@@ -87,7 +87,7 @@ jobs:
             --build-arg "BOOTY_FLAVOR=full" \
             --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
             --output "type=local,dest=out-split" -f initrd.Dockerfile .
-          (cd out-split && sha256sum base.cpio.zst frr.cpio.zst qemu-img.cpio.zst ipmitool.cpio.zst > SHA256SUMS)
+          (cd out-split && sha256sum -c --quiet SHA256SUMS)
           {
             echo "### Split ramdisk"
             echo
@@ -184,6 +184,7 @@ jobs:
             out-split/frr.cpio.zst
             out-split/qemu-img.cpio.zst
             out-split/ipmitool.cpio.zst
+            out-split/vmlinuz
             out-split/SHA256SUMS
           if-no-files-found: error
           retention-days: 14

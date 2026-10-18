@@ -22,7 +22,7 @@ import (
 // build, and the frr user of #794 resolves). base + vars fails with
 // BOOTY-PAY-001 and starts no FRR daemon.
 //
-// BOOTY_SPLIT_DIR: the output of --target split and --target kernel-image.
+// BOOTY_SPLIT_DIR: the output of --target split (with its vmlinuz).
 func TestSplitRamdiskPayloadsQEMU(t *testing.T) {
 	qemuAvailable(t)
 	dir := os.Getenv("BOOTY_SPLIT_DIR")

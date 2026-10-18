@@ -185,8 +185,9 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 | `kernel-image` | ~12 MB | n/a | n/a | The Debian `vmlinuz` that matches the shipped modules, for QEMU tests |
 | `split` | see below | as the default | as the default | The default ramdisk as a base archive plus one archive per optional payload |
 
-The `split` target writes `base.cpio.zst` and one archive per payload:
-`frr.cpio.zst`, `qemu-img.cpio.zst` and `ipmitool.cpio.zst`. The boot
+The `split` target writes `base.cpio.zst`, one archive per payload
+(`frr.cpio.zst`, `qemu-img.cpio.zst`, `ipmitool.cpio.zst`), the `vmlinuz`
+whose modules the base carries, and `SHA256SUMS` over all of them. The boot
 loader loads the base and, after it, only the payloads that the run needs.
 The kernel unpacks them over each other (ISOLINUX
 `initrd=/boot/base.cpio.zst,/boot/frr.cpio.zst`, GRUB

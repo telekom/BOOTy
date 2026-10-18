@@ -498,10 +498,14 @@ RUN pack-initramfs.sh . /initramfs.cpio.zst
 # The default tree as a base ramdisk plus one archive per optional payload
 # (FRR, qemu-img, ipmitool), which the boot loader loads only for the runs
 # that need them. See docs/proposal-ramdisk-split.md and pkg/payload.
+# The kernel comes from the same build as the modules of the base, and
+# SHA256SUMS lists every file, so one pin covers the set.
 FROM busybox AS split-builder
 ARG BOOTY_BUILD=unknown
 COPY hack/split-initramfs.sh /usr/local/bin/
 RUN split-initramfs.sh /build/initramfs /split "$BOOTY_BUILD"
+COPY --from=kernel /vmlinuz /split/vmlinuz
+RUN cd /split && sha256sum base.cpio.zst frr.cpio.zst qemu-img.cpio.zst ipmitool.cpio.zst vmlinuz > SHA256SUMS
 
 FROM scratch AS split
 COPY --from=split-builder /split/ .

@@ -37,8 +37,14 @@ func TestSplitBuildPayloadsMatchTheDefaultTree(t *testing.T) {
 		}
 	}
 	split := dockerfileStageBlock(t, string(dockerfile), "split-builder")
-	if !strings.Contains(split, `RUN split-initramfs.sh /build/initramfs /split "$BOOTY_BUILD"`) {
-		t.Errorf("split-builder does not split the default tree with the build ID:\n%s", split)
+	for _, want := range []string{
+		`RUN split-initramfs.sh /build/initramfs /split "$BOOTY_BUILD"`,
+		"COPY --from=kernel /vmlinuz /split/vmlinuz",
+		"sha256sum base.cpio.zst frr.cpio.zst qemu-img.cpio.zst ipmitool.cpio.zst vmlinuz > SHA256SUMS",
+	} {
+		if !strings.Contains(split, want) {
+			t.Errorf("split-builder lacks %q:\n%s", want, split)
+		}
 	}
 }
 
@@ -47,13 +53,13 @@ func TestWorkflowsPublishSplitRamdisk(t *testing.T) {
 	pr := loadWorkflow(t, ".github/workflows/pr-artifacts.yml")
 	job := pr.Jobs["publish-pr-iso"]
 	build := requireWorkflowStepRunContains(t, job, "Build ISO artifacts", "--target split")
-	if !strings.Contains(build.Run, "SHA256SUMS") {
-		t.Error("PR artifacts do not write SHA256SUMS for the split archives")
+	if !strings.Contains(build.Run, "sha256sum -c --quiet SHA256SUMS") {
+		t.Error("PR artifacts do not check the SHA256SUMS of the split archives")
 	}
 	upload := requireWorkflowStep(t, job, "Publish split ramdisk artifact")
 	assertWorkflowWith(t, upload, "name", "booty-pr-split")
-	for _, f := range []string{"base", "frr", "qemu-img", "ipmitool"} {
-		assertStepWithContains(t, upload, "path", "out-split/"+f+".cpio.zst")
+	for _, f := range []string{"base.cpio.zst", "frr.cpio.zst", "qemu-img.cpio.zst", "ipmitool.cpio.zst", "vmlinuz", "SHA256SUMS"} {
+		assertStepWithContains(t, upload, "path", "out-split/"+f)
 	}
 
 	release, err := os.ReadFile(".github/workflows/release-v2.yml")
@@ -64,6 +70,9 @@ func TestWorkflowsPublishSplitRamdisk(t *testing.T) {
 		"flavor: split",
 		"for part in base frr qemu-img ipmitool; do",
 		"split-${{ matrix.arch }}-*.cpio.zst",
+		"split-${{ matrix.arch }}-vmlinuz",
+		"split-${{ matrix.arch }}-SHA256SUMS",
+		`-o -name "split-*"`,
 	} {
 		if !strings.Contains(string(release), want) {
 			t.Errorf("release workflow lacks %q", want)

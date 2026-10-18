@@ -208,11 +208,15 @@ jobs:
           fi
           if [ "${{ matrix.flavor }}" = "split" ]; then
             # Base ramdisk plus one archive per payload (pkg/payload).
+            # SHA256SUMS lists the unprefixed names; it pins the whole set.
+            (cd out-split && sha256sum -c --quiet SHA256SUMS)
             for part in base frr qemu-img ipmitool; do
-              test -f "out-split/${part}.cpio.zst"
               cp "out-split/${part}.cpio.zst" "split-${{ matrix.arch }}-${part}.cpio.zst"
               sha256sum "split-${{ matrix.arch }}-${part}.cpio.zst" > "split-${{ matrix.arch }}-${part}.cpio.zst.sha256"
             done
+            cp out-split/vmlinuz "split-${{ matrix.arch }}-vmlinuz"
+            sha256sum "split-${{ matrix.arch }}-vmlinuz" > "split-${{ matrix.arch }}-vmlinuz.sha256"
+            cp out-split/SHA256SUMS "split-${{ matrix.arch }}-SHA256SUMS"
           elif [ -f out-${{ matrix.flavor }}/initramfs.cpio.zst ]; then
             cp out-${{ matrix.flavor }}/initramfs.cpio.zst ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst
             sha256sum ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst > ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst.sha256
@@ -238,6 +242,9 @@ jobs:
             ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst.sha256
             split-${{ matrix.arch }}-*.cpio.zst
             split-${{ matrix.arch }}-*.cpio.zst.sha256
+            split-${{ matrix.arch }}-vmlinuz
+            split-${{ matrix.arch }}-vmlinuz.sha256
+            split-${{ matrix.arch }}-SHA256SUMS
           if-no-files-found: ignore
 
   sbom:
@@ -845,7 +852,7 @@ jobs:
       - name: Collect release files
         run: |
           mkdir release-files
-          find artifacts -type f \( -name "booty-*" -o -name "*.cpio.gz" -o -name "*.cpio.zst" -o -name "*.iso" -o -name "*.sha256" -o -name "*.sig" -o -name "*.bundle" -o -name "*.spdx.json" \) \
+          find artifacts -type f \( -name "booty-*" -o -name "*.cpio.gz" -o -name "*.cpio.zst" -o -name "*.iso" -o -name "*.sha256" -o -name "*.sig" -o -name "*.bundle" -o -name "*.spdx.json" -o -name "split-*" \) \
             -exec cp {} release-files/ \;
           ls -lh release-files/
 
