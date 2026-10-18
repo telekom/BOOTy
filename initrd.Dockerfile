@@ -494,6 +494,18 @@ RUN prune-initramfs-libs.sh .
 # Package initramfs
 RUN pack-initramfs.sh . /initramfs.cpio.zst
 
+# ── Split ramdisk (optional, --target=split) ───────────────────────────────
+# The default tree as a base ramdisk plus one archive per optional payload
+# (FRR, qemu-img, ipmitool), which the boot loader loads only for the runs
+# that need them. See docs/proposal-ramdisk-split.md and pkg/payload.
+FROM busybox AS split-builder
+ARG BOOTY_BUILD=unknown
+COPY hack/split-initramfs.sh /usr/local/bin/
+RUN split-initramfs.sh /build/initramfs /split "$BOOTY_BUILD"
+
+FROM scratch AS split
+COPY --from=split-builder /split/ .
+
 # ── ISO build stage (optional, triggered by --target=iso) ──────────────────
 # UEFI boot image: Debian shim (Microsoft UEFI CA) + Debian-signed GRUB,
 # which verifies the Debian-signed kernel, so the ISO boots with Secure Boot.
