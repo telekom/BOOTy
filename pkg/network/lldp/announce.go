@@ -184,7 +184,8 @@ func macPHY(autoneg *bool) layers.LinkLayerDiscoveryValue {
 
 // medTLVs are the LLDP-MED capabilities (capabilities and inventory,
 // endpoint class I) and inventory TLVs (TIA-1057 10.2.6), at most 32
-// bytes each.
+// bytes each. TIA-1057 sends them only after hearing LLDP-MED; BOOTy
+// sends them at once (full level), like lldpd -M.
 func medTLVs(s *System) []layers.LinkLayerDiscoveryValue {
 	out := []layers.LinkLayerDiscoveryValue{orgTLV(layers.IEEEOUIMedia, 1, []byte{0x00, 0x21, 0x01})}
 	for _, f := range []struct {

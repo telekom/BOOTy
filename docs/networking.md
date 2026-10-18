@@ -805,9 +805,11 @@ Without an IEEE OUI that Telekom owns, BOOTy sends no organizationally
 specific TLVs of its own; the extra host data goes into the system
 description. `full` sends the DMI serial number to the switch, which the
 check result and the inventory leave out; [cable
-check](cable-check.md#host-identity-what-goes-where) has both decisions. BOOTy sends
-the LLDP-MED TLVs without waiting for the switch to send LLDP-MED first,
-as lldpd does with `-M`. With every string at its limit, a frame has about
+check](cable-check.md#host-identity-what-goes-where) has both decisions. TIA-1057
+has an endpoint send LLDP-MED TLVs only after it heard LLDP-MED from the
+network device. BOOTy sends them at once with `full`, as lldpd does with
+`-M`, so a switch that never starts LLDP-MED still gets the inventory; a
+strict MED switch may ignore them. With every string at its limit, a frame has about
 1.2 KB (`TestFrameBudget`), below the 1500-byte LLDPDU limit.
 `TestCableCheckAnnounce` checks that lldpd decodes the `full` TLVs.
 

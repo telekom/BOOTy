@@ -7,6 +7,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 )
 
 func fakePort(t *testing.T, p port) {
@@ -97,4 +100,28 @@ func TestFrameBudget(t *testing.T) {
 		t.Fatalf("mgmt %v, inventory %+v: want 4 IPs and the MAC, and 32-byte inventory strings", n.MgmtAddresses, n.Inventory)
 	}
 	t.Logf("largest LLDPDU: %d bytes", len(b)-14)
+}
+
+// The LLDP-MED capabilities TLV announces exactly "LLDP-MED capabilities"
+// and "inventory" (bits 0 and 5) and endpoint class I.
+func TestFrameMEDCapabilities(t *testing.T) {
+	fakePort(t, port{Driver: "ice", MTU: 1500})
+	mac, _ := net.ParseMAC("3c:fd:fe:a1:b2:c3")
+	b, err := Frame("ens1f0np0", mac, &Info{MachineID: "m", SystemName: "host1", Announce: AnnounceFull, System: testSystem})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkt := gopacket.NewPacket(b, layers.LayerTypeEthernet, gopacket.Default)
+	info, ok := pkt.Layer(layers.LayerTypeLinkLayerDiscoveryInfo).(*layers.LinkLayerDiscoveryInfo)
+	if !ok {
+		t.Fatal("no LLDP info")
+	}
+	med, err := info.DecodeMedia()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := layers.LLDPMediaCapabilities{Capabilities: true, Inventory: true, Class: layers.LLDPMediaClassEndpointI}
+	if med.MediaCapabilities != want {
+		t.Fatalf("MED capabilities %+v, want %+v", med.MediaCapabilities, want)
+	}
 }
