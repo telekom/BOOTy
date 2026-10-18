@@ -4320,6 +4320,19 @@ func TestProcessRouteUpdateType2MobilityAndSticky(t *testing.T) {
 // create would keep them) and forgets the routes; a callback after it
 // installs nothing, and a new Setup installs them again.
 func TestType2TeardownRemovesAndForgets(t *testing.T) {
+	// I4: Teardown also empties the IP index.
+	oi, _ := type2TestOverlay()
+	oi.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:01", IpAddress: "10.0.0.50"}, "10.0.0.1", 0, false)
+	if !oi.type2HasIP(net.ParseIP("10.0.0.50")) {
+		t.Fatal("type2HasIP false for a live MAC/IP route")
+	}
+	if err := oi.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if oi.type2HasIP(net.ParseIP("10.0.0.50")) {
+		t.Fatal("type2HasIP true after Teardown")
+	}
+
 	o, mock := type2TestOverlay()
 	r := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
 	o.handleType2Route(r, "10.0.0.1", 0, false)
@@ -4710,5 +4723,56 @@ func TestType2NeighborTiebreakOnMAC(t *testing.T) {
 				t.Fatalf("order %v: neighbor MAC %s, want the lowest", order, got)
 			}
 		}
+	}
+}
+
+// I3: the same MAC/IP from two RDs; the withdraw of one keeps the neighbor
+// entry and the index.
+func TestType2NeighborKeptByTheOtherRD(t *testing.T) {
+	o, m := type2TestOverlay()
+	route := func(rd uint32) *apipb.EVPNMACIPAdvertisementRoute {
+		r, err := buildRouteDistinguisher(65000, rd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &apipb.EVPNMACIPAdvertisementRoute{Rd: r, MacAddress: "aa:bb:cc:00:00:01", IpAddress: "10.0.0.50"}
+	}
+	o.handleType2Route(route(1), "10.0.0.1", 0, false)
+	o.handleType2Route(route(2), "10.0.0.1", 0, false)
+	o.handleType2Route(route(1), "10.0.0.1", 0, true)
+	if dels := bridgeNeigh(m.dels, "10.0.0.50"); len(dels) != 0 || !o.type2HasIP(net.ParseIP("10.0.0.50")) {
+		t.Fatalf("neighbor deletes %v, type2HasIP %v; want the entry kept by the RD 2 route", dels, o.type2HasIP(net.ParseIP("10.0.0.50")))
+	}
+}
+
+// L4: an IPv6 prefix over a VTEP that is also a Type-2 IP gets its
+// IPv4-mapped gateway entry: an IPv6 kernel entry of its own, not shared.
+func TestType5MappedGatewayIsNotShared(t *testing.T) {
+	const vtep, rmac = "10.0.0.1", "62:db:b8:c1:80:52"
+	o, m := type2TestOverlay()
+	o.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:00:00:01", IpAddress: vtep}, "10.0.0.2", 0, false)
+	o.handleType5Route(&apipb.EVPNIPPrefixRoute{IpPrefix: "2001:db8::", IpPrefixLen: 64, GwAddress: "::"}, vtep, mustParseMAC(t, rmac), false)
+	found := false
+	for _, n := range m.sets {
+		found = found || (n.Family == syscall.AF_INET6 && n.IP.Equal(net.ParseIP("::ffff:"+vtep)) && n.HardwareAddr.String() == rmac)
+	}
+	if !found {
+		t.Fatalf("no ::ffff:%s -> %s entry in %v", vtep, rmac, m.sets)
+	}
+}
+
+// L6: on a shared gateway a failed FDB set must not roll back (delete) the
+// neighbor entry, which is the Type-2 one.
+func TestType5SharedGatewayFDBFailureKeepsTheNeighbor(t *testing.T) {
+	const vtep = "10.0.0.1"
+	o, m := type2TestOverlay()
+	o.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:00:00:01", IpAddress: vtep}, "10.0.0.2", 0, false)
+	m.setErr, m.setErrOnCall = errors.New("boom"), len(m.sets)+1 // the Type-5 FDB set
+	o.handleType5Route(&apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: "0.0.0.0"}, vtep, mustParseMAC(t, "62:db:b8:c1:80:52"), false)
+	if len(m.sets) == 0 || m.sets[len(m.sets)-1].Family != syscall.AF_BRIDGE {
+		t.Fatalf("the failed set was not the FDB entry: %v", m.sets)
+	}
+	if dels := bridgeNeigh(m.dels, vtep); len(dels) != 0 {
+		t.Fatalf("a failed FDB set deleted the shared neighbor: %v", dels)
 	}
 }
