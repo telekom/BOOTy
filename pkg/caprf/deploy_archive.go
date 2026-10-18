@@ -321,12 +321,12 @@ func archivePath(name string) (string, error) {
 	if len(name) > maxArchivePathLen {
 		return "", fmt.Errorf("deploy archive entry path is longer than %d bytes", maxArchivePathLen)
 	}
-	trimmed := strings.TrimPrefix(name, "./")
-	for _, part := range strings.Split(strings.TrimSuffix(trimmed, "/"), "/") {
-		if part == ".." {
-			return "", fmt.Errorf("deploy archive entry %q has a parent directory element", name)
-		}
+	// Any "..", also inside a file name: simple to check, and the form of
+	// the check that static analysis (CodeQL zip slip) knows.
+	if strings.Contains(name, "..") {
+		return "", fmt.Errorf("deploy archive entry %q contains \"..\"", name)
 	}
+	trimmed := strings.TrimPrefix(name, "./")
 	clean := path.Clean(trimmed)
 	if clean == "deploy" {
 		return "", nil

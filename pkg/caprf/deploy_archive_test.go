@@ -164,6 +164,7 @@ func TestDeployArchiveRejectsUnsafeEntries(t *testing.T) {
 		// Two entries with long paths would create many directories.
 		"directory bomb":  {validVars, {name: "deploy/" + strings.Repeat("d/", 8) + "f", body: ""}},
 		"path too long":   {validVars, {name: "deploy/" + strings.Repeat("x", 520), body: ""}},
+		"dots in a name":  {validVars, {name: "deploy/machine-files/a..b", body: ""}},
 		"path too deep":   {validVars, {name: "deploy/" + strings.Repeat("d/", 16) + "f", body: ""}},
 		"job dir is file": {validVars, {name: "deploy/machine-files", body: "x"}},
 	} {

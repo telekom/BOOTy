@@ -269,7 +269,8 @@ files are files, not vars.
 - The archive is untrusted input to a root process. Only directories and
   regular files are allowed: a symlink, a hard link or any other type fails
   the command, so machine files can not be symlinks in a deploy archive.
-  Every entry must be below `deploy/`, without `..` and not absolute. A
+  Every entry must be below `deploy/`, not absolute, and have no `..`
+  anywhere in its name (also not inside a file name such as `a..b`). A
   file name may appear once. Files are created with `O_EXCL|O_NOFOLLOW`,
   with the permission bits of the archive entry (a 0600 file stays 0600),
   owned by root; the archive owner and the setuid, setgid and sticky bits
