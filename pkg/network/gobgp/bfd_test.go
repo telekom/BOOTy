@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -405,5 +406,70 @@ func TestBFDDownWhileStartingRecheck(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A session that is Established with an uptime when BFD goes Down (the
+// same second) keeps it when BFD is Up again inside the grace time.
+func TestBFDDownRecheckWaitsForGrace(t *testing.T) {
+	now := time.Now()
+	resets := make(chan struct{}, 1)
+	u := &UnderlayTier{log: slog.Default(), bfdUpGrace: 200 * time.Millisecond, now: func() time.Time { return now },
+		resetBGP: func(context.Context, string, string) { resets <- struct{}{} },
+		bgpSession: func(context.Context, string) (apipb.PeerState_SessionState, time.Time) {
+			return apipb.PeerState_ESTABLISHED, now
+		},
+	}
+	p := &bfd.Peer{Name: "198.51.100.1"}
+	u.bfdChanged(p, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
+	time.Sleep(100 * time.Millisecond)
+	u.bfdChanged(p, bfd.StateDown, bfd.StateUp, bfd.DiagNone)
+	select {
+	case <-resets:
+		t.Fatal("reset although BFD came Up within the grace time")
+	case <-time.After(500 * time.Millisecond):
+	}
+	u.stopRechecks()
+}
+
+// The grace time is the detection time at the slow transmit interval,
+// longer than the 1 s the RR's re-keyed session needs to come Up again.
+func TestBFDRecheckGrace(t *testing.T) {
+	for mult, want := range map[uint8]time.Duration{0: 3 * time.Second, 2: 2 * time.Second, 3: 3 * time.Second, 5: 5 * time.Second} {
+		got := bfdRecheckGrace(&bfd.Peer{Timers: bfd.Timers{DetectMult: mult}})
+		if got != want || got <= bfd.SlowTx {
+			t.Errorf("multiplier %d: grace %v, want %v (more than %v)", mult, got, want, bfd.SlowTx)
+		}
+	}
+}
+
+// Teardown stops a recheck that still waits for the session, so it
+// neither leaks nor resets a peer during the teardown.
+func TestTeardownStopsBFDRecheck(t *testing.T) {
+	resets := 0
+	var calls atomic.Int32
+	u := &UnderlayTier{cfg: &Config{}, log: slog.Default(), bfdUpGrace: 50 * time.Millisecond,
+		resetBGP: func(context.Context, string, string) { resets++ },
+		bgpSession: func(context.Context, string) (apipb.PeerState_SessionState, time.Time) {
+			calls.Add(1)
+			return apipb.PeerState_OPENCONFIRM, time.Time{}
+		},
+	}
+	u.bfdChanged(&bfd.Peer{Name: "198.51.100.1"}, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
+	time.Sleep(50 * time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		_ = u.Teardown(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Teardown waits for the recheck")
+	}
+	n := calls.Load()
+	time.Sleep(100 * time.Millisecond)
+	if calls.Load() != n || resets != 0 {
+		t.Fatalf("recheck still running after Teardown: %d more calls, %d resets", calls.Load()-n, resets)
 	}
 }

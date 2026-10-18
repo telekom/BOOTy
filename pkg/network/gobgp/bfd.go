@@ -172,7 +172,7 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 // without an uptime until the FSM sets it; both count as coming up. So a
 // real failure is not hidden until the hold timer expires, a skipped BFD
 // Down is checked again when the session is Established: if BFD is not
-// Up again within bfdUpGrace of the Down, the session is reset then.
+// Up again within bfdRecheckGrace of the Down, the session is reset then.
 func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag) {
 	u.bfdUp.Store(p.Name, to == bfd.StateUp)
 	if from != bfd.StateUp || to != bfd.StateDown {
@@ -194,42 +194,74 @@ func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag
 	switch state, at := session(ctx, p.Name); {
 	case state == apipb.PeerState_OPENCONFIRM:
 		u.log.Info("BFD down while the BGP session is coming up (OpenConfirm), not resetting it yet", "peer", p.Name, "diag", diag)
-		go u.resetUnlessBFDUp(p.Name, time.Now())
+		u.recheck(p)
 		return
 	case state == apipb.PeerState_ESTABLISHED && (at.IsZero() || now().Unix() == at.Unix()):
 		u.log.Info("BFD down in the second the BGP session came up, not resetting it yet, like FRR", "peer", p.Name, "diag", diag)
-		go u.resetUnlessBFDUp(p.Name, time.Now())
+		u.recheck(p)
 		return
 	}
 	u.log.Warn("BFD down, resetting the BGP session", "peer", p.Name, "diag", diag)
 	u.reset(ctx, p.Name)
 }
 
-// bfdUpGraceDefault is the time BFD gets to come Up again after a Down
-// that did not reset a starting session: the detection time at the slow
-// 1 s transmit interval of a session that is not Up (3 x 1 s). The RR's
-// re-keyed session is Up again after about 1 s.
-const bfdUpGraceDefault = 3 * time.Second
+// bfdRecheckGrace is the time BFD gets to come Up again after a Down that
+// did not reset a starting session: the detection time at the slow
+// transmit interval of a session that is not Up (multiplier x 1 s). The
+// RR's re-keyed session is Up again after about 1 s.
+func bfdRecheckGrace(p *bfd.Peer) time.Duration {
+	return time.Duration(cmp.Or(p.Timers.DetectMult, 3)) * bfd.SlowTx
+}
+
+// recheck starts resetUnlessBFDUp for p; Teardown stops it (stopRechecks).
+func (u *UnderlayTier) recheck(p *bfd.Peer) {
+	grace := cmp.Or(u.bfdUpGrace, bfdRecheckGrace(p))
+	u.checkMu.Lock()
+	defer u.checkMu.Unlock()
+	if u.checkCtx == nil {
+		u.checkCtx, u.stopChecks = context.WithCancel(context.Background())
+	}
+	ctx := u.checkCtx
+	u.checks.Add(1)
+	go func() {
+		defer u.checks.Done()
+		u.resetUnlessBFDUp(ctx, p.Name, time.Now(), grace)
+	}()
+}
+
+// stopRechecks stops the rechecks and waits for them; later ones end at
+// once. Teardown calls it before the BGP server stops, so no recheck
+// waits on a stopped server or resets a peer during the teardown.
+func (u *UnderlayTier) stopRechecks() {
+	u.checkMu.Lock()
+	if u.checkCtx == nil {
+		u.checkCtx, u.stopChecks = context.WithCancel(context.Background())
+	}
+	u.stopChecks()
+	u.checkMu.Unlock()
+	u.checks.Wait()
+}
 
 // resetUnlessBFDUp waits until the BGP session of name is Established with
-// an uptime, then resets it unless BFD came Up again within the grace time
-// after downAt. A session that does not come up needs no reset.
-func (u *UnderlayTier) resetUnlessBFDUp(name string, downAt time.Time) {
+// an uptime, then resets it unless BFD came Up again within grace after
+// downAt. A session that does not come up needs no reset.
+func (u *UnderlayTier) resetUnlessBFDUp(ctx context.Context, name string, downAt time.Time, grace time.Duration) {
 	session := u.bgpSession
 	if session == nil {
 		session = u.sessionState
 	}
-	grace := cmp.Or(u.bfdUpGrace, bfdUpGraceDefault)
 	tick := time.NewTicker(cmp.Or(grace/30, 10*time.Millisecond))
 	defer tick.Stop()
 	for range tick.C {
 		if up, ok := u.bfdUp.Load(name); ok && up.(bool) {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		state, at := session(ctx, name)
+		qctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		state, at := session(qctx, name)
 		cancel()
 		switch {
+		case ctx.Err() != nil: // Teardown
+			return
 		case state == apipb.PeerState_OPENCONFIRM || state == apipb.PeerState_ESTABLISHED && at.IsZero():
 			continue // still coming up; the hold timer bounds this
 		case state != apipb.PeerState_ESTABLISHED:
@@ -238,8 +270,8 @@ func (u *UnderlayTier) resetUnlessBFDUp(name string, downAt time.Time) {
 			continue
 		}
 		u.log.Warn("BGP session came up while BFD stayed down, resetting it", "peer", name)
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		u.reset(ctx, name)
+		rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		u.reset(rctx, name)
 		cancel()
 		return
 	}

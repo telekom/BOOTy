@@ -98,8 +98,14 @@ type UnderlayTier struct {
 	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
 	bfd          *bfd.Manager                  // BFD sessions of the peers
 	bfdUp        sync.Map                      // BFD peer name -> bool, the session is Up
-	bfdUpGrace   time.Duration                 // overridable in tests; zero = bfdUpGraceDefault
-	stopLLDP     func()                        // stops the LLDP senders and waits for them
+	bfdUpGrace   time.Duration                 // overridable in tests; zero = bfdRecheckGrace
+	// checkCtx, canceled by Teardown, bounds the BFD rechecks of
+	// starting sessions (recheck); checkMu guards it and checks.Add.
+	checkMu    sync.Mutex
+	checkCtx   context.Context //nolint:containedctx // canceled by Teardown, like stopRelearn
+	stopChecks context.CancelFunc
+	checks     sync.WaitGroup
+	stopLLDP   func() // stops the LLDP senders and waits for them
 }
 
 const defaultUnderlayDummyName = "dummy.underlay"
@@ -260,6 +266,7 @@ func (u *UnderlayTier) Teardown(_ context.Context) error {
 		u.bfd.Close()
 		u.bfd = nil
 	}
+	u.stopRechecks() // no ResetPeer during the teardown, none waits on the stopped server
 	if u.stopLLDP != nil {
 		u.stopLLDP()
 		u.stopLLDP = nil

@@ -469,7 +469,8 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   up, and BOOTy reset the RR session at every start (#738)
 - gobgp: a BFD Down while the BGP session is in OpenConfirm, or Established
   without an uptime yet, does not reset it at once; once Established, BOOTy
-  resets the session if BFD is not Up again within 3 s. This ends the
+  resets the session if BFD is not Up again within the slow detection time
+  (multiplier x 1 s). This ends the
   `TestProdTplRRSessionsNotResetAtStart` start flake (#761)
 - GoBGP mode: an L3VNI provision VNI without `provision_gateway` (bm4x IPv6
   provisioning network) selects Type-5 only, instead of failing with

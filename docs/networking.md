@@ -241,10 +241,11 @@ same resolution:
   whenever `last_event > peer->uptime`), but its BFD Down arrives through
   zebra, after the RR's KEEPALIVE, so the shadow node does not see it.
   BOOTy's BFD is in the same process and can see the Down first. When the
-  session is Established, BOOTy checks again: if BFD is not Up within 3 s
-  of the Down (the detection time at the slow 1 s rate), it resets the
-  session then, so a real failure is not hidden until the hold timer
-  expires.
+  session is Established, BOOTy checks again: if BFD is not Up within the
+  detection time at the slow 1 s rate (multiplier x 1 s, 3 s by default)
+  after the Down, it resets the session then, so a real failure is not
+  hidden until the hold timer expires. The RR's re-keyed session is Up
+  again after 1 s in the lab. Teardown stops these checks.
 - `bgp bestpath as-path multipath-relax` (native `network.bgp.multipathRelax`,
   `BGP_MULTIPATH_RELAX`) installs equal-cost paths with different AS paths
   of the same length as one multipath route.
