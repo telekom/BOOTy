@@ -88,7 +88,13 @@ type UnderlayTier struct {
 	ifacePeerConfs map[string]*apipb.Peer
 	// peerMu guards peerDevs, ifacePeers and ifacePeerConfs after Setup,
 	// when the relearner changes them.
-	peerMu       sync.RWMutex
+	peerMu sync.RWMutex
+	// peerConfs are all GoBGP peers as added, by GoBGP address, to add
+	// a peer again (peerRestarter). peerOps guards it and serializes the
+	// peer moves and restarts.
+	peerConfs    map[string]*apipb.Peer
+	peerOps      sync.Mutex
+	stopRestart  func()                        // stops the peer restarter
 	stopRelearn  context.CancelFunc            // stops the relearner
 	relearnDone  chan struct{}                 // closed when the relearner exits
 	stopCarrier  chan struct{}                 // stops the carrier watch
@@ -169,6 +175,9 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 		u.startCarrierWatch()
 	}
 	u.startRelearn()
+	if err := u.startRestarter(); err != nil {
+		u.log.Warn("a BGP peer waits 5 s in Idle after its session ends", "error", err)
+	}
 
 	// Start periodic Router Advertisements so FRR's zebra continuously
 	// knows our link-local addresses for BGP unnumbered peering.
@@ -238,6 +247,10 @@ func (u *UnderlayTier) Teardown(_ context.Context) error {
 	if u.stopRA != nil {
 		close(u.stopRA)
 		u.stopRA = nil
+	}
+	if u.stopRestart != nil {
+		u.stopRestart() // no peer restarts after the server stops
+		u.stopRestart = nil
 	}
 	if u.stopRelearn != nil {
 		u.stopRelearn()
@@ -820,7 +833,7 @@ func (u *UnderlayTier) addSessionPeers(ctx context.Context) error {
 			u.recordInterfacePeer(s.Name, addr)
 			u.ifacePeerConfs[s.Name] = peer
 		}
-		if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
+		if err := u.addPeer(ctx, peer); err != nil {
 			u.log.Warn("Failed to add BGP peer", "neighbor", s.Name, "error", err)
 			lastErr = err
 			continue
@@ -833,6 +846,20 @@ func (u *UnderlayTier) addSessionPeers(ctx context.Context) error {
 	if added == 0 && lastErr != nil {
 		return fmt.Errorf("no BGP peers added: %w", lastErr)
 	}
+	return nil
+}
+
+// addPeer adds a peer to GoBGP and remembers it for the peer restarter.
+func (u *UnderlayTier) addPeer(ctx context.Context, peer *apipb.Peer) error {
+	if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
+		return err //nolint:wrapcheck // the callers name the peer
+	}
+	u.peerOps.Lock()
+	defer u.peerOps.Unlock()
+	if u.peerConfs == nil {
+		u.peerConfs = map[string]*apipb.Peer{}
+	}
+	u.peerConfs[peer.GetConf().GetNeighborAddress()] = peer
 	return nil
 }
 
@@ -908,7 +935,7 @@ func (u *UnderlayTier) addInterfacePeer(ctx context.Context, iface string, famil
 		u.log.Info("tcp-md5 authentication configured for BGP peer", "interface", iface)
 	}
 
-	if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
+	if err := u.addPeer(ctx, peer); err != nil {
 		return fmt.Errorf("add peer on %s: %w", iface, err)
 	}
 
@@ -928,7 +955,7 @@ func (u *UnderlayTier) addNumberedPeer(ctx context.Context, addr string, familie
 		sessionType = "eBGP"
 	}
 
-	if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
+	if err := u.addPeer(ctx, peer); err != nil {
 		return fmt.Errorf("add %s peer %s: %w", sessionType, addr, err)
 	}
 

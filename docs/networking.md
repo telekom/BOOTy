@@ -204,22 +204,30 @@ same resolution:
   60000 ms and a multiplier outside 2 to 255 fail in both forms. Like FRR
   10.3, the session is multihop (RFC 5883) only for an iBGP peer that is
   not on a connected network of its VRF. When BFD goes from Up to Down,
-  BOOTy resets the BGP session and connects again after 1 s, like the FRR
-  start timer. Known deviation: the peer gets Cease/Administrative Reset
-  (subcode 4), not Cease/BFD Down (subcode 10, RFC 9384), because the
-  GoBGP API sends no other subcode. Only the peer log shows it. Two
-  timing deviations of GoBGP 3.37 remain, filed upstream:
-  - when the peer ends the session (for example `clear bgp` on the
-    leaf), GoBGP waits a fixed 5 s in Idle (`holdtimeIdle`), where FRR
-    waits 1 s, and refuses connections in that time
+  BOOTy resets the BGP session. Known deviation: the peer gets
+  Cease/Administrative Reset (subcode 4), not Cease/BFD Down (subcode 10,
+  RFC 9384), because the GoBGP API sends no other subcode. Only the peer
+  log shows it (status: open, needs a GoBGP API change). Timing after a
+  session ends, against GoBGP 3.37:
+  - GoBGP waits a fixed 5 s in Idle (`holdtimeIdle`) when the peer ends
+    the session (for example `clear bgp` on the leaf), where FRR waits
+    1 s, and refuses connections in that time
     ([osrg/gobgp#3735](https://github.com/osrg/gobgp/issues/3735)). In
     the lab a leaf-initiated session to BOOTy took 36 s against 2.3 s for
-    FRR (the leaf then retries after its connect timer); a GoBGP build
-    with the idle hold time after reset also used there took 5.3 s;
+    FRR (the leaf then retries after its connect timer). Status: worked
+    around in BOOTy (#PRNUM). When a session ends and BOOTy did not stop
+    the peer (carrier loss) and GoBGP keeps no graceful restart routes of
+    it, BOOTy deletes the GoBGP peer and adds it again at once. A new
+    peer accepts the leaf's connection at once, like FRR in Idle, and
+    connects itself after 1 to 2 s. This also covers the BFD reset, where
+    GoBGP refused connections for the 1 s idle hold time.
+    `TestProdTplLeafClear` checks that the leaf session is up again within
+    5 s;
   - GoBGP waits a random 1 to 2 s before the first connect after Idle
     ([osrg/gobgp#3736](https://github.com/osrg/gobgp/issues/3736)), where
-    FRR connects at once. After a BFD reset BOOTy restored ECMP in 4.0 to
-    4.4 s against 2.3 to 2.9 s for FRR; without the delay 2.7 s.
+    FRR connects after its 1 s start timer. Status: open, needs a GoBGP
+    change. After a BFD reset BOOTy restored ECMP in 4.0 to 4.4 s against
+    2.3 to 2.9 s for FRR; without the delay 2.7 s.
   BOOTy uses the released GoBGP without a fork.
   GoBGP v4 (native BFD, Extended Message) has two regressions against
   3.37 that matter for BOOTy, filed upstream before a move to v4:
