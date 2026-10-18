@@ -460,13 +460,20 @@ BOOTy does not guarantee:
 | DRA SR-IOV driver (`k8snetworkplumbingwg/dra-driver-sriov`) | eSwitch mode (the driver reads it through devlink and assumes legacy without it; eSwitch detection by `phys_switch_id` was proposed in upstream PR #120, closed without merge), PF name, vendor and device ID, NUMA node, link type | `eswitch.mode`, `physSwitchId`, `interface`, `vendorId`, `deviceId`, `numaNode`, `linkType` |
 | DRA representor and tc-flower work (upstream issues #121, #122) | Whether the hardware can run switchdev | `eswitch.capability` |
 | DRA VF attributes (upstream #123) and sriov-cni | VF limits | `sriovTotalVFs` |
-| t-co `SRIOVIntegration` gate | The `SRIOVEnabled` bootstrap input that taints SR-IOV worker groups. The input should come from this report (`sriovCapable` and `sriovTotalVFs` of the profile PFs), not from a manual flag. | `sriovCapable`, `sriovTotalVFs` |
+| t-co `SRIOVIntegration` gate and the ComputeProfile | The node label and the optional taint below, for SR-IOV worker groups. Their input should come from this report (`sriovCapable` and `sriovTotalVFs` of the profile PFs), not from a manual flag. | `sriovCapable`, `sriovTotalVFs` |
 | CAPRF and bm4x | Host status and the host class | the whole `sriov` object |
 
-The t-co draft MRs name the taint `sriov.t-caas.telekom.com/enabled`
-(`api/v1alpha1/taints.go` on `feat/sriov-taint-const`); the proposal and
-older notes name it `t-caas.telekom.com/sriov`. BOOTy sets no taint, so only
-the t-co side has to settle the key.
+The node keys follow the T-CaaS ADR "SR-IOV node scheduling" (repository
+`cit/t-caas/docs`, `decisions/cluster-lifecycle/2026-08-sriov-node-scheduling`,
+status proposed):
+
+- the node label `t-caas.telekom.com/sr-iov: "true"` is the interop
+  contract for SR-IOV nodes;
+- the taint `sriov.t-caas.telekom.com/enabled` with effect `NoSchedule` is
+  optional, to keep other workloads off an SR-IOV worker pool.
+
+The ComputeProfile and t-co set both. BOOTy sets neither the label nor the
+taint; it only reports the facts they should be based on.
 
 ### Ownership of firmware settings
 
