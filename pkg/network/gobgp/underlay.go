@@ -97,6 +97,8 @@ type UnderlayTier struct {
 	peerCountFn  func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
 	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
 	bfd          *bfd.Manager                  // BFD sessions of the peers
+	bfdUp        sync.Map                      // BFD peer name -> bool, the session is Up
+	bfdUpGrace   time.Duration                 // overridable in tests; zero = bfdUpGraceDefault
 	stopLLDP     func()                        // stops the LLDP senders and waits for them
 }
 

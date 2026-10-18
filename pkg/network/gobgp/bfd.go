@@ -3,6 +3,7 @@
 package gobgp
 
 import (
+	"cmp"
 	"context"
 	"net/netip"
 	"time"
@@ -164,12 +165,16 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 // saw BOOTy reset the RR session once at every start. The RR comes up
 // when it receives our KEEPALIVE and can re-key BFD before its KEEPALIVE
 // moves our session from OpenConfirm to Established, so a BFD Down in
-// OpenConfirm does not reset the session either: it carries no routes
-// yet, and the hold timer still ends it if the peer is gone. GoBGP's
-// ListPeer shows OpenConfirm until its server loop handles the state
-// change, after the FSM logged "Peer Up", and then Established without
-// an uptime until the FSM sets it; both count as coming up.
+// OpenConfirm does not reset the session at once either (bgpd would, but
+// its BFD Down comes through zebra and arrives after its KEEPALIVE).
+// GoBGP's ListPeer shows OpenConfirm until its server loop handles the
+// state change, after the FSM logged "Peer Up", and then Established
+// without an uptime until the FSM sets it; both count as coming up. So a
+// real failure is not hidden until the hold timer expires, a skipped BFD
+// Down is checked again when the session is Established: if BFD is not
+// Up again within bfdUpGrace of the Down, the session is reset then.
 func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag) {
+	u.bfdUp.Store(p.Name, to == bfd.StateUp)
 	if from != bfd.StateUp || to != bfd.StateDown {
 		return
 	}
@@ -188,18 +193,64 @@ func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag
 	// monotonic times). Then the BFD Down resets the session as usual.
 	switch state, at := session(ctx, p.Name); {
 	case state == apipb.PeerState_OPENCONFIRM:
-		u.log.Info("BFD down while the BGP session is coming up (OpenConfirm), not resetting it", "peer", p.Name, "diag", diag)
+		u.log.Info("BFD down while the BGP session is coming up (OpenConfirm), not resetting it yet", "peer", p.Name, "diag", diag)
+		go u.resetUnlessBFDUp(p.Name, time.Now())
 		return
 	case state == apipb.PeerState_ESTABLISHED && (at.IsZero() || now().Unix() == at.Unix()):
-		u.log.Info("BFD down in the second the BGP session came up, not resetting it, like FRR", "peer", p.Name, "diag", diag)
+		u.log.Info("BFD down in the second the BGP session came up, not resetting it yet, like FRR", "peer", p.Name, "diag", diag)
+		go u.resetUnlessBFDUp(p.Name, time.Now())
 		return
 	}
 	u.log.Warn("BFD down, resetting the BGP session", "peer", p.Name, "diag", diag)
+	u.reset(ctx, p.Name)
+}
+
+// bfdUpGraceDefault is the time BFD gets to come Up again after a Down
+// that did not reset a starting session: the detection time at the slow
+// 1 s transmit interval of a session that is not Up (3 x 1 s). The RR's
+// re-keyed session is Up again after about 1 s.
+const bfdUpGraceDefault = 3 * time.Second
+
+// resetUnlessBFDUp waits until the BGP session of name is Established with
+// an uptime, then resets it unless BFD came Up again within the grace time
+// after downAt. A session that does not come up needs no reset.
+func (u *UnderlayTier) resetUnlessBFDUp(name string, downAt time.Time) {
+	session := u.bgpSession
+	if session == nil {
+		session = u.sessionState
+	}
+	grace := cmp.Or(u.bfdUpGrace, bfdUpGraceDefault)
+	tick := time.NewTicker(cmp.Or(grace/30, 10*time.Millisecond))
+	defer tick.Stop()
+	for range tick.C {
+		if up, ok := u.bfdUp.Load(name); ok && up.(bool) {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		state, at := session(ctx, name)
+		cancel()
+		switch {
+		case state == apipb.PeerState_OPENCONFIRM || state == apipb.PeerState_ESTABLISHED && at.IsZero():
+			continue // still coming up; the hold timer bounds this
+		case state != apipb.PeerState_ESTABLISHED:
+			return
+		case time.Since(downAt) < grace:
+			continue
+		}
+		u.log.Warn("BGP session came up while BFD stayed down, resetting it", "peer", name)
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		u.reset(ctx, name)
+		cancel()
+		return
+	}
+}
+
+func (u *UnderlayTier) reset(ctx context.Context, name string) {
 	reset := u.resetBGP
 	if reset == nil {
 		reset = u.resetPeer
 	}
-	reset(ctx, p.Name, "BFD down")
+	reset(ctx, name, "BFD down")
 }
 
 // sessionState returns the BGP session state of addr and, when it is
