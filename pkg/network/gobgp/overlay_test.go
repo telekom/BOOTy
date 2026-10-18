@@ -5441,12 +5441,15 @@ func TestType2WithdrawKeepsFIBRoute(t *testing.T) {
 // route without the community counts as VXLAN, like FRR.
 func TestProcessRouteUpdateHonoursEncapsulation(t *testing.T) {
 	const mplsTunnelType = 10
-	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
-		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-		NextHops: []string{"192.168.4.1"},
-	})
-	if err != nil {
-		t.Fatal(err)
+	nextHop := func(nh string) *anypb.Any {
+		mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+			Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+			NextHops: []string{nh},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mp
 	}
 	communities := func(extra ...*anypb.Any) *anypb.Any {
 		c := append([]*anypb.Any{mustRT2(t, 65000, 4000)}, extra...)
@@ -5463,13 +5466,14 @@ func TestProcessRouteUpdateHonoursEncapsulation(t *testing.T) {
 		}
 		return a
 	}
-	path := func(route proto.Message, ec *anypb.Any) *apipb.Path {
+	pathVia := func(nh string, route proto.Message, ec *anypb.Any) *apipb.Path {
 		n, err := anypb.New(route)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return &apipb.Path{Nlri: n, Pattrs: []*anypb.Any{mp, ec}}
+		return &apipb.Path{Nlri: n, Pattrs: []*anypb.Any{nextHop(nh), ec}}
 	}
+	path := func(route proto.Message, ec *anypb.Any) *apipb.Path { return pathVia("192.168.4.1", route, ec) }
 	newOverlay := func(mock *mockOverlayNetlinkOps) *OverlayTier {
 		return &OverlayTier{
 			cfg:        &Config{RouterID: "192.168.4.10", ASN: 65000, ProvisionVNI: 4000, BridgeName: "br.provision", EnableL2: true},
@@ -5495,6 +5499,15 @@ func TestProcessRouteUpdateHonoursEncapsulation(t *testing.T) {
 		o.processRouteUpdate(path(type5(), communities(encap(mplsTunnelType))))
 		if len(mock.routeDels) != 1 {
 			t.Fatalf("an MPLS-only update of the installed key: %d route deletes, want 1", len(mock.routeDels))
+		}
+		// E3: an MPLS-only update of the same key from another next hop
+		// removes the installed route through its own gateway.
+		mock3 := &mockOverlayNetlinkOps{}
+		o3 := newOverlay(mock3)
+		o3.processRouteUpdate(path(type5(), communities(encap(vxlanTunnelType))))
+		o3.processRouteUpdate(pathVia("192.168.4.2", type5(), communities(encap(mplsTunnelType))))
+		if len(mock3.routeDels) != 1 || !mock3.routeDels[0].Gw.Equal(net.ParseIP("192.168.4.1")) {
+			t.Fatalf("MPLS-only update from another next hop: route deletes %v, want the route via 192.168.4.1", mock3.routeDels)
 		}
 		mock2 := &mockOverlayNetlinkOps{}
 		newOverlay(mock2).processRouteUpdate(path(type5(), communities()))
