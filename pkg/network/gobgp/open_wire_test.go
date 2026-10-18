@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
+	"github.com/osrg/gobgp/v4/pkg/server"
 
 	"github.com/telekom/BOOTy/pkg/network"
 )
@@ -76,7 +76,7 @@ func captureOpen(t *testing.T, asn uint32, p *apipb.Peer) []bgp.ParameterCapabil
 // in frrOpenCaps. Values that differ by host or AS (the FQDN, the 4-octet
 // AS, the software version string) are left out.
 func capTokens(caps []bgp.ParameterCapabilityInterface) []string {
-	fam := func(afi uint16, safi uint8) string { return bgp.AfiSafiToRouteFamily(afi, safi).String() }
+	fam := func(afi uint16, safi uint8) string { return bgp.NewFamily(afi, safi).String() }
 	var out []string
 	for _, c := range caps {
 		switch c := c.(type) {
@@ -106,7 +106,7 @@ func capTokens(caps []bgp.ParameterCapabilityInterface) []string {
 		case *bgp.CapAddPath:
 			var t []string
 			for _, tu := range c.Tuples {
-				t = append(t, tu.RouteFamily.String()+"/"+map[bgp.BGPAddPathMode]string{bgp.BGP_ADD_PATH_RECEIVE: "rx", bgp.BGP_ADD_PATH_SEND: "tx", bgp.BGP_ADD_PATH_BOTH: "rxtx"}[tu.Mode])
+				t = append(t, tu.Family.String()+"/"+map[bgp.BGPAddPathMode]string{bgp.BGP_ADD_PATH_RECEIVE: "rx", bgp.BGP_ADD_PATH_SEND: "tx", bgp.BGP_ADD_PATH_BOTH: "rxtx"}[tu.Mode])
 			}
 			out = append(out, "addpath:"+strings.Join(t, ","))
 		default:
@@ -144,9 +144,9 @@ var openDeviations = struct {
 	missing []string
 	extra   map[string][]string // per peer kind
 }{
-	missing: []string{"dynamic", "enhanced-route-refresh", "extended-message", "gr:R", "paths-limit",
+	missing: []string{"dynamic", "enhanced-route-refresh", "gr:R", "paths-limit",
 		"llgr:[ipv4-unicast/flags=0x80/stale=0]", "llgr:[l2vpn-evpn/flags=0x80/stale=0]"},
-	extra: map[string][]string{"leaf": {"llgr:[]"}, "rr": {"enhe:l2vpn-evpn>ipv6", "llgr:[]"}},
+	extra: map[string][]string{"leaf": {"llgr:[]"}, "rr": {"llgr:[]"}},
 }
 
 // GoBGP sends the OPEN capabilities of FRR 10 with the bm4x template and
