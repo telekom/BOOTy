@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -499,5 +500,206 @@ func TestOnBoundRenewalTracksAddressWhenRollbackFails(t *testing.T) {
 
 	if len(d.stale) != 1 || d.stale[0].addr.IPNet.String() != "10.0.2.16/24" {
 		t.Fatalf("stale state = %v, want the address whose rollback failed tracked for Teardown", d.stale)
+	}
+}
+
+// fakeDHCPClient records Start and Stop; Stop takes a while, like
+// go-dhclient waiting out its response timeout.
+type fakeDHCPClient struct {
+	mu               sync.Mutex
+	started, stopped int
+	onStart          func()
+}
+
+func (c *fakeDHCPClient) Start() {
+	c.mu.Lock()
+	c.started++
+	c.mu.Unlock()
+	if c.onStart != nil {
+		c.onStart()
+	}
+}
+
+func (c *fakeDHCPClient) Stop() {
+	time.Sleep(200 * time.Millisecond)
+	c.mu.Lock()
+	c.stopped++
+	c.mu.Unlock()
+}
+
+// stubDHCPSetup gives Setup two fake NICs and fake clients.
+func stubDHCPSetup(t *testing.T, onBound func(name string, cb dhclient.Callback)) map[string]*fakeDHCPClient {
+	t.Helper()
+	stubDHCPNetlink(t)
+	origIfaces, origByName, origUp, origPrep, origNew, origTimeout := dhcpInterfaces, dhcpLinkByName, dhcpLinkSetUp, dhcpPrepareLink, dhcpNewClient, dhcpSetupTimeout
+	t.Cleanup(func() {
+		dhcpInterfaces, dhcpLinkByName, dhcpLinkSetUp, dhcpPrepareLink, dhcpNewClient, dhcpSetupTimeout = origIfaces, origByName, origUp, origPrep, origNew, origTimeout
+	})
+	dhcpInterfaces = func(context.Context) ([]net.Interface, error) {
+		return []net.Interface{{Name: "eth0", Index: 1}, {Name: "eth1", Index: 2}}, nil
+	}
+	dhcpLinkByName = func(name string) (netlink.Link, error) {
+		return dummyLink(name, int(name[3]-'0')+1), nil
+	}
+	dhcpLinkSetUp = func(netlink.Link) error { return nil }
+	var prepared []string
+	dhcpPrepareLink = func(name string) error { prepared = append(prepared, name); return nil }
+	t.Cleanup(func() {
+		if len(prepared) != 2 {
+			t.Errorf("promote_secondaries set on %v, want both NICs", prepared)
+		}
+	})
+	clients := map[string]*fakeDHCPClient{}
+	var mu sync.Mutex
+	dhcpNewClient = func(iface *net.Interface, _ string, cb dhclient.Callback) dhcpClient {
+		c := &fakeDHCPClient{}
+		if onBound != nil {
+			name := iface.Name
+			c.onStart = func() { onBound(name, cb) }
+		}
+		mu.Lock()
+		clients[iface.Name] = c
+		mu.Unlock()
+		return c
+	}
+	return clients
+}
+
+func stoppedAll(t *testing.T, clients map[string]*fakeDHCPClient, want int) {
+	t.Helper()
+	for name, c := range clients {
+		c.mu.Lock()
+		if c.started != 1 || c.stopped != want {
+			t.Errorf("%s: started %d stopped %d, want 1 and %d", name, c.started, c.stopped, want)
+		}
+		c.mu.Unlock()
+	}
+}
+
+func TestSetupStopsClientsOnTimeoutInParallel(t *testing.T) {
+	clients := stubDHCPSetup(t, nil)
+	dhcpSetupTimeout = 50 * time.Millisecond
+	d := NewDHCPMode()
+	start := time.Now()
+	if err := d.Setup(context.Background(), &Config{}); err == nil {
+		t.Fatal("Setup() = nil without a lease")
+	}
+	if took := time.Since(start); took > 350*time.Millisecond {
+		t.Fatalf("Setup took %s: the clients were not stopped in parallel", took)
+	}
+	stoppedAll(t, clients, 1)
+}
+
+func TestSetupStopsClientsOnCancel(t *testing.T) {
+	clients := stubDHCPSetup(t, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := NewDHCPMode().Setup(ctx, &Config{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Setup() = %v, want context.Canceled", err)
+	}
+	stoppedAll(t, clients, 1)
+}
+
+func TestSetupKeepsClientsUntilTeardown(t *testing.T) {
+	clients := stubDHCPSetup(t, func(name string, cb dhclient.Callback) {
+		if name == "eth0" {
+			cb(lease24("10.0.2.15", "10.0.2.2"))
+		}
+	})
+	d := NewDHCPMode()
+	if err := d.Setup(context.Background(), &Config{}); err != nil {
+		t.Fatalf("Setup() = %v", err)
+	}
+	stoppedAll(t, clients, 0)
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stoppedAll(t, clients, 1)
+}
+
+// A lease applied while the setup timer fires counts as success; a lease
+// after the stop is not applied.
+func TestSetupTimeoutRace(t *testing.T) {
+	stubDHCPNetlink(t)
+	d := NewDHCPMode()
+	d.onBound(dummyLink("eth0", 1), "eth0", make(chan string))(lease24("10.0.2.15", "10.0.2.2"))
+	if d.stopUnlessLeased() {
+		t.Fatal("stopUnlessLeased() stopped the clients although a lease is applied")
+	}
+	d2 := NewDHCPMode()
+	if !d2.stopUnlessLeased() {
+		t.Fatal("stopUnlessLeased() kept the clients without a lease")
+	}
+	d2.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 1))(lease24("10.0.2.15", "10.0.2.2"))
+	if len(d2.nics) != 0 {
+		t.Fatalf("a lease after the stop was applied: %v", d2.nics)
+	}
+}
+
+// Like networkd hands the servers of every link to timesyncd: a NIC
+// without option 42 does not drop the servers of another NIC; Teardown
+// removes them.
+func TestOnBoundKeepsNTPServersOfEveryNIC(t *testing.T) {
+	stubDHCPNetlink(t)
+	t.Cleanup(func() { setDHCPNTPList(nil) })
+	d := NewDHCPMode()
+	l0 := lease24("10.0.2.15", "10.0.2.2")
+	l0.OtherOptions = []dhclient.Option{{Type: layers.DHCPOptNTPServers, Data: []byte{10, 0, 2, 3}}}
+	l1 := lease24("10.0.3.15", "10.0.3.2")
+	l1.OtherOptions = []dhclient.Option{{Type: layers.DHCPOptNTPServers, Data: []byte{10, 0, 3, 3, 10, 0, 2, 3}}}
+	d.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 4))(l0)
+	d.onBound(dummyLink("eth1", 2), "eth1", make(chan string, 4))(l1)
+	d.onBound(dummyLink("eth2", 3), "eth2", make(chan string, 4))(lease24("10.0.4.15", "10.0.4.2"))
+	if got := DHCPNTPServers(); !slices.Equal(got, []string{"10.0.2.3", "10.0.3.3"}) {
+		t.Fatalf("NTP servers = %v, want 10.0.2.3 and 10.0.3.3", got)
+	}
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := DHCPNTPServers(); len(got) != 0 {
+		t.Fatalf("NTP servers after Teardown = %v", got)
+	}
+}
+
+// A renewal with another router removes the old default route; when that
+// fails, the route stays tracked and Teardown removes it, without an
+// address delete for the route-only entry.
+func TestOnBoundGatewayChangeAndStaleTeardown(t *testing.T) {
+	stubDHCPNetlink(t)
+	var deleted []string
+	failDel := true
+	dhcpRouteDel = func(r *netlink.Route) error {
+		deleted = append(deleted, r.Gw.String())
+		if failDel {
+			return syscall.EBUSY
+		}
+		return nil
+	}
+	var addrDels []*netlink.Addr
+	dhcpAddrDel = func(_ netlink.Link, a *netlink.Addr) error {
+		if a == nil {
+			t.Fatal("AddrDel called with a nil address")
+		}
+		addrDels = append(addrDels, a)
+		return nil
+	}
+	d := NewDHCPMode()
+	bound := d.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 2))
+	bound(lease24("10.0.2.15", "10.0.2.2"))
+	bound(lease24("10.0.2.15", "10.0.2.3"))
+	if !slices.Equal(deleted, []string{"10.0.2.2"}) {
+		t.Fatalf("route deletes = %v, want the old route via 10.0.2.2", deleted)
+	}
+	if len(d.stale) != 1 || d.stale[0].addr != nil || !d.stale[0].route.Gw.Equal(net.ParseIP("10.0.2.2")) {
+		t.Fatalf("stale = %+v, want the old route tracked", d.stale)
+	}
+	failDel = false
+	deleted = nil
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(deleted)
+	if !slices.Equal(deleted, []string{"10.0.2.2", "10.0.2.3"}) || len(addrDels) != 1 {
+		t.Fatalf("Teardown deleted routes %v and %d addresses, want both routes and the lease address", deleted, len(addrDels))
 	}
 }

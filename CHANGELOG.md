@@ -31,6 +31,11 @@ behaviour.
 
 ### Behaviour changes in all modes
 
+- dhcp: a client runs on every physical NIC for the whole run, and every NIC
+  keeps its own lease address plus a default route with metric 100 and
+  `proto dhcp`, like systemd-networkd with the legacy netplan; before, the
+  first lease won and the other NICs stayed without an address (#750)
+
 - The `ERROR_URL` body of a failed provision or deprovision step now carries a
   stable failure code: `step <name> failed [BOOTY-<AREA>-<NNN>]: <error>`.
   [docs/failure-codes.md](docs/failure-codes.md) lists the codes (#706).
