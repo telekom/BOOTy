@@ -7,6 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -2430,5 +2433,50 @@ func TestLLDPReceiveStartGated(t *testing.T) {
 	if strings.Count(string(src), "startLLDPReceive(ctx)") != 1 ||
 		!strings.Contains(string(src), "if lldpReceiveEnabled(cfg) {\n\t\tstartLLDPReceive(ctx)\n\t}") {
 		t.Fatal("startLLDPReceive is not called once, behind lldpReceiveEnabled")
+	}
+}
+
+// The every-NIC LLDP sender is stopped (and waited for) once, so it sends
+// the shutdown LLDPDU before the handoff.
+func TestStopLLDPEmit(t *testing.T) {
+	t.Cleanup(func() { setLLDPEmitStop(nil) })
+	stopLLDPEmit() // none running
+	calls := 0
+	setLLDPEmitStop(func() { calls++ })
+	stopLLDPEmit()
+	stopLLDPEmit()
+	if calls != 1 {
+		t.Fatalf("stop ran %d times, want once", calls)
+	}
+}
+
+// Every handoff (kexec, reboot, power off) stops the LLDP sender first.
+func TestHandoffsStopLLDPEmit(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"reboot": false, "requestReboot": false, "requestPowerOff": false, "doKexecExecute": false}
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		if _, tracked := want[fn.Name.Name]; !tracked {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if c, ok := n.(*ast.CallExpr); ok {
+				if id, ok := c.Fun.(*ast.Ident); ok && id.Name == "stopLLDPEmit" {
+					want[fn.Name.Name] = true
+				}
+			}
+			return true
+		})
+	}
+	for name, ok := range want {
+		if !ok {
+			t.Errorf("%s does not call stopLLDPEmit", name)
+		}
 	}
 }
