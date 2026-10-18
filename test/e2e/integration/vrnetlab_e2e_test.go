@@ -714,6 +714,10 @@ var vrnetlabAllowedErrorRootCauses = []string{
 	// Expected when CAPRF endpoints are HTTP-only and token auth is enforced.
 	"failed to report error status",
 	"insecure transport",
+	// The vrnetlab ramdisk has no cloud-guest-utils: the provision ends in
+	// grow-partition, after the image came over EVPN and was written
+	// (TestVrnetlabProvisionAttemptsImageDownload requires both).
+	`exec: "growpart": executable file not found`,
 }
 
 var vrnetlabDeniedErrorRootCauses = []string{
