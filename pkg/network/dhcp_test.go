@@ -543,9 +543,15 @@ func TestOnBoundRenewalTracksAddressWhenRollbackFails(t *testing.T) {
 // fakeDHCPClient records Start and Stop; Stop takes a while, like
 // a client waiting for a reply.
 type fakeDHCPClient struct {
-	mu               sync.Mutex
-	started, stopped int
-	onStart          func()
+	mu                        sync.Mutex
+	started, stopped, reboots int
+	onStart                   func()
+}
+
+func (c *fakeDHCPClient) Reboot() {
+	c.mu.Lock()
+	c.reboots++
+	c.mu.Unlock()
 }
 
 func (c *fakeDHCPClient) Start() {
@@ -1344,5 +1350,116 @@ func TestStartClientAfterStop(t *testing.T) {
 	d.startClient(&net.Interface{Name: "eth1", Index: 2}, "", make(chan string, 1))
 	if len(d.clients) != 0 || clients["eth0"].stopped != 1 {
 		t.Fatalf("clients %v, own client stops %d: want none kept and it stopped", d.clients, clients["eth0"].stopped)
+	}
+}
+
+// Like networkd: a NIC without carrier loses its lease state; when the
+// carrier is back, the client confirms the address (INIT-REBOOT).
+func TestCarrierLossKeepsLeaseAndReturnReboots(t *testing.T) {
+	clients := stubDHCPSetup(t, func(name string, cb dhcp4.Callback) {
+		if name == "eth0" {
+			cb(lease24("10.0.2.15", "10.0.2.2"))
+		}
+	})
+	var mu sync.Mutex
+	var addrDeleted, routesDeleted []string
+	dhcpAddrDel = func(_ netlink.Link, a *netlink.Addr) error {
+		mu.Lock()
+		addrDeleted = append(addrDeleted, a.IPNet.String())
+		mu.Unlock()
+		return nil
+	}
+	dhcpRouteDel = func(r *netlink.Route) error {
+		mu.Lock()
+		routesDeleted = append(routesDeleted, routeDst(r))
+		mu.Unlock()
+		return nil
+	}
+	updates := make(chan chan<- netlink.LinkUpdate, 1)
+	dhcpSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}, _ netlink.LinkSubscribeOptions) error {
+		updates <- ch
+		go func() { <-done; close(ch) }()
+		return nil
+	}
+	d := NewDHCPMode()
+	if err := d.Setup(context.Background(), &Config{}); err != nil {
+		t.Fatal(err)
+	}
+	ch := <-updates
+	update := func(carrier bool) {
+		u := netlink.LinkUpdate{Link: dummyLink("eth0", 1)}
+		u.Header.Type = unix.RTM_NEWLINK
+		if carrier {
+			u.Flags = unix.IFF_UP | unix.IFF_LOWER_UP
+		} else {
+			u.Flags = unix.IFF_UP
+		}
+		ch <- u
+	}
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); !ok(); time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+		}
+	}
+	update(true) // carrier as before: nothing happens
+	update(false)
+	waitFor("the carrier loss", func() bool { d.mu.Lock(); defer d.mu.Unlock(); return d.clients[1].down })
+	update(false) // still down: nothing more
+	update(true)
+	c := clients["eth0"]
+	waitFor("the INIT-REBOOT", func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.reboots == 1 })
+	mu.Lock()
+	if len(addrDeleted) != 0 || len(routesDeleted) != 0 {
+		t.Errorf("carrier loss deleted addresses %v and routes %v, want the lease kept", addrDeleted, routesDeleted)
+	}
+	mu.Unlock()
+	d.mu.Lock()
+	kept := d.nics[1]
+	d.mu.Unlock()
+	if kept.addr == nil || len(kept.routes) != 2 {
+		t.Errorf("lease state after carrier loss = %+v, want the address and both routes", kept)
+	}
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(addrDeleted, []string{"10.0.2.15/24"}) || len(routesDeleted) != 2 {
+		t.Fatalf("Teardown deleted addresses %v routes %v, want the lease state once", addrDeleted, routesDeleted)
+	}
+}
+
+// carrierChange: a NEWLINK with unchanged carrier sends no INIT-REBOOT, and
+// after the stop nothing reacts to the carrier.
+func TestCarrierChangeUnchangedAndStopped(t *testing.T) {
+	stubDHCPNetlink(t)
+	d := NewDHCPMode()
+	c := &fakeDHCPClient{}
+	d.clients = map[int]*nicClient{1: {client: c, link: dummyLink("eth0", 1)}}
+	update := func(carrier bool) netlink.LinkUpdate {
+		u := netlink.LinkUpdate{Link: dummyLink("eth0", 1)}
+		u.Header.Type = unix.RTM_NEWLINK
+		u.Flags = unix.IFF_UP
+		if carrier {
+			u.Flags |= unix.IFF_LOWER_UP
+		}
+		return u
+	}
+	for range 3 {
+		d.carrierChange(update(true))
+	}
+	d.carrierChange(update(false))
+	d.carrierChange(update(false))
+	if c.reboots != 0 {
+		t.Fatalf("%d INIT-REBOOTs without a carrier return", c.reboots)
+	}
+	d.mu.Lock()
+	d.stopped = true
+	d.mu.Unlock()
+	if !d.carrierChange(update(true)) || c.reboots != 0 {
+		t.Fatalf("after the stop: reboots %d, want 0 and the NIC still known", c.reboots)
 	}
 }
