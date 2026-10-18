@@ -79,6 +79,7 @@ type UnderlayTier struct {
 	stopRA       chan struct{}                                                           // signals the periodic RA goroutine to stop
 	stopFIB      context.CancelFunc                                                      // stops the FIB writer
 	fib          atomic.Pointer[fibWriter]                                               // the running FIB writer, for FIBOwns
+	onFIBRemove  func(table int, p netip.Prefix)                                         // called for each route the FIB writer removed
 	fibDone      chan struct{}                                                           // closed when the FIB writer has removed its routes
 	peerDevs     map[string]string                                                       // unnumbered peer address -> interface
 	discoverPeer func(context.Context, string) (string, error)                           // overridable in tests; nil = discoverLinkLocalPeer
@@ -627,6 +628,7 @@ func (u *UnderlayTier) FIBOwns(table int, p netip.Prefix) bool {
 func (u *UnderlayTier) buildFIBWriter(vrfTable func(string) int) *fibWriter {
 	sel, vrfs := u.fibSelector(vrfTable)
 	w := newFIBWriter(u.bgp, sel, vrfs)
+	w.onRemove = u.onFIBRemove
 	w.resolveViaDefault = u.cfg.ResolveViaDefault
 	return w
 }
