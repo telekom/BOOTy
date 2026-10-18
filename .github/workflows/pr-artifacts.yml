@@ -182,7 +182,6 @@ jobs:
           path: |
             out-split/base.cpio.zst
             out-split/frr.cpio.zst
-            out-split/ipmitool.cpio.zst
             out-split/vmlinuz
             out-split/SHA256SUMS
           if-no-files-found: error
