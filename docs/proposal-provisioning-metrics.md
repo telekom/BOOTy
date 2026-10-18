@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposal. Design only. Nothing in this document is implemented. It refines
+Proposal. The first PRs of some proposals are merged; see the Status column. The remaining design is not implemented. It refines
 [proposal-observability.md](proposal-observability.md) and
 [proposal-telemetry-enhanced.md](proposal-telemetry-enhanced.md) for a
 short-lived ramdisk, and pairs with
@@ -37,6 +37,11 @@ data into fleet KPIs with bounded label cardinality.
   the scraper usually cannot reach the provisioning network.
 
 ## Current state
+
+> **Update:** #706 merged: stable failure codes ([failure-codes.md](failure-codes.md))
+> in error callbacks, and the orchestrator feeds the step tracker. The
+> snapshot event, the endpoint and protected push are still open. The table
+> below is the state before that work.
 
 | Area | Today | Reference |
 |------|-------|-----------|

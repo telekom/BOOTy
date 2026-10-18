@@ -142,8 +142,9 @@ it first in `IMAGE`). P2P only if the cache is not enough.
 ### 7. Air-gapped operation
 
 - Every input has a local source: OS images and sysexts (local HTTP or OCI
-  mirror), BOOTy artifacts (OCI mirror), DNS (local resolvers), time (no
-  external NTP; BOOTy does not sync time today, see `TOKEN_EXPIRES_AT` notes
+  mirror), BOOTy artifacts (OCI mirror), DNS (local resolvers), time (the
+  NTP servers in the site network (`NTP_SERVERS`) or the CAPRF `Date`
+  source of the time sync from #713; see `TOKEN_EXPIRES_AT` notes
   in [caprf-integration.md](caprf-integration.md)), certificates (private CA
   in the ramdisk or the seed).
 - Add an offline bundle format: a single OCI artifact with the BOOTy initramfs,

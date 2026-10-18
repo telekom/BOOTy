@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposal. Design only. Nothing in this document is implemented. It extends
+Proposal. The first PRs of some proposals are merged; see the Status column. The remaining design is not implemented. It extends
 [proposal-nic-firmware-common.md](proposal-nic-firmware-common.md) and the
 vendor NIC proposals ([Mellanox](proposal-nic-firmware-mellanox.md),
 [Intel](proposal-nic-firmware-intel.md),
@@ -40,6 +40,12 @@ A desired SR-IOV profile per host class drives apply and drift checks.
 - Without a handoff contract, each layer guesses what the other configured.
 
 ## Current state
+
+> **Update:** #709 (SR-IOV per PF port in the inventory), #717 (profiles
+> with strict validation and a drift check) and #719 (runtime settings through
+> kernel interfaces) merged; see [sriov.md](sriov.md). Vendor firmware backends
+> (#726) and the KVM `igb` scenario (#728) are open. The table below is the
+> state before that work.
 
 | Area | Today | Reference |
 |------|-------|-----------|

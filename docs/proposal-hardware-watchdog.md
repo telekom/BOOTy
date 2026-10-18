@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposal. Design only. Nothing in this document is implemented.
+Proposal. The first PRs of some proposals are merged; see the Status column. The remaining design is not implemented.
 
 ## Priority
 
@@ -26,6 +26,11 @@ directly through IPMI.
   `D`-state process). No user-space timer can recover from that.
 
 ## Current state
+
+> **Update:** #721 merged: `WATCHDOG_ENABLE` arms the hardware watchdog,
+> pets it only on step progress with per-step budgets, falls back to the IPMI
+> watchdog, and hands it over at kexec and reboot (`WATCHDOG_HANDOFF`). The
+> table below is the state before that work.
 
 | Area | Today | Reference |
 |------|-------|-----------|

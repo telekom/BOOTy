@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposal. Design only. Nothing in this set is implemented.
+Proposal. The first PRs of some proposals are merged; see the Status column. The remaining design is not implemented.
 
 ## Summary
 

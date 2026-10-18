@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposal. Design only. Nothing in this document is implemented.
+Proposal. The first PRs of some proposals are merged; see the Status column. The remaining design is not implemented.
 
 ## Priority
 
@@ -31,6 +31,10 @@ vendor coverage and limits of each option.
   the network drops or the host reboots.
 
 ## Current state
+
+> **Update:** #718 merged: the `BOOTY1` serial status line (`OOB_STATUS`) and
+> the `BootyLastResult` UEFI record (`OOB_EFI_VAR`). SEL records and the CAPRF
+> readers are still open. The table below is the state before that work.
 
 | Area | Today | Reference |
 |------|-------|-----------|

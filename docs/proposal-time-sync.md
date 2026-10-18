@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposal. Design only. Nothing in this document is implemented.
+Proposal. The first PRs of some proposals are merged; see the Status column. The remaining design is not implemented.
 
 ## Priority
 
@@ -26,6 +26,12 @@ clock for all durations.
   `SKIP_TLS_VERIFY`, which disables much more than time checks.
 
 ## Current state
+
+> **Update:** #713 and #740 merged: BOOTy syncs the clock before the first
+> TLS certificate check (CAPRF `Date`, NTP), writes the RTC back
+> (`TIME_WRITE_RTC`) and reports `BOOTY-TIM-001`. See
+> [configuration.md](configuration.md#time-sync). The table below is the state
+> before that work.
 
 | Area | Today | Reference |
 |------|-------|-----------|

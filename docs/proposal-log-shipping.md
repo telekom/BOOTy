@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposal. Design only. Nothing in this document is implemented.
+Proposal. The first PRs of some proposals are merged; see the Status column. The remaining design is not implemented.
 [proposal-kafka-logging.md](proposal-kafka-logging.md) covers Kafka; this
 proposal generalizes the sink model.
 
@@ -38,6 +38,11 @@ leave a crash trail in pstore that the next boot ships.
 
 ## Current state
 
+> **Update:** #711 merged: the CAPRF log handler uses a bounded ring with
+> level-aware eviction and counted drops, and flushes with a deadline
+> (`LOG_FLUSH_TIMEOUT_SEC`) before every handoff. The table below is the state
+> before that work.
+
 | Area | Today | Reference |
 |------|-------|-----------|
 | Logger | `log/slog` only (AGENTS rule). Console handler plus remote handler. | `main.go`, `AGENTS.md` |
@@ -68,7 +73,7 @@ leave a crash trail in pstore that the next boot ships.
 | Field | Type | Note |
 |-------|------|------|
 | `ts` | RFC 3339 with nanoseconds | Wall clock. |
-| `mono_ns` | integer | `CLOCK_BOOTTIME`. Orders records when the wall clock is wrong (BOOTy does not sync time). |
+| `mono_ns` | integer | `CLOCK_BOOTTIME`. Orders records also before the time sync (#713) has set the wall clock. |
 | `level` | `DEBUG`, `INFO`, `WARN`, `ERROR` | |
 | `msg` | string | Human text. Not a contract. |
 | `run_id` | string | Set by CAPRF (`RUN_ID`), or a random UUID. |
