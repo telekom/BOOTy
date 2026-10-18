@@ -201,7 +201,7 @@ func TestDHCPSetup_ContextCancelPropagates(t *testing.T) {
 
 func TestNewDHCPClientRequestsDefaultParams(t *testing.T) {
 	for _, hostname := range []string{"(none)", ""} {
-		client := newDHCPClient(&net.Interface{Name: "eth0"}, hostname, nil)
+		client := newDHCPClient(&net.Interface{Name: "eth0"}, hostname, nil, nil)
 
 		var params []byte
 		var gotHostname []byte
@@ -551,7 +551,7 @@ func stubDHCPSetup(t *testing.T, onBound func(name string, cb dhclient.Callback)
 	})
 	clients := map[string]*fakeDHCPClient{}
 	var mu sync.Mutex
-	dhcpNewClient = func(iface *net.Interface, _ string, cb dhclient.Callback) dhcpClient {
+	dhcpNewClient = func(iface *net.Interface, _ string, cb, _ dhclient.Callback) dhcpClient {
 		c := &fakeDHCPClient{}
 		if onBound != nil {
 			name := iface.Name
@@ -719,5 +719,58 @@ func TestOnBoundAfterStopIgnored(t *testing.T) {
 	d.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 1))(lease24("10.0.2.15", "10.0.2.2"))
 	if added != 0 || len(d.nics) != 0 {
 		t.Fatalf("a lease after the stop was applied: %d addresses, %v", added, d.nics)
+	}
+}
+
+// TestOnExpireRemovesLeaseState checks RFC 2131 sections 4.4.5 and 3.2: when
+// the lease of a NIC ends (expired, or DHCPNAK) the client stops using the
+// address, so the address and default route of that NIC go and the other
+// NIC keeps its lease; the next lease of the NIC is applied again.
+func TestOnExpireRemovesLeaseState(t *testing.T) {
+	stubDHCPNetlink(t)
+	var addrs, delAddrs []*netlink.Addr
+	var delRoutes []*netlink.Route
+	dhcpAddrReplace = func(_ netlink.Link, a *netlink.Addr) error { addrs = append(addrs, a); return nil }
+	dhcpAddrDel = func(_ netlink.Link, a *netlink.Addr) error { delAddrs = append(delAddrs, a); return nil }
+	dhcpRouteAdd = func(*netlink.Route) error { return nil }
+	dhcpRouteDel = func(r *netlink.Route) error { delRoutes = append(delRoutes, r); return nil }
+	t.Cleanup(func() { setDHCPNTPServers(nil) })
+
+	d := NewDHCPMode()
+	eth0, eth1 := dummyLink("eth0", 7), dummyLink("eth1", 8)
+	bound0 := d.onBound(eth0, "eth0", make(chan string, 2))
+	bound0(lease24("10.0.2.15", "10.0.2.2"))
+	d.onBound(eth1, "eth1", make(chan string, 2))(lease24("10.0.3.15", "10.0.3.2"))
+
+	d.onExpire(eth0, "eth0")(nil)
+	if len(delAddrs) != 1 || delAddrs[0].IPNet.String() != "10.0.2.15/24" || len(delRoutes) != 1 || delRoutes[0].LinkIndex != 7 {
+		t.Fatalf("ended lease removed addrs=%v routes=%v, want 10.0.2.15/24 and its default route", delAddrs, delRoutes)
+	}
+	if _, ok := d.nics[7]; ok {
+		t.Fatal("eth0 still has lease state")
+	}
+	if _, ok := d.nics[8]; !ok {
+		t.Fatal("eth1 lost its lease")
+	}
+	d.onExpire(eth0, "eth0")(nil) // a NAK after the expiry changes nothing
+	if len(delAddrs) != 1 {
+		t.Fatalf("second end removed again: %v", delAddrs)
+	}
+
+	bound0(lease24("10.0.2.15", "10.0.2.2"))
+	if _, ok := d.nics[7]; !ok || len(addrs) != 3 {
+		t.Fatalf("new lease: %d address sets, state %v, want the address again", len(addrs), d.nics)
+	}
+}
+
+func TestNewDHCPClientSetsExpireCallback(t *testing.T) {
+	called := false
+	client := newDHCPClient(&net.Interface{Name: "eth0"}, "", nil, func(*dhclient.Lease) { called = true })
+	if client.OnExpire == nil {
+		t.Fatal("client has no OnExpire callback")
+	}
+	client.OnExpire(nil)
+	if !called {
+		t.Fatal("OnExpire is not the given callback")
 	}
 }
