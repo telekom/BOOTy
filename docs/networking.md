@@ -1096,17 +1096,25 @@ BOOTy retries the scan for up to 10 s while names start with `clab`
 
 ## DHCP
 
-DHCP mode probes all physical NICs in parallel. Each probe has a 15 s
-timeout. The first lease wins and BOOTy stops the other probes.
+DHCP mode works like systemd-networkd with the legacy ramdisk's netplan
+(`dhcp4: true` on every `en*` and `eth*` NIC): a DHCP client runs on every
+physical NIC for the whole run, and every lease configures its own NIC.
+Setup returns after the first lease. Without a lease on any NIC within
+15 s, BOOTy stops all clients and the network setup fails (the connectivity
+retry starts it again).
 
 The client requests the default parameter list: subnet mask, router, time
 server, DNS server, domain name, interface MTU and NTP servers. It sends the
 ramdisk hostname (option 12) when one is set.
 
-On the first lease, BOOTy:
+On every lease (also renewals and leases on the other NICs), BOOTy:
 
-- adds the leased address with the leased mask to the NIC;
-- adds a default route through the first router from the lease.
+- adds the leased address with the leased mask to the NIC and removes the
+  address of the previous lease of that NIC;
+- adds a default route through the first router of the lease, with the
+  lease address as source, metric 100 and `proto dhcp`, like networkd with
+  netplan. The default routes of all NICs stay next to each other. A lease
+  without a router removes the default route of its NIC.
 
 BOOTy does not apply DNS servers or the MTU from the lease. Set
 `dns_resolver` for DNS.
