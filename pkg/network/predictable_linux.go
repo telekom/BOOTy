@@ -26,17 +26,25 @@ var linkExists = func(name string) bool {
 // ApplyPredictableNames renames NICs to the predictable names (systemd
 // net_id) that the network config uses and that do not exist yet, so a
 // netplan or frr.conf written for the installed OS (enp1s0) finds the
-// ramdisk NIC (eth0). It runs before the netplan set-name renames. When no
-// configured name is missing, it does nothing (no NIC detection). When a
-// rename fails, the renames done before it are undone.
+// ramdisk NIC (eth0). With UdevNames every other NIC gets its predictable
+// name too, like udev in the legacy ramdisk; the name shows on the wire as
+// the LLDP port ID. It runs before the netplan set-name renames. When no
+// configured name is missing and UdevNames is off, it does nothing (no NIC
+// detection). When a rename fails, the renames done before it are undone.
 func ApplyPredictableNames(ctx context.Context, c *Config) error {
-	missing := missingLinks(ConfiguredInterfaceNames(c))
-	if len(missing) == 0 {
-		return nil
+	var plan []netname.Rename
+	if missing := missingLinks(ConfiguredInterfaceNames(c)); len(missing) > 0 {
+		var err error
+		if plan, err = waitForConfiguredNICs(ctx, c, missing); err != nil {
+			return err
+		}
 	}
-	plan, err := waitForConfiguredNICs(ctx, c, missing)
-	if err != nil {
-		return err
+	if c.UdevNames {
+		more, err := udevPlan(ctx, c, plan)
+		if err != nil {
+			return err
+		}
+		plan = append(plan, more...)
 	}
 	var done [][2]string // from, to
 	for _, r := range plan {
@@ -47,6 +55,35 @@ func ApplyPredictableNames(ctx context.Context, c *Config) error {
 		slog.Info("renamed NIC to its predictable name", "from", r.From, "to", r.To)
 	}
 	return nil
+}
+
+// udevPlan gives every physical NIC that the plan does not rename and the
+// config does not name its first predictable name, the name udev gives it.
+// A name that exists, is planned or is the first name of two NICs is
+// skipped.
+func udevPlan(ctx context.Context, c *Config, plan []netname.Rename) ([]netname.Rename, error) {
+	links, err := physicalLinks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	configured := ConfiguredInterfaceNames(c)
+	first := map[string][]string{} // predictable name -> NICs
+	for _, l := range links {
+		if names := netname.Names(predictableSysfs, l.Name); len(names) > 0 {
+			first[names[0]] = append(first[names[0]], l.Name)
+		}
+	}
+	var out []netname.Rename
+	for _, l := range links {
+		names := netname.Names(predictableSysfs, l.Name)
+		if len(names) == 0 || names[0] == l.Name || slices.Contains(configured, l.Name) ||
+			slices.ContainsFunc(plan, func(r netname.Rename) bool { return r.From == l.Name || r.To == names[0] }) ||
+			len(first[names[0]]) > 1 || linkExists(names[0]) {
+			continue
+		}
+		out = append(out, netname.Rename{From: l.Name, To: names[0]})
+	}
+	return out, nil
 }
 
 func missingLinks(names []string) []string {
