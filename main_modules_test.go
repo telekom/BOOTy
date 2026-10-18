@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -151,5 +152,65 @@ func TestLoadModulesLogsOneSummaryLine(t *testing.T) {
 	if !strings.Contains(logs.String(), `msg="loaded kernel modules" count=2 failed=0`) ||
 		!strings.Contains(logs.String(), `modules="nvme.ko xfs.ko"`) {
 		t.Fatalf("summary line misses the modules:\n%s", logs.String())
+	}
+}
+
+// A module whose dependency the .modinfo does not name (libcrc32c with a
+// softdep that resolves to a module outside the directory, such as
+// crc32c_intel) fails its first load. It gets one retry after all other
+// modules loaded; a driver without hardware (ENODEV) gets none.
+func TestLoadModuleDirRetriesAFailedLoadOnce(t *testing.T) {
+	type mi = modinfo
+	dir := fakeModules(t, map[string]mi{
+		"libcrc32c.ko":   {deps: []string{"crc32c"}},
+		"always_fail.ko": {},
+		"no_hardware.ko": {device: true},
+	})
+	origLoad := loadModuleFn
+	t.Cleanup(func() { loadModuleFn = origLoad })
+	var mu sync.Mutex
+	calls := map[string]int{}
+	loadModuleFn = func(path string) error {
+		name := filepath.Base(path)
+		mu.Lock()
+		defer mu.Unlock()
+		calls[name]++
+		switch {
+		case name == "libcrc32c.ko" && calls[name] == 1:
+			return unix.ENOENT // Unknown symbol
+		case name == "always_fail.ko":
+			return unix.ENOENT
+		case name == "no_hardware.ko":
+			return unix.ENODEV
+		}
+		return nil
+	}
+
+	got, failed := loadModuleDir(dir, func(string) bool { return false })
+
+	if !slices.Equal(got, []string{"libcrc32c.ko"}) {
+		t.Errorf("loaded = %v, want libcrc32c.ko after its retry", got)
+	}
+	names := make([]string, 0, len(failed))
+	for _, f := range failed {
+		names = append(names, f.name)
+	}
+	if want := []string{"always_fail.ko", "no_hardware.ko"}; !slices.Equal(names, want) {
+		t.Errorf("failed = %v, want %v", names, want)
+	}
+	if want := map[string]int{"libcrc32c.ko": 2, "always_fail.ko": 2, "no_hardware.ko": 1}; !maps.Equal(calls, want) {
+		t.Errorf("finit_module calls = %v, want %v", calls, want)
+	}
+}
+
+// A module that names itself as a dependency must not wait for itself:
+// it keeps its place in the order instead of moving to the cycle tail.
+func TestLegacyLoadOrderIgnoresSelfDependency(t *testing.T) {
+	mods := map[string]*kmod{
+		"y":      {file: "y.ko", modinfo: modinfo{deps: []string{"z_self"}}},
+		"z_self": {file: "z_self.ko", modinfo: modinfo{deps: []string{"z_self"}}},
+	}
+	if got, want := legacyLoadOrder([]string{"y", "z_self"}, mods), []string{"z_self", "y"}; !slices.Equal(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
 	}
 }

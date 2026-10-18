@@ -84,7 +84,7 @@ inject fabric faults during the stream.
 | CAPRF prepare: connect, ISO build, eject, insert, reset | 2 to 3 | controller steps |
 | firmware and ISO load (sushy virtual media) | about 6 | `rebootSystem` to kernel banner |
 | kernel to `/init` | 3.3 | console (`Run /init`) |
-| BOOTy module load | 5 | console (`loaded kernel module`, retries on `Unknown symbol`) |
+| BOOTy module load | 5 | console (before #758: one `loaded kernel module` line per module and retries on `Unknown symbol`; since #758: one `loaded kernel modules` line) |
 | network: BGP established, then connectivity | 12 to 16 | console |
 | disk settle (`detect-disk`) | 2.2 | console |
 | disk wipe | 3.1 | console |
