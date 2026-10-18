@@ -4335,6 +4335,58 @@ func TestProcessRouteUpdateType2MobilityAndSticky(t *testing.T) {
 	})
 }
 
+// Like zebra, a Type-2 neighbor entry gets NTF_ROUTER when the route has
+// the router flag of the ARP/ND extended community, only for IPv6, and is
+// reinstalled when only the flag changes.
+func TestType2NeighborRouterFlag(t *testing.T) {
+	path := func(ip string, router bool, withdraw bool) *apipb.Path {
+		p := type2TestPath(t, 1, "10.0.0.1", nil)
+		p.GetNlri().GetEvpnMacadv().IpAddress = ip
+		p.IsWithdraw = withdraw
+		ext, err := wrapExt(&apipb.ArpNdExtended{IsRouter: router})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ec := p.GetPattrs()[1].GetExtendedCommunities()
+		ec.Communities = append(ec.Communities, ext)
+		return p
+	}
+	neighbors := func(list []*netlink.Neigh) []*netlink.Neigh {
+		var out []*netlink.Neigh
+		for _, n := range list {
+			if n.Family != syscall.AF_BRIDGE {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+	isRouter := func(n *netlink.Neigh) bool { return n.Flags&netlink.NTF_ROUTER != 0 }
+
+	o, mock := type2TestOverlay()
+	o.processRouteUpdate(path("fd00::5", true, false))
+	n := neighbors(mock.sets)
+	if len(n) != 1 || !isRouter(n[0]) || n[0].Flags&netlink.NTF_EXT_LEARNED == 0 {
+		t.Fatalf("IPv6 router: neighbor sets %v, want one with NTF_ROUTER and NTF_EXT_LEARNED", n)
+	}
+	o.processRouteUpdate(path("fd00::5", true, false))
+	if n := neighbors(mock.sets); len(n) != 1 {
+		t.Fatalf("an unchanged route set the neighbor again: %v", n)
+	}
+	o.processRouteUpdate(path("fd00::5", false, false))
+	if n := neighbors(mock.sets); len(n) != 2 || isRouter(n[1]) {
+		t.Fatalf("router flag cleared: neighbor sets %v, want a second set without NTF_ROUTER", n)
+	}
+	o.processRouteUpdate(path("fd00::5", false, true))
+	if d := neighbors(mock.dels); len(d) != 1 || isRouter(d[0]) {
+		t.Fatalf("withdraw: neighbor deletes %v", d)
+	}
+
+	o.processRouteUpdate(path("10.100.0.5", true, false))
+	if n := neighbors(mock.sets); len(n) != 3 || isRouter(n[2]) || n[2].Family != syscall.AF_INET {
+		t.Fatalf("IPv4 with the router flag: neighbor sets %v, want no NTF_ROUTER", n)
+	}
+}
+
 // The real Teardown removes the FDB entries (a VXLAN device BOOTy did not
 // create would keep them) and forgets the routes; a callback after it
 // installs nothing, and a new Setup installs them again.
@@ -4738,7 +4790,7 @@ func TestType2NeighborTiebreakOnMAC(t *testing.T) {
 			for _, mac := range order {
 				o.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{MacAddress: mac, IpAddress: "10.0.0.50"}, "10.0.0.2", 0, false)
 			}
-			if got := o.type2Neigh["10.0.0.50"]; got != "aa:bb:cc:00:00:01" {
+			if got := o.type2Neigh["10.0.0.50"].mac; got != "aa:bb:cc:00:00:01" {
 				t.Fatalf("order %v: neighbor MAC %s, want the lowest", order, got)
 			}
 		}
