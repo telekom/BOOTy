@@ -265,7 +265,36 @@ func lease24(ip string, router ...string) *dhclient.Lease {
 	for _, r := range router {
 		l.Router = append(l.Router, net.ParseIP(r))
 	}
+	return live(l)
+}
+
+// live gives a test lease a server identifier and a 2 min lifetime.
+func live(l *dhclient.Lease) *dhclient.Lease {
+	l.ServerID = net.IPv4(10, 0, 2, 1)
+	l.Bound = time.Now()
+	l.Renew, l.Rebind, l.Expire = l.Bound.Add(time.Minute), l.Bound.Add(105*time.Second), l.Bound.Add(2*time.Minute)
 	return l
+}
+
+// A lease without a lifetime or a server identifier is not applied, like
+// networkd: it would end at once and come back in a loop.
+func TestOnBoundRejectsLeaseWithoutLifetimeOrServer(t *testing.T) {
+	stubDHCPNetlink(t)
+	added := 0
+	dhcpAddrReplace = func(netlink.Link, *netlink.Addr) error { added++; return nil }
+	d := NewDHCPMode()
+	noLife := lease24("10.0.2.15", "10.0.2.2")
+	noLife.Expire = noLife.Bound
+	noServer := lease24("10.0.2.15", "10.0.2.2")
+	noServer.ServerID = nil
+	zeroServer := lease24("10.0.2.15", "10.0.2.2")
+	zeroServer.ServerID = net.IPv4zero
+	for _, l := range []*dhclient.Lease{noLife, noServer, zeroServer} {
+		d.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 1))(l)
+	}
+	if added != 0 || len(d.nics) != 0 {
+		t.Fatalf("applied %d leases without a lifetime or server: %v", added, d.nics)
+	}
 }
 
 func TestOnBoundReplacesStateAndTeardownRemovesIt(t *testing.T) {
@@ -475,7 +504,7 @@ func TestOnBoundRenewalDropsRouteAndRestoresMask(t *testing.T) {
 
 	// Renewal with a new mask whose route fails restores the old mask.
 	failRoute = true
-	bound(&dhclient.Lease{FixedAddress: net.ParseIP("10.0.2.15"), Netmask: net.CIDRMask(16, 32), Router: []net.IP{net.ParseIP("10.0.2.2")}})
+	bound(live(&dhclient.Lease{FixedAddress: net.ParseIP("10.0.2.15"), Netmask: net.CIDRMask(16, 32), Router: []net.IP{net.ParseIP("10.0.2.2")}}))
 	if want := []string{"10.0.2.15/24", "10.0.2.15/24", "10.0.2.15/16", "10.0.2.15/24"}; !slices.Equal(set, want) {
 		t.Fatalf("addresses set = %v, want %v", set, want)
 	}
