@@ -811,14 +811,10 @@ var restoreNetwork = func(ctx context.Context, cfg *config.MachineConfig) func()
 		}
 	}
 	slog.Warn("handoff failed after the network stop, setting the network up again")
-	setupCtx, cancel := context.WithTimeout(ctx, restoreTimeout)
-	defer cancel()
-	netMode, err := setupNetworkModeFn(setupCtx, cfg)
-	if err != nil {
-		slog.Error("network setup after the failed handoff failed", "error", err)
+	netMode, ok := setupRestoredNetwork(ctx, cfg)
+	if !ok {
 		return func() {}
 	}
-	// The run context: the restored network outlives this setup.
 	stop := stopNetworkOnce(ctx, netMode)
 	target := cfg.Transport.ErrorURL
 	if target == "" {
@@ -827,10 +823,44 @@ var restoreNetwork = func(ctx context.Context, cfg *config.MachineConfig) func()
 	if target == "" {
 		return stop
 	}
-	if err := netMode.WaitForConnectivity(setupCtx, target, restoreTimeout); err != nil {
+	waitCtx, cancel := context.WithTimeout(ctx, restoreTimeout)
+	defer cancel()
+	if err := netMode.WaitForConnectivity(waitCtx, target, restoreTimeout); err != nil {
 		slog.Error("no connectivity after the failed handoff", "error", err)
 	}
 	return stop
+}
+
+// setupRestoredNetwork sets the network up with the run context: the mode
+// keeps goroutines on it (the GoBGP EVPN route watcher), so it must not be
+// a context that ends with the restore. The wait is bounded by
+// restoreTimeout instead; a setup that finishes later is torn down.
+func setupRestoredNetwork(ctx context.Context, cfg *config.MachineConfig) (network.Mode, bool) {
+	type result struct {
+		mode network.Mode
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		mode, err := setupNetworkModeFn(ctx, cfg)
+		done <- result{mode, err}
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil {
+			slog.Error("network setup after the failed handoff failed", "error", r.err)
+			return nil, false
+		}
+		return r.mode, true
+	case <-time.After(restoreTimeout):
+		slog.Error("network setup after the failed handoff did not finish in time", "timeout", restoreTimeout)
+		go func() {
+			if r := <-done; r.err == nil && r.mode != nil {
+				_ = r.mode.Teardown(context.WithoutCancel(ctx))
+			}
+		}()
+		return nil, false
+	}
 }
 
 func handleProvisionHandoff(
@@ -946,6 +976,10 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		}
 	}
 
+	// The grace reboot of the handler holds this first stop, not the stop
+	// of a network that restoreNetwork sets up after a failed handoff. That
+	// is safe today: a terminal success cancels the grace timer
+	// (stopTokenGraceReboot) before any wrapped handoff runs.
 	client.SetTokenRenewalFatalHandler(tokenFatalHandler(cfg, stopNetwork, stopRun))
 
 	if err := client.StartTokenRenewal(ctx); err != nil {

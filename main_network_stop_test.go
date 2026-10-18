@@ -373,3 +373,56 @@ func TestRestoreNetworkWaitsForTheTeardown(t *testing.T) {
 		t.Fatalf("teardowns of the restored network = %d, want 1 from the returned stop", got)
 	}
 }
+
+// The restored network is set up with the run context: the context that
+// Setup got stays live after restoreNetwork returns, so goroutines of the
+// mode (the GoBGP EVPN route watcher) keep running.
+func TestRestoreNetworkSetupContextOutlivesTheRestore(t *testing.T) {
+	prevSetup, prevRestore := setupNetworkModeFn, restoreTimeout
+	t.Cleanup(func() {
+		setupNetworkModeFn, restoreTimeout = prevSetup, prevRestore
+		teardownDone.Store(nil)
+	})
+	teardownDone.Store(nil)
+	restoreTimeout = 50 * time.Millisecond
+	var setupCtx context.Context
+	setupNetworkModeFn = func(ctx context.Context, _ *config.MachineConfig) (network.Mode, error) {
+		setupCtx = ctx
+		return &connectivityMode{}, nil
+	}
+	cfg := &config.MachineConfig{}
+	cfg.Transport.ErrorURL = "https://caprf.example.invalid/status/error"
+
+	restoreNetwork(context.Background(), cfg)
+	if setupCtx == nil || setupCtx.Err() != nil {
+		t.Fatalf("setup context after the restore: %v, want live", setupCtx)
+	}
+}
+
+// A setup that does not finish within restoreTimeout is given up, not
+// canceled, and torn down when it finishes.
+func TestRestoreNetworkGivesUpASlowSetup(t *testing.T) {
+	prevSetup, prevRestore := setupNetworkModeFn, restoreTimeout
+	t.Cleanup(func() {
+		setupNetworkModeFn, restoreTimeout = prevSetup, prevRestore
+		teardownDone.Store(nil)
+	})
+	teardownDone.Store(nil)
+	restoreTimeout = 20 * time.Millisecond
+	release := make(chan struct{})
+	late := &connectivityMode{}
+	setupNetworkModeFn = func(context.Context, *config.MachineConfig) (network.Mode, error) {
+		<-release
+		return late, nil
+	}
+
+	restoreNetwork(context.Background(), &config.MachineConfig{})()
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for late.teardowns.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := late.teardowns.Load(); got != 1 {
+		t.Fatalf("teardowns of the late network = %d, want 1", got)
+	}
+}
