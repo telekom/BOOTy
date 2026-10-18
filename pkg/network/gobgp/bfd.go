@@ -154,8 +154,8 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 // Cease/BFD Down (RFC 9384, bgp_bfd.c:70; ResetPeerRequest.BfdDown of the
 // GoBGP fork), and GoBGP connects again after idleHoldAfterReset. FRR
 // also starts a connect at BFD Up; GoBGP has no API for that, but with
-// ConnectAtOnce its Active state connects at once by itself
-// (pkg/server/fsm.go:994-998 of the fork).
+// ConnectAtOnce its Active state connects at once by itself (the
+// outgoingConnManager.run and connectLoop functions of the fork).
 //
 // Like bgpd, a BFD Down does not reset a BGP session that came up in the
 // same second (bss->last_event > peer->uptime, both in seconds): a
