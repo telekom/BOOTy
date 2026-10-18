@@ -5019,12 +5019,30 @@ func TestProcessRouteUpdateType5TreatAsWithdraw(t *testing.T) {
 			{&apipb.EVPNIPPrefixRoute{Label: 4000, GwAddress: "0.0.0.0"}, rmac},
 			{&apipb.EVPNIPPrefixRoute{Label: 4000, GwAddress: "0.0.0.0"}, ""},
 			{&apipb.EVPNIPPrefixRoute{GwAddress: "10.100.0.1"}, "not-a-mac"},
+			{&apipb.EVPNIPPrefixRoute{GwAddress: "10.100.0.1"}, "01:00:5e:00:00:01"},
 		} {
 			mock := &mockOverlayNetlinkOps{}
 			newOverlay(mock).processRouteUpdate(path(r.route, r.mac))
 			if len(mock.routeReplaces) != 1 {
 				t.Errorf("%+v %q: got %d route replaces, want 1", r.route, r.mac, len(mock.routeReplaces))
 			}
+			for _, n := range mock.sets {
+				if n.HardwareAddr[0]&1 != 0 {
+					t.Errorf("%+v %q: neighbor or FDB entry with the non-unicast MAC %s", r.route, r.mac, n.HardwareAddr)
+				}
+			}
 		}
 	})
+}
+
+// RFC 9136 section 3.2: a router MAC must be a unicast MAC.
+func TestParseRouterMACRejectsNonUnicast(t *testing.T) {
+	for _, mac := range []string{"01:00:5e:00:00:01", "ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00", "33:33:00:00:00:01"} {
+		if _, err := parseRouterMAC(mac); err == nil {
+			t.Errorf("parseRouterMAC(%s) accepted a non-unicast MAC", mac)
+		}
+	}
+	if _, err := parseRouterMAC("02:54:c0:00:02:11"); err != nil {
+		t.Errorf("unicast MAC rejected: %v", err)
+	}
 }

@@ -871,7 +871,7 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 	case nlri.GetEvpnIpPrefix() != nil:
 		route := nlri.GetEvpnIpPrefix()
 		routerMAC, err := extractRouterMAC(p)
-		if reason := type5Unusable(route, routerMAC, err); reason != "" && !withdraw {
+		if reason := type5Unusable(route, err); reason != "" && !withdraw {
 			// The update replaces the path of the same route key, so the
 			// old path goes too, as for a withdraw (RFC 7606 section 2).
 			o.log.Warn("type-5 route treated as withdraw", "prefix", route.GetIpPrefix(), "len", route.GetIpPrefixLen(),
@@ -917,7 +917,7 @@ func (o *OverlayTier) handleType3Path(p *apipb.Path, route *apipb.EVPNInclusiveM
 // (and a zero label, which needs an overlay index) needs a recursive
 // resolution through Type-1 or Type-2 routes, which BOOTy does not do, so
 // such a route cannot be used either.
-func type5Unusable(route *apipb.EVPNIPPrefixRoute, routerMAC net.HardwareAddr, macErr error) string {
+func type5Unusable(route *apipb.EVPNIPPrefixRoute, macErr error) string {
 	esi := route.GetEsi()
 	esiSet := esi.GetType() != 0 || slices.ContainsFunc(esi.GetValue(), func(b byte) bool { return b != 0 })
 	gw := net.ParseIP(route.GetGwAddress())
@@ -925,9 +925,6 @@ func type5Unusable(route *apipb.EVPNIPPrefixRoute, routerMAC net.HardwareAddr, m
 	switch {
 	case !gwSet && macErr != nil:
 		return "invalid router MAC: " + macErr.Error()
-	case !gwSet && len(routerMAC) == ethernetMACLength &&
-		(routerMAC[0]&1 != 0 || bytes.Equal(routerMAC, make(net.HardwareAddr, ethernetMACLength))):
-		return "router MAC " + routerMAC.String() + " is not a unicast MAC"
 	case esiSet && gwSet:
 		return "both ESI and gateway IP are set"
 	case esiSet:
@@ -2308,6 +2305,10 @@ func parseRouterMAC(routerMAC string) (net.HardwareAddr, error) {
 	}
 	if len(mac) != ethernetMACLength {
 		return nil, fmt.Errorf("parse router MAC %s: expected 48-bit MAC, got %d bytes", routerMAC, len(mac))
+	}
+	// RFC 9136 section 3.2: a broadcast, multicast or zero MAC is invalid.
+	if mac[0]&1 != 0 || bytes.Equal(mac, make(net.HardwareAddr, ethernetMACLength)) {
+		return nil, fmt.Errorf("router MAC %s is not a unicast MAC", routerMAC)
 	}
 	return mac, nil
 }
