@@ -25,6 +25,9 @@ func TestSetPanicReboot(t *testing.T) {
 		{"console=ttyS0 -- panic=0", panicRebootSeconds},
 		{"console=ttyS0 sysctl.kernel.panic=0", "unset"},
 		{"console=ttyS0 sysctl.kernel/panic=0", "unset"},
+		{"console=ttyS0 sysctl/kernel/panic=0", "unset"},
+		{"console=ttyS0 sysctl/kernel.panic=0", "unset"},
+		{"console=ttyS0 sysctlkernel.panic=0", panicRebootSeconds},
 		{"console=ttyS0 sysctl.kernel.panic_on_oops=1", panicRebootSeconds},
 	} {
 		dir := t.TempDir()

@@ -246,7 +246,8 @@ kernel command line of an ISO boot is
 kernel errors only, and BOOTy logs the Secure Boot and lockdown state itself
 (`kernel security state`).
 
-Without a `panic=` or `sysctl.kernel.panic=` parameter on the kernel
+Without a `panic=` or `sysctl.kernel.panic=` (with either separator, also
+`sysctl/kernel/panic=`) parameter on the kernel
 command line (before `--`),
 BOOTy sets `kernel.panic` to 10 when it starts as PID 1, so a kernel panic, also the "Attempted
 to kill init" panic when BOOTy itself crashes, reboots the host after 10 s
