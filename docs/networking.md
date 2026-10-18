@@ -638,11 +638,11 @@ The known deviations, with the fix that closes each of them:
 
 | FRR 10 sends | GoBGP | Fabric impact | Status |
 |---|---|---|---|
-| Enhanced route refresh (RFC 7313) | Not sent | A peer that refreshes its routes from BOOTy uses plain route refresh, without the begin and end markers. Nothing is lost; stale routes of BOOTy are not swept at the end of a refresh. | Open: needs a GoBGP change (capability and the begin and end of refresh markers). |
-| Paths-limit (with add-path), limit 0 for each add-path family | Not sent | Limit 0 is no limit, so the peer behaves the same. | Open: needs a GoBGP change. |
+| Enhanced route refresh (RFC 7313) | Not sent | A peer that refreshes its routes from BOOTy uses plain route refresh, without the begin and end markers. Nothing is lost; stale routes of BOOTy are not swept at the end of a refresh. | Upstream-pending: needs a GoBGP change (the capability and the begin and end of refresh markers). |
+| Paths-limit (with add-path), limit 0 for each add-path family | Not sent | Limit 0 is no limit, so the peer behaves the same. | Upstream-pending: needs a GoBGP change. |
 | Dynamic capability: FRR sends it with `frr defaults datacenter` (`BGP_DYNAMIC_CAPABILITY`), so the CAPRF configs send it and the bm4x templates (`traditional`) do not | Not sent | A capability change needs a session reset. The fabric does not change capabilities at run time. | Not planned: GoBGP has no CAPABILITY message. |
-| Graceful restart Restart State (R) bit in the first restart time (120 s) after bgpd starts, then off | Off | The R bit tells the peer that the speaker restarted. BOOTy is only a helper and keeps no forwarding state, so the peer's behaviour does not change. GoBGP sets it only for a restarting speaker (`LocalRestarting`), which also holds back BOOTy's own routes until every peer has sent End-of-RIB, so BOOTy does not set it. | Open: needs a GoBGP change. |
-| Long-lived graceful restart family tuples (F bit, stale time 0) | Without tuples in helper mode | With stale time 0 neither side keeps routes long-lived. | Open: needs a GoBGP change. |
+| Graceful restart Restart State (R) bit in the first restart time (120 s) after bgpd starts, then off | Off | The R bit tells the peer that the speaker restarted. BOOTy is only a helper and keeps no forwarding state, so the peer's behaviour does not change. GoBGP sets it only for a restarting speaker (`LocalRestarting`), which also holds back BOOTy's own routes until every peer has sent End-of-RIB, so BOOTy does not set it. | Accepted: no effect on the fabric; GoBGP would need an R bit without the restarting speaker procedure. |
+| Long-lived graceful restart family tuples (F bit, stale time 0) | Without tuples in helper mode | With stale time 0 neither side keeps routes long-lived. | Accepted: GoBGP sends the tuples only for a restarting speaker, and FRR's tuples claim preserved forwarding state (F bit). |
 | Software version `FRRouting/10.x` | `GoBGP/4.10.0` | Information only. The capability goes to the same peers as in FRR. | Not planned: GoBGP sends its own name. |
 
 Defaults of `frr defaults`: FRR 10.3.1 has these profile-dependent
