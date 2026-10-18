@@ -4405,10 +4405,10 @@ func TestHandleType2RouteBestPathPerMAC(t *testing.T) {
 	})
 }
 
-// TestMacMobilitySeq reads the sequence number of the MAC Mobility
-// extended community.
-func TestMacMobilitySeq(t *testing.T) {
-	mm, err := anypb.New(&apipb.MacMobilityExtended{SequenceNum: 7})
+// TestMacMobilityOf reads the sequence number and the sticky flag of the
+// MAC Mobility extended community.
+func TestMacMobilityOf(t *testing.T) {
+	mm, err := anypb.New(&apipb.MacMobilityExtended{SequenceNum: 7, IsSticky: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4416,10 +4416,105 @@ func TestMacMobilitySeq(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := macMobilitySeq(&apipb.Path{Pattrs: []*anypb.Any{ext}}); got != 7 {
-		t.Errorf("sequence = %d, want 7", got)
+	if got := macMobilityOf(&apipb.Path{Pattrs: []*anypb.Any{ext}}); got != (macMobility{seq: 7, sticky: true}) {
+		t.Errorf("MAC mobility = %+v, want sequence 7, sticky", got)
 	}
-	if got := macMobilitySeq(&apipb.Path{}); got != 0 {
-		t.Errorf("sequence without community = %d, want 0", got)
+	if got := macMobilityOf(&apipb.Path{}); got != (macMobility{}) {
+		t.Errorf("MAC mobility without community = %+v, want zero", got)
+	}
+}
+
+func type2TestOverlay() (*OverlayTier, *mockOverlayNetlinkOps) {
+	mock := &mockOverlayNetlinkOps{}
+	return &OverlayTier{
+		cfg:        &Config{RouterID: "10.0.0.99", ASN: 65000, ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}, mock
+}
+
+func type2TestPath(t *testing.T, rd uint32, nh string, mm *apipb.MacMobilityExtended) *apipb.Path {
+	t.Helper()
+	r, err := buildRouteDistinguisher(65000, rd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := anypb.New(&apipb.EVPNMACIPAdvertisementRoute{Rd: r, MacAddress: "aa:bb:cc:dd:ee:ff"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+		Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}, NextHops: []string{nh}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := []*anypb.Any{mustRT2(t, 65000, 100)}
+	if mm != nil {
+		a, err := anypb.New(mm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c = append(c, a)
+	}
+	ec, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{Communities: c})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &apipb.Path{Nlri: n, Pattrs: []*anypb.Any{mp, ec}}
+}
+
+// The MAC Mobility community reaches the selection through
+// processRouteUpdate, and a sticky route wins over a higher sequence number
+// like in FRR (bgp_path_info_cmp).
+func TestProcessRouteUpdateType2MobilityAndSticky(t *testing.T) {
+	t.Run("sequence number", func(t *testing.T) {
+		o, mock := type2TestOverlay()
+		o.processRouteUpdate(type2TestPath(t, 2, "10.0.0.2", &apipb.MacMobilityExtended{SequenceNum: 1}))
+		o.processRouteUpdate(type2TestPath(t, 1, "10.0.0.1", nil))
+		if got := mock.sets[len(mock.sets)-1].IP.String(); got != "10.0.0.2" || len(mock.sets) != 1 {
+			t.Fatalf("FDB sets %v, want only 10.0.0.2 (sequence 1)", mock.sets)
+		}
+	})
+	t.Run("sticky wins over a higher sequence", func(t *testing.T) {
+		o, mock := type2TestOverlay()
+		o.processRouteUpdate(type2TestPath(t, 1, "10.0.0.1", &apipb.MacMobilityExtended{IsSticky: true}))
+		o.processRouteUpdate(type2TestPath(t, 2, "10.0.0.2", &apipb.MacMobilityExtended{SequenceNum: 5}))
+		if got := mock.sets[len(mock.sets)-1].IP.String(); got != "10.0.0.1" || len(mock.sets) != 1 {
+			t.Fatalf("FDB sets %v, want only the sticky 10.0.0.1", mock.sets)
+		}
+	})
+}
+
+// The real Teardown removes the FDB entries (a VXLAN device BOOTy did not
+// create would keep them) and forgets the routes, so a new Setup installs
+// them again.
+func TestType2TeardownRemovesAndForgets(t *testing.T) {
+	o, mock := type2TestOverlay()
+	r := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
+	o.handleType2Route(r, "10.0.0.1", 0, false)
+	if err := o.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(mock.dels) != 1 || mock.dels[0].HardwareAddr.String() != "aa:bb:cc:dd:ee:ff" || !mock.dels[0].IP.Equal(net.ParseIP("10.0.0.1")) {
+		t.Fatalf("teardown deletes %v, want the FDB entry", mock.dels)
+	}
+	o.handleType2Route(r, "10.0.0.1", 0, false)
+	if len(mock.sets) != 2 {
+		t.Fatalf("sets = %d, want the entry again after teardown", len(mock.sets))
+	}
+}
+
+// A failed FDB set is retried by the next update of the route.
+func TestType2RetryAfterFailedSet(t *testing.T) {
+	o, mock := type2TestOverlay()
+	mock.setErr, mock.setErrOnCall = errors.New("boom"), 1
+	r := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
+	o.handleType2Route(r, "10.0.0.1", 0, false)
+	o.handleType2Route(r, "10.0.0.1", 0, false)
+	if len(mock.sets) != 2 {
+		t.Fatalf("sets = %d, want a retry after the failed set", len(mock.sets))
+	}
+	if o.type2FDB["aa:bb:cc:dd:ee:ff"] != "10.0.0.1" {
+		t.Fatal("the retried entry is not tracked")
 	}
 }
