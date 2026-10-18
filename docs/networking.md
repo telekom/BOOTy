@@ -215,7 +215,7 @@ same resolution:
     ([osrg/gobgp#3735](https://github.com/osrg/gobgp/issues/3735)). In
     the lab a leaf-initiated session to BOOTy took 36 s against 2.3 s for
     FRR (the leaf then retries after its connect timer). Status: worked
-    around in BOOTy (#PRNUM). When a session ends and BOOTy did not stop
+    around in BOOTy (#745). When a session ends and BOOTy did not stop
     the peer (carrier loss) and GoBGP keeps no graceful restart routes of
     it, BOOTy deletes the GoBGP peer and adds it again at once. A new
     peer accepts the leaf's connection at once, like FRR in Idle, and

@@ -210,7 +210,7 @@ behaviour.
   GoBGP held the peer 5 s in Idle and refused the leaf's connections
   (osrg/gobgp#3735); a `clear bgp` on the leaf took up to 36 s, now about
   as long as with FRR. Peers whose graceful restart routes GoBGP keeps
-  stay as they are (#PRNUM).
+  stay as they are (#745).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 
