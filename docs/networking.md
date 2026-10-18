@@ -519,6 +519,33 @@ on purpose although they are not in the templates:
 - `ip route` and `ipv6 route` inside a `vrf` block (BOOTy installs static
   routes only in the main table).
 
+## GoBGP version and fork
+
+GoBGP mode embeds GoBGP 4.10.0 through a fork tag:
+`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.2`
+in `go.mod`. The tag is v4.10.0 with eight fixes:
+
+| Fix | Effect without it |
+|---|---|
+| Apply the idle hold time after reset when `ResetPeer` finds no session ([osrg/gobgp#3740](https://github.com/osrg/gobgp/issues/3740)) | A session that lost carrier comes back about 5 s later (Idle hold of 5 s instead of 1 s). |
+| Resolve a connection collision in OpenConfirm without Idle ([osrg/gobgp#3741](https://github.com/osrg/gobgp/issues/3741)) | When BOOTy and the leaf connect at the same time, the session waits 5 s in Idle. |
+| Take a new connection from a restarting peer (RFC 4724) | A peer that restarts with graceful restart cannot open a new session while the old one is still up. |
+| Discard EVPN NLRIs of unknown route types | An EVPN route type that GoBGP does not know resets the session instead of being ignored (RFC 7606). |
+| Send IPv4 routes with an IPv6 next hop only with the extended next hop capability | A peer without RFC 8950 support gets routes with a next hop it cannot use. |
+| Advertise extended next hop only for the IPv4 families of RFC 8950 | GoBGP also offers it for l2vpn evpn, and FRR logs a capability warning per OPEN. |
+| Keep unknown EVPN extended community sub-types (RFC 7606 section 7.14) | A route with an EVPN extended community sub-type that GoBGP does not know is treated as withdrawn: FRR's MAC/IP routes with the ARP/ND community (sub-type 0x08) are withdrawn. |
+| Decode the EVPN ARP/ND extended community (RFC 9047) | The router (R), override (O) and proxy (I) flags of a MAC/IP route are not available to BOOTy. |
+
+GoBGP 4 is required: GoBGP 3.37 panics on a truncated EVPN NLRI from any
+peer, also on an IPv4-only session, which ends BOOTy (PID 1);
+`TestEVPNDecodeTruncatedNLRIReturnsError` pins that 4.10 returns an error.
+
+Drop the replace when an osrg/gobgp release contains all eight fixes. Then
+check the GO-2026-4736 exception in `hack/check-govulncheck.py`: it names
+`github.com/osrg/gobgp/v4` 4.10.0, which govulncheck does not report while
+the fork module is in the build. Run the production template lab after
+the change.
+
 ## FRR and GoBGP compared
 
 | Feature | FRR | GoBGP |
@@ -599,7 +626,6 @@ GoBGP 4.10 does not send the following, so they are known deviations:
 | Graceful restart Restart State (R) bit | Off | The R bit tells the peer that the speaker restarted. BOOTy is only a helper and keeps no forwarding state, so the peer's behaviour does not change. |
 | Long-lived graceful restart family tuples (stale time 0) | Without tuples in helper mode | With stale time 0 neither side keeps routes long-lived. |
 | Software version `FRRouting/10.x` | `GoBGP/4.10.0` | Information only. |
-| No extended next hop for l2vpn evpn | GoBGP also offers it for l2vpn evpn | The route reflectors do not offer it, so it is not negotiated. FRR on the route reflectors logs one capability warning per OPEN for the unexpected l2vpn evpn tuple. |
 
 Defaults of `frr defaults`: FRR 10.3.1 has these profile-dependent
 defaults (every `FRR_CFG_DEFAULT_*` with a `match_profile` in bgpd, zebra,
