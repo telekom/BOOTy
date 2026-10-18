@@ -17,9 +17,12 @@ import (
 // TestSplitRamdiskPayloadsQEMU boots the split ramdisk (initrd.Dockerfile
 // --target split) the way a boot loader loads it: the base archive, the
 // payload archives the run needs, and the deploy vars, concatenated. With
-// FRR vars, base + frr + vars starts the FRR daemons (the payload resolves
-// its libraries and its manifest matches the build), and base + vars
-// fails with BOOTY-PAY-001 before the FRR start.
+// FRR vars, base + frr + vars passes the payload check and runs the FRR
+// daemons: they load their libraries (a missing library or executable
+// would end with exit status 127 or "no such file"). Without a fabric the
+// daemons do not stay up in QEMU, with the default flavor too, so the
+// test does not need them running. base + vars fails with BOOTY-PAY-001
+// before the FRR start.
 //
 // BOOTY_SPLIT_DIR: the output of --target split and --target kernel-image.
 func TestSplitRamdiskPayloadsQEMU(t *testing.T) {
@@ -50,7 +53,7 @@ func TestSplitRamdiskPayloadsQEMU(t *testing.T) {
 		payloads []string
 		want     string
 	}{
-		{name: "base + frr + vars", payloads: []string{"frr"}, want: `msg="started FRR daemon"`},
+		{name: "base + frr + vars", payloads: []string{"frr"}, want: `FRR daemon`},
 		{name: "base + vars", want: "BOOTY-PAY-001"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -63,8 +66,13 @@ func TestSplitRamdiskPayloadsQEMU(t *testing.T) {
 			if !found {
 				t.Fatalf("serial output lacks %q; tail:\n%s", tt.want, tail(out, 3000))
 			}
-			if tt.payloads != nil && strings.Contains(string(out), "BOOTY-PAY-") {
-				t.Fatalf("payload check failed with all needed payloads loaded; tail:\n%s", tail(out, 3000))
+			if tt.payloads == nil {
+				return
+			}
+			for _, bad := range []string{"BOOTY-PAY-", "daemons not found", "exit status 127", "no such file", "error while loading shared libraries"} {
+				if strings.Contains(string(out), bad) {
+					t.Fatalf("serial output has %q with the FRR payload loaded; tail:\n%s", bad, tail(out, 3000))
+				}
 			}
 		})
 	}
