@@ -5097,23 +5097,23 @@ func TestParseRouterMACRejectsNonUnicast(t *testing.T) {
 // installs such a D-VNI next hop only on a single VXLAN device) and an
 // installed route of its key goes. The other modes keep their handling.
 func TestProcessRouteUpdateType5L3VNI(t *testing.T) {
-	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+	mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 		NextHops: []string{"192.168.4.1"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ec, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{Communities: []*anypb.Any{mustRT2(t, 65000, 4000), mustRouterMAC(t, "62:db:b8:c1:80:52")}})
+	ec, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 4000), mustRouterMAC(t, "62:db:b8:c1:80:52")}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := func(label uint32, gw string) *apipb.Path {
-		n, err := anypb.New(&apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, Label: label, GwAddress: gw})
+		n, err := wrapNLRI(&apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, Label: label, GwAddress: gw})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return &apipb.Path{Nlri: n, Pattrs: []*anypb.Any{mp, ec}}
+		return &apipb.Path{Nlri: n, Pattrs: []*apipb.Attribute{mp, ec}}
 	}
 	newOverlay := func(type5Only bool) (*OverlayTier, *mockOverlayNetlinkOps) {
 		mock := &mockOverlayNetlinkOps{}
@@ -5137,9 +5137,11 @@ func TestProcessRouteUpdateType5L3VNI(t *testing.T) {
 	if len(mock.routeDels) != 1 {
 		t.Fatalf("L3VNI mode: update of the key to VNI 5000: %d deletes, want 1", len(mock.routeDels))
 	}
-	o.processRouteUpdate(path(5000, "10.100.0.1"))
-	if len(mock.routeReplaces) != 2 {
-		t.Fatal("L3VNI mode: a gateway IP route is resolved through the gateway, not checked against the VNI")
+	// A gateway IP route resolves through its gateway and is not checked
+	// against the VNI. Since #775 BOOTy installs it only in L2 mode with
+	// enable-resolve-overlay-index, so the rule itself is checked here.
+	if r := type5Unusable(&apipb.EVPNIPPrefixRoute{Label: 5000, GwAddress: "10.100.0.1"}, nil, o.type5LocalVNI()); r != "" {
+		t.Fatalf("L3VNI mode: a gateway IP route was checked against the VNI: %s", r)
 	}
 
 	o, mock = newOverlay(false)
