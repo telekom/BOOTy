@@ -5150,19 +5150,19 @@ func TestType5GatewayIPRouteConvertedWithdraw(t *testing.T) {
 	o.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:00:00:05", IpAddress: gw.String()}, "10.0.0.2", 0, false)
 	path := func(nh string, r *apipb.EVPNIPPrefixRoute, mac string) *apipb.Path {
 		t.Helper()
-		mp, err := anypb.New(&apipb.MpReachNLRIAttribute{Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}, NextHops: []string{nh}})
+		mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}, NextHops: []string{nh}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		ec, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{Communities: []*anypb.Any{mustRT2(t, 65000, 100), mustRouterMAC(t, mac)}})
+		ec, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 100), mustRouterMAC(t, mac)}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		n, err := anypb.New(r)
+		n, err := wrapNLRI(r)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return &apipb.Path{Nlri: n, Pattrs: []*anypb.Any{mp, ec}}
+		return &apipb.Path{Nlri: n, Pattrs: []*apipb.Attribute{mp, ec}}
 	}
 	o.processRouteUpdate(path("10.0.0.1", &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, Label: 100, GwAddress: gw.String()}, "62:db:b8:c1:80:52"))
 	if len(m.routeReplaces) != 1 || !m.routeReplaces[0].Gw.Equal(gw) {
