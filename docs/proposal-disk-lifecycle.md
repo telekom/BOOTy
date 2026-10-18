@@ -26,6 +26,8 @@ erase certificate per disk that a decommission process can keep as evidence.
   (`pkg/disk/manager.go`). A requested secure erase can end as a signature
   wipe, and the run still succeeds. For decommission this is a compliance
   gap.
+- Update: #704 removed the silent fallback; a requested secure erase now
+  fails or reports the fallback instead of succeeding quietly.
 - SAS and SCSI disks (`sd*` behind a SAS HBA) take the SATA path with
   `hdparm`. SAS drives need SCSI `SANITIZE` or `FORMAT UNIT` (`sg_sanitize`,
   `sg_format`, verify).

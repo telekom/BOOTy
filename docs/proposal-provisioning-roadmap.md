@@ -29,25 +29,37 @@ Criteria: (a) unblocks the BOOTy drop-in for the legacy CAPRF ramdisk and the
 bm4x cable and infrastructure checks; (b) reduces risk (security, data loss,
 failed provisioning); (c) reduces operator pain today (debugging when the
 network fails, provisioning time); (d) effort and dependencies on work in
-flight. In flight: the GoBGP v4 upgrade, the kernel and Debian upgrade, the
-cable-check slices A to G, the secure-erase and TPM fixes, and the
-networking parity fixes.
+flight.
 
-| Rank | Proposal | Why now | First PR |
-|------|----------|---------|----------|
-| 1 | [Metrics: failure codes and step data](proposal-provisioning-metrics.md) | Every other observability item needs stable failure codes and step timings. The collector exists but is not fed, so the change is small. It also gives the cable-check a defined output (DOM, LLDP). | Failure code table `BOOTY-<AREA>-<NNN>` and step tracker wiring in `executeStep`; codes in error callbacks. |
-| 2 | [Out-of-band diagnostics](proposal-bmc-out-of-band-diagnostics.md) | Network failures are the most common hard failures, and today they end in a silent CAPRF timeout. A serial status line and a UEFI result record cost a few days and need no new dependency. | Structured serial status line per phase and a `BootyLastResult` UEFI variable. |
-| 3 | [Log shipping](proposal-log-shipping.md) | The CAPRF log handler drops lines when its 256-line buffer is full, exactly when things go wrong, and logs before kexec or reboot are lost. Fixing the buffer policy and the flush is local to BOOTy. | Error-priority ring for the CAPRF sink with counted drops, and a flush with deadline before every handoff. |
-| 4 | [CAPI integration: event contract](proposal-capi-integration.md) | The drop-in needs CAPRF to stop parsing log text and to receive inventory, firmware and health data. A typed event contract unblocks both, and bm4x checks can consume it. | `EVENTS_URL` emitter for step events with a published JSON schema. |
-| 5 | [Hardware watchdog](proposal-hardware-watchdog.md) | A hung run today waits for the CAPRF timeout and power cycle without a reason. A watchdog with progress-based petting is small and independent. | `/dev/watchdog` supervisor with step progress, default off. |
-| 6 | [Time sync before TLS](proposal-time-sync.md) | Wrong RTC clocks break TLS and push operators to `SKIP_TLS_VERIFY`. A sync from the CAPRF `Date` header with a pinned CA is small. | CAPRF `Date` sync with pinned CA and skew reporting. |
-| 7 | [Credentials and machine identity](proposal-credential-identity.md) | The bearer token travels in the ISO path and in vars; single-use tokens and certificate identity reduce the main security exposure of the boot media. | CAPRF single-use bootstrap tokens (CAPRF MR), then `IDENTITY_MODE=cert`. |
-| 8 | [SR-IOV, NIC, DPU and GPU configuration](proposal-sriov-nic-config.md) | The T-CaaS SR-IOV and DRA work needs firmware-level prerequisites and a reported handoff contract. The inventory part has no dependency. | Kernel-only SR-IOV inventory fields for all NIC families. |
-| 9 | [Image delivery: resume and throughput](proposal-image-delivery.md) | A mid-download break restarts the image at byte zero; resume and decoder concurrency shorten provisioning and reduce failed runs. | zstd decoder concurrency behind a benchmark, then Range resume. |
-| 10 | [Disk lifecycle](proposal-disk-lifecycle.md) and [certified decommissioning](proposal-certified-decommission.md) | Data loss and compliance risk. Starts after the in-flight secure-erase fix lands, so it is ranked lower for now. | Erase in all modes (`ERASE_LEVEL`, `ERASE_SCOPE`) on top of the in-flight fix. |
+Status as of 2026-10-18. "Merged" means the first PRs of the proposal are on
+`main`; the rest of each proposal stays open.
 
-Recommended start now (no overlap with work in flight): ranks 1, 2 and 3.
-Rank 2 uses the codes from rank 1, so stack it on rank 1.
+| Rank | Proposal | Why now | Status |
+|------|----------|---------|--------|
+| 1 | [Metrics: failure codes and step data](proposal-provisioning-metrics.md) | Every other observability item needs stable failure codes and step timings. | Merged: failure codes and step telemetry (#706, [failure-codes.md](failure-codes.md)). Open: snapshot event, Prometheus endpoint, protected push. |
+| 2 | [Out-of-band diagnostics](proposal-bmc-out-of-band-diagnostics.md) | Network failures ended in a silent CAPRF timeout. | Merged: `BOOTY1` serial status line and `BootyLastResult` UEFI record (#718). Open: SEL records, CAPRF readers. |
+| 3 | [Log shipping](proposal-log-shipping.md) | The CAPRF log handler dropped lines when its buffer was full, and logs before the handoff were lost. | Merged: bounded log ring with level-aware eviction and flush deadline (#711). Open: JSON schema, other sinks, kernel log, pstore. |
+| 4 | [CAPI integration: event contract](proposal-capi-integration.md) | The drop-in needs CAPRF to stop parsing log text and to receive inventory, firmware and health data. | Partly: the success message names the handoff (#724). Open: `EVENTS_URL` contract and CAPRF receivers. |
+| 5 | [Hardware watchdog](proposal-hardware-watchdog.md) | A hung run waited for the CAPRF timeout without a reason. | Merged: watchdog armed and petted on progress, handover at kexec and reboot (#721). |
+| 6 | [Time sync before TLS](proposal-time-sync.md) | Wrong RTC clocks broke TLS. | Merged: clock sync before the first TLS check, RTC write-back (#713, #740). |
+| 7 | [Credentials and machine identity](proposal-credential-identity.md) | The bearer token travels in the ISO path and in vars. | Open. TPM evidence fixes merged (#707) as a prerequisite. |
+| 8 | [SR-IOV, NIC, DPU and GPU configuration](proposal-sriov-nic-config.md) | The T-CaaS SR-IOV and DRA work needs firmware prerequisites and a handoff contract. | Merged: SR-IOV inventory per PF port (#709), profiles with drift check (#717), runtime settings through kernel interfaces (#719), [sriov.md](sriov.md). Open: vendor firmware backends (#726), KVM igb scenario (#728). |
+| 9 | [Image delivery: resume and throughput](proposal-image-delivery.md) | A mid-download break restarts the image at byte zero. | Open. Fast cycle design and timing merged (#714, #715, [agent-fast-cycle.md](agent-fast-cycle.md)); standby latency work open (#716, #730). |
+| 10 | [Disk lifecycle](proposal-disk-lifecycle.md) and [certified decommissioning](proposal-certified-decommission.md) | Data loss and compliance risk. | Merged: secure erase must not silently fall back (#704). Open: erase in all modes, verification, report. |
+
+Related work merged or in flight since this index was written:
+
+- kexec: GRUB default entry resolution with an allow-list (#720), handoff
+  named in the success message (#724), a real KVM kexec scenario with the EFI
+  runtime check (#725). Open: BGP Cease and BFD AdminDown before kexec and
+  reboot (#723); the limitations page `docs/kexec.md` (#705).
+- UEFI and Secure Boot ISO boot with lockdown measurements: open (#737).
+- Cable check: in progress (#727, #729, #731, #734, #735).
+- Ramdisk on Debian 13 with the 6.12 kernel (#701) and smaller ramdisks (#722).
+
+Next to start (no overlap with work in flight): the `EVENTS_URL` event
+contract (rank 4), the metrics snapshot event on top of the merged codes
+(rank 1), and the SEL record writer (rank 2).
 
 ## Prioritized roadmap
 
@@ -118,9 +130,9 @@ disk lifecycle (2) -> certified decommission (38), burn-in (33)
 
 ## Quick wins (one PR each, under three days)
 
-1. Serial status line and UEFI result variable
+1. Done (#718): serial status line and UEFI result variable
    ([out-of-band diagnostics](proposal-bmc-out-of-band-diagnostics.md)).
-2. Failure code table and step tracker wiring
+2. Done (#706): failure code table and step tracker wiring
    ([metrics](proposal-provisioning-metrics.md)).
 3. Raise zstd decoder concurrency, behind a benchmark
    ([image delivery](proposal-image-delivery.md)).
@@ -138,21 +150,21 @@ proposals, not separate changes in this PR.
 
 | Finding | Where | Proposal |
 |---------|-------|----------|
-| `pkg/tpm` assigns PCR 8, 9, 10, 14, 15 to BOOTy. These collide with GRUB, IMA, shim MokList and systemd (UAPI registry, verify). The cryptenroll proposal binds LUKS to PCR 14. | `pkg/tpm/pcr.go`, `docs/proposal-cryptenroll-tpm.md` | [measured boot](proposal-measured-boot-ab.md) |
-| The quote AK is not a restricted key, and there is no EK credential activation. `VerifyQuoteSignature` uses the key in the quote. | `pkg/tpm/attest.go` | [measured boot](proposal-measured-boot-ab.md) |
+| `pkg/tpm` assigns PCR 8, 9, 10, 14, 15 to BOOTy. These collide with GRUB, IMA, shim MokList and systemd (UAPI registry, verify). The cryptenroll proposal binds LUKS to PCR 14. Fixed in #707 (one PCR, 23; cryptenroll uses PCR 7). | `pkg/tpm/pcr.go`, `docs/proposal-cryptenroll-tpm.md` | [measured boot](proposal-measured-boot-ab.md) |
+| The quote AK is not a restricted key, and there is no EK credential activation. `VerifyQuoteSignature` uses the key in the quote. Fixed in #707 (restricted AK, credential activation, `VerifyQuote`). | `pkg/tpm/attest.go` | [measured boot](proposal-measured-boot-ab.md) |
 | `pkg/tpm` and `pkg/disk/luks` are not wired into the provisioning flow. | `grep` of non-test importers | [measured boot](proposal-measured-boot-ab.md) |
-| Secure erase falls back to `wipefs` on failure, on frozen drives and on drives without ATA security, and the run succeeds. SAS disks take the `hdparm` path. | `pkg/disk/manager.go` | [disk lifecycle](proposal-disk-lifecycle.md) |
+| Secure erase falls back to `wipefs` on failure, on frozen drives and on drives without ATA security, and the run succeeds. SAS disks take the `hdparm` path. Fixed in #704. | `pkg/disk/manager.go` | [disk lifecycle](proposal-disk-lifecycle.md) |
 | CAPRF disables Secure Boot before it boots BOOTy, so PCR 7 shows Secure Boot off for the provisioning boot. | CAPRF `internal/redfish/system.go` | [measured boot](proposal-measured-boot-ab.md), [UEFI](proposal-uefi-management.md) |
 | CAPRF `main` has no receiver for `INVENTORY_URL`, `FIRMWARE_URL` and `HEALTH_CHECK_URL`, and derives image phases from log text. | CAPRF `internal/server/server.go`, `internal/provision/manager.go` | [CAPI](proposal-capi-integration.md) |
-| kexec parses only `grub.cfg` `menuentry` blocks. BLS-based targets (RHEL-likes, Fedora) need a BLS parser. | `pkg/kexec/grub.go` | [OS targets](proposal-os-targets.md) |
+| kexec parses only `grub.cfg` `menuentry` blocks. BLS-based targets (RHEL-likes, Fedora) need a BLS parser. #720 now resolves the GRUB default with an allow-list and reboots for BLS; a BLS parser is still needed for kexec. | `pkg/kexec/grub.go` | [OS targets](proposal-os-targets.md) |
 | The Secure Boot verifier fallback path is `BOOTX64.EFI` only. | `pkg/secureboot/verify.go` | [multi-arch](proposal-multiarch-provisioning.md) |
 | Image download retries stop once the body starts; a mid-body break restarts at byte zero. | `pkg/image/stream.go` | [image delivery](proposal-image-delivery.md) |
 | No Go fuzz tests and no benchmarks exist. | `grep` of `_test.go` files | [testing](proposal-testing-strategy.md) |
 | `pkg/bootloader` (systemd-boot scaffolding) was removed in #463; GRUB is hard-coded in kexec, EFI fallback and entry creation. | `pkg/kexec/grub.go`, `pkg/provision/configurator.go` | [systemd-boot](proposal-systemd-boot.md) |
 | The `flatcar-like-usra-system-ab` KVM scenario copies a synthetic `USR-A` into BOOTy's own A/B layout; no real Flatcar boot, Ignition or gptprio is tested. | `test/e2e/kvm/ab_sysext_test.go` | [Flatcar](proposal-flatcar.md) |
-| The CAPRF log handler drops lines when its 256-line buffer is full. | `main.go`, `pkg/caprf/loghandler.go` | [log shipping](proposal-log-shipping.md) |
-| The telemetry collector is created but no step feeds it; there is no metrics endpoint. | `pkg/provision/orchestrator.go`, `pkg/telemetry/` | [metrics](proposal-provisioning-metrics.md) |
-| BOOTy does not sync time; TLS depends on the RTC. | `docs/caprf-integration.md` | [time sync](proposal-time-sync.md) |
+| The CAPRF log handler drops lines when its 256-line buffer is full. Fixed in #711 (level-aware ring, flush deadline). | `main.go`, `pkg/caprf/loghandler.go` | [log shipping](proposal-log-shipping.md) |
+| The telemetry collector is created but no step feeds it; there is no metrics endpoint. Step telemetry fixed in #706; no endpoint yet. | `pkg/provision/orchestrator.go`, `pkg/telemetry/` | [metrics](proposal-provisioning-metrics.md) |
+| BOOTy does not sync time; TLS depends on the RTC. Fixed in #713. | `docs/caprf-integration.md` | [time sync](proposal-time-sync.md) |
 | `RESCUE_TIMEOUT` is parsed but unused; rescue access uses static keys. | `docs/configuration.md`, `pkg/rescue/rescue.go` | [rescue and maintenance](proposal-rescue-maintenance.md) |
 | The DHCP client is IPv4 only. | `pkg/network/dhcp.go` | [IPv6-only](proposal-ipv6-only.md) |
 | The bond lab does not negotiate LACP; no partner check exists. | `README.md`, `pkg/network/bond.go` | [LACP](proposal-lacp-bonds.md) |

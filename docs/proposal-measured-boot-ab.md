@@ -55,6 +55,12 @@ is the reference continuous verifier on the node.
 
 ### Findings in the existing library
 
+> **Update:** #707 fixed findings 1 to 5: a restricted AK, credential
+> activation, `VerifyQuote` with a caller-supplied AK and the quoted digest,
+> and one BOOTy PCR (`PCRBooty = 23`; PCR 15 is not used, because kexec keeps
+> the BOOTy values). The design below follows that plan. Open question 1 is
+> answered by #707.
+
 These are not runtime bugs today, because nothing calls the code. They must
 be fixed before any wiring:
 
