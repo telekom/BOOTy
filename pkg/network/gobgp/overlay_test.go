@@ -4648,3 +4648,67 @@ func TestAPIPathKeepsWithdrawAndAttributes(t *testing.T) {
 		}
 	}
 }
+
+// bridgeNeigh returns the neighbor (not FDB) operations on ip.
+func bridgeNeigh(ops []*netlink.Neigh, ip string) []*netlink.Neigh {
+	var out []*netlink.Neigh
+	for _, n := range ops {
+		if n.Family != syscall.AF_BRIDGE && n.IP.Equal(net.ParseIP(ip)) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// The Type-5 gateway neighbor (VTEP IP -> router MAC) and the Type-2
+// neighbor (IP -> MAC) are one kernel entry when a MAC/IP route carries
+// the VTEP IP. The Type-2 one wins; a Type-5 withdraw keeps it, and the
+// last Type-2 withdraw brings the Type-5 entry back instead of deleting it.
+func TestType2AndType5ShareTheBridgeNeighbor(t *testing.T) {
+	const vtep, mac, rmac = "10.0.0.1", "aa:bb:cc:00:00:01", "62:db:b8:c1:80:52"
+	t5 := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: "0.0.0.0"}
+	t2 := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: mac, IpAddress: vtep}
+
+	t.Run("Type-5 withdraw keeps the Type-2 entry", func(t *testing.T) {
+		o, m := type2TestOverlay()
+		o.handleType2Route(t2, "10.0.0.2", 0, false)
+		o.handleType5Route(t5, vtep, mustParseMAC(t, rmac), false)
+		if sets := bridgeNeigh(m.sets, vtep); len(sets) != 1 || sets[0].HardwareAddr.String() != mac {
+			t.Fatalf("neighbor sets %v, want only the Type-2 entry", sets)
+		}
+		o.handleType5Route(t5, vtep, nil, true)
+		if dels := bridgeNeigh(m.dels, vtep); len(dels) != 0 {
+			t.Fatalf("the Type-5 withdraw deleted the Type-2 neighbor: %v", dels)
+		}
+	})
+	t.Run("last Type-2 withdraw restores the Type-5 entry", func(t *testing.T) {
+		o, m := type2TestOverlay()
+		o.handleType5Route(t5, vtep, mustParseMAC(t, rmac), false)
+		o.handleType2Route(t2, "10.0.0.2", 0, false)
+		o.handleType2Route(t2, "10.0.0.2", 0, true)
+		sets := bridgeNeigh(m.sets, vtep)
+		if dels := bridgeNeigh(m.dels, vtep); len(dels) != 0 || len(sets) != 3 || sets[2].HardwareAddr.String() != rmac {
+			t.Fatalf("sets %v, deletes %v; want Type-5, Type-2, then the Type-5 entry again", sets, bridgeNeigh(m.dels, vtep))
+		}
+		o.handleType5Route(t5, vtep, nil, true)
+		if dels := bridgeNeigh(m.dels, vtep); len(dels) != 1 {
+			t.Fatalf("deletes %v, want the Type-5 entry gone with its withdraw", dels)
+		}
+	})
+}
+
+// Equal routes of one IP from one VTEP (a duplicate IP) take the lowest
+// MAC, whatever the arrival order, so the entry does not move.
+func TestType2NeighborTiebreakOnMAC(t *testing.T) {
+	for _, order := range [][]string{{"aa:bb:cc:00:00:02", "aa:bb:cc:00:00:01"}, {"aa:bb:cc:00:00:01", "aa:bb:cc:00:00:02"}} {
+		for range 5 {
+			o, _ := type2TestOverlay()
+			for _, mac := range order {
+				o.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{MacAddress: mac, IpAddress: "10.0.0.50"}, "10.0.0.2", 0, false)
+			}
+			if got := o.type2Neigh["10.0.0.50"]; got != "aa:bb:cc:00:00:01" {
+				t.Fatalf("order %v: neighbor MAC %s, want the lowest", order, got)
+			}
+		}
+	}
+}
