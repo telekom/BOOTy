@@ -104,11 +104,18 @@ func TestRouteDistinguisher(t *testing.T) {
 	if rd, _ = apiutil.UnmarshalRD(a); rd.String() != "192.0.2.17:1" {
 		t.Fatalf("empty RD = %v, want 192.0.2.17:1", rd)
 	}
-	for rd, ok := range map[string]bool{"nope": false, "65000:7": true, "192.0.2.17:2": true} {
+	for rd, ok := range map[string]bool{
+		"nope": false, "65000:7": true, "192.0.2.17:2": true, "4210000017:9": true,
+		"4210000017:70000": false, "1.2.3.4:70000": false, "65000:5000000000": false,
+	} {
 		c := &Config{ASN: 65000, RouterID: "10.0.0.1", PeerMode: network.PeerModeUnnumbered, ProvisionVNI: 100,
 			ProvisionGateway: testProvisionGateway, MinEstablishedPeers: 1, RD: rd}
 		if err := c.Validate(); (err == nil) != ok {
 			t.Errorf("Validate with RD %s = %v", rd, err)
+		}
+		c.RD, c.L2RD = "", rd
+		if err := c.Validate(); (err == nil) != ok {
+			t.Errorf("Validate with L2 RD %s = %v", rd, err)
 		}
 	}
 }

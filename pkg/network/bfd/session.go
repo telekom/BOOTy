@@ -15,8 +15,10 @@ type Timers struct {
 
 // requiredMinEchoRx is the Required Min Echo RX Interval that FRR bfdd
 // advertises by default (bfd.h BFD_DEF_REQ_MIN_ECHO_RX), also with echo
-// mode off. A peer's echo packets are addressed to the peer itself, so the
-// forwarding plane returns them; bfdd does not answer them either.
+// mode off. A peer's echo packets are addressed to the peer itself, so
+// only IP forwarding returns them; BOOTy does not loop them back. FRR 10.3
+// bfdd does not either for IPv4, but loops IPv6 echo packets back in
+// software (bp_bfd_echo_in).
 const requiredMinEchoRx = 50 * time.Millisecond
 
 // slowTx is the transmit interval while the session is not Up (RFC 5880

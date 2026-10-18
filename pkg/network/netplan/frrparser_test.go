@@ -486,3 +486,35 @@ func TestApplyEVPNModeL2RD(t *testing.T) {
 			cfg.EVPNL2Enabled, cfg.EVPNType5Only, cfg.EVPNRDIndex, cfg.BGPInstances)
 	}
 }
+
+// The rd of the L3VNI VRF in frr.conf becomes the EVPN RD, unchanged for
+// a 4-byte ASN, with the VRF's instance id.
+func TestApplyFRRParamsL3VNIRD(t *testing.T) {
+	const conf = `vrf provision
+ vni 3000
+exit-vrf
+router bgp 4210000017
+ neighbor 192.0.2.1 remote-as external
+ address-family l2vpn evpn
+  neighbor 192.0.2.1 activate
+  advertise-all-vni
+ exit-address-family
+exit
+router bgp 4210000017 vrf provision
+ address-family l2vpn evpn
+  rd 4210000017:9
+  advertise ipv4 unicast
+ exit-address-family
+exit
+`
+	params, err := ParseFRRConfigBytes([]byte(conf))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &network.Config{ProvisionVNI: 3000}
+	applyFRRParams(params, cfg)
+	if !cfg.EVPNType5Only || cfg.EVPNRD != "4210000017:9" || cfg.EVPNRDIndex != 2 || cfg.BGPInstances != 2 {
+		t.Fatalf("Type-5 only %v RD %q index %d instances %d; want true 4210000017:9 2 2",
+			cfg.EVPNType5Only, cfg.EVPNRD, cfg.EVPNRDIndex, cfg.BGPInstances)
+	}
+}

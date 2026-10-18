@@ -23,8 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
-
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frr"
 )
@@ -435,8 +433,8 @@ func (c *Config) validatePolicy() error {
 // validateEVPNCommunities checks the route distinguishers and targets.
 func (c *Config) validateEVPNCommunities() error {
 	for _, rd := range []string{c.RD, c.L2RD} {
-		if _, err := bgp.ParseRouteDistinguisher(rd); rd != "" && err != nil {
-			return fmt.Errorf("EVPN route distinguisher %q (EVPN_RD): %w", rd, err)
+		if _, err := parseRouteDistinguisher(rd); rd != "" && err != nil {
+			return fmt.Errorf("EVPN route distinguisher (EVPN_RD): %w", err)
 		}
 	}
 	for _, spec := range slices.Concat(c.ImportRTs, c.ExportRTs) {

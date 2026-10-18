@@ -2221,6 +2221,15 @@ func TestNetworkConfigFromMachineConfigDevices(t *testing.T) {
 	}
 }
 
+// EVPN_RD reaches the network config unchanged.
+func TestNetworkConfigFromMachineConfigEVPNRD(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Network.EVPN.RD = "4210000017:9"
+	if n := networkConfigFromMachineConfig(cfg); n.EVPNRD != "4210000017:9" {
+		t.Fatalf("EVPNRD = %q, want 4210000017:9", n.EVPNRD)
+	}
+}
+
 func TestNetworkConfigFromMachineConfigOverlayVRF(t *testing.T) {
 	for _, tt := range []struct{ name, wantName string }{{"default", ""}, {"Vrf_cust", "Vrf_cust"}} {
 		cfg := &config.MachineConfig{}
