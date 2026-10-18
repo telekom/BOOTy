@@ -230,12 +230,13 @@ func TestLoadModuleDirLoadsDeviceDriversOneAtATime(t *testing.T) {
 	origLoad := loadModuleFn
 	t.Cleanup(func() { loadModuleFn = origLoad })
 	var mu sync.Mutex
-	inFlight, overlaps := 0, 0
+	inFlight, overlaps, deviceLoads := 0, 0, 0
 	loadModuleFn = func(path string) error {
 		if !strings.HasSuffix(filepath.Base(path), "_nic.ko") {
 			return nil
 		}
 		mu.Lock()
+		deviceLoads++
 		inFlight++
 		if inFlight > 1 {
 			overlaps++
@@ -248,8 +249,13 @@ func TestLoadModuleDirLoadsDeviceDriversOneAtATime(t *testing.T) {
 		return nil
 	}
 
-	if _, failed := loadModuleDir(dir, func(string) bool { return false }); len(failed) != 0 {
-		t.Fatalf("failed = %v", failed)
+	loaded, failed := loadModuleDir(dir, func(string) bool { return false })
+	if len(failed) != 0 || len(loaded) != 4 {
+		t.Fatalf("loaded = %v, failed = %v, want all 4 modules loaded", loaded, failed)
+	}
+	// The overlap check below is only meaningful if the device loads ran.
+	if deviceLoads != 3 {
+		t.Fatalf("device driver loads = %d, want 3", deviceLoads)
 	}
 	if overlaps != 0 {
 		t.Fatalf("%d device driver loads overlapped, want one at a time", overlaps)
