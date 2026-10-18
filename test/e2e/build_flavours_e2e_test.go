@@ -831,8 +831,9 @@ func TestDefaultContainsNetworkAndSSHE2E(t *testing.T) {
 	assertContains(t, files, "bin/curl", "curl")
 	assertContains(t, files, "bin/dropbear", "dropbear SSH")
 	assertContains(t, files, "bin/dropbearkey", "dropbearkey")
-	assertContains(t, files, "bin/lldpcli", "LLDP client")
-	assertContains(t, files, "sbin/lldpd", "LLDP daemon")
+	// LLDP diagnosis is "booty lldp"; lldpd and lldpcli are not shipped.
+	assertNotContains(t, files, "bin/lldpcli", "LLDP client")
+	assertNotContains(t, files, "sbin/lldpd", "LLDP daemon")
 	assertContains(t, files, "etc/ssl/certs/ca-certificates.crt", "CA certificates")
 	assertContains(t, files, "bin/gpgv", "GPG signature verifier")
 }
@@ -929,7 +930,7 @@ func TestGoBGPContainsNetworkAndSSHE2E(t *testing.T) {
 	assertContains(t, files, "bin/ethtool", "ethtool")
 	assertContains(t, files, "bin/curl", "curl")
 	assertContains(t, files, "bin/dropbear", "dropbear SSH")
-	assertContains(t, files, "bin/lldpcli", "LLDP client")
+	assertNotContains(t, files, "bin/lldpcli", "LLDP client")
 	assertContains(t, files, "etc/ssl/certs/ca-certificates.crt", "CA certificates")
 	assertContains(t, files, "bin/gpgv", "GPG signature verifier")
 }
