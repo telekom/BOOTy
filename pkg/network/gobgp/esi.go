@@ -54,9 +54,10 @@ type fdbNexthop struct {
 // type1Path is one live EAD route: the ES, its VTEP and whether it is the
 // EAD-per-ES route.
 type type1Path struct {
-	esi   string
-	vtep  string
-	perES bool
+	esi          string
+	vtep         string
+	perES        bool
+	singleActive bool // Single-Active flag of the ESI Label community (per-ES route)
 }
 
 // esGroup is the installed FDB nexthop group of an ES and its VTEPs.
@@ -85,7 +86,7 @@ func type1Key(route *apipb.EVPNEthernetAutoDiscoveryRoute) string {
 
 // handleType1Route records or removes an EAD route and updates the FDB
 // nexthop group of its ES and the MACs that use it.
-func (o *OverlayTier) handleType1Route(route *apipb.EVPNEthernetAutoDiscoveryRoute, vtep string, withdraw bool) {
+func (o *OverlayTier) handleType1Route(route *apipb.EVPNEthernetAutoDiscoveryRoute, vtep string, singleActive, withdraw bool) {
 	esi := esiKey(route.GetEsi())
 	if esi == "" {
 		return
@@ -96,15 +97,57 @@ func (o *OverlayTier) handleType1Route(route *apipb.EVPNEthernetAutoDiscoveryRou
 	key := type1Key(route)
 	o.type2Mu.Lock()
 	defer o.type2Mu.Unlock()
+	if o.type2Stopped {
+		return
+	}
 	if withdraw {
 		delete(o.type1Paths, key)
 	} else {
 		if o.type1Paths == nil {
 			o.type1Paths = map[string]type1Path{}
 		}
-		o.type1Paths[key] = type1Path{esi: esi, vtep: vtep, perES: route.GetEthernetTag() == maxET}
+		perES := route.GetEthernetTag() == maxET
+		o.type1Paths[key] = type1Path{esi: esi, vtep: vtep, perES: perES, singleActive: perES && singleActive}
 	}
 	o.syncES(esi)
+	o.syncESMACs(esi) // the Single-Active flag may have changed
+}
+
+// esiSingleActive reports the Single-Active flag of the ESI Label extended
+// community of a path (RFC 7432 section 7.5).
+func esiSingleActive(path *apipb.Path) bool {
+	for _, attr := range path.GetPattrs() {
+		msg, err := attr.UnmarshalNew()
+		if err != nil {
+			continue
+		}
+		ext, ok := msg.(*apipb.ExtendedCommunitiesAttribute)
+		if !ok {
+			continue
+		}
+		for _, c := range ext.GetCommunities() {
+			m, err := c.UnmarshalNew()
+			if err != nil {
+				continue
+			}
+			if l, ok := m.(*apipb.ESILabelExtended); ok {
+				return l.GetIsSingleActive()
+			}
+		}
+	}
+	return false
+}
+
+// esSingleActive reports a single-active ES: an EAD-per-ES route of it has
+// the Single-Active flag (RFC 7432 section 14.1.1: one is enough). The
+// caller holds type2Mu.
+func (o *OverlayTier) esSingleActive(esi string) bool {
+	for _, p := range o.type1Paths {
+		if p.esi == esi && p.singleActive {
+			return true
+		}
+	}
+	return false
 }
 
 // activeVTEPs returns the VTEPs with both EAD routes for the ES, sorted.
@@ -142,12 +185,7 @@ func (o *OverlayTier) syncES(esi string) {
 		return
 	}
 	if len(vteps) == 0 {
-		delete(o.esGroups, esi)
-		o.syncESMACs(esi) // uninstall before the group goes
-		if err := o.netlinkOps.NexthopDel(old.id); err != nil {
-			o.log.Debug("failed to delete ES nexthop group", "esi", esi, "id", old.id, "error", err)
-		}
-		o.dropUnusedVTEPNexthops()
+		o.dropESGroup(esi, old, had)
 		o.log.Info("ES has no active VTEP, its MACs are not installed", "esi", esi)
 		return
 	}
@@ -155,6 +193,7 @@ func (o *OverlayTier) syncES(esi string) {
 	for _, v := range vteps {
 		id, ok := o.vtepNexthopID(v)
 		if !ok {
+			o.dropESGroup(esi, old, had) // the MACs fall back to their VTEP
 			return
 		}
 		members = append(members, id)
@@ -164,7 +203,8 @@ func (o *OverlayTier) syncES(esi string) {
 		g.id = o.nextNexthopID()
 	}
 	if err := o.netlinkOps.NexthopReplace(fdbNexthop{id: g.id, group: members}); err != nil {
-		o.log.Warn("failed to install ES nexthop group", "esi", esi, "vteps", vteps, "error", err)
+		o.log.Warn("failed to install ES nexthop group, its MACs use their VTEP", "esi", esi, "vteps", vteps, "error", err)
+		o.dropESGroup(esi, old, had)
 		return
 	}
 	if o.esGroups == nil {
@@ -174,6 +214,27 @@ func (o *OverlayTier) syncES(esi string) {
 	o.dropUnusedVTEPNexthops()
 	o.log.Info("ES nexthop group", "esi", esi, "id", g.id, "vteps", vteps)
 	o.syncESMACs(esi)
+}
+
+// dropESGroup forgets the group of an ES, moves its MACs off it (to their
+// VTEP while the ES is active, else out of the FDB) and deletes it. The
+// caller holds type2Mu.
+func (o *OverlayTier) dropESGroup(esi string, old esGroup, had bool) {
+	delete(o.esGroups, esi)
+	o.syncESMACs(esi) // before the group goes: the kernel keeps no entry on a deleted group
+	if had {
+		o.deleteNexthop(old.id)
+	}
+	o.dropUnusedVTEPNexthops()
+}
+
+// deleteNexthop deletes a kernel nexthop and keeps its ID for a retry when
+// the delete fails. The caller holds type2Mu.
+func (o *OverlayTier) deleteNexthop(id uint32) {
+	if err := o.netlinkOps.NexthopDel(id); err != nil {
+		o.log.Warn("failed to delete nexthop, retried later", "id", id, "error", err)
+		o.staleNexthops = append(o.staleNexthops, id)
+	}
 }
 
 // syncESMACs updates the FDB entries of the MACs whose best route has the
@@ -206,9 +267,14 @@ func (o *OverlayTier) vtepNexthopID(vtep string) (uint32, bool) {
 	return id, true
 }
 
-// dropUnusedVTEPNexthops deletes the VTEP nexthops that no group uses.
-// The caller holds type2Mu.
+// dropUnusedVTEPNexthops retries the failed nexthop deletes, then deletes
+// the VTEP nexthops that no group uses. The caller holds type2Mu.
 func (o *OverlayTier) dropUnusedVTEPNexthops() {
+	stale := o.staleNexthops
+	o.staleNexthops = nil
+	for _, id := range stale {
+		o.deleteNexthop(id)
+	}
 	for vtep, id := range o.vtepNexthops {
 		used := false
 		for _, g := range o.esGroups {
@@ -217,10 +283,8 @@ func (o *OverlayTier) dropUnusedVTEPNexthops() {
 		if used {
 			continue
 		}
-		if err := o.netlinkOps.NexthopDel(id); err != nil {
-			o.log.Debug("failed to delete VTEP nexthop", "vtep", vtep, "id", id, "error", err)
-		}
 		delete(o.vtepNexthops, vtep)
+		o.deleteNexthop(id)
 	}
 }
 
@@ -230,17 +294,25 @@ func (o *OverlayTier) nextNexthopID() uint32 {
 	return nhIDBase + o.lastNexthopID
 }
 
-// removeESState deletes the nexthop groups and VTEP nexthops at Teardown.
-// The FDB entries that use them go with the VXLAN device. The caller holds
-// type2Mu.
+// removeESState deletes the nexthop groups, then the VTEP nexthops and the
+// nexthops of earlier failed deletes, at Teardown, after the FDB entries
+// that use them. Nexthops are global kernel objects: they outlive the VXLAN
+// device. The caller holds type2Mu.
 func (o *OverlayTier) removeESState() {
+	ids := make([]uint32, 0, len(o.esGroups)+len(o.vtepNexthops)+len(o.staleNexthops))
 	for _, g := range o.esGroups {
-		_ = o.netlinkOps.NexthopDel(g.id)
+		ids = append(ids, g.id)
 	}
 	for _, id := range o.vtepNexthops {
-		_ = o.netlinkOps.NexthopDel(id)
+		ids = append(ids, id)
 	}
-	o.type1Paths, o.esGroups, o.vtepNexthops = nil, nil, nil
+	ids = append(ids, o.staleNexthops...)
+	for _, id := range ids {
+		if err := o.netlinkOps.NexthopDel(id); err != nil {
+			o.log.Warn("failed to delete nexthop at teardown", "id", id, "error", err)
+		}
+	}
+	o.type1Paths, o.esGroups, o.vtepNexthops, o.staleNexthops = nil, nil, nil, nil
 }
 
 // nhGroupKey is the installed-FDB marker of a MAC that uses a group.

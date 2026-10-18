@@ -145,8 +145,8 @@ type OverlayTier struct {
 	type2Mu    sync.Mutex
 	type2Paths map[string]map[string]type2Path
 	type2FDB   map[string]string
-	// type2Stopped is set by Teardown, so a Type-2 callback that is still
-	// in flight does not install anything afterwards.
+	// type2Stopped is set by Teardown, so a Type-1 or Type-2 callback that
+	// is still in flight does not install anything afterwards.
 	type2Stopped bool
 	// type2Neigh is the MAC of the neighbor entry installed on the bridge
 	// for each IP of a Type-2 MAC/IP route, like zebra installs remote
@@ -162,6 +162,9 @@ type OverlayTier struct {
 	esGroups      map[string]esGroup
 	vtepNexthops  map[string]uint32
 	lastNexthopID uint32
+	// staleNexthops are nexthop IDs whose delete failed; they are retried
+	// at the next ES change and at Teardown.
+	staleNexthops []uint32
 	// type5GatewayMAC tracks Type-5 gateway IP → router MAC mappings so
 	// withdrawals without extended communities can still delete the neighbor.
 	// type5GatewayMu serializes gateway MAC/reference updates and the refcount
@@ -880,7 +883,7 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 		}
 	case nlri.GetEvpnEthernetAd() != nil:
 		if o.cfg.EnableL2 {
-			o.handleType1Route(nlri.GetEvpnEthernetAd(), vtep, withdraw)
+			o.handleType1Route(nlri.GetEvpnEthernetAd(), vtep, esiSingleActive(p), withdraw)
 		}
 	case nlri.GetEvpnMulticast() != nil:
 		if o.cfg.EnableL2 {
@@ -1997,7 +2000,7 @@ func (o *OverlayTier) syncType2FDB(mac net.HardwareAddr) {
 		err = o.netlinkOps.NeighSet(fdb(best.vtep))
 	}
 	if err != nil {
-		o.log.Debug("failed to add/update FDB entry", "mac", macStr, "via", want, "error", err)
+		o.log.Warn("failed to add/update FDB entry", "mac", macStr, "via", want, "error", err)
 		return
 	}
 	o.log.Info("installed FDB entry from type-2 route", "mac", macStr, "via", want, "seq", best.seq, "esi", best.esi)
@@ -2009,15 +2012,24 @@ func (o *OverlayTier) syncType2FDB(mac net.HardwareAddr) {
 
 // wantedFDB is the FDB entry for the best route of a MAC: its VTEP, the
 // nexthop group of its ES, or "" for none. The caller holds type2Mu.
+//
+// A single-active ES (RFC 7432 sections 8.4 and 14.1.1: an EAD-per-ES route
+// with the Single-Active flag of the ESI Label community) uses only the
+// primary PE, the VTEP of the MAC route; FRR aliases there too, but the RFC
+// MUST wins, because a backup PE drops the traffic. When the group cannot
+// be installed (FDB nexthops need Linux 5.8), the MAC also uses its VTEP.
 func (o *OverlayTier) wantedFDB(best *type2Path) string {
 	switch {
 	case best == nil:
 		return ""
-	case best.esi == "":
+	case best.esi == "", o.esSingleActive(best.esi):
 		return best.vtep.String()
 	}
 	if g, ok := o.esGroups[best.esi]; ok {
 		return nhGroupKey(g.id)
+	}
+	if len(o.activeVTEPs(best.esi)) > 0 {
+		return best.vtep.String() // the ES is active, its group failed
 	}
 	return ""
 }
@@ -2032,7 +2044,9 @@ func (o *OverlayTier) deleteType2FDB(idx int, mac net.HardwareAddr, installed st
 		err = o.netlinkOps.NeighDel(vtepEntry)
 	}
 	if err != nil {
-		o.log.Debug("failed to delete FDB entry", "mac", mac.String(), "via", installed, "error", err)
+		// The kernel refuses to replace a VTEP entry with a group entry or
+		// the other way round, so a failed delete makes the next set fail.
+		o.log.Warn("failed to delete FDB entry", "mac", mac.String(), "via", installed, "error", err)
 	} else {
 		o.log.Info("removed FDB entry", "mac", mac.String(), "via", installed)
 	}

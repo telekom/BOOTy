@@ -48,6 +48,9 @@ type mockOverlayNetlinkOps struct {
 	nexthopDels     []uint32
 	fdbNhids        []string
 	fdbDels         []string
+	nexthopErr      error // NexthopReplace of a group fails
+	nexthopDelErr   error
+	fdbNhidErr      error
 }
 
 func (m *mockOverlayNetlinkOps) LinkByName(name string) (netlink.Link, error) {
@@ -95,17 +98,20 @@ func (m *mockOverlayNetlinkOps) RouteDel(route *netlink.Route) error {
 
 func (m *mockOverlayNetlinkOps) NexthopReplace(nh fdbNexthop) error {
 	m.nexthops = append(m.nexthops, nh)
+	if nh.vtep == nil {
+		return m.nexthopErr
+	}
 	return nil
 }
 
 func (m *mockOverlayNetlinkOps) NexthopDel(id uint32) error {
 	m.nexthopDels = append(m.nexthopDels, id)
-	return nil
+	return m.nexthopDelErr
 }
 
 func (m *mockOverlayNetlinkOps) FDBNhidSet(_ int, mac net.HardwareAddr, nhid uint32) error {
 	m.fdbNhids = append(m.fdbNhids, fmt.Sprintf("%s nhid %d", mac, nhid))
-	return nil
+	return m.fdbNhidErr
 }
 
 func (m *mockOverlayNetlinkOps) FDBDel(_ int, mac net.HardwareAddr) error {
@@ -4834,7 +4840,7 @@ func TestType2ESIAliasingAndMassWithdraw(t *testing.T) {
 		if withdraw {
 			vtep = "" // a withdraw may come without next hop
 		}
-		o.handleType1Route(&apipb.EVPNEthernetAutoDiscoveryRoute{Rd: rd(n), Esi: esi, EthernetTag: tag}, vtep, withdraw)
+		o.handleType1Route(&apipb.EVPNEthernetAutoDiscoveryRoute{Rd: rd(n), Esi: esi, EthernetTag: tag}, vtep, false, withdraw)
 	}
 	lastGroup := func() []uint32 {
 		for i := len(mock.nexthops) - 1; i >= 0; i-- {
