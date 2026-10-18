@@ -233,6 +233,11 @@ func (d *DHCPMode) startClient(iface *net.Interface, hostname string, leased cha
 	if d.clients == nil {
 		d.clients = map[int]*nicClient{}
 	}
+	if d.clients[link.Attrs().Index] != nil {
+		d.mu.Unlock()
+		nc.client.Stop() // a restart put a client there meanwhile
+		return
+	}
 	d.clients[link.Attrs().Index] = nc
 	d.mu.Unlock()
 }
@@ -251,12 +256,21 @@ func (d *DHCPMode) watchNewNICs(hostname string, leased chan<- string) {
 	d.watchDone = done
 	d.mu.Unlock()
 	go func() {
+		notNIC := map[int]bool{} // links that are no physical NIC: not checked again
 		for u := range updates {
-			if u.Header.Type != unix.RTM_NEWLINK || u.Link == nil {
+			if u.Link == nil {
+				continue
+			}
+			idx := u.Attrs().Index
+			if u.Header.Type == unix.RTM_DELLINK {
+				delete(notNIC, idx) // the index can come back for another link
+				continue
+			}
+			if u.Header.Type != unix.RTM_NEWLINK || notNIC[idx] {
 				continue
 			}
 			d.mu.Lock()
-			_, known := d.clients[u.Attrs().Index]
+			_, known := d.clients[idx]
 			stopped := d.stopped
 			d.mu.Unlock()
 			if known || stopped {
@@ -266,12 +280,13 @@ func (d *DHCPMode) watchNewNICs(hostname string, leased chan<- string) {
 			if err != nil {
 				continue
 			}
-			for i := range ifaces {
-				if ifaces[i].Index == u.Attrs().Index {
-					d.log.Info("Starting DHCP on a new NIC", "interface", ifaces[i].Name)
-					d.startClient(&ifaces[i], hostname, leased)
-				}
+			i := slices.IndexFunc(ifaces, func(n net.Interface) bool { return n.Index == idx })
+			if i < 0 {
+				notNIC[idx] = true
+				continue
 			}
+			d.log.Info("Starting DHCP on a new NIC", "interface", ifaces[i].Name)
+			d.startClient(&ifaces[i], hostname, leased)
 		}
 	}()
 }
@@ -363,6 +378,13 @@ func (d *DHCPMode) restartClient(idx int, ifName string, nc *nicClient) {
 	}
 	if d.clients == nil {
 		d.clients = map[int]*nicClient{}
+	}
+	if d.clients[idx] != nil {
+		// The link watch started a client while this one restarted (the
+		// MTU restore of the ended lease sends RTM_NEWLINK).
+		d.mu.Unlock()
+		fresh.Stop()
+		return
 	}
 	d.clients[idx] = &nicClient{client: fresh, start: nc.start}
 	d.mu.Unlock()
