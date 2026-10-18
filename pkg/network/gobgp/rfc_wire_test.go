@@ -73,6 +73,25 @@ func extCommunities(t *testing.T, attrs []bgp.PathAttributeInterface) []bgp.Exte
 	return nil
 }
 
+// checkOriginAndNoNextHop checks RFC 4271 section 5.1.1 (the originator sets
+// ORIGIN, here IGP) and RFC 4760 section 3 (an UPDATE whose NLRI is only in
+// MP_REACH_NLRI should not carry NEXT_HOP).
+func checkOriginAndNoNextHop(t *testing.T, attrs []bgp.PathAttributeInterface) {
+	t.Helper()
+	var origin *bgp.PathAttributeOrigin
+	for _, a := range attrs {
+		switch v := a.(type) {
+		case *bgp.PathAttributeOrigin:
+			origin = v
+		case *bgp.PathAttributeNextHop:
+			t.Errorf("NEXT_HOP attribute %v next to MP_REACH_NLRI", v.Value)
+		}
+	}
+	if origin == nil || origin.Value != bgp.BGP_ORIGIN_ATTR_TYPE_IGP {
+		t.Errorf("ORIGIN = %v, want IGP", origin)
+	}
+}
+
 func mpReachNextHop(t *testing.T, attrs []bgp.PathAttributeInterface) net.IP {
 	t.Helper()
 	for _, a := range attrs {
@@ -85,7 +104,8 @@ func mpReachNextHop(t *testing.T, attrs []bgp.PathAttributeInterface) net.IP {
 }
 
 // TestRFCWireType5 checks the Type-5 route that BOOTy originates for its
-// provision IP: RFC 9136 section 3.1 (length 34, ESI zero, Ethernet Tag
+// provision IP: RFC 4271 section 5.1.1 and RFC 4760 section 3 (ORIGIN IGP,
+// no NEXT_HOP next to MP_REACH_NLRI), RFC 9136 section 3.1 (length 34, ESI zero, Ethernet Tag
 // zero, GW IP zero for the interface-less model of section 4.4.1), RFC 8365
 // section 5.1.3 (VNI in the label field, next hop the NVE address) and the
 // extended communities of RFC 9135 section 8.1 and RFC 9012 (VXLAN tunnel
@@ -128,6 +148,7 @@ func TestRFCWireType5(t *testing.T) {
 	if nh := mpReachNextHop(t, attrs); !nh.Equal(net.ParseIP(wireRouterID)) {
 		t.Errorf("next hop = %s, want the VTEP %s (RFC 8365 section 5.1.3)", nh, wireRouterID)
 	}
+	checkOriginAndNoNextHop(t, attrs)
 	var rt, encap, rmac int
 	for _, ec := range extCommunities(t, attrs) {
 		eb, err := ec.Serialize()
@@ -190,6 +211,7 @@ func TestRFCWireType3(t *testing.T) {
 	if body[12] != 32 || !bytes.Equal(body[13:17], net.ParseIP(wireRouterID).To4()) {
 		t.Errorf("originating router = %x/%d, want %s", body[13:17], body[12], wireRouterID)
 	}
+	checkOriginAndNoNextHop(t, attrs)
 	var pmsi *bgp.PathAttributePmsiTunnel
 	for _, a := range attrs {
 		if p, ok := a.(*bgp.PathAttributePmsiTunnel); ok {
@@ -254,4 +276,5 @@ func TestRFCWireType2(t *testing.T) {
 	if nh := mpReachNextHop(t, attrs); !nh.Equal(net.ParseIP(wireRouterID)) {
 		t.Errorf("next hop = %s, want the VTEP %s", nh, wireRouterID)
 	}
+	checkOriginAndNoNextHop(t, attrs)
 }
