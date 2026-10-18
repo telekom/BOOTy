@@ -831,6 +831,7 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
 		GwAddress:   "0.0.0.0",
+		Label:       4000, // the VNI: a zero label without gateway IP is a withdraw
 	})
 	if err != nil {
 		t.Fatalf("marshal NLRI: %v", err)
@@ -3292,6 +3293,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
 		GwAddress:   "0.0.0.0",
+		Label:       4000, // the VNI: a zero label without gateway IP is a withdraw
 	})
 	if err != nil {
 		t.Fatalf("marshal NLRI: %v", err)
