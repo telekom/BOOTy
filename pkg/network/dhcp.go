@@ -426,6 +426,7 @@ var (
 	dhcpRouteAdd       = netlink.RouteAppend
 	dhcpRouteDel       = netlink.RouteDel
 	dhcpSetMTU         = netlink.LinkSetMTU
+	dhcpSetDNSServers  = dnsFanout.set
 	dhcpLinkMaxMTU     = linkMaxMTU
 	dhcpIPv6Enabled    = ipv6Enabled
 	dhcpWriteResolvers = ConfigureResolvConf
@@ -640,6 +641,7 @@ func (d *DHCPMode) writeResolvers() {
 	if content == d.written || d.written == "" && len(servers) == 0 {
 		return
 	}
+	dhcpSetDNSServers(servers)
 	if err := dhcpWriteResolvers(servers, search); err != nil {
 		d.log.Warn("failed to write the DHCP DNS servers", "servers", servers, "search", search, "error", err)
 		return
