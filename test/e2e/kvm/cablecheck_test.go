@@ -61,6 +61,7 @@ func runCableCheckVM(t *testing.T, boot []string, hold time.Duration) (out []byt
 // cablecheckTraffic is what one NIC sent.
 type cablecheckTraffic struct {
 	lldp      int      // LLDP frames with the bm4x identity of the NIC
+	shutdown  int      // shutdown LLDPDUs (TTL 0) for the port of the NIC
 	otherLLDP []string // LLDP frames with another identity
 	ipv4      int      // IPv4 or ARP frames (DHCP among them)
 	globalV6  []string // IPv6 sources that are not link-local or ::
@@ -95,10 +96,16 @@ func readCableCheckPcap(t *testing.T, path, mac string) cablecheckTraffic {
 		case layers.EthernetTypeLinkLayerDiscovery:
 			l, _ := pkt.Layer(layers.LayerTypeLinkLayerDiscovery).(*layers.LinkLayerDiscovery)
 			info, _ := pkt.Layer(layers.LayerTypeLinkLayerDiscoveryInfo).(*layers.LinkLayerDiscoveryInfo)
-			if l != nil && info != nil && l.PortID.Subtype == layers.LLDPPortIDSubtypeMACAddr &&
-				net.HardwareAddr(l.PortID.ID).String() == mac && info.SysName == "bare-minimal" {
+			ownPort := l != nil && l.PortID.Subtype == layers.LLDPPortIDSubtypeMACAddr &&
+				net.HardwareAddr(l.PortID.ID).String() == mac
+			switch {
+			case ownPort && l.TTL == 0:
+				// IEEE 802.1AB shutdown LLDPDU when BOOTy stops sending:
+				// the same chassis and port, only the mandatory TLVs.
+				tr.shutdown++
+			case ownPort && info != nil && info.SysName == "bare-minimal":
 				tr.lldp++
-			} else {
+			default:
 				tr.otherLLDP = append(tr.otherLLDP, fmt.Sprintf("%x", data))
 			}
 		case layers.EthernetTypeIPv4, layers.EthernetTypeARP:
@@ -134,6 +141,10 @@ func TestLinksModeLLDPQEMU(t *testing.T) {
 		tr := readCableCheckPcap(t, pcaps[i], mac)
 		if tr.lldp == 0 || len(tr.otherLLDP) > 0 {
 			t.Errorf("NIC %s: %d bm4x LLDP frames, other LLDP frames %v", mac, tr.lldp, tr.otherLLDP)
+		}
+		// The run ends with a reboot, which stops the sender first.
+		if tr.shutdown == 0 {
+			t.Errorf("NIC %s: no shutdown LLDPDU before the reboot", mac)
 		}
 		if tr.ipv4 > 0 || len(tr.globalV6) > 0 {
 			t.Errorf("NIC %s sent %d IPv4/ARP frames and IPv6 from %v, want link-local only", mac, tr.ipv4, tr.globalV6)
