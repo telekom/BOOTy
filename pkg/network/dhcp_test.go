@@ -1536,3 +1536,19 @@ func TestCarrierUpAroundFirstLease(t *testing.T) {
 		}
 	}
 }
+
+// One DNS server per link for the fan-out: the first configured one, then
+// per NIC the first DHCPv4 server, else the first DHCPv6 server.
+func TestLinkServers(t *testing.T) {
+	d := NewDHCPMode()
+	d.resolvers = []string{"10.9.9.9", "10.9.9.8"}
+	d.nics = map[int]dhcpApplied{
+		1: {dns: []string{"10.0.2.3", "10.0.2.4"}},
+		2: {},
+		4: {dns: []string{"10.9.9.9"}},
+	}
+	d.v6 = map[int]*nic6{1: {dns: []string{"fd00:10::1"}}, 2: {dns: []string{"fd00:20::1"}}, 3: {dns: []string{"fd00:30::1", "fd00:30::2"}}}
+	if got, want := d.linkServers(), []string{"10.9.9.9", "10.0.2.3", "fd00:20::1", "fd00:30::1"}; !slices.Equal(got, want) {
+		t.Fatalf("linkServers = %v, want %v", got, want)
+	}
+}
