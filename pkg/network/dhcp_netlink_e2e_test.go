@@ -294,12 +294,17 @@ func TestWatchRAOnVeth(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
+	pc := ipv6.NewPacketConn(conn)
 	dst := &net.IPAddr{IP: net.ParseIP("ff02::1"), Zone: "ra-r0"}
 	var got [2]bool
 	for deadline := time.Now().Add(10 * time.Second); ; {
 		echo := []byte{128, 0, 0, 0, 0, 1, 0, 1} // echo request: ignored
+		forwarded := []byte{134, 0, 0, 0, 64, 0xc0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 		ra := []byte{134, 0, 0, 0, 64, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		_ = pc.SetMulticastHopLimit(64) // not 255: forwarded, ignored (RFC 4861 6.1.2)
 		_, _ = conn.WriteTo(echo, dst)
+		_, _ = conn.WriteTo(forwarded, dst)
+		_ = pc.SetMulticastHopLimit(255)
 		_, _ = conn.WriteTo(ra, dst)
 		select {
 		case got = <-flags:

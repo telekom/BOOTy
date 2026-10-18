@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
+	"math"
 	"math/rand/v2"
 	"net"
 	"sync"
@@ -64,10 +65,15 @@ var (
 	infoRT    = params{time.Second, 3600 * time.Second}
 )
 
-// next is the retransmission timeout after prev (RFC 8415 section 15).
+// next is the retransmission timeout after prev (RFC 8415 section 15). The
+// first SOLICIT timeout is strictly greater than IRT (18.2.1).
 func (c *Client) next(p params, prev time.Duration) time.Duration {
 	if prev == 0 {
-		return p.irt + time.Duration(c.rand()*float64(p.irt))
+		r := c.rand()
+		if p == solicitRT {
+			r = max(math.Abs(r), 0.01)
+		}
+		return p.irt + time.Duration(r*float64(p.irt))
 	}
 	rt := 2*prev + time.Duration(c.rand()*float64(prev))
 	if rt > p.mrt {

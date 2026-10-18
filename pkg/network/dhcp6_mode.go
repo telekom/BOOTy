@@ -39,8 +39,10 @@ type nic6 struct {
 	link   netlink.Link
 	stopRA context.CancelFunc
 	client dhcp6Client
-	addr   *netlink.Addr
-	dns    []string
+	// stateful is set when client asks for an address (the RA had M).
+	stateful bool
+	addr     *netlink.Addr
+	dns      []string
 }
 
 // Seams for tests.
@@ -107,19 +109,32 @@ func watchRA(ctx context.Context, iface *net.Interface, fn func(managed, other b
 		<-ctx.Done()
 		_ = conn.Close()
 	}()
+	pc := ipv6.NewPacketConn(conn)
+	if err := pc.SetControlMessage(ipv6.FlagHopLimit, true); err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("ICMPv6 hop limit on %s: %w", iface.Name, err)
+	}
 	go func() {
 		buf := make([]byte, 1500)
 		for {
-			n, _, err := conn.ReadFrom(buf)
+			n, cm, src, err := pc.ReadFrom(buf)
 			if err != nil {
 				return
 			}
-			if n >= 6 && buf[0] == byte(ipv6.ICMPTypeRouterAdvertisement) {
+			if validRA(buf[:n], cm, src) {
 				fn(buf[5]&0x80 != 0, buf[5]&0x40 != 0)
 			}
 		}
 	}()
 	return nil
+}
+
+// validRA checks a router advertisement like RFC 4861 6.1.2: hop limit 255
+// (it was not forwarded) and a link-local source.
+func validRA(b []byte, cm *ipv6.ControlMessage, src net.Addr) bool {
+	a, ok := src.(*net.IPAddr)
+	return len(b) >= 16 && b[0] == byte(ipv6.ICMPTypeRouterAdvertisement) &&
+		cm != nil && cm.HopLimit == 255 && ok && a.IP.IsLinkLocalUnicast()
 }
 
 // startRA watches the router advertisements of a NIC with a DHCPv4 client.
@@ -149,8 +164,24 @@ func (d *DHCPMode) onRA(idx int, iface *net.Interface, hostname string, managed,
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	n := d.v6[idx]
-	if d.stopped || n == nil || n.client != nil {
+	if d.stopped || n == nil {
 		return
+	}
+	if n.client != nil {
+		if !managed || n.stateful {
+			return
+		}
+		// A later RA has the M flag: the stateless client makes room for a
+		// stateful one, like networkd. Stop waits for the client, whose
+		// callbacks take d.mu.
+		old := n.client
+		n.client = nil
+		d.mu.Unlock()
+		old.Stop()
+		d.mu.Lock()
+		if n = d.v6[idx]; d.stopped || n == nil || n.client != nil {
+			return
+		}
 	}
 	if nc := d.clients[idx]; nc != nil && nc.down {
 		return
@@ -167,7 +198,7 @@ func (d *DHCPMode) onRA(idx int, iface *net.Interface, hostname string, managed,
 		SendRelease: true,
 		Log:         d.log,
 	}
-	n.client = dhcp6New(c)
+	n.client, n.stateful = dhcp6New(c), managed
 	d.log.Info("Starting DHCPv6", "interface", iface.Name, "managed", managed)
 	n.client.Start()
 }
