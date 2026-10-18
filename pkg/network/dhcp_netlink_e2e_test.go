@@ -219,9 +219,9 @@ func TestDHCPNetlinkGatewayOutsideSubnet(t *testing.T) {
 		t.Fatal(err)
 	}
 	leased := make(chan string, 1)
-	NewDHCPMode().onBound(link, link.Name, leased)(&dhclient.Lease{
+	NewDHCPMode().onBound(link, link.Name, leased)(live(&dhclient.Lease{
 		FixedAddress: net.ParseIP("198.51.100.7"), Netmask: net.CIDRMask(32, 32), Router: []net.IP{net.ParseIP("192.0.2.1")},
-	})
+	}))
 	if len(leased) != 1 {
 		t.Fatal("the /32 lease was not applied")
 	}
