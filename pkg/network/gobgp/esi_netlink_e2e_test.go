@@ -11,11 +11,10 @@ import (
 	"slices"
 	"testing"
 
-	apipb "github.com/osrg/gobgp/v3/api"
+	apipb "github.com/osrg/gobgp/v4/api"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // kernelFDB is the FDB entry of a MAC on a VXLAN device: its VTEP or its
@@ -116,12 +115,9 @@ func TestESINetlinkAliasing(t *testing.T) {
 
 	esi := &apipb.EthernetSegmentIdentifier{Value: []byte{0, 0x11, 0x22, 0x33, 0x44, 0x55, 0, 0, 1}}
 	vteps := []string{"192.0.2.21", "192.0.2.22"}
-	rds := make([]*anypb.Any, len(vteps))
+	rds := make([]*apipb.RouteDistinguisher, len(vteps))
 	for i, vtep := range vteps {
-		rd, err := buildRouteDistinguisher(65000, uint32(i+1))
-		if err != nil {
-			t.Fatal(err)
-		}
+		rd := buildRouteDistinguisher(65000, uint32(i+1))
 		rds[i] = rd
 		for _, tag := range []uint32{maxET, 0} {
 			o.handleType1Route(&apipb.EVPNEthernetAutoDiscoveryRoute{Rd: rd, Esi: esi, EthernetTag: tag}, vtep, false, false)

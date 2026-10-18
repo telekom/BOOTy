@@ -4822,13 +4822,7 @@ func TestType2ESIAliasingAndMassWithdraw(t *testing.T) {
 		netlinkOps: mock,
 	}
 	esi := &apipb.EthernetSegmentIdentifier{Type: 0, Value: []byte{0, 0x11, 0x22, 0x33, 0x44, 0x55, 0, 0, 1}}
-	rd := func(n uint32) *anypb.Any {
-		a, err := buildRouteDistinguisher(65000, n)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return a
-	}
+	rd := func(n uint32) *apipb.RouteDistinguisher { return buildRouteDistinguisher(65000, n) }
 	ead := func(vtep string, perES, withdraw bool) {
 		tag := uint32(0)
 		if perES {

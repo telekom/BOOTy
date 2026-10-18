@@ -12,9 +12,8 @@ import (
 	"syscall"
 	"testing"
 
-	apipb "github.com/osrg/gobgp/v3/api"
+	apipb "github.com/osrg/gobgp/v4/api"
 	"github.com/vishvananda/netlink"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // esTest drives the remote ES handling against the netlink mock.
@@ -40,17 +39,12 @@ func newESTest(t *testing.T) *esTest {
 	}
 }
 
-func (e *esTest) rd(vtep string) *anypb.Any {
-	e.t.Helper()
+func (e *esTest) rd(vtep string) *apipb.RouteDistinguisher {
 	n := uint32(1)
 	if len(vtep) > 0 {
 		n = uint32(vtep[len(vtep)-1])
 	}
-	a, err := buildRouteDistinguisher(65000, n)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return a
+	return buildRouteDistinguisher(65000, n)
 }
 
 // ead sends an EAD route of the test ES with the given Ethernet Tag.
@@ -213,11 +207,11 @@ func TestESSingleActiveFlagFromThePath(t *testing.T) {
 		e := newESTest(t)
 		e.o.cfg.ASN = 65000
 		p := mustMarshalPath(t, &apipb.EVPNEthernetAutoDiscoveryRoute{Rd: e.rd("10.0.0.1"), Esi: e.esi, EthernetTag: maxET}, "10.0.0.1", false)
-		label, err := anypb.New(&apipb.ESILabelExtended{IsSingleActive: single})
+		label, err := wrapExt(&apipb.ESILabelExtended{IsSingleActive: single})
 		if err != nil {
 			t.Fatal(err)
 		}
-		ec, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{Communities: []*anypb.Any{mustRT2(t, 65000, 100), label}})
+		ec, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 100), label}})
 		if err != nil {
 			t.Fatal(err)
 		}

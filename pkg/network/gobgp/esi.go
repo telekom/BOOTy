@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	apipb "github.com/osrg/gobgp/v3/api"
+	apipb "github.com/osrg/gobgp/v4/api"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
@@ -80,8 +80,7 @@ func esiKey(esi *apipb.EthernetSegmentIdentifier) string {
 
 // type1Key is the route key of an EAD route: RD, ESI and Ethernet Tag.
 func type1Key(route *apipb.EVPNEthernetAutoDiscoveryRoute) string {
-	rd := route.GetRd()
-	return fmt.Sprintf("%s|%x|%s|%d", rd.GetTypeUrl(), rd.GetValue(), esiKey(route.GetEsi()), route.GetEthernetTag())
+	return fmt.Sprintf("%s|%s|%d", rdKey(route.GetRd()), esiKey(route.GetEsi()), route.GetEthernetTag())
 }
 
 // handleType1Route records or removes an EAD route and updates the FDB
@@ -117,20 +116,8 @@ func (o *OverlayTier) handleType1Route(route *apipb.EVPNEthernetAutoDiscoveryRou
 // community of a path (RFC 7432 section 7.5).
 func esiSingleActive(path *apipb.Path) bool {
 	for _, attr := range path.GetPattrs() {
-		msg, err := attr.UnmarshalNew()
-		if err != nil {
-			continue
-		}
-		ext, ok := msg.(*apipb.ExtendedCommunitiesAttribute)
-		if !ok {
-			continue
-		}
-		for _, c := range ext.GetCommunities() {
-			m, err := c.UnmarshalNew()
-			if err != nil {
-				continue
-			}
-			if l, ok := m.(*apipb.ESILabelExtended); ok {
+		for _, c := range attr.GetExtendedCommunities().GetCommunities() {
+			if l := c.GetEsiLabel(); l != nil {
 				return l.GetIsSingleActive()
 			}
 		}
