@@ -219,14 +219,14 @@ func TestRenewRebindExpire(t *testing.T) {
 }
 
 // TestAdvertiseRequestAndRelease: without rapid commit the ADVERTISE leads
-// to a REQUEST; Stop releases the address (2,3,1,8).
+// to a REQUEST; Stop releases the address (2,3,1,8) and reads the REPLY.
 func TestAdvertiseRequestAndRelease(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(msg []byte) []byte {
 		switch msg[0] {
 		case msgSolicit:
 			return serverReply(msg, msgAdvertise, false)
-		case msgRequest:
+		case msgRequest, msgRelease:
 			return serverReply(msg, msgReply, false)
 		}
 		return nil
@@ -248,6 +248,11 @@ func TestAdvertiseRequestAndRelease(t *testing.T) {
 	}
 	if sid, _ := find(parseOptions(msgs[1][4:]), optServerID); !bytes.Equal(sid, testServer) {
 		t.Errorf("REQUEST server ID = %x", sid)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.queue) != 0 {
+		t.Error("the RELEASE REPLY was not read: the socket closed before it came")
 	}
 }
 
