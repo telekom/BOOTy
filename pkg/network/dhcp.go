@@ -463,7 +463,7 @@ func (d *DHCPMode) apply(link netlink.Link, addr *netlink.Addr, lease *dhclient.
 	}
 	route, err := d.applyRoute(link, addr, lease, prev.route)
 	if err != nil {
-		d.dropUnappliedAddr(link, addr, prev, had)
+		d.dropUnappliedAddr(link, addr, &prev, had)
 		return err
 	}
 	if had && !prev.addr.IP.Equal(addr.IP) {
@@ -578,13 +578,13 @@ func (d *DHCPMode) applyRoute(link netlink.Link, addr *netlink.Addr, lease *dhcl
 // dropUnappliedAddr removes an address that was set before the route of its
 // lease failed, unless it is the address of the previous lease; then the
 // previous mask comes back if the lease changed it. The caller holds d.mu.
-func (d *DHCPMode) dropUnappliedAddr(link netlink.Link, addr *netlink.Addr, prev dhcpApplied, had bool) {
+func (d *DHCPMode) dropUnappliedAddr(link netlink.Link, addr *netlink.Addr, prev *dhcpApplied, had bool) {
 	if had && prev.addr.IP.Equal(addr.IP) {
 		if prev.addr.IPNet.String() != addr.IPNet.String() {
 			if err := dhcpAddrReplace(link, prev.addr); err != nil {
 				d.log.Warn("failed to restore DHCP address", "iface", link.Attrs().Name, "error", err)
 				prev.addr = addr // track what the kernel has
-				d.nics[link.Attrs().Index] = prev
+				d.nics[link.Attrs().Index] = *prev
 			}
 		}
 		return
