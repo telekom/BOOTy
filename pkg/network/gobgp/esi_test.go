@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"slices"
+	"syscall"
 	"testing"
 
 	apipb "github.com/osrg/gobgp/v3/api"
+	"github.com/vishvananda/netlink"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -348,5 +351,34 @@ func TestESTeardownDeletesStaleNexthops(t *testing.T) {
 	}
 	if !slices.Contains(e.mock.nexthopDels, g) {
 		t.Fatalf("Teardown deletes %v, want the stale group %d", e.mock.nexthopDels, g)
+	}
+}
+
+// A MAC/IP route with a non-reserved ESI gets its IP -> MAC bridge neighbor
+// like any MAC/IP route (#766): while the ES is not active yet (no FDB
+// entry), after the EAD routes activate it (FDB entry via the group), and
+// the neighbor goes with the withdraw.
+func TestESMACIPRouteGetsItsNeighbor(t *testing.T) {
+	e := newESTest(t)
+	route := &apipb.EVPNMACIPAdvertisementRoute{Rd: e.rd("10.0.0.1"), Esi: e.esi, MacAddress: "aa:bb:cc:00:00:01", IpAddress: "10.0.0.50"}
+	neigh := func(ops []*netlink.Neigh) (n []*netlink.Neigh) {
+		for _, x := range ops {
+			if x.Family != syscall.AF_BRIDGE && x.IP.Equal(net.ParseIP("10.0.0.50")) {
+				n = append(n, x)
+			}
+		}
+		return n
+	}
+	e.o.handleType2Route(route, "10.0.0.1", 0, false)
+	if sets := neigh(e.mock.sets); e.installed() != "" || len(sets) != 1 || sets[0].HardwareAddr.String() != "aa:bb:cc:00:00:01" {
+		t.Fatalf("inactive ES: FDB %q, neighbor sets %v; want no FDB entry and the neighbor", e.installed(), sets)
+	}
+	e.activate("10.0.0.1")
+	if _, group := parseNhGroupKey(e.installed()); !group || len(neigh(e.mock.dels)) != 0 {
+		t.Fatalf("active ES: FDB %q, neighbor deletes %v; want the group and the neighbor kept", e.installed(), neigh(e.mock.dels))
+	}
+	e.o.handleType2Route(route, "10.0.0.1", 0, true)
+	if dels := neigh(e.mock.dels); len(dels) != 1 {
+		t.Fatalf("withdraw: neighbor deletes %v, want the entry removed", dels)
 	}
 }
