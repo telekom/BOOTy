@@ -1715,7 +1715,8 @@ jobs:
           set -o pipefail
           go test -tags e2e_cablecheck -v -race -count=1 -timeout 10m ./test/e2e/integration/... 2>&1 | tee e2e-cablecheck.log
           for expected in \
-            TestCableCheckLLDP; do
+            TestCableCheckLLDP \
+            TestCableCheckHold; do
             if ! grep -q "^--- PASS: ${expected} " e2e-cablecheck.log; then
               echo "::error::${expected} did not pass"
               exit 1
