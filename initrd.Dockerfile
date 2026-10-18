@@ -706,7 +706,7 @@ COPY --from=kernel /modules/ modules/
 COPY hack/prune-initramfs-libs.sh hack/pack-initramfs.sh /usr/local/bin/
 RUN prune-initramfs-libs.sh .
 
-# Package GoBGP initramfs (no FRR binaries — GoBGP runs in-process). The
+# Package GoBGP initramfs (no FRR binaries, GoBGP runs in-process). The
 # Debian kernel has CONFIG_RD_ZSTD=y built-in.
 RUN pack-initramfs.sh . /initramfs.cpio.zst
 
