@@ -31,11 +31,14 @@ import (
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/gobgp"
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/oob"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/realm"
 	"github.com/telekom/BOOTy/pkg/runmode"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 type teardownRecorderMode struct {
@@ -2697,5 +2700,119 @@ func TestResumeLLDPEmitWaitsForPendingSenders(t *testing.T) {
 	resumeLLDPEmit()
 	if starts != 2 {
 		t.Fatalf("not restarted after the old senders ended: %d starts", starts)
+	}
+}
+
+// networkd sends LLDP on emit-lldp NICs in every addressing mode; outside
+// GoBGP mode (whose underlay sends) networkModeWithResolvers starts the
+// sender and the mode's Teardown stops it.
+func TestNetworkModeWithResolversStartsLLDP(t *testing.T) {
+	orig := startLLDPEmit
+	t.Cleanup(func() { startLLDPEmit = orig })
+	var started [][]string
+	stopped := 0
+	startLLDPEmit = func(netCfg *network.Config) func() {
+		started = append(started, netCfg.EmitLLDP)
+		return func() { stopped++ }
+	}
+	mode := teardownRecorderMode{teardown: func() error { return nil }}
+
+	got, err := networkModeWithResolvers(context.Background(), &network.Config{EmitLLDP: []string{"eth0", "eth1"}}, mode, &linkLayerCleanup{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(started) != 1 || strings.Join(started[0], ",") != "eth0,eth1" {
+		t.Fatalf("LLDP started on %v, want eth0,eth1", started)
+	}
+	if err := got.Teardown(context.Background()); err != nil || stopped != 1 {
+		t.Fatalf("Teardown() = %v, LLDP stops = %d, want 1", err, stopped)
+	}
+
+	gobgp := &network.Config{EmitLLDP: []string{"eth0"}, ASN: 65000, UnderlayIP: "192.0.2.1", NetworkMode: "gobgp"}
+	if !gobgp.IsGoBGPMode() {
+		t.Skip("test config is not GoBGP mode")
+	}
+	if _, err := networkModeWithResolvers(context.Background(), gobgp, mode, &linkLayerCleanup{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(started) != 1 {
+		t.Fatalf("LLDP started %d times, want no second sender in GoBGP mode", len(started))
+	}
+	// LLDP_EMIT_ALL: the all-NIC sender runs, no second one.
+	all := &network.Config{EmitLLDP: []string{"eth0"}, LLDPEmitAll: true}
+	if _, err := networkModeWithResolvers(context.Background(), all, mode, &linkLayerCleanup{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(started) != 1 {
+		t.Fatalf("LLDP started %d times, want none next to LLDP_EMIT_ALL", len(started))
+	}
+}
+
+// The netplan sender uses the configured profile, and a NIC that appears
+// later and a match block selects sends too, once.
+func TestEmitLLDPOnNetplanNICsHotplug(t *testing.T) {
+	origEmit, origSub, origResolve := lldpEmit, lldpLinkSubscribe, resolveLinkMatches
+	t.Cleanup(func() { lldpEmit, lldpLinkSubscribe, resolveLinkMatches = origEmit, origSub, origResolve })
+	var mu sync.Mutex
+	var sent [][]string
+	var profiles []string
+	lldpEmit = func(_ context.Context, ifaces []string, info *lldp.Info, _ *slog.Logger) func() {
+		mu.Lock()
+		sent = append(sent, ifaces)
+		profiles = append(profiles, info.Profile)
+		mu.Unlock()
+		return func() {}
+	}
+	nics := make([]string, 0, 2)
+	nics = append(nics, "enp1s0")
+	resolveLinkMatches = func(context.Context, []network.LinkMatch) ([]string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(nics), nil
+	}
+	subscribed := make(chan chan<- netlink.LinkUpdate, 1)
+	lldpLinkSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}) error {
+		subscribed <- ch
+		go func() { <-done; close(ch) }()
+		return nil
+	}
+	stop := emitLLDPOnNetplanNICs(&network.Config{EmitLLDP: []string{"enp1s0"}, EmitLLDPMatches: []network.LinkMatch{{Name: "en*"}}, LLDPProfile: "bm4x-cablecheck"})
+	ch := <-subscribed
+	mu.Lock()
+	nics = append(nics, "enp2s0")
+	mu.Unlock()
+	for _, name := range []string{"enp2s0", "enp2s0", "enp1s0"} {
+		u := netlink.LinkUpdate{Link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: name}}}
+		u.Header.Type = unix.RTM_NEWLINK
+		ch <- u
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		mu.Lock()
+		n := len(sent)
+		mu.Unlock()
+		if n >= 2 || time.Now().After(deadline) {
+			break
+		}
+	}
+	stop()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sent) != 2 || strings.Join(sent[0], ",") != "enp1s0" || strings.Join(sent[1], ",") != "enp2s0" || profiles[0] != "bm4x-cablecheck" {
+		t.Fatalf("sent on %v with profiles %v, want enp1s0 then the new enp2s0 once, with the profile", sent, profiles)
+	}
+}
+
+// A native EMIT_LLDP list replaces the netplan values, also match blocks.
+func TestMergeNetplanConfigEmitLLDPMatches(t *testing.T) {
+	src := &network.Config{EmitLLDPMatches: []network.LinkMatch{{Name: "en*"}}}
+	dst := &network.Config{}
+	mergeNetplanConfig(dst, src)
+	if len(dst.EmitLLDPMatches) != 1 {
+		t.Fatalf("EmitLLDPMatches = %v, want the netplan match", dst.EmitLLDPMatches)
+	}
+	dst = &network.Config{EmitLLDP: []string{"eth3"}}
+	mergeNetplanConfig(dst, src)
+	if len(dst.EmitLLDPMatches) != 0 {
+		t.Fatalf("EmitLLDPMatches = %v, want none with a native list", dst.EmitLLDPMatches)
 	}
 }
