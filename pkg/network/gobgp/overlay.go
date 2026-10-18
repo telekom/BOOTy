@@ -869,20 +869,7 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 
 	switch {
 	case nlri.GetEvpnIpPrefix() != nil:
-		route := nlri.GetEvpnIpPrefix()
-		routerMAC, err := extractRouterMAC(p)
-		converted := false
-		if reason := type5Unusable(route, err); reason != "" && !withdraw {
-			// The update replaces the path of the same route key, so the
-			// old path goes too, as for a withdraw (RFC 7606 section 2).
-			o.log.Warn("type-5 route treated as withdraw", "prefix", route.GetIpPrefix(), "len", route.GetIpPrefixLen(),
-				"vtep", vtep, "reason", reason)
-			withdraw, converted = true, true
-		}
-		if err != nil {
-			routerMAC = nil
-		}
-		o.handleType5Update(route, vtep, routerMAC, err == nil, withdraw, converted)
+		o.processType5Update(p, nlri.GetEvpnIpPrefix(), vtep, withdraw)
 	case nlri.GetEvpnMacadv() != nil:
 		if o.cfg.EnableL2 {
 			o.handleType2Update(nlri.GetEvpnMacadv(), vtep, macMobilityOf(p), withdraw)
@@ -908,6 +895,24 @@ func (o *OverlayTier) handleType3Path(p *apipb.Path, route *apipb.EVPNInclusiveM
 		withdraw = true
 	}
 	o.handleType3Route(route, vtep, withdraw)
+}
+
+// processType5Update applies the receive rules of a Type-5 path and hands
+// it on. An unusable update is a withdraw of its route key.
+func (o *OverlayTier) processType5Update(p *apipb.Path, route *apipb.EVPNIPPrefixRoute, vtep string, withdraw bool) {
+	routerMAC, err := extractRouterMAC(p)
+	converted := false
+	if reason := type5Unusable(route, err); reason != "" && !withdraw {
+		// The update replaces the path of the same route key, so the
+		// old path goes too, as for a withdraw (RFC 7606 section 2).
+		o.log.Warn("type-5 route treated as withdraw", "prefix", route.GetIpPrefix(), "len", route.GetIpPrefixLen(),
+			"vtep", vtep, "reason", reason)
+		withdraw, converted = true, true
+	}
+	if err != nil {
+		routerMAC = nil
+	}
+	o.handleType5Update(route, vtep, routerMAC, err == nil, withdraw, converted)
 }
 
 // type5Unusable returns why a received Type-5 route must not be used, or
