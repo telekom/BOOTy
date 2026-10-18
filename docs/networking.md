@@ -806,25 +806,32 @@ NIC without option 42 does not drop the servers of another NIC, and
 Teardown drops them all. The legacy ramdisk has no timesyncd, so it sends
 no NTP request.
 
-The client requests the default parameter list: subnet mask, router, time
-server, DNS server, domain name, interface MTU and NTP servers. It sends the
-ramdisk hostname (option 12) when one is set.
+The client sends the options of systemd-networkd (systemd 255, captured
+in the CAPRF L2 parity fixture), in its order after the message type: client
+identifier (61: type 255, an IAID of the NIC and a DUID-EN with the systemd
+enterprise number and a hash of the machine ID of the boot, so new at every
+boot as in the legacy ramdisk), parameter request list (55: 1, 3, 6, 12,
+15, 26, 33, 42, 114, 119, 120, 121), maximum message size (57: MTU less
+28) and the ramdisk hostname (12) when one is set.
 
 On every lease (also renewals and leases on the other NICs), BOOTy:
 
 - adds the leased address with the leased mask to the NIC and removes the
   address of the previous lease of that NIC;
-- adds a default route through the first router of the lease, with the
-  lease address as source, metric 100 and `proto dhcp`, like networkd with
-  netplan. The default routes of all NICs stay next to each other. A lease
-  without a router removes the default route of its NIC;
+- adds the routes of the lease like networkd with netplan: the classless
+  static routes of option 121, which replace the router of option 3 (RFC
+  3442), or else a default route through the first router; first a host
+  route (scope link) to every gateway. All have the lease address as
+  source, metric 100 and `proto dhcp`. The routes of all NICs stay next to
+  each other; routes of the previous lease that the new one does not have
+  are removed;
 - sets the lease MTU (option 26) on the NIC, like networkd with netplan's
   `UseMTU=true`; values below 576 are ignored, as in networkd. Teardown
   restores the MTU from before;
 - writes `/etc/resolv.conf` with the configured resolvers (`dns_resolver`,
   netplan `nameservers`) first and then the DNS servers (option 6) of all
   leases, like systemd-resolved with `UseDNS=yes`, and the lease domains
-  (option 15) as `search` line, as in the legacy ramdisk's resolv.conf. With
+  (option 15) and domain search lists (option 119) as `search` line, as in the legacy ramdisk's resolv.conf. With
   `PROVISIONER_FILES_TARGET=ramdisk` and a provisioner `/etc/resolv.conf`,
   that file stays, as in the legacy ramdisk.
 

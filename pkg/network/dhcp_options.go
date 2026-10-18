@@ -1,0 +1,217 @@
+//go:build linux
+
+package network
+
+import (
+	"crypto/sha256"
+	"encoding/binary"
+	"net"
+	"slices"
+	"strings"
+
+	"github.com/digineo/go-dhclient"
+	"github.com/google/gopacket/layers"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
+)
+
+// The DHCPv4 options of systemd-networkd (systemd 255) with the legacy
+// ramdisk's netplan, as captured in kindmetal (CAPRF !309, job 407787205).
+
+// networkdParams is the parameter request list (option 55) of networkd:
+// subnet mask, router, DNS, host name, domain name, MTU, static routes,
+// NTP, captive portal, domain search, SIP servers, classless routes.
+var networkdParams = []layers.DHCPOpt{1, 3, 6, 12, 15, 26, 33, 42, 114, 119, 120, 121}
+
+const (
+	dhcpOptDomainSearch    layers.DHCPOpt = 119
+	dhcpOptClasslessRoutes layers.DHCPOpt = 121
+	// systemdEnterprise is the IANA enterprise number of systemd in its
+	// DUID-EN (sd-dhcp-duid.h).
+	systemdEnterprise = 43793
+)
+
+// dhcpClientID is the client identifier (option 61) of networkd: type 255,
+// a 4 byte IAID of the interface and a DUID-EN (type 2) with the systemd
+// enterprise number and 8 bytes derived from the machine ID (RFC 4361).
+// The machine ID of the ramdisk is new at every boot, as in the legacy
+// ramdisk, so the identifier is too; the hash differs from networkd's
+// siphash, its form does not.
+func dhcpClientID(ifname, machineID string) []byte {
+	iaid := sha256.Sum256([]byte(ifname))
+	id := sha256.Sum256([]byte(machineID))
+	b := make([]byte, 0, 19)
+	b = append(b, 255)
+	b = append(b, iaid[:4]...)
+	b = binary.BigEndian.AppendUint16(b, 2)
+	b = binary.BigEndian.AppendUint32(b, systemdEnterprise)
+	return append(b, id[:8]...)
+}
+
+// dhcpMaxMessageSize is option 57 of networkd: the MTU less the IP and UDP
+// headers.
+func dhcpMaxMessageSize(mtu int) []byte {
+	if mtu < dhcpMinMTU {
+		mtu = dhcpMinMTU
+	}
+	return binary.BigEndian.AppendUint16(nil, uint16(mtu-28)) //nolint:gosec // an MTU fits
+}
+
+// leaseOption returns the payload of a lease option that go-dhclient keeps
+// in OtherOptions.
+func leaseOption(lease *dhclient.Lease, opt layers.DHCPOpt) ([]byte, bool) {
+	for _, o := range lease.OtherOptions {
+		if o.Type == opt {
+			return o.Data, true
+		}
+	}
+	return nil, false
+}
+
+// dhcpRoute is one route of a lease: a destination and a gateway, or no
+// gateway for an on-link destination.
+type dhcpRoute struct {
+	dst *net.IPNet
+	gw  net.IP
+}
+
+// classlessRoutes decodes option 121 (RFC 3442). A malformed option is
+// ignored as a whole, like networkd does.
+func classlessRoutes(data []byte) ([]dhcpRoute, bool) {
+	var out []dhcpRoute
+	for b := data; len(b) > 0; {
+		width := int(b[0])
+		n := (width + 7) / 8
+		if width > 32 || len(b) < 1+n+4 {
+			return nil, false
+		}
+		dst := make(net.IP, net.IPv4len)
+		copy(dst, b[1:1+n])
+		gw := net.IP(append([]byte(nil), b[1+n:5+n]...))
+		out = append(out, dhcpRoute{dst: &net.IPNet{IP: dst, Mask: net.CIDRMask(width, 32)}, gw: gw})
+		b = b[5+n:]
+	}
+	return out, len(out) > 0
+}
+
+// domainSearch decodes option 119 (RFC 3397): DNS names in wire format,
+// with compression pointers into the option.
+func domainSearch(data []byte) []string {
+	var out []string
+	for off := 0; off < len(data); {
+		name, next, ok := dnsName(data, off)
+		if !ok {
+			return out
+		}
+		if name != "" {
+			out = append(out, name)
+		}
+		off = next
+	}
+	return out
+}
+
+// dnsName reads the name at off and returns it and the offset after it.
+func dnsName(data []byte, off int) (name string, next int, ok bool) {
+	var labels []string
+	next = -1
+	for jumps := 0; off < len(data) && jumps < 64; {
+		l := int(data[off])
+		switch {
+		case l == 0:
+			if next < 0 {
+				next = off + 1
+			}
+			return strings.Join(labels, "."), next, true
+		case l&0xc0 == 0xc0:
+			if off+1 >= len(data) {
+				return "", 0, false
+			}
+			if next < 0 {
+				next = off + 2
+			}
+			off = (l&0x3f)<<8 | int(data[off+1])
+			jumps++
+		case off+1+l <= len(data):
+			labels = append(labels, string(data[off+1:off+1+l]))
+			off += 1 + l
+		default:
+			return "", 0, false
+		}
+	}
+	return "", 0, false
+}
+
+// leaseRoutes returns the routes of a lease like networkd: the classless
+// routes of option 121, which replace the router of option 3 (RFC 3442), or
+// a default route through the first router; first a host route to every
+// gateway. All have the lease address as source, metric 100 and proto dhcp.
+func leaseRoutes(link netlink.Link, addr *netlink.Addr, lease *dhclient.Lease) []*netlink.Route {
+	routes := []dhcpRoute{}
+	if data, ok := leaseOption(lease, dhcpOptClasslessRoutes); ok {
+		routes, _ = classlessRoutes(data)
+	}
+	if len(routes) == 0 && len(lease.Router) > 0 {
+		routes = []dhcpRoute{{dst: &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)}, gw: lease.Router[0]}}
+	}
+	route := func(dst *net.IPNet, gw net.IP) *netlink.Route {
+		r := &netlink.Route{LinkIndex: link.Attrs().Index, Src: addr.IP, Priority: dhcpRouteMetric, Protocol: unix.RTPROT_DHCP}
+		if ones, _ := dst.Mask.Size(); ones > 0 {
+			r.Dst = dst
+		}
+		if gw == nil || gw.IsUnspecified() {
+			r.Scope = netlink.SCOPE_LINK
+		} else {
+			r.Gw = gw
+		}
+		return r
+	}
+	out := make([]*netlink.Route, 0, len(routes))
+	var gws []*netlink.Route
+	for _, r := range routes {
+		if r.gw != nil && !r.gw.IsUnspecified() && !containsGateway(gws, r.gw) {
+			gws = append(gws, route(&net.IPNet{IP: r.gw, Mask: net.CIDRMask(32, 32)}, nil))
+		}
+		out = append(out, route(r.dst, r.gw))
+	}
+	return append(gws, out...)
+}
+
+func containsGateway(routes []*netlink.Route, gw net.IP) bool {
+	for _, r := range routes {
+		if r.Dst != nil && r.Dst.IP.Equal(gw) {
+			return true
+		}
+	}
+	return false
+}
+
+// sameRoute compares the keys of two lease routes.
+func sameRoute(a, b *netlink.Route) bool {
+	dst := func(r *netlink.Route) string {
+		if r.Dst == nil {
+			return "default"
+		}
+		return r.Dst.String()
+	}
+	return dst(a) == dst(b) && a.Gw.Equal(b.Gw) && a.Src.Equal(b.Src) && a.Scope == b.Scope
+}
+
+// leaseSearchDomains returns the domain (option 15) and the domain search
+// list (option 119) of a lease, each once.
+func leaseSearchDomains(lease *dhclient.Lease) []string {
+	var out []string
+	add := func(d string) {
+		d = strings.TrimSuffix(strings.TrimSpace(d), ".")
+		if d != "" && validSearchDomain(d) && !slices.Contains(out, d) {
+			out = append(out, d)
+		}
+	}
+	add(lease.DomainName)
+	if data, ok := leaseOption(lease, dhcpOptDomainSearch); ok {
+		for _, d := range domainSearch(data) {
+			add(d)
+		}
+	}
+	return out
+}
