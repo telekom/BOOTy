@@ -261,7 +261,7 @@ behaviour.
   `frr.conf`, off below 8.3 (the bm4x templates). New key
   `BGP_GRACEFUL_NOTIFICATION` (YAML `network.bgp.gracefulNotification`).
   `TestOpenCapabilitiesMatchFRR` compares the OPEN of GoBGP on the wire
-  with FRR 10.2.1 and 10.3.1 captures (#PRNUM).
+  with FRR 10.2.1 and 10.3.1 captures (#744).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 
