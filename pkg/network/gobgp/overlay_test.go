@@ -5200,7 +5200,7 @@ func newFIBOwnerOverlay(owned fibOwnerStub) (*OverlayTier, *mockOverlayNetlinkOp
 var (
 	fibOwnedPrefix = netip.MustParsePrefix("10.200.0.0/24")
 	fibOwnedKey    = routeKey(unix.RT_TABLE_MAIN, fibOwnedPrefix)
-	fibOwnedRoute  = &apipb.EVPNIPPrefixRoute{IpPrefix: "10.200.0.0", IpPrefixLen: 24, GwAddress: "192.168.4.1"}
+	fibOwnedRoute  = &apipb.EVPNIPPrefixRoute{IpPrefix: "10.200.0.0", IpPrefixLen: 24, GwAddress: "0.0.0.0"}
 )
 
 // One writer owns a prefix: without an overlay VRF the overlay keeps a
@@ -5215,7 +5215,7 @@ func TestType5ShadowedByFIBInstalledOnRemoval(t *testing.T) {
 	if len(mock.routeReplaces) != 0 {
 		t.Fatalf("installed a Type-5 route for a prefix of the FIB writer: %v", mock.routeReplaces)
 	}
-	other := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.201.0.0", IpPrefixLen: 24, GwAddress: "192.168.4.1"}
+	other := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.201.0.0", IpPrefixLen: 24, GwAddress: "0.0.0.0"}
 	overlay.handleType5Route(other, "192.168.4.1", mac, false)
 	if len(mock.routeReplaces) != 1 || mock.routeReplaces[0].Dst.String() != "10.201.0.0/24" {
 		t.Fatalf("route replaces = %v, want only 10.201.0.0/24", mock.routeReplaces)

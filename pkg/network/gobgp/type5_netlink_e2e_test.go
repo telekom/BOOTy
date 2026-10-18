@@ -96,7 +96,7 @@ func TestType5NetlinkFIBOwnership(t *testing.T) {
 			t.Fatalf("default routes in table %d = %v, want the FIB writer's on dum-fib", type5E2ETable, routes)
 		}
 	}
-	route, mac := type5E2ERoute(t, 1, "192.0.2.1"), mustParseMAC(t, "02:00:00:00:00:a1")
+	route, mac := type5E2ERoute(t, 1), mustParseMAC(t, "02:00:00:00:00:a1")
 
 	w.apply(fib, false)
 	overlay.handleType5Route(route, "192.0.2.1", mac, false)
