@@ -332,7 +332,7 @@ func TestProdTplType5ConnectedPrefixKept(t *testing.T) {
 	const mgmt = "172.31.250.0/24"
 	ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
 	defer cancel()
-	conf := func(no string) {
+	conf := func(ctx context.Context, no string) {
 		t.Helper()
 		args := []string{"vtysh", "-c", "configure terminal",
 			"-c", no + "ip route " + mgmt + " blackhole vrf provision",
@@ -343,8 +343,13 @@ func TestProdTplType5ConnectedPrefixKept(t *testing.T) {
 			t.Fatalf("dcgw01 %snetwork %s: %v\n%s", no, mgmt, err, out)
 		}
 	}
-	conf("")
-	t.Cleanup(func() { conf("no ") })
+	conf(ctx, "")
+	t.Cleanup(func() {
+		// The test's context is canceled by then.
+		cctx, ccancel := context.WithTimeout(context.Background(), time.Minute)
+		defer ccancel()
+		conf(cctx, "no ")
+	})
 	// The route reaches the servers: the shadow node has it in its EVPN table.
 	for {
 		out, err := prodtplExec(ctx, prodtplShadow, "vtysh", "-c", "show bgp l2vpn evpn route type prefix")
