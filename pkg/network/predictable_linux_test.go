@@ -98,6 +98,55 @@ func TestApplyPredictableNames(t *testing.T) {
 	}
 }
 
+// With UdevNames (provisioner netplan input) every NIC gets its udev name,
+// like in the legacy ramdisk, except a NIC that the config names by its
+// kernel name.
+func TestApplyPredictableNamesUdevNames(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+	oldSysfs := predictableSysfs
+	predictableSysfs = fakeNICSysfs(t)
+	byName, down, setName, up, exists := renameLinkByName, renameLinkSetDown, renameLinkSetName, renameLinkSetUp, linkExists
+	t.Cleanup(func() {
+		predictableSysfs = oldSysfs
+		renameLinkByName, renameLinkSetDown, renameLinkSetName, renameLinkSetUp, linkExists = byName, down, setName, up, exists
+	})
+	linkExists = func(name string) bool { return name == "eth0" || name == "eth1" }
+	mac, _ := net.ParseMAC("02:00:00:00:00:01")
+	linkList = func() ([]netlink.Link, error) {
+		return []netlink.Link{
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth0", HardwareAddr: mac}},
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth1", HardwareAddr: mac}},
+		}, nil
+	}
+	renameLinkByName = func(name string) (netlink.Link, error) {
+		return &netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: name}}, nil
+	}
+	renameLinkSetDown = func(netlink.Link) error { return nil }
+	renameLinkSetUp = func(netlink.Link) error { return nil }
+	var renamed []string
+	renameLinkSetName = func(l netlink.Link, name string) error {
+		renamed = append(renamed, l.Attrs().Name+">"+name)
+		return nil
+	}
+
+	// The legacy L2 netplan: match blocks only.
+	if err := ApplyPredictableNames(context.Background(), &Config{UdevNames: true}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"eth0>enp1s0", "eth1>enp2s0"}; !reflect.DeepEqual(renamed, want) {
+		t.Fatalf("renames = %v, want %v", renamed, want)
+	}
+	// A config that names eth0 keeps it.
+	renamed = nil
+	if err := ApplyPredictableNames(context.Background(), &Config{UdevNames: true, StaticIface: "eth0"}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"eth1>enp2s0"}; !reflect.DeepEqual(renamed, want) {
+		t.Fatalf("renames = %v, want %v", renamed, want)
+	}
+}
+
 func TestConfiguredInterfaceNames(t *testing.T) {
 	c := &Config{
 		StaticIface:    "enp1s0",

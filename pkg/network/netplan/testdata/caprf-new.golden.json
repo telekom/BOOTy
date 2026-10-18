@@ -32,6 +32,7 @@
     }
   ],
   "NICWait": 0,
+  "UdevNames": false,
   "InterfaceNames": [
     "hbn"
   ],
