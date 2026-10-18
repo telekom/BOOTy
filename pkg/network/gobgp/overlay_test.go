@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,7 @@ import (
 	apipb "github.com/osrg/gobgp/v3/api"
 	"github.com/osrg/gobgp/v3/pkg/server"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/anypb"
 )
@@ -4226,5 +4228,40 @@ func TestOverlaySetupAdvertisesType2And3OnlyWithL2(t *testing.T) {
 					tt.enableL2, len(type2), len(type3), tt.wantType2, tt.wantType3)
 			}
 		})
+	}
+}
+
+// Like zebra: a Type-5 route for a connected prefix of the bridge's VRF is
+// not installed (connected beats BGP), a more specific one is, and Type-5
+// routes get protocol bgp and metric 20 in both families. Before, an IPv4
+// route got metric 0 and replaced the connected route of the same prefix.
+func TestHandleType5RouteConnectedAndZebraMetric(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	overlay := &OverlayTier{
+		cfg: &Config{RouterID: "192.168.4.10", ProvisionVNI: 1000, BridgeName: "br.provision"},
+		log: slog.Default(), netlinkOps: mock,
+		connected: func(bridge string) []netip.Prefix {
+			if bridge != "br.provision" {
+				t.Errorf("connected prefixes of %q, want the bridge", bridge)
+			}
+			return []netip.Prefix{netip.MustParsePrefix("10.200.0.0/24"), netip.MustParsePrefix("2001:db8::/64")}
+		},
+	}
+	mac := mustParseMAC(t, "62:db:b8:c1:80:52")
+	for _, r := range []*apipb.EVPNIPPrefixRoute{
+		{IpPrefix: "10.200.0.0", IpPrefixLen: 24, GwAddress: "192.168.4.1"},
+		{IpPrefix: "2001:db8::", IpPrefixLen: 64},
+	} {
+		overlay.handleType5Route(r, "192.168.4.1", mac, false)
+	}
+	if len(mock.routeReplaces) != 0 {
+		t.Fatalf("connected prefixes installed: %v", mock.routeReplaces)
+	}
+	overlay.handleType5Route(&apipb.EVPNIPPrefixRoute{IpPrefix: "10.200.0.7", IpPrefixLen: 32, GwAddress: "192.168.4.1"}, "192.168.4.1", mac, false)
+	if len(mock.routeReplaces) != 1 {
+		t.Fatalf("route replaces = %d, want the /32 inside the connected /24", len(mock.routeReplaces))
+	}
+	if r := mock.routeReplaces[0]; r.Protocol != unix.RTPROT_BGP || r.Priority != zebraRouteMetric {
+		t.Fatalf("IPv4 Type-5 route protocol %v metric %d, want bgp and %d like zebra", r.Protocol, r.Priority, zebraRouteMetric)
 	}
 }
