@@ -125,10 +125,10 @@ func TestProdTplRDAndMED(t *testing.T) {
 }
 
 // The route reflectors see the BFD Required Min Echo RX of FRR bfdd
-// (50 ms) from every server, and the extended next hop capability on the
-// RR session only from the GoBGP servers (documented deviation: GoBGP has
-// no per-peer switch for it).
-func TestProdTplRRSessionEchoAndENHE(t *testing.T) {
+// (50 ms) from every server, and no extended next hop capability on the
+// l2vpn evpn RR session from any server: like FRR, GoBGP v4 (fork, #699)
+// offers it only for the IPv4 families of RFC 8950.
+func TestProdTplRRSessionEchoNoENHE(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
 	defer cancel()
 	out, err := prodtplExec(ctx, prodtplDCGW1, "vtysh", "-c", "show bfd peers json")
@@ -157,12 +157,8 @@ func TestProdTplRRSessionEchoAndENHE(t *testing.T) {
 			t.Fatal(err)
 		}
 		caps, _ := n["neighborCapabilities"].(map[string]any)
-		want := any("received")
-		if node.name == "shadow" {
-			want = nil
-		}
-		if got := caps["extendedNexthop"]; got != want {
-			t.Errorf("%s: extended next hop at dcgw01 = %v, want %v", node.name, got, want)
+		if got := caps["extendedNexthop"]; got != nil {
+			t.Errorf("%s: extended next hop at dcgw01 = %v, want none like FRR", node.name, got)
 		}
 	}
 }
