@@ -962,7 +962,15 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 // fibShadows reports whether the underlay FIB writer owns prefix in the
 // overlay route table.
 func (o *OverlayTier) fibShadows(prefix string) bool {
-	return o.fibOwns != nil && o.fibOwns(o.fibTable(), netip.MustParsePrefix(prefix))
+	if o.fibOwns == nil {
+		return false
+	}
+	p, err := netip.ParsePrefix(prefix)
+	if err != nil {
+		o.log.Debug("type-5 prefix not comparable with the FIB writer's", "prefix", prefix, "error", err)
+		return false
+	}
+	return o.fibOwns(o.fibTable(), p)
 }
 
 // forgetShadowedType5Path forgets a withdrawn path of a prefix the FIB

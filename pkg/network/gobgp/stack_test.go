@@ -474,3 +474,14 @@ func TestStackWiresFIBOwnership(t *testing.T) {
 		t.Fatalf("route replaces = %v, want the Type-5 route after the FIB writer removed its route", mock.routeReplaces)
 	}
 }
+
+// startFIBWriter keeps the running writer, so the overlay's ownership
+// check (FIBOwns) sees its routes.
+func TestStartFIBWriterStoresWriter(t *testing.T) {
+	u := &UnderlayTier{cfg: &Config{}, log: slog.Default(), bgp: startServer(t, 65000, "192.0.2.17", -1)}
+	u.startFIBWriter()
+	t.Cleanup(func() { u.stopFIB(); <-u.fibDone })
+	if u.fib.Load() == nil {
+		t.Fatal("startFIBWriter did not store the writer")
+	}
+}

@@ -4320,10 +4320,11 @@ func TestType5ShadowedByFIBInstalledOnRemoval(t *testing.T) {
 	if len(mock.routeReplaces) != 2 || mock.routeReplaces[1].Dst.String() != "10.200.0.0/24" {
 		t.Fatalf("route replaces = %v, want the shadowed 10.200.0.0/24 after the FIB writer removed it", mock.routeReplaces)
 	}
-	// Installed now, so a withdraw deletes it.
+	// Installed and active now, so a withdraw deletes the route of its
+	// gateway (an unknown active path would delete by prefix, without one).
 	overlay.handleType5Route(fibOwnedRoute, "192.168.4.1", mac, true)
-	if len(mock.routeDels) != 1 || mock.routeDels[0].Dst.String() != "10.200.0.0/24" {
-		t.Fatalf("route deletes = %v, want 10.200.0.0/24", mock.routeDels)
+	if len(mock.routeDels) != 1 || mock.routeDels[0].Dst.String() != "10.200.0.0/24" || mock.routeDels[0].Gw == nil {
+		t.Fatalf("route deletes = %v, want 10.200.0.0/24 via its gateway", mock.routeDels)
 	}
 }
 
@@ -4364,9 +4365,23 @@ func TestType5ReplacedByFIBInstalledOnRemoval(t *testing.T) {
 	}
 
 	owned[fibOwnedKey] = true
+	gwDels := len(mock.dels)
 	overlay.handleType5Route(fibOwnedRoute, "192.168.4.1", mac, true)
 	if len(mock.routeDels) != 0 {
 		t.Fatalf("a withdraw deleted %v while the FIB writer owns the prefix", mock.routeDels)
+	}
+	// The last path is gone, so the gateway state of the earlier install
+	// is cleared.
+	if len(mock.dels) == gwDels {
+		t.Fatal("the gateway neighbor of the forgotten path stayed")
+	}
+}
+
+// A prefix that does not parse is never shadowed and does not panic.
+func TestFIBShadowsInvalidPrefix(t *testing.T) {
+	overlay, _ := newFIBOwnerOverlay(fibOwnerStub{fibOwnedKey: true})
+	if overlay.fibShadows("not-a-prefix") || !overlay.fibShadows("10.200.0.0/24") {
+		t.Fatal("fibShadows: want false for an invalid prefix, true for an owned one")
 	}
 }
 
