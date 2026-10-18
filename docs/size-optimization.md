@@ -67,6 +67,14 @@ virtio NIC, static network vars:
 | `N` network phase (one NIC) | 3.15 s | 0.12 s | #760 |
 | disk settle in `detect-disk` / `select-deprovision-disk` | 2.03 s | 0.004 s | #762 |
 
+x86 KVM in CI (GitHub runners), same changes:
+
+| Measurement | main | with the PR | PR |
+|---|---:|---:|---|
+| `TestFlavorInitrdStorageControllersQEMU` (default flavor, Debian kernel, OVMF, NVMe, AHCI, MegaRAID, SAS, RAID; whole test) | 58.1 to 60.9 s | 46.5 s | #758 |
+| `agent-cycle-timing` `network-bring-up`, agent boot | 3.50 s | 0.75 s | #760 |
+| `agent-cycle-timing` `detect-disk` and `select-deprovision-disk` | 2.01 s each | 0.01 s each | #762 |
+
 QEMU does not rate-limit its UART. A BMC serial-over-LAN UART at 115200
 baud takes about 87 us per byte, so the 43 KB less console output in `M`
 saves about 3.7 s more on hardware.
