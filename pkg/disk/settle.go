@@ -37,7 +37,8 @@ func (m *Manager) WaitForStableDisks(ctx context.Context, stable, poll, maxWait 
 	if maxWait <= 0 {
 		return
 	}
-	deadline := time.Now().Add(maxWait)
+	start := time.Now()
+	deadline := start.Add(maxWait)
 	last := m.blockDevices()
 	if m.settled != nil && m.settled.same(last) {
 		slog.Info("block devices unchanged since they settled", "devices", last)
@@ -65,7 +66,10 @@ func (m *Manager) WaitForStableDisks(ctx context.Context, stable, poll, maxWait 
 		}
 	}
 	slog.Info("block devices settled", "devices", last)
-	if m.settled != nil {
+	// Only a window observed in this call counts for later calls: a window
+	// credited from the boot watch must not let a wipe of all disks skip
+	// its own.
+	if m.settled != nil && !since.Before(start) {
 		m.settled.set(last)
 	}
 }

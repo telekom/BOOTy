@@ -46,10 +46,10 @@ func TestWaitForStableDisksOncePerDeviceSet(t *testing.T) {
 	m := NewManager(newMockCommander())
 	m.SetSysfsRoot(sysfs)
 	stable := 200 * time.Millisecond
-	m.WaitForStableDisks(context.Background(), stable, 5*time.Millisecond, 5*time.Second)
+	m.WaitForStableDisks(context.Background(), stable, 5*time.Millisecond, 5*time.Second, false)
 
 	start := time.Now()
-	m.WithQuickWipe(true).WaitForStableDisks(context.Background(), stable, 5*time.Millisecond, 5*time.Second)
+	m.WithQuickWipe(true).WaitForStableDisks(context.Background(), stable, 5*time.Millisecond, 5*time.Second, false)
 	if d := time.Since(start); d >= stable {
 		t.Fatalf("second wait took %v, want an immediate return", d)
 	}
@@ -58,7 +58,7 @@ func TestWaitForStableDisksOncePerDeviceSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	start = time.Now()
-	m.WaitForStableDisks(context.Background(), stable, 5*time.Millisecond, 5*time.Second)
+	m.WaitForStableDisks(context.Background(), stable, 5*time.Millisecond, 5*time.Second, false)
 	if d := time.Since(start); d < stable {
 		t.Fatalf("wait after a new disk took %v, want a new stable window", d)
 	}
@@ -269,5 +269,23 @@ func TestWaitForStableDisksCreditGuards(t *testing.T) {
 				t.Fatalf("returned after %v, want (nearly) the full 100 ms window", d)
 			}
 		})
+	}
+}
+
+// A wait that took the boot credit does not mark the devices settled for
+// later calls: a later call without the credit still observes its window.
+func TestWaitForStableDisksCreditDoesNotMarkSettled(t *testing.T) {
+	sysfs := settleSysfs(t, "nvme0n1")
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	StartBlockWatch(ctx, sysfs, 5*time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
+	m := NewManager(newMockCommander())
+	m.SetSysfsRoot(sysfs)
+	m.WaitForStableDisks(context.Background(), 100*time.Millisecond, 5*time.Millisecond, 5*time.Second, true)
+	start := time.Now()
+	m.WaitForStableDisks(context.Background(), 100*time.Millisecond, 5*time.Millisecond, 5*time.Second, false)
+	if d := time.Since(start); d < 100*time.Millisecond {
+		t.Fatalf("returned after %v, want the full window after a credited wait", d)
 	}
 }
