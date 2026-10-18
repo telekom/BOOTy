@@ -5,6 +5,7 @@ package network
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"github.com/vishvananda/netlink"
+
+	"github.com/telekom/BOOTy/pkg/network/netname"
 )
 
 // fakeNICSysfs gives eth0 the path name enp1s0 and eth1 enp2s0.
@@ -258,5 +261,76 @@ func TestWaitForConfiguredNICsProducedAndEnd(t *testing.T) {
 	err := ApplyPredictableNames(ctx, &Config{InterfaceNames: []string{"ens9f9"}, NICWait: 10 * time.Second})
 	if err == nil || time.Since(start) > 5*time.Second {
 		t.Fatalf("canceled wait = %v after %s, want an error at once", err, time.Since(start))
+	}
+}
+
+// udevPlan skips a NIC whose udev name exists, is the target of a
+// configured rename, is the first name of two NICs, or that has its udev
+// name already or is named by the config.
+func TestUdevPlanGuards(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+	origNames, origExists := udevNames, linkExists
+	t.Cleanup(func() { udevNames, linkExists = origNames, origExists })
+	names := map[string][]string{
+		"eth0": {"enp1s0"}, "eth1": {"enp2s0"}, "eth2": {"enp3s0"}, "eth3": {"enp4s0"},
+		"eth4": {"enp5s0"}, "eth5": {"enp5s0"}, "enp6s0": {"enp6s0"}, "eth7": {"enp7s0"}, "eth8": nil,
+	}
+	udevNames = func(n string) []string { return names[n] }
+	linkExists = func(n string) bool { return n == "enp2s0" }
+	links := make([]netlink.Link, 0, 9)
+	for _, n := range []string{"eth0", "eth1", "eth2", "eth3", "eth4", "eth5", "enp6s0", "eth7", "eth8"} {
+		links = append(links, &netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: n, HardwareAddr: net.HardwareAddr{2, 0, 0, 0, 0, byte(len(links) + 1)}}})
+	}
+	linkList = func() ([]netlink.Link, error) { return links, nil }
+	plan := []netname.Rename{{From: "eth9", To: "enp3s0"}, {From: "eth3", To: "enp10s0"}}
+	got, err := udevPlan(context.Background(), &Config{UdevNames: true, StaticIface: "eth7"}, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// eth1: enp2s0 exists; eth2: enp3s0 is a planned target; eth3: planned
+	// itself; eth4, eth5: same first name; enp6s0: has it; eth7:
+	// configured; eth8: no name.
+	if want := []netname.Rename{{From: "eth0", To: "enp1s0"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("udevPlan = %v, want %v", got, want)
+	}
+}
+
+// A failed udev rename is logged and skipped; the configured rename stays.
+func TestUdevNamesBestEffort(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+	origNames, origExists := udevNames, linkExists
+	byName, down, setName, up := renameLinkByName, renameLinkSetDown, renameLinkSetName, renameLinkSetUp
+	t.Cleanup(func() {
+		udevNames, linkExists = origNames, origExists
+		renameLinkByName, renameLinkSetDown, renameLinkSetName, renameLinkSetUp = byName, down, setName, up
+	})
+	udevNames = func(n string) []string { return map[string][]string{"eth0": {"enp1s0"}, "eth1": {"enp2s0"}}[n] }
+	linkExists = func(n string) bool { return n == "eth0" || n == "eth1" }
+	linkList = func() ([]netlink.Link, error) {
+		return []netlink.Link{
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth0", HardwareAddr: net.HardwareAddr{2, 0, 0, 0, 0, 1}}},
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth1", HardwareAddr: net.HardwareAddr{2, 0, 0, 0, 0, 2}}},
+		}, nil
+	}
+	renameLinkByName = func(name string) (netlink.Link, error) {
+		return &netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: name}}, nil
+	}
+	renameLinkSetDown = func(netlink.Link) error { return nil }
+	renameLinkSetUp = func(netlink.Link) error { return nil }
+	var renamed []string
+	renameLinkSetName = func(l netlink.Link, name string) error {
+		if name == "enp1s0" {
+			return errors.New("device busy")
+		}
+		renamed = append(renamed, l.Attrs().Name+">"+name)
+		return nil
+	}
+	if err := ApplyPredictableNames(context.Background(), &Config{UdevNames: true}); err != nil {
+		t.Fatalf("a failed udev rename failed the setup: %v", err)
+	}
+	if want := []string{"eth1>enp2s0"}; !reflect.DeepEqual(renamed, want) {
+		t.Fatalf("renames = %v, want %v", renamed, want)
 	}
 }
