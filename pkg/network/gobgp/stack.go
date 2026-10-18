@@ -78,6 +78,11 @@ func (netlinkGatewayRouteOps) RouteDel(route *netlink.Route) error {
 func NewStack(cfg *Config) *Stack {
 	underlay := NewUnderlayTier(cfg)
 	overlay := NewOverlayTier(cfg)
+	// One writer owns a prefix: the overlay keeps its Type-5 path in the
+	// shadow while the FIB writer has the prefix, and installs it again
+	// when the writer removes it.
+	overlay.fibOwns = underlay.FIBOwns
+	underlay.onFIBRemove = overlay.fibRemoved
 
 	return &Stack{
 		underlay:   underlay,
@@ -115,7 +120,6 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 
 	// Share the BGP server with the overlay tier.
 	s.overlay.SetBgpServer(s.underlay.BgpServer())
-	s.overlay.fibOwns = s.underlay.FIBOwns
 	s.wireVTEPRoutes()
 
 	if err := s.overlay.Setup(ctx); err != nil {

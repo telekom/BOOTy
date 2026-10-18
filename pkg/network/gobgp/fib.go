@@ -6,8 +6,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/netip"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,8 +51,11 @@ type fibWriter struct {
 
 	// installed holds the routes this writer installed, by table and
 	// prefix. mu guards it against owns, which the overlay calls.
-	mu         sync.Mutex
-	installed  map[string]*netlink.Route
+	mu        sync.Mutex
+	installed map[string]*netlink.Route
+	// onRemove is called, without mu, for each route the writer removed,
+	// so the overlay can install its Type-5 route for the prefix again.
+	onRemove   func(table int, p netip.Prefix)
 	unresolved map[netip.Addr]time.Time
 	resync     time.Duration
 	// resolveViaDefault allows a next hop that only a default route covers,
@@ -208,6 +215,10 @@ func (w *fibWriter) wanted(ctx context.Context) (map[string]*netlink.Route, erro
 // apply installs the wanted routes that changed (all with force) and
 // removes the installed routes that are no longer wanted.
 func (w *fibWriter) apply(want map[string]*netlink.Route, force bool) {
+	w.notifyRemoved(w.applyLocked(want, force))
+}
+
+func (w *fibWriter) applyLocked(want map[string]*netlink.Route, force bool) (removed []string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for key, r := range want {
@@ -231,7 +242,26 @@ func (w *fibWriter) apply(want map[string]*netlink.Route, force bool) {
 			w.log.Warn("remove route", "route", key, "error", err)
 		}
 		delete(w.installed, key)
+		removed = append(removed, key)
 		w.log.Info("removed route", "route", key)
+	}
+	return removed
+}
+
+// notifyRemoved calls onRemove for the removed route keys. It runs without
+// mu, because onRemove takes the overlay lock, which is held while the
+// overlay calls owns.
+func (w *fibWriter) notifyRemoved(keys []string) {
+	if w.onRemove == nil {
+		return
+	}
+	for _, key := range keys {
+		t, p, _ := strings.Cut(key, "/")
+		table, err := strconv.Atoi(t)
+		prefix, perr := netip.ParsePrefix(p)
+		if err == nil && perr == nil {
+			w.onRemove(table, prefix)
+		}
 	}
 }
 
@@ -247,13 +277,15 @@ func (w *fibWriter) owns(table int, p netip.Prefix) bool {
 
 func (w *fibWriter) removeAll() {
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	removed := slices.Collect(maps.Keys(w.installed))
 	for key, r := range w.installed {
 		if err := w.nl.RouteDel(r); err != nil {
 			w.log.Debug("remove route", "route", key, "error", err)
 		}
 	}
 	w.installed = map[string]*netlink.Route{}
+	w.mu.Unlock()
+	w.notifyRemoved(removed)
 }
 
 // kernelRoute builds the netlink route with the zebra metric. IPv4
