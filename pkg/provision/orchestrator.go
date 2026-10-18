@@ -1139,7 +1139,7 @@ func (o *Orchestrator) validateImageStreamingPrerequisites(ctx context.Context, 
 	}
 	if err != nil && image.IsTransientFormatProbeError(err) {
 		// The format probe code, not the deadline code of the cause.
-		return fmt.Errorf("validating image prerequisites before destructive storage: %w after %d attempts, stopping before the disk wipe: %v",
+		return fmt.Errorf("validating image prerequisites before destructive storage: %w after %d attempts, stopping before the disk wipe: %v", //nolint:errorlint // only the probe sentinel may carry the code
 			image.ErrFormatProbe, probeAttempts, err)
 	}
 	if err != nil {
