@@ -161,16 +161,20 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 // when the BGP session comes up (bgp_peer_bfd_update_source), so the BFD
 // session we just brought Up goes Down in that second. The FRR shadow
 // node sees the same Down and keeps the session; kindmetal and the lab
-// saw BOOTy reset the RR session once at every start.
+// saw BOOTy reset the RR session once at every start. The RR comes up
+// when it receives our KEEPALIVE and can re-key BFD before its KEEPALIVE
+// moves our session from OpenConfirm to Established, so a BFD Down in
+// OpenConfirm does not reset the session either: it carries no routes
+// yet, and the hold timer still ends it if the peer is gone.
 func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag) {
 	if from != bfd.StateUp || to != bfd.StateDown {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	uptime := u.bgpUptime
-	if uptime == nil {
-		uptime = u.establishedAt
+	session := u.bgpSession
+	if session == nil {
+		session = u.sessionState
 	}
 	now := time.Now
 	if u.now != nil {
@@ -179,7 +183,11 @@ func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag
 	// Only the same second: GoBGP's uptime is wall-clock time, and a time
 	// sync that steps the clock back puts it in the future (FRR compares
 	// monotonic times). Then the BFD Down resets the session as usual.
-	if at, ok := uptime(ctx, p.Name); ok && now().Unix() == at.Unix() {
+	switch state, at := session(ctx, p.Name); {
+	case state == apipb.PeerState_OPENCONFIRM:
+		u.log.Info("BFD down while the BGP session is coming up (OpenConfirm), not resetting it", "peer", p.Name, "diag", diag)
+		return
+	case state == apipb.PeerState_ESTABLISHED && now().Unix() == at.Unix():
 		u.log.Info("BFD down in the second the BGP session came up, not resetting it, like FRR", "peer", p.Name, "diag", diag)
 		return
 	}
@@ -191,20 +199,20 @@ func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag
 	reset(ctx, p.Name, "BFD down")
 }
 
-// establishedAt returns when the BGP session of addr came up, and false
-// when it is not up.
-func (u *UnderlayTier) establishedAt(ctx context.Context, addr string) (time.Time, bool) {
-	var at time.Time
-	up := false
+// sessionState returns the BGP session state of addr and, when it is
+// established, when it came up. Without a server or peer it is UNKNOWN.
+func (u *UnderlayTier) sessionState(ctx context.Context, addr string) (apipb.PeerState_SessionState, time.Time) {
+	state, at := apipb.PeerState_UNKNOWN, time.Time{}
 	if u.bgp == nil {
-		return at, false
+		return state, at
 	}
 	_ = u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
-		if p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED && p.GetTimers().GetState().GetUptime() != nil {
-			at, up = p.GetTimers().GetState().GetUptime().AsTime(), true
+		state = p.GetState().GetSessionState()
+		if state == apipb.PeerState_ESTABLISHED && p.GetTimers().GetState().GetUptime() != nil {
+			at = p.GetTimers().GetState().GetUptime().AsTime()
 		}
 	})
-	return at, up
+	return state, at
 }
 
 func (u *UnderlayTier) resetPeer(ctx context.Context, addr, reason string) {

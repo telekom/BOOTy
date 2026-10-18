@@ -205,7 +205,11 @@ same resolution:
   10.3, the session is multihop (RFC 5883) only for an iBGP peer that is
   not on a connected network of its VRF. When BFD goes from Up to Down,
   BOOTy resets the BGP session and connects again after 1 s, like the FRR
-  start timer. Known deviation: the peer gets Cease/Administrative Reset
+  start timer. Like bgpd, a BFD Down in the second the BGP session came up
+  does not reset it, and also not one while the session is in OpenConfirm:
+  a route reflector with `update-source` re-keys its BFD session when its
+  side comes up, which can be before its KEEPALIVE reaches BOOTy. Known
+  deviation: the peer gets Cease/Administrative Reset
   (subcode 4), not Cease/BFD Down (subcode 10, RFC 9384), because the
   GoBGP API sends no other subcode. Only the peer log shows it. Two
   timing deviations of GoBGP 3.37 remain, filed upstream:
