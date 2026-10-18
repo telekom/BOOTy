@@ -1490,11 +1490,13 @@ func TestSetupStartsClientsOnNewNICs(t *testing.T) {
 		}
 	})
 	var mu sync.Mutex
+	lookups := 0
 	nics := make([]net.Interface, 0, 3)
 	nics = append(nics, net.Interface{Name: "eth0", Index: 1}, net.Interface{Name: "eth1", Index: 2})
 	dhcpInterfaces = func(context.Context) ([]net.Interface, error) {
 		mu.Lock()
 		defer mu.Unlock()
+		lookups++
 		return slices.Clone(nics), nil
 	}
 	updates := make(chan chan<- netlink.LinkUpdate, 1)
@@ -1516,7 +1518,9 @@ func TestSetupStartsClientsOnNewNICs(t *testing.T) {
 		u.Header.Type = unix.RTM_NEWLINK
 		return u
 	}
-	ch <- newLink(1, "eth0") // known: no second client
+	ch <- newLink(1, "eth0")  // known: no second client
+	ch <- newLink(9, "veth9") // no NIC: looked up once
+	ch <- newLink(9, "veth9")
 	ch <- newLink(4, "eth3")
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -1538,4 +1542,44 @@ func TestSetupStartsClientsOnNewNICs(t *testing.T) {
 		t.Fatalf("clients = %d, want eth0, eth1 and eth3", len(clients))
 	}
 	stoppedAll(t, clients, 1)
+	mu.Lock()
+	defer mu.Unlock()
+	if lookups != 1+1+1 { // Setup, veth9 once, eth3
+		t.Fatalf("NIC lookups = %d, want 3 (veth9 only once)", lookups)
+	}
+}
+
+// A client that the link watch starts while a restart runs (the MTU
+// restore sends RTM_NEWLINK) and the restarted one: only one stays, the
+// other is stopped, so none leaks past Teardown.
+func TestRestartAndLinkWatchKeepOneClient(t *testing.T) {
+	stubDHCPNetlink(t)
+	d := NewDHCPMode()
+	watch := &fakeRestartClient{}
+	var fresh *fakeRestartClient
+	start := func() dhcpClient {
+		// The watch puts its client in the slot while the restart starts.
+		d.mu.Lock()
+		d.clients = map[int]*nicClient{7: {client: watch}}
+		d.mu.Unlock()
+		fresh = &fakeRestartClient{}
+		return fresh
+	}
+	d.restartClient(7, "eth0", &nicClient{client: &fakeRestartClient{}, start: start})
+	if fresh.stops != 1 || d.clients[7].client != watch {
+		t.Fatalf("fresh stops %d, slot %+v: want the fresh client stopped and the watch client kept", fresh.stops, d.clients[7])
+	}
+}
+
+// startClient leaves a client that is already in the slot and stops its own.
+func TestStartClientKeepsTakenSlot(t *testing.T) {
+	clients := stubDHCPSetup(t, nil)
+	d := NewDHCPMode()
+	kept := &fakeRestartClient{}
+	d.clients = map[int]*nicClient{1: {client: kept}}
+	d.startClient(&net.Interface{Name: "eth0", Index: 1}, "", make(chan string, 1))
+	d.startClient(&net.Interface{Name: "eth1", Index: 2}, "", make(chan string, 1))
+	if d.clients[1].client != kept || clients["eth0"].stopped != 1 {
+		t.Fatalf("slot %+v, own client stops %d: want the slot kept and the own client stopped", d.clients[1], clients["eth0"].stopped)
+	}
 }
