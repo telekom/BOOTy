@@ -387,3 +387,101 @@ func TestEncodePadsToMinimumSize(t *testing.T) {
 		t.Fatalf("message is %d bytes, want at least %d", len(b), minMessageSize)
 	}
 }
+
+// waitFor polls the sent messages until ok, or fails.
+func (f *fakeNet) waitFor(t *testing.T, what string, ok func([]sent) bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); !ok(f.messages()); time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+	}
+}
+
+func count(msgs []sent, ok func(sent) bool) int {
+	n := 0
+	for _, s := range msgs {
+		if ok(s) {
+			n++
+		}
+	}
+	return n
+}
+
+// SELECTING ignores a reply of another type (an OFFER to the REQUEST) and
+// starts over with a DISCOVER after five REQUESTs.
+func TestSelectingIgnoresOtherTypesAndRetriesFiveTimes(t *testing.T) {
+	f := newFakeNet()
+	f.answer = func(s sent) []byte { return serverReply(s.m, layers.DHCPMsgTypeOffer) }
+	bound := make(chan *Lease, 1)
+	c := f.client()
+	c.OnBound = func(l *Lease) { bound <- l }
+	c.Start()
+	isDiscover := func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeDiscover }
+	f.waitFor(t, "the second DISCOVER", func(m []sent) bool { return count(m, isDiscover) >= 2 })
+	close(f.stopped)
+	c.Stop()
+	msgs := f.messages()
+	second := slices.IndexFunc(msgs[1:], isDiscover) + 1
+	if n := count(msgs[:second], func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeRequest }); n != 5 {
+		t.Errorf("%d REQUESTs before the second DISCOVER, want 5", n)
+	}
+	select {
+	case l := <-bound:
+		t.Fatalf("an OFFER to a REQUEST bound %+v", l)
+	default:
+	}
+}
+
+// INIT-REBOOT tries twice, then INIT.
+func TestRebootTriesTwice(t *testing.T) {
+	f := newFakeNet()
+	f.answer = func(s sent) []byte {
+		if s.m.typ == layers.DHCPMsgTypeDiscover {
+			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		}
+		return nil
+	}
+	bound := make(chan *Lease, 4)
+	c := f.client()
+	c.OnBound = func(l *Lease) { bound <- l }
+	c.Start()
+	<-bound
+	c.Reboot()
+	<-bound // the DISCOVER after two INIT-REBOOTs
+	close(f.stopped)
+	c.Stop()
+	if n := count(f.messages(), func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeRequest }); n != 2 {
+		t.Errorf("%d INIT-REBOOT REQUESTs, want 2", n)
+	}
+}
+
+// RENEWING waits half the time to T2, at least 60 s (RFC 2131 4.4.5).
+func TestRenewWait(t *testing.T) {
+	f := newFakeNet()
+	lease := binary.BigEndian.AppendUint32(nil, 600)
+	f.answer = func(s sent) []byte {
+		if s.m.typ == layers.DHCPMsgTypeDiscover {
+			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil), layers.NewDHCPOption(layers.DHCPOptLeaseTime, lease))
+		}
+		return nil
+	}
+	bound := make(chan *Lease, 1)
+	c := f.client()
+	c.OnBound = func(l *Lease) { bound <- l }
+	c.Start()
+	<-bound
+	f.tick(t) // T1 at 300 s; T2 at 525 s
+	f.waitFor(t, "two RENEWs", func(m []sent) bool {
+		return count(m, func(s sent) bool { return s.kind == "unicast" }) >= 2
+	})
+	close(f.stopped)
+	c.Stop()
+	f.mu.Lock()
+	waits := slices.Clone(f.waits)
+	f.mu.Unlock()
+	// 225 s to T2: wait 112.5 s; then 112.5 s left: wait 60 s.
+	if want := []time.Duration{300 * time.Second, 112500 * time.Millisecond, 60 * time.Second}; !slices.Equal(waits[:3], want) {
+		t.Errorf("waits = %v, want %v first", waits, want)
+	}
+}
