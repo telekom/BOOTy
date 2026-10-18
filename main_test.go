@@ -18,6 +18,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -2483,7 +2484,7 @@ func TestHandoffsStopLLDPEmit(t *testing.T) {
 
 func resetLLDPEmit() {
 	lldpEmitMu.Lock()
-	lldpEmitStop, lldpEmitStart = nil, nil
+	lldpEmitStop, lldpEmitStart, lldpEmitPending = nil, nil, nil
 	lldpEmitMu.Unlock()
 }
 
@@ -2570,3 +2571,60 @@ func TestStopNetworkOnceStopsLLDPFirst(t *testing.T) {
 	}
 }
 
+// Concurrent restarts start one sender, never one that nobody can stop.
+func TestResumeLLDPEmitConcurrent(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	var mu sync.Mutex
+	starts := 0
+	lldpEmitMu.Lock()
+	lldpEmitStart = func() func() {
+		time.Sleep(5 * time.Millisecond) // widen the window between check and store
+		mu.Lock()
+		starts++
+		mu.Unlock()
+		return func() {}
+	}
+	lldpEmitMu.Unlock()
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resumeLLDPEmit()
+		}()
+	}
+	wg.Wait()
+	if starts != 1 {
+		t.Fatalf("%d senders started, want 1", starts)
+	}
+}
+
+// After a stop that timed out, a restart waits for the old senders, so
+// their late shutdown LLDPDU cannot follow the new frames; it skips the
+// restart while they are still alive.
+func TestResumeLLDPEmitWaitsForPendingSenders(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	origStop, origResume := lldpStopTimeout, lldpResumeWait
+	t.Cleanup(func() { lldpStopTimeout, lldpResumeWait = origStop, origResume })
+	lldpStopTimeout, lldpResumeWait = 10*time.Millisecond, 20*time.Millisecond
+	block := make(chan struct{})
+	starts := 0
+	start := func() func() {
+		starts++
+		return func() { waitLLDPEmit(func() { <-block }) }
+	}
+	lldpEmitMu.Lock()
+	lldpEmitStart = start
+	lldpEmitMu.Unlock()
+	setLLDPEmitStop(start())
+	stopLLDPEmit() // times out: the senders stay pending
+	resumeLLDPEmit()
+	if starts != 1 {
+		t.Fatalf("restarted while the old senders run: %d starts", starts)
+	}
+	close(block)
+	resumeLLDPEmit()
+	if starts != 2 {
+		t.Fatalf("not restarted after the old senders ended: %d starts", starts)
+	}
+}
