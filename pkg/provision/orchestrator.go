@@ -1446,8 +1446,12 @@ func (o *Orchestrator) waitForDisks(ctx context.Context, device, serial string) 
 		timeout = *t
 	}
 	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-	o.disk.WaitForStableDisks(ctx, diskSettleStable, diskSettlePoll, time.Duration(timeout)*time.Second)
-	for (device != "" || serial != "") && time.Now().Before(deadline) {
+	// The settle time since boot counts only when a named disk is awaited
+	// below; every other selection, and the wipe of all disks, observes
+	// the full window from here.
+	named := device != "" || serial != ""
+	o.disk.WaitForStableDisks(ctx, diskSettleStable, diskSettlePoll, time.Duration(timeout)*time.Second, named)
+	for named && time.Now().Before(deadline) {
 		if device != "" {
 			if _, err := os.Stat(device); err == nil {
 				return

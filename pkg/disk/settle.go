@@ -25,10 +25,14 @@ import (
 // on this manager or a copy of it) returns at once while the set is the
 // same: the devices have been stable since then.
 //
-// With a block watch on the same sysfs (StartBlockWatch, from boot), the
-// stable window counts from the last change the watch saw, so disks that
-// settled while the network came up do not cost the window again.
-func (m *Manager) WaitForStableDisks(ctx context.Context, stable, poll, maxWait time.Duration) {
+// creditBoot counts the window from the last change that a block watch on
+// the same sysfs saw (StartBlockWatch, from boot), so disks that settled
+// while the network came up do not cost the window again. Only a caller
+// that then also waits for a named disk (a device path or serial) may set
+// it: an HBA with an asynchronous SCSI scan can present disks after the
+// watch went quiet, and a caller that uses every disk (wipe all disks,
+// automatic selection, mirroring) must observe the full window itself.
+func (m *Manager) WaitForStableDisks(ctx context.Context, stable, poll, maxWait time.Duration, creditBoot bool) {
 	if maxWait <= 0 {
 		return
 	}
@@ -39,8 +43,10 @@ func (m *Manager) WaitForStableDisks(ctx context.Context, stable, poll, maxWait 
 		return
 	}
 	since := time.Now()
-	if changed, ok := blockWatchSince(m.sysfsRoot, last); ok {
-		since = changed
+	if creditBoot {
+		if changed, ok := blockWatchSince(m.sysfsRoot, last); ok {
+			since = changed
+		}
 	}
 	for time.Since(since) < stable {
 		if time.Now().After(deadline) {

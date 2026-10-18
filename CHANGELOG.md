@@ -31,10 +31,13 @@ behaviour.
 
 ### Behaviour changes in all modes
 
-- The block device settle wait before the disk selection counts from boot:
+- When the disk selection waits for a named disk (`DISK_DEVICE` or
+  `DISK_SERIAL_NUMBER`), the block device settle wait counts from boot:
   BOOTy watches `/sys/block` from the module load on, so disks that
-  settled while the network came up no longer cost another 2 s in
-  `detect-disk` and `select-deprovision-disk` (#762).
+  settled while the network came up no longer cost another 2 s. Every
+  other selection, and the wipe of all disks, still observes the full 2 s
+  window, because an HBA with an asynchronous SCSI scan can present disks
+  late (#762).
 - The `ERROR_URL` body of a failed provision or deprovision step now carries a
   stable failure code: `step <name> failed [BOOTY-<AREA>-<NNN>]: <error>`.
   [docs/failure-codes.md](docs/failure-codes.md) lists the codes (#706).
