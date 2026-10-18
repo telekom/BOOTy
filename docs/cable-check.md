@@ -29,12 +29,13 @@ shim and GRUB do not verify it.
 | `LLDP_PROFILE` | `bm4x-cablecheck` | Port ID = NIC MAC, system name `bare-minimal`, on every NIC with carrier ([identity profiles](networking.md#lldp-identity-profiles)). |
 | `CHECK_HOLD` | `until-poweroff` | Keep the links and LLDP up after the checks until bm4x powers the host off (`STOP_LLDP`). |
 
-The bm4x-cablecheck profile also stops the firmware LLDP agent of Intel
-NICs while BOOTy runs (`LLDP_DISABLE_FW_AGENT`, on by default with this
-profile), so the switch frames reach BOOTy. BOOTy restores the agent before
-it reboots, kexecs or powers off itself; after the bm4x `STOP_LLDP` power
-off, ice NICs keep the agent off until the OS turns it on again (see
-[networking](networking.md#bgp-capabilities-and-lldp)).
+BOOTy also stops the firmware LLDP agent of Intel NICs, as in every mode
+(`LLDP_DISABLE_FW_AGENT`, on by default), so the switch frames reach BOOTy
+and the switch sees the host. The agent stays off after the check: BOOTy
+does not put the flag back, and ice keeps it in the NVM (see
+[networking](networking.md#bgp-capabilities-and-lldp)). The check ISO vars
+do not set the key; a site that needs the firmware agent (firmware DCBX)
+builds the ISO with `LLDP_DISABLE_FW_AGENT=false`.
 
 The flow with bm4x is unchanged: `START_LLDP` inserts the ISO and powers the
 host on, NSO collects the neighbor tables, and `STOP_LLDP` powers the host
