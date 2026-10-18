@@ -1129,12 +1129,20 @@ On every lease (also renewals and leases on the other NICs), BOOTy:
 - adds a default route through the first router of the lease, with the
   lease address as source, metric 100 and `proto dhcp`, like networkd with
   netplan. The default routes of all NICs stay next to each other. A lease
-  without a router removes the default route of its NIC.
+  without a router removes the default route of its NIC;
+- sets the lease MTU (option 26) on the NIC, like networkd with netplan's
+  `UseMTU=true`; values below 576 are ignored, as in networkd. Teardown
+  restores the MTU from before;
+- writes `/etc/resolv.conf` with the configured resolvers (`dns_resolver`,
+  netplan `nameservers`) first and then the DNS servers (option 6) of all
+  leases, like systemd-resolved with `UseDNS=yes`. With
+  `PROVISIONER_FILES_TARGET=ramdisk` and a provisioner `/etc/resolv.conf`,
+  that file stays, as in the legacy ramdisk.
 
 When the lease of a NIC ends (it expires before a renewal or rebind, or the
-server answers with DHCPNAK), BOOTy removes the address and default route
-of that NIC (RFC 2131 sections 3.2 and 4.4.5), like networkd. The client
-starts over in INIT with a DHCPDISCOVER, and its next lease is applied
+server answers with DHCPNAK), BOOTy removes the address, default route,
+DNS and NTP servers of that NIC and restores its MTU (RFC 2131 sections 3.2
+and 4.4.5), like networkd. The client starts over in INIT with a DHCPDISCOVER, and its next lease is applied
 again. BOOTy keeps its own expiry timer per lease: the DHCP client library
 (go-dhclient v1.0.2) renews forever after a failed renewal, does not
 report the expiry and keeps requesting the old address from the old
@@ -1145,9 +1153,6 @@ without a lifetime or a server identifier is not applied, like networkd;
 since go-dhclient stays bound to it, BOOTy restarts the client of that NIC
 after 2 s, doubled per refusal up to 64 s. Teardown waits for a restart
 in progress, so no client starts after it.
-
-BOOTy does not apply DNS servers or the MTU from the lease. Set
-`dns_resolver` for DNS.
 
 Because `bond*` names are not physical NICs, DHCP does not run on `bond0`.
 

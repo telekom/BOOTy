@@ -49,6 +49,9 @@ type Config struct {
 	ProvisionIP      string // IP/mask to assign to provision bridge (e.g. "10.100.0.20/24")
 	ProvisionGateway string // Gateway VTEP IP for VXLAN BUM flooding
 	DNSResolvers     string // Comma-separated DNS servers
+	// KeepResolvConf leaves the provisioner resolv.conf alone: DHCP does not
+	// write the lease DNS servers.
+	KeepResolvConf bool
 
 	// Optional FRR onefabric mode fields.
 	DCGWIPs          string // Data Center Gateway IPs (comma-sep)

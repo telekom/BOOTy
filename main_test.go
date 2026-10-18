@@ -1465,6 +1465,9 @@ func TestKeepProvisionerResolvConfWithRamdiskFiles(t *testing.T) {
 	if netCfg.DNSResolvers != "" {
 		t.Fatalf("PROVISIONER_FILES_TARGET=ramdisk would rewrite the provisioner resolv.conf with %q", netCfg.DNSResolvers)
 	}
+	if !netCfg.KeepResolvConf {
+		t.Fatal("PROVISIONER_FILES_TARGET=ramdisk must keep the provisioner resolv.conf from DHCP too")
+	}
 }
 
 func TestLoadModulesWarnsWhenAModuleNeverLoads(t *testing.T) {
