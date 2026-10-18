@@ -29,9 +29,10 @@ import (
 // the same sysfs saw (StartBlockWatch, from boot), so disks that settled
 // while the network came up do not cost the window again. Only a caller
 // that then also waits for a named disk (a device path or serial) may set
-// it: an HBA with an asynchronous SCSI scan can present disks after the
-// watch went quiet, and a caller that uses every disk (wipe all disks,
-// automatic selection, mirroring) must observe the full window itself.
+// it, and only when it touches no other disk: an HBA with an asynchronous
+// SCSI scan can present disks after the watch went quiet, and a caller
+// that uses more disks (wipe all disks, a mirror companion, automatic
+// selection, RAID) must observe the full window itself.
 func (m *Manager) WaitForStableDisks(ctx context.Context, stable, poll, maxWait time.Duration, creditBoot bool) {
 	if maxWait <= 0 {
 		return

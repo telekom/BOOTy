@@ -1446,11 +1446,8 @@ func (o *Orchestrator) waitForDisks(ctx context.Context, device, serial string) 
 		timeout = *t
 	}
 	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-	// The settle time since boot counts only when a named disk is awaited
-	// below; every other selection, and the wipe of all disks, observes
-	// the full window from here.
 	named := device != "" || serial != ""
-	o.disk.WaitForStableDisks(ctx, diskSettleStable, diskSettlePoll, time.Duration(timeout)*time.Second, named)
+	waitForStableDisks(o.disk, ctx, diskSettleStable, diskSettlePoll, time.Duration(timeout)*time.Second, o.creditBootSettle(named))
 	for named && time.Now().Before(deadline) {
 		if device != "" {
 			if _, err := os.Stat(device); err == nil {
@@ -1466,6 +1463,23 @@ func (o *Orchestrator) waitForDisks(ctx context.Context, device, serial string) 
 		case <-time.After(diskSettlePoll):
 		}
 	}
+}
+
+// waitForStableDisks is a test seam for disk.Manager.WaitForStableDisks.
+var waitForStableDisks = (*disk.Manager).WaitForStableDisks
+
+// creditBootSettle reports whether the block device settle wait may count
+// from boot. Only a provision that uses one named disk and nothing else
+// may: an HBA with an asynchronous SCSI scan can present disks after the
+// boot watch went quiet, so every run that touches other disks observes
+// the full window itself. Those are WIPE_ALL_DISKS (it wipes every disk,
+// also with a named target), explicit RAID, and every deprovision (hard
+// deprovision with a named device also wipes its md mirror companion).
+// It reads the config, not targetDisk, which is still empty here.
+func (o *Orchestrator) creditBootSettle(named bool) bool {
+	d := o.cfg.Provision.Disk
+	return named && !config.BoolOr(d.WipeAllDisks, false) && len(d.RAID) == 0 &&
+		!config.IsDeprovisionMode(o.cfg.Mode)
 }
 
 // checkRamdiskDevicePath rejects a /dev/disk/... path: the ramdisk has no
