@@ -59,6 +59,9 @@ func TestDNSFanout(t *testing.T) {
 	dnsServer(t, "127.0.0.1", port, nil, &silent)
 	dnsServer(t, "127.0.0.2", port, net.IPv4(192, 0, 2, 7), &answering)
 
+	origLinger := fanoutLinger
+	t.Cleanup(func() { fanoutLinger = origLinger })
+	fanoutLinger = 100 * time.Millisecond
 	f := &fanout{servers: []string{"127.0.0.1", "127.0.0.2"}}
 	r := &net.Resolver{PreferGo: true, Dial: f.dial}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
