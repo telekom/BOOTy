@@ -101,6 +101,9 @@ type provisionHandoffOps struct {
 	powerOff func() error
 	shell    func()
 	exit     func(int)
+	// stopNetwork, when set, stops the network before the exit after a
+	// failed handoff (the network that restoreNetwork set up again).
+	stopNetwork func()
 }
 
 func main() {
@@ -667,7 +670,7 @@ func endRun(ctx context.Context, cfg *config.MachineConfig, client provisionStat
 	case errors.As(modeErr, &powerOffErr):
 		// Do not reboot when the power off fails: CAPRF has not ejected the
 		// ISO yet, so a reboot would run the task again.
-		ops := withNetworkStopBeforeHandoff(provisionHandoff, stopNetwork, func() { restoreNetwork(ctx, cfg) })
+		ops := withNetworkStopBeforeHandoff(provisionHandoff, stopNetwork, func() func() { return restoreNetwork(ctx, cfg) })
 		requestProvisionHandoff(ctx, client, "power off", ops.powerOff, ops,
 			"power off handoff failed after deprovisioning success")
 		return
@@ -749,27 +752,41 @@ func finishProvision(ctx context.Context, cfg *config.MachineConfig, client prov
 	// No pause here: the handoff closes the CAPRF log handler, and that
 	// drains the queued log lines (at most 5 s) before it acts.
 	handleProvisionHandoff(ctx, cfg, client, provisionErr, kexeced,
-		withNetworkStopBeforeHandoff(provisionHandoff, stopNetwork, func() { restoreNetwork(ctx, cfg) }))
+		withNetworkStopBeforeHandoff(provisionHandoff, stopNetwork, func() func() { return restoreNetwork(ctx, cfg) }))
 }
 
 // withNetworkStopBeforeHandoff returns ops whose reboot and power off ship
 // the queued log lines, then stop the network, then hand off. When the
 // handoff fails, restore brings the network back, so that the failure can
-// be reported and the rescue shell is reachable.
-func withNetworkStopBeforeHandoff(ops provisionHandoffOps, stopNetwork, restore func()) provisionHandoffOps {
+// be reported and the rescue shell is reachable, and returns the stop of
+// the restored network: the next handoff and the exit after the rescue
+// shell stop that one (BGP Cease), the first stop already ran.
+func withNetworkStopBeforeHandoff(ops provisionHandoffOps, stopNetwork func(), restore func() func()) provisionHandoffOps {
+	var mu sync.Mutex
+	current := stopNetwork
+	stop := func() {
+		mu.Lock()
+		s := current
+		mu.Unlock()
+		s()
+	}
 	wrap := func(handoff func() error) func() error {
 		return func() error {
 			flushLogs()
-			stopNetwork()
+			stop()
 			err := handoff()
 			if err != nil {
-				restore()
+				restored := restore()
+				mu.Lock()
+				current = restored
+				mu.Unlock()
 			}
 			return err
 		}
 	}
 	ops.reboot = wrap(ops.reboot)
 	ops.powerOff = wrap(ops.powerOff)
+	ops.stopNetwork = stop
 	return ops
 }
 
@@ -782,34 +799,38 @@ var restoreTimeout = time.Minute
 // of the stop first (bounded by networkStopTimeout) and skips the restore
 // while it still runs: the teardown removes the VRF, VXLAN and bridge by
 // name and would remove the new ones. One setup and one connectivity check
-// within restoreTimeout: the report is best effort.
-var restoreNetwork = func(ctx context.Context, cfg *config.MachineConfig) {
+// within restoreTimeout: the report is best effort. It returns the stop of
+// the restored network, or a no-op without one.
+var restoreNetwork = func(ctx context.Context, cfg *config.MachineConfig) func() {
 	if done := teardownDone.Load(); done != nil {
 		select {
 		case <-*done:
 		case <-time.After(networkStopTimeout):
 			slog.Error("handoff failed and the network teardown still runs, not setting the network up again")
-			return
+			return func() {}
 		}
 	}
 	slog.Warn("handoff failed after the network stop, setting the network up again")
-	ctx, cancel := context.WithTimeout(ctx, restoreTimeout)
+	setupCtx, cancel := context.WithTimeout(ctx, restoreTimeout)
 	defer cancel()
-	netMode, err := setupNetworkModeFn(ctx, cfg)
+	netMode, err := setupNetworkModeFn(setupCtx, cfg)
 	if err != nil {
 		slog.Error("network setup after the failed handoff failed", "error", err)
-		return
+		return func() {}
 	}
+	// The run context: the restored network outlives this setup.
+	stop := stopNetworkOnce(ctx, netMode)
 	target := cfg.Transport.ErrorURL
 	if target == "" {
 		target = cfg.Transport.InitURL
 	}
 	if target == "" {
-		return
+		return stop
 	}
-	if err := netMode.WaitForConnectivity(ctx, target, restoreTimeout); err != nil {
+	if err := netMode.WaitForConnectivity(setupCtx, target, restoreTimeout); err != nil {
 		slog.Error("no connectivity after the failed handoff", "error", err)
 	}
+	return stop
 }
 
 func handleProvisionHandoff(
@@ -849,6 +870,12 @@ func requestProvisionHandoff(
 		slog.Error("provisioning handoff failed after success report", "action", action, "error", err)
 		reportProvisionHandoffError(ctx, reporter, statusMessage)
 		ops.shell()
+		if ops.stopNetwork != nil {
+			// The exit of PID 1 ends the ramdisk; the restored network sends
+			// its BGP Cease first.
+			flushLogs()
+			ops.stopNetwork()
+		}
 		ops.exit(1)
 		return
 	}

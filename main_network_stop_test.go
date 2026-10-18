@@ -120,7 +120,11 @@ func TestWithNetworkStopBeforeHandoff(t *testing.T) {
 		reboot:   func() error { order = append(order, "reboot"); return errors.New("x") },
 		powerOff: func() error { order = append(order, "poweroff"); return nil },
 	}
-	ops = withNetworkStopBeforeHandoff(ops, func() { order = append(order, "stop") }, func() { order = append(order, "restore") })
+	ops = withNetworkStopBeforeHandoff(ops, func() { order = append(order, "stop") },
+		func() func() {
+			order = append(order, "restore")
+			return func() { order = append(order, "stop-restored") }
+		})
 	if err := ops.powerOff(); err != nil {
 		t.Fatal(err)
 	}
@@ -128,6 +132,15 @@ func TestWithNetworkStopBeforeHandoff(t *testing.T) {
 		t.Fatal("reboot error lost")
 	}
 	want := "flush,stop,poweroff,flush,stop,reboot,restore"
+	if got := strings.Join(order, ","); got != want {
+		t.Fatalf("order = %v, want %s", got, want)
+	}
+	// After the restore, the next handoff and the exit stop the restored
+	// network: the first stop already ran.
+	order = nil
+	_ = ops.reboot()
+	ops.stopNetwork()
+	want = "flush,stop-restored,reboot,restore,stop-restored"
 	if got := strings.Join(order, ","); got != want {
 		t.Fatalf("order = %v, want %s", got, want)
 	}
@@ -143,7 +156,10 @@ func recordEndRun(t *testing.T, order *[]string, powerOffErr error) {
 	})
 	rebootNow = func() { *order = append(*order, "reboot") }
 	endRunPause = 0
-	restoreNetwork = func(context.Context, *config.MachineConfig) { *order = append(*order, "restore") }
+	restoreNetwork = func(context.Context, *config.MachineConfig) func() {
+		*order = append(*order, "restore")
+		return func() { *order = append(*order, "stop-restored") }
+	}
 	provisionHandoff = provisionHandoffOps{
 		reboot:   func() error { *order = append(*order, "reboot"); return nil },
 		powerOff: func() error { *order = append(*order, "poweroff"); return powerOffErr },
@@ -172,7 +188,7 @@ func TestEndRunStopsNetworkBeforeTheHandoff(t *testing.T) {
 		{"failed mode", errors.New("mode failed"), nil, "flush,stop,reboot"},
 		{"no error", nil, nil, "flush,stop,reboot"},
 		{"power off", &runmode.PowerOffRequestedError{}, nil, "flush,stop,poweroff"},
-		{"failed power off", &runmode.PowerOffRequestedError{}, errors.New("x"), "flush,stop,poweroff,restore,report-error,shell"},
+		{"failed power off", &runmode.PowerOffRequestedError{}, errors.New("x"), "flush,stop,poweroff,restore,report-error,shell,flush,stop-restored"},
 		{"rescue shell keeps the network", &runmode.RescueShellError{}, nil, "reboot"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -344,8 +360,16 @@ func TestRestoreNetworkWaitsForTheTeardown(t *testing.T) {
 		t.Fatal("restored while the teardown still runs")
 	}
 	close(hung.block)
-	restoreNetwork(context.Background(), cfg)
+	stop := restoreNetwork(context.Background(), cfg)
 	if setups != 1 || restored.waits.Load() != 1 {
 		t.Fatalf("setups %d, connectivity checks %d; want one each", setups, restored.waits.Load())
+	}
+	// The restored network is kept, and its stop tears it down.
+	if restored.teardowns.Load() != 0 {
+		t.Fatal("restored network torn down at once")
+	}
+	stop()
+	if got := restored.teardowns.Load(); got != 1 {
+		t.Fatalf("teardowns of the restored network = %d, want 1 from the returned stop", got)
 	}
 }
