@@ -1511,4 +1511,10 @@ func TestLinkServers(t *testing.T) {
 	if got, want := d.linkServers(), []string{"10.9.9.9", "10.0.2.3", "fd00:20::1", "fd00:30::1"}; !slices.Equal(got, want) {
 		t.Fatalf("linkServers = %v, want %v", got, want)
 	}
+	// With search domains on some leases only those NICs count (resolved
+	// routes the lookup to the links whose domains match).
+	d.nics[4] = dhcpApplied{dns: []string{"10.0.4.3"}, domains: []string{"l2.example"}}
+	if got, want := d.linkServers(), []string{"10.9.9.9", "10.0.4.3"}; !slices.Equal(got, want) {
+		t.Fatalf("linkServers with domains = %v, want %v", got, want)
+	}
 }
