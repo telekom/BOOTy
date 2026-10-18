@@ -320,3 +320,58 @@ func TestProdTplType5CAPRFOverIPv6(t *testing.T) {
 		}
 	}
 }
+
+// A Type-5 route for a prefix that a server has connected in the L3VNI
+// VRF (here the management subnet on eth0, in the default VRF like the
+// L3VNI) is not installed, like zebra: connected beats BGP. dcgw01
+// originates the management subnet as an IPv4 Type-5 route; every server
+// must keep its connected route. Before, BOOTy installed IPv4 Type-5
+// routes with metric 0, which replaced the connected route of the same
+// prefix (and with it the path to the CAPRF mock).
+func TestProdTplType5ConnectedPrefixKept(t *testing.T) {
+	const mgmt = "172.31.250.0/24"
+	ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
+	defer cancel()
+	conf := func(no string) {
+		t.Helper()
+		args := []string{"vtysh", "-c", "configure terminal",
+			"-c", no + "ip route " + mgmt + " blackhole vrf provision",
+			"-c", "router bgp 4210000017 vrf provision",
+			"-c", "address-family ipv4 unicast", "-c", no + "network " + mgmt, "-c", "exit-address-family",
+			"-c", "address-family l2vpn evpn", "-c", no + "advertise ipv4 unicast"}
+		if out, err := prodtplExec(ctx, prodtplDCGW1, args...); err != nil {
+			t.Fatalf("dcgw01 %snetwork %s: %v\n%s", no, mgmt, err, out)
+		}
+	}
+	conf("")
+	t.Cleanup(func() { conf("no ") })
+	// The route reaches the servers: the shadow node has it in its EVPN table.
+	for {
+		out, err := prodtplExec(ctx, prodtplShadow, "vtysh", "-c", "show bgp l2vpn evpn route type prefix")
+		if err == nil && strings.Contains(out, "[172.31.250.0]") {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("the Type-5 route for %s did not reach the shadow node: %v\n%s", mgmt, err, out)
+		case <-time.After(time.Second):
+		}
+	}
+	time.Sleep(5 * time.Second) // BOOTy imports it within a second
+	for _, node := range prodtplServers {
+		out, err := prodtplExec(ctx, prodtplContainer(node), "ip", "-j", "route", "show", "table", "main", mgmt)
+		if err != nil {
+			t.Fatalf("%s routes: %v", node.name, err)
+		}
+		var routes []struct {
+			Dev      string `json:"dev"`
+			Protocol string `json:"protocol"`
+		}
+		if err := json.Unmarshal([]byte(out), &routes); err != nil {
+			t.Fatalf("%s: decode routes: %v\n%s", node.name, err, out)
+		}
+		if len(routes) != 1 || routes[0].Dev != "eth0" || routes[0].Protocol != "kernel" {
+			t.Errorf("%s: routes for %s = %+v, want only the connected route on eth0", node.name, mgmt, routes)
+		}
+	}
+}
