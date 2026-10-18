@@ -5,6 +5,7 @@ package lldp
 import (
 	"fmt"
 	"net"
+	"slices"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -46,8 +47,11 @@ func idString(subtypeName string, id []byte) string {
 // TLVs are not Chassis ID, Port ID and TTL in this order (IEEE 802.1AB,
 // mandatoryTLVsFirst). The End of LLDPDU TLV is optional since
 // 802.1AB-2016; the decoder needs one, so a payload without it gets one
-// appended (a present End TLV ends the decoding before it).
-func parseLLDP(data []byte, iface string) *Neighbor {
+// appended (a present End TLV ends the decoding before it). The frame
+// comes from the wire: a decoder panic keeps what was decoded so far
+// instead of ending BOOTy.
+func parseLLDP(data []byte, iface string) (n *Neighbor) {
+	defer func() { _ = recover() }() // n keeps the partial neighbor
 	if !mandatoryTLVsFirst(data) {
 		return nil
 	}
@@ -57,7 +61,7 @@ func parseLLDP(data []byte, iface string) *Neighbor {
 	if !ok {
 		return nil
 	}
-	n := &Neighbor{
+	n = &Neighbor{
 		Interface:        iface,
 		TTL:              l.TTL,
 		ChassisIDSubtype: subtypeName(chassisSubtypes, byte(l.ChassisID.Subtype)),
@@ -82,24 +86,27 @@ func parseLLDP(data []byte, iface string) *Neighbor {
 	return n
 }
 
-// decodeOrg reads the 802.1, 802.3 and LLDP-MED TLVs.
-func decodeOrg(info *layers.LinkLayerDiscoveryInfo, n *Neighbor) {
+// decodeOrg reads the 802.1, 802.3 and LLDP-MED TLVs. It skips the TLVs
+// that gopacket's decoders would read past the end of (orgTLVSafe).
+func decodeOrg(full *layers.LinkLayerDiscoveryInfo, n *Neighbor) {
+	info := *full
+	info.OrgTLVs = slices.DeleteFunc(slices.Clone(full.OrgTLVs), func(o layers.LLDPOrgSpecificTLV) bool { return !orgTLVSafe(o) })
 	if d, err := info.Decode8021(); err == nil {
 		n.VLAN = d.PVID
 		for _, v := range d.VLANNames {
 			n.VLANNames = append(n.VLANNames, fmt.Sprintf("%d:%s", v.ID, sanitizeLLDP(v.Name)))
 		}
-		if hasOrg(info, layers.IEEEOUI8021, layers.LLDP8021SubtypeLinkAggregation) {
+		if hasOrg(&info, layers.IEEEOUI8021, layers.LLDP8021SubtypeLinkAggregation) {
 			n.LinkAggregation = &LinkAggregation{d.LinkAggregation.Supported, d.LinkAggregation.Enabled, d.LinkAggregation.PortID}
 		}
 	}
 	if d, err := info.Decode8023(); err == nil {
 		n.MaxFrameSize = d.MTU
-		if hasOrg(info, layers.IEEEOUI8023, layers.LLDP8023SubtypeMACPHY) {
+		if hasOrg(&info, layers.IEEEOUI8023, layers.LLDP8023SubtypeMACPHY) {
 			m := d.MACPHYConfigStatus
 			n.MACPHY = &MACPHY{AutonegSupported: m.AutoNegSupported, AutonegEnabled: m.AutoNegEnabled, MAUType: m.MAUType}
 		}
-		if hasOrg(info, layers.IEEEOUI8023, layers.LLDP8023SubtypeLinkAggregation) {
+		if hasOrg(&info, layers.IEEEOUI8023, layers.LLDP8023SubtypeLinkAggregation) {
 			n.LinkAggregation = &LinkAggregation{d.LinkAggregation.Supported, d.LinkAggregation.Enabled, d.LinkAggregation.PortID}
 		}
 	}
@@ -175,4 +182,26 @@ func capabilityNames(c layers.LLDPCapabilities) []string {
 		}
 	}
 	return out
+}
+
+// orgTLVSafe reports whether gopacket (v1.1.19) decodes o without reading
+// past its end. Its length checks are too loose for these TLVs:
+//   - 802.1 VLAN name: checks 2 bytes, reads from byte 3;
+//   - 802.1 protocol identity: reads the length byte's count of bytes;
+//   - 802.3 MDI power: with 7 bytes it reads bytes 6 and 7;
+//   - MED location, civic address: checks 3 bytes after the format byte,
+//     reads 4.
+func orgTLVSafe(o layers.LLDPOrgSpecificTLV) bool {
+	n := len(o.Info)
+	switch {
+	case o.OUI == layers.IEEEOUI8021 && o.SubType == layers.LLDP8021SubtypeVLANName:
+		return n >= 3
+	case o.OUI == layers.IEEEOUI8021 && o.SubType == layers.LLDP8021SubtypeProtocolIdentity:
+		return n >= 1 && n >= 1+int(o.Info[0])
+	case o.OUI == layers.IEEEOUI8023 && o.SubType == layers.LLDP8023SubtypeMDIPower:
+		return n != 7
+	case o.OUI == layers.IEEEOUIMedia && layers.LLDPMediaSubtype(o.SubType) == layers.LLDPMediaTypeLocation:
+		return n < 2 || layers.LLDPLocationFormat(o.Info[0]) != layers.LLDPLocationFormatAddress || n >= 5
+	}
+	return true
 }

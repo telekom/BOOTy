@@ -4,6 +4,7 @@ package lldp
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"slices"
@@ -93,11 +94,26 @@ func (r *receiver) receiveOn(ctx context.Context, iface string) {
 	defer func() { _ = unix.Close(fd) }()
 	buf := make([]byte, 1600)
 	for ctx.Err() == nil {
-		if nb := readNeighbor(fd, buf, iface); nb != nil {
+		if nb := r.read(fd, buf, iface); nb != nil {
 			r.record(nb, time.Now())
 		}
 	}
 }
+
+// read reads one frame. A decoder panic drops that frame only: receive is
+// on by default and runs in PID 1, and the frames come from the wire.
+func (r *receiver) read(fd int, buf []byte, iface string) (nb *Neighbor) {
+	defer func() {
+		if p := recover(); p != nil {
+			r.log.Warn("LLDP frame dropped: decoder panic", "interface", iface, "panic", fmt.Sprint(p))
+			nb = nil
+		}
+	}()
+	return readFrame(fd, buf, iface)
+}
+
+// readFrame reads and decodes one frame; a test seam.
+var readFrame = readNeighbor
 
 // record stores a neighbor and logs it when it is new or changed.
 func (r *receiver) record(n *Neighbor, now time.Time) {
@@ -144,6 +160,13 @@ func (r *receiver) list(now time.Time) []Neighbor {
 	return out
 }
 
+// carrierSettle is how long WaitForNeighbors waits for a first carrier;
+// waitTick is its poll interval.
+var (
+	carrierSettle = 15 * time.Second
+	waitTick      = time.Second
+)
+
 // hasCarrier reports whether a NIC has carrier; a test seam.
 var hasCarrier = func(iface string) bool {
 	ifi, err := net.InterfaceByName(iface)
@@ -153,15 +176,20 @@ var hasCarrier = func(iface string) bool {
 // WaitForNeighbors waits until every NIC with carrier has an LLDP
 // neighbor, or until timeout. It returns the NICs with carrier that have
 // none. A switch sends every 30 s, so a timeout of 90 s covers a lost
-// frame.
+// frame. Links come up a few seconds after the network setup, so while no
+// NIC has carrier it waits up to carrierSettle (at most the timeout) before
+// it judges.
 func WaitForNeighbors(ctx context.Context, ifaces []string, timeout time.Duration) []string {
+	start := time.Now()
+	settle := min(timeout, carrierSettle)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	tick := time.NewTicker(time.Second)
+	tick := time.NewTicker(waitTick)
 	defer tick.Stop()
 	for {
 		missing := missingNeighbors(ifaces, Neighbors())
-		if len(missing) == 0 || ctx.Err() != nil {
+		settled := slices.ContainsFunc(ifaces, hasCarrier) || time.Since(start) >= settle
+		if len(missing) == 0 && settled || ctx.Err() != nil {
 			return missing
 		}
 		select {

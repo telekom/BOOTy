@@ -175,3 +175,44 @@ func TestMissingNeighbors(t *testing.T) {
 		t.Fatalf("missing = %v, want [ens1f1np1]", got)
 	}
 }
+
+// A decoder panic drops the frame and keeps the receiver running.
+func TestReceiverReadRecovers(t *testing.T) {
+	orig := readFrame
+	t.Cleanup(func() { readFrame = orig })
+	readFrame = func(int, []byte, string) *Neighbor { panic("index out of range") }
+	r := &receiver{neighbors: map[string]Neighbor{}, expires: map[string]time.Time{}, log: slog.Default()}
+	if nb := r.read(-1, nil, "eth0"); nb != nil {
+		t.Fatalf("read = %+v, want nil", nb)
+	}
+}
+
+// WaitForNeighbors does not judge before the first carrier: links come up
+// after the network setup.
+func TestWaitForNeighborsWaitsForCarrier(t *testing.T) {
+	origCarrier, origSettle, origTick := hasCarrier, carrierSettle, waitTick
+	current.Lock()
+	origR := current.r
+	current.r = nil
+	current.Unlock()
+	t.Cleanup(func() {
+		hasCarrier, carrierSettle, waitTick = origCarrier, origSettle, origTick
+		current.Lock()
+		current.r = origR
+		current.Unlock()
+	})
+	carrierSettle, waitTick = 5*time.Second, 10*time.Millisecond
+	up := time.Now().Add(200 * time.Millisecond)
+	hasCarrier = func(string) bool { return time.Now().After(up) }
+	got := WaitForNeighbors(context.Background(), []string{"eth0"}, 300*time.Millisecond)
+	if !reflect.DeepEqual(got, []string{"eth0"}) {
+		t.Fatalf("missing = %v, want [eth0] (carrier came up after 200 ms)", got)
+	}
+	// Without any carrier it returns after the settle time, not the timeout.
+	hasCarrier = func(string) bool { return false }
+	carrierSettle = 50 * time.Millisecond
+	start := time.Now()
+	if got := WaitForNeighbors(context.Background(), []string{"eth0"}, time.Minute); len(got) != 0 || time.Since(start) > 5*time.Second {
+		t.Fatalf("no carrier: missing %v after %v", got, time.Since(start))
+	}
+}

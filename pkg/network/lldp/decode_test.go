@@ -3,6 +3,7 @@
 package lldp
 
 import (
+	"encoding/binary"
 	"reflect"
 	"testing"
 )
@@ -165,5 +166,88 @@ func TestIDString(t *testing.T) {
 		if got := idString(tt.subtype, tt.id); got != sanitizeLLDP(tt.want) {
 			t.Errorf("idString(%s, %x) = %q, want %q", tt.subtype, tt.id, got, sanitizeLLDP(tt.want))
 		}
+	}
+}
+
+// bm4xRepro is a frame from the review that crashed BOOTy (PID 1): an 802.1
+// VLAN name TLV with 2 data bytes. gopacket checks 2 bytes and reads from
+// byte 3.
+// It has no TTL TLV, so the 802.1AB order check drops it before decoding;
+// bm4xReproTTL is the same frame with a TTL TLV, which reaches the org TLV
+// decoders.
+const (
+	bm4xRepro    = "\x02\x03000\x04\x0200\xfe\x06\x00\x80\xc2\x0300\x00\x00"
+	bm4xReproTTL = "\x02\x03000\x04\x0200\x06\x02\x00\x78\xfe\x06\x00\x80\xc2\x0300\x00\x00"
+)
+
+// Org TLVs that gopacket's decoders would read past the end of are
+// skipped; the rest of the frame still decodes.
+func TestParseLLDPShortOrgTLVs(t *testing.T) {
+	if n := parseLLDP([]byte(bm4xRepro), "eth0"); n != nil {
+		t.Fatalf("repro without TTL: %+v, want dropped", n)
+	}
+	if n := parseLLDP([]byte(bm4xReproTTL), "eth0"); n == nil || n.TTL != 120 {
+		t.Fatalf("repro with TTL: %+v", n)
+	}
+	base := nxosFrame[: len(nxosFrame)-2 : len(nxosFrame)-2] // without the end TLV; appends copy
+	for name, bad := range map[string][]byte{
+		"802.1 VLAN name, 2 bytes":          org(oui8021, 3, 0x00, 0x0a),
+		"802.1 protocol identity, short":    org(oui8021, 4, 0x05, 0x01),
+		"802.1 protocol identity, empty":    org(oui8021, 4),
+		"802.3 MDI power, 7 bytes":          org(oui8023, 2, 0x0f, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00),
+		"MED civic location, 3 bytes after": org(ouiMED, 3, 0x02, 0x00, 0x55, 0x53),
+	} {
+		frame := cat(base, bad, org(oui8023, 4, 0x05, 0xdc), rawTLV(0))
+		n := parseLLDP(frame, "eth0")
+		if n == nil || n.SystemName != "leaf01" || n.PortID != "Ethernet1/12" {
+			t.Errorf("%s: neighbor %+v", name, n)
+			continue
+		}
+		if n.MaxFrameSize != 1500 {
+			t.Errorf("%s: max frame size %d after the bad TLV, want 1500", name, n.MaxFrameSize)
+		}
+	}
+}
+
+func FuzzParseLLDP(f *testing.F) {
+	for _, seed := range [][]byte{[]byte(bm4xRepro), []byte(bm4xReproTTL), nxosFrame, junosFrame, lldpdFrame} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_ = parseLLDP(data, "eth0")
+	})
+}
+
+// A management address TLV with an address length below 2 (family byte
+// only, or none) is skipped.
+func TestMgmtAddressesShort(t *testing.T) {
+	for _, v := range [][]byte{{1, 1}, {0, 1, 2, 3}} {
+		frame := cat(nxosFrame[:len(nxosFrame)-2], rawTLV(8, v...), rawTLV(0))
+		n := parseLLDP(frame, "eth0")
+		if n == nil || !reflect.DeepEqual(n.MgmtAddresses, []string{"192.0.2.1"}) {
+			t.Errorf("%x: management addresses %v, want only 192.0.2.1", v, n.MgmtAddresses)
+		}
+	}
+}
+
+// Capabilities come only from a capabilities TLV: gopacket reports zero
+// values without one, which are not "no capabilities".
+func TestParseLLDPCapabilitiesTLV(t *testing.T) {
+	n := parseLLDP(nxosFrame, "eth0")
+	if !reflect.DeepEqual(n.Capabilities, []string{"bridge", "router"}) {
+		t.Fatalf("capabilities %v", n.Capabilities)
+	}
+	without := cat(nxosFrame[:len(nxosFrame)-2], rawTLV(0))
+	var parts [][]byte
+	for b := without; len(b) >= 2; {
+		l := int(binary.BigEndian.Uint16(b)&0x1ff) + 2
+		if b[0]>>1 != 7 {
+			parts = append(parts, b[:l])
+		}
+		b = b[l:]
+	}
+	n = parseLLDP(cat(parts...), "eth0")
+	if n == nil || n.Capabilities != nil || n.EnabledCapabilities != nil {
+		t.Fatalf("without the TLV: %+v", n)
 	}
 }
