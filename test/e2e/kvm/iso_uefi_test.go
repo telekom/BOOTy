@@ -104,6 +104,10 @@ func TestISOFirmwareUEFI(t *testing.T) {
 	if !strings.Contains(string(out), "Secure boot disabled") {
 		t.Fatalf("kernel did not report UEFI boot without Secure Boot; tail:\n%s", tail(out, 1500))
 	}
+	// timeout_style=hidden: without a key GRUB draws no menu.
+	if strings.Contains(string(out), "GNU GRUB") {
+		t.Fatalf("GRUB drew its menu without a key press; tail:\n%s", tail(out, 1500))
+	}
 }
 
 // TestISOFirmwareUEFIUSB boots the ISO as a USB disk (isohybrid GPT): the
