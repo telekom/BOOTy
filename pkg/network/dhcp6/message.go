@@ -105,7 +105,10 @@ type reply struct {
 	hasAddr     bool
 }
 
-var errShort = errors.New("short DHCPv6 message")
+var (
+	errShort    = errors.New("short DHCPv6 message")
+	errNoServer = errors.New("DHCPv6 reply without server identifier")
+)
 
 // decode parses a server message for the IA with iaid.
 func decode(b []byte, iaid uint32, now time.Time) (reply, error) {
@@ -116,6 +119,10 @@ func decode(b []byte, iaid uint32, now time.Time) (reply, error) {
 	opts := parseOptions(b[4:])
 	r.clientID, _ = find(opts, optClientID)
 	r.lease.ServerID, _ = find(opts, optServerID)
+	// RFC 8415 16.3 and 16.10: discard an ADVERTISE or REPLY without one.
+	if (r.typ == msgAdvertise || r.typ == msgReply) && len(r.lease.ServerID) == 0 {
+		return reply{}, errNoServer
+	}
 	_, r.rapidCommit = find(opts, optRapidCommit)
 	if st, ok := find(opts, optStatusCode); ok && len(st) >= 2 {
 		r.status = binary.BigEndian.Uint16(st)
@@ -136,9 +143,17 @@ func decode(b []byte, iaid uint32, now time.Time) (reply, error) {
 	return r, nil
 }
 
-// ia reads an IA_NA: T1, T2 and its first IA address with lifetimes.
+// ia reads an IA_NA: T1, T2 and its first usable IA address with
+// lifetimes (RFC 8415 21.4 and 21.6): an IA with T1 > T2 (both set) is
+// discarded, an address with a preferred lifetime over its valid lifetime,
+// a valid lifetime of 0 or a status other than success is skipped. T1 and
+// T2 of 0 are left to the client (0.5 and 0.8 of the preferred lifetime);
+// T1 <= T2 <= valid.
 func (l *Lease) ia(b []byte, now time.Time) bool {
 	t1, t2 := binary.BigEndian.Uint32(b[4:]), binary.BigEndian.Uint32(b[8:])
+	if t1 > 0 && t2 > 0 && t1 > t2 {
+		return false
+	}
 	for _, o := range parseOptions(b[12:]) {
 		if o.code != optIAAddr || len(o.data) < 24 {
 			continue
@@ -146,17 +161,20 @@ func (l *Lease) ia(b []byte, now time.Time) bool {
 		if st, ok := find(parseOptions(o.data[24:]), optStatusCode); ok && len(st) >= 2 && binary.BigEndian.Uint16(st) != 0 {
 			continue
 		}
-		l.Addr = net.IP(append([]byte(nil), o.data[:16]...))
 		pref, valid := binary.BigEndian.Uint32(o.data[16:]), binary.BigEndian.Uint32(o.data[20:])
+		if valid == 0 || pref > valid {
+			continue
+		}
+		l.Addr = net.IP(append([]byte(nil), o.data[:16]...))
 		l.Preferred, l.Valid = time.Duration(pref)*time.Second, time.Duration(valid)*time.Second
-		// RFC 8415 section 21.4: T1 and T2 of 0 leave them to the client;
-		// it uses 0.5 and 0.8 of the preferred lifetime.
-		if t1 == 0 || t1 > pref {
+		if t1 == 0 {
 			t1 = pref / 2
 		}
-		if t2 == 0 || t2 < t1 || t2 > valid {
-			t2 = pref / 5 * 4
+		if t2 == 0 {
+			t2 = uint32(uint64(pref) * 4 / 5)
 		}
+		t2 = min(t2, valid)
+		t1 = min(t1, t2)
 		l.Bound = now
 		l.Renew, l.Rebind = now.Add(time.Duration(t1)*time.Second), now.Add(time.Duration(t2)*time.Second)
 		l.Expire = now.Add(l.Valid)

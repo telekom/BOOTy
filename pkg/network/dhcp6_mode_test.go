@@ -16,6 +16,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/network/dhcp6"
 	"github.com/telekom/BOOTy/pkg/network/lldp"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/net/ipv6"
 	"golang.org/x/sys/unix"
 )
 
@@ -180,5 +181,49 @@ func TestDHCPv6InformationRequestAndExpire(t *testing.T) {
 	d.stopClients()
 	if s.clients[0].OnBound(l); len(s.added) != 1 {
 		t.Fatal("a lease after the stop was applied")
+	}
+}
+
+func TestValidRA(t *testing.T) {
+	ra := []byte{134, 0, 0, 0, 64, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	ll := &net.IPAddr{IP: net.ParseIP("fe80::1")}
+	for _, tt := range []struct {
+		name string
+		b    []byte
+		hop  int
+		src  net.Addr
+		want bool
+	}{
+		{"valid", ra, 255, ll, true},
+		{"forwarded", ra, 64, ll, false},
+		{"global source", ra, 255, &net.IPAddr{IP: net.ParseIP("fd00::1")}, false},
+		{"short", ra[:8], 255, ll, false},
+		{"not an RA", append([]byte{133}, ra[1:]...), 255, ll, false},
+	} {
+		if got := validRA(tt.b, &ipv6.ControlMessage{HopLimit: tt.hop}, tt.src); got != tt.want {
+			t.Errorf("%s: validRA = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+	if validRA(ra, nil, ll) {
+		t.Error("an RA without the hop limit passed")
+	}
+}
+
+// A later RA with the M flag replaces the stateless client with a
+// stateful one; more RAs change nothing.
+func TestDHCPv6UpgradesToStateful(t *testing.T) {
+	s := stubDHCPv6(t)
+	d := NewDHCPMode()
+	d.mu.Lock()
+	d.startRA(dummyLink("eth0", 1), &net.Interface{Name: "eth0", Index: 1}, "")
+	d.mu.Unlock()
+	ra := s.watching()
+	ra(false, true)
+	ra(false, true)
+	ra(true, true)
+	ra(true, false)
+	if len(s.clients) != 2 || s.clients[0].Stateful || !s.clients[1].Stateful || s.fakes[0].stopped != 1 || s.fakes[1].stopped != 0 {
+		t.Fatalf("clients %d, stateful %v %v, stops %d %d: want the stateless one stopped and one stateful",
+			len(s.clients), s.clients[0].Stateful, len(s.clients) > 1 && s.clients[1].Stateful, s.fakes[0].stopped, s.fakes[len(s.fakes)-1].stopped)
 	}
 }
