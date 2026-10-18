@@ -41,8 +41,9 @@ type DHCPMode struct {
 	// stopped is set before the clients stop; a lease that arrives after it
 	// is not applied.
 	stopped bool
-	// watchDone ends the watch for new NICs.
+	// watchDone ends the watch for new NICs and the router solicitations.
 	watchDone chan struct{}
+	bg        sync.WaitGroup  // router solicitations; stopClients waits for them
 	mtus      map[int]dhcpMTU // by link index: MTU before the first lease changed it
 	v6        map[int]*nic6   // by link index: DHCPv6 (dhcp6_mode.go)
 
@@ -339,6 +340,8 @@ func (d *DHCPMode) carrierChange(u netlink.LinkUpdate) bool {
 		return true
 	case carrier && nc.down:
 		nc.down = false
+		// Under d.mu: stopClients sets stopped under it before it waits.
+		d.bg.Go(func() { d.solicitRA(u.Attrs().Index) })
 		d.mu.Unlock()
 		d.log.Info("NIC has carrier again, confirming its DHCP lease", "interface", nc.link.Attrs().Name)
 		nc.client.Reboot()
@@ -360,6 +363,7 @@ func (d *DHCPMode) stopClients() {
 		d.watchDone = nil
 	}
 	d.mu.Unlock()
+	d.bg.Wait()
 	var wg sync.WaitGroup
 	for _, c := range clients {
 		wg.Go(c.client.Stop)

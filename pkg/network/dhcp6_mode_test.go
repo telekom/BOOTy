@@ -27,6 +27,7 @@ type dhcp6Stub struct {
 	added   []*netlink.Addr
 	deleted []string
 	written []string
+	rs      int
 }
 
 func stubDHCPv6(t *testing.T) *dhcp6Stub {
@@ -34,7 +35,13 @@ func stubDHCPv6(t *testing.T) *dhcp6Stub {
 	stubDHCPNetlink(t)
 	s := &dhcp6Stub{}
 	origRA, origNew, origAdd, origDel := dhcp6WatchRA, dhcp6New, dhcp6AddrAdd, dhcp6AddrDel
-	t.Cleanup(func() { dhcp6WatchRA, dhcp6New, dhcp6AddrAdd, dhcp6AddrDel = origRA, origNew, origAdd, origDel })
+	origRS, origWait := dhcp6SendRS, dhcp6RSWait
+	t.Cleanup(func() {
+		dhcp6WatchRA, dhcp6New, dhcp6AddrAdd, dhcp6AddrDel = origRA, origNew, origAdd, origDel
+		dhcp6SendRS, dhcp6RSWait = origRS, origWait
+	})
+	dhcp6RSWait = 20 * time.Millisecond
+	dhcp6SendRS = func(string, net.HardwareAddr) error { s.mu.Lock(); s.rs++; s.mu.Unlock(); return nil }
 	dhcp6WatchRA = func(ctx context.Context, _ *net.Interface, fn func(bool, bool)) error {
 		s.ra = fn
 		go func() { <-ctx.Done(); s.mu.Lock(); s.ra = nil; s.mu.Unlock() }()
@@ -121,7 +128,17 @@ func TestDHCPv6FollowsRAAndCarrier(t *testing.T) {
 	up := down
 	up.Flags = unix.IFF_UP | unix.IFF_LOWER_UP
 	d.carrierChange(up)
+	rs := func() int { s.mu.Lock(); defer s.mu.Unlock(); return s.rs }
+	for deadline := time.Now().Add(5 * time.Second); rs() < 2; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("no router solicitations after the carrier came back")
+		}
+	}
 	ra(true, false)
+	time.Sleep(100 * time.Millisecond)
+	if n := rs(); n > 3 {
+		t.Fatalf("%d router solicitations, want at most 3 (RFC 4861) and none after the client started", n)
+	}
 	if len(s.clients) != 2 {
 		t.Fatalf("%d clients after the carrier came back, want 2", len(s.clients))
 	}

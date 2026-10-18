@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/telekom/BOOTy/pkg/network/dhcp6"
 	"github.com/telekom/BOOTy/pkg/network/lldp"
@@ -48,19 +49,52 @@ var (
 	dhcp6New     = func(c *dhcp6.Client) dhcp6Client { return c }
 	dhcp6AddrAdd = netlink.AddrReplace
 	dhcp6AddrDel = netlink.AddrDel
+	dhcp6SendRS  = sendRS
+	dhcp6RSWait  = 4 * time.Second // RTR_SOLICITATION_INTERVAL, RFC 4861
 )
 
-// watchRA calls fn with the M and O flags of every router advertisement
-// that the NIC receives, until ctx ends.
-func watchRA(ctx context.Context, iface *net.Interface, fn func(managed, other bool)) error {
+// listenICMPv6 opens an ICMPv6 socket bound to the NIC.
+func listenICMPv6(ctx context.Context, ifname string) (net.PacketConn, error) {
 	lc := net.ListenConfig{Control: func(_, _ string, rc syscall.RawConn) error {
 		var serr error
-		err := rc.Control(func(fd uintptr) { serr = unix.BindToDevice(int(fd), iface.Name) })
+		err := rc.Control(func(fd uintptr) { serr = unix.BindToDevice(int(fd), ifname) })
 		return errors.Join(err, serr)
 	}}
 	conn, err := lc.ListenPacket(ctx, "ip6:ipv6-icmp", "::")
 	if err != nil {
-		return fmt.Errorf("ICMPv6 socket on %s: %w", iface.Name, err)
+		return nil, fmt.Errorf("ICMPv6 socket on %s: %w", ifname, err)
+	}
+	return conn, nil
+}
+
+// sendRS sends a router solicitation to all routers with the source
+// link-layer address option, as networkd's NDisc client does (the kernel
+// fills in the checksum).
+func sendRS(ifname string, mac net.HardwareAddr) error {
+	conn, err := listenICMPv6(context.Background(), ifname)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if err := ipv6.NewPacketConn(conn).SetMulticastHopLimit(255); err != nil {
+		return fmt.Errorf("hop limit on %s: %w", ifname, err)
+	}
+	msg := []byte{byte(ipv6.ICMPTypeRouterSolicitation), 0, 0, 0, 0, 0, 0, 0}
+	if len(mac) == 6 {
+		msg = append(append(msg, 1, 1), mac...) // option 1, 8 bytes
+	}
+	if _, err := conn.WriteTo(msg, &net.IPAddr{IP: net.IPv6linklocalallrouters, Zone: ifname}); err != nil {
+		return fmt.Errorf("router solicitation on %s: %w", ifname, err)
+	}
+	return nil
+}
+
+// watchRA calls fn with the M and O flags of every router advertisement
+// that the NIC receives, until ctx ends.
+func watchRA(ctx context.Context, iface *net.Interface, fn func(managed, other bool)) error {
+	conn, err := listenICMPv6(ctx, iface.Name)
+	if err != nil {
+		return err
 	}
 	var f ipv6.ICMPFilter
 	f.SetAll(true)
@@ -217,6 +251,32 @@ func (d *DHCPMode) stop6(idx int, all bool) {
 	n.dns = nil
 	d.writeResolvers()
 	d.mu.Unlock()
+}
+
+// solicitRA asks the routers of a NIC whose carrier came back for an RA,
+// which starts DHCPv6 again: networkd restarts its NDisc client with the
+// carrier and sends router solicitations (captured in the CAPRF L2 fault
+// windows); the kernel sends them only when the link comes up. It tries
+// three times, 4 s apart (RFC 4861), until a client runs.
+func (d *DHCPMode) solicitRA(idx int) {
+	for range 3 {
+		d.mu.Lock()
+		n, nc, done := d.v6[idx], d.clients[idx], d.watchDone
+		if d.stopped || n == nil || n.client != nil || nc == nil || nc.down {
+			d.mu.Unlock()
+			return
+		}
+		link := n.link
+		d.mu.Unlock()
+		if err := dhcp6SendRS(link.Attrs().Name, link.Attrs().HardwareAddr); err != nil {
+			d.log.Debug("router solicitation", "interface", link.Attrs().Name, "error", err)
+		}
+		select {
+		case <-done:
+			return
+		case <-time.After(dhcp6RSWait):
+		}
+	}
 }
 
 // stopAll6 stops DHCPv6 on every NIC, at once.
