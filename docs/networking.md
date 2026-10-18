@@ -1251,17 +1251,28 @@ DHCPDISCOVER, and its next lease is applied again.
 ### DHCPv6
 
 Like networkd with the legacy netplan, every NIC with a DHCP client also
-watches router advertisements (the kernel keeps doing SLAAC). The first RA
-with the M flag starts a stateful DHCPv6 client (`pkg/network/dhcp6`), one
-with only the O flag a stateless one (INFORMATION-REQUEST, options 6, 1,
-8). The stateful client sends the messages of systemd-networkd 255, as
+watches router advertisements (the kernel keeps doing SLAAC). Only an RA
+with hop limit 255 from a link-local address counts (RFC 4861 6.1.2). The
+first RA with the M flag starts a stateful DHCPv6 client
+(`pkg/network/dhcp6`), one with only the O flag a stateless one
+(INFORMATION-REQUEST, options 6, 1, 8); a later RA with the M flag
+replaces a stateless client with a stateful one. The stateful client sends the messages of systemd-networkd 255, as
 captured in the CAPRF L2 parity fixture:
 
 - SOLICIT with rapid commit, IA_NA, IA_PD, client FQDN (39, flag S and the
   hostname), ORO 23, 31, 56, 82, 103, client identifier and elapsed time;
   REQUEST after an ADVERTISE without rapid commit.
 - RENEW at T1 and REBIND at T2 with the IA address; RELEASE at stop.
-- Retransmission as in RFC 8415 section 15 (SOLICIT 1 s, up to 1 h).
+- Retransmission as in RFC 8415 section 15 (SOLICIT 1 s, up to 1 h; the
+  first SOLICIT timeout is above 1 s); REQUEST up to ten times, then a new
+  SOLICIT. When the valid lifetime ends without a REPLY, the client
+  solicits again.
+- Replies (RFC 8415): an ADVERTISE or REPLY without a server identifier
+  is discarded, an ADVERTISE with a status other than success ignored; an
+  IA_NA with T1 > T2 is discarded, an address with a preferred lifetime
+  over its valid lifetime, a valid lifetime of 0 or an error status is
+  skipped. T1 and T2 of 0 become 0.5 and 0.8 of the preferred lifetime,
+  and T1 <= T2 <= the valid lifetime.
 - The client identifier is the DUID-EN of DHCPv4 option 61 and the IAID
   that of option 61, as in networkd.
 

@@ -170,7 +170,8 @@ func TestSolicitLikeNetworkd(t *testing.T) {
 	f.mu.Lock()
 	waits := slices.Clone(f.waits)
 	f.mu.Unlock()
-	if want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}; !slices.Equal(waits[:3], want) {
+	// The first SOLICIT timeout is strictly greater than IRT (RAND 0 counts as 0.01).
+	if want := []time.Duration{1010 * time.Millisecond, 2020 * time.Millisecond, 4040 * time.Millisecond}; !slices.Equal(waits[:3], want) {
 		t.Errorf("waits = %v, want %v", waits, want)
 	}
 }
@@ -285,5 +286,17 @@ func TestDomainList(t *testing.T) {
 	b := []byte{1, 'a', 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 0, 1, 'b', 0}
 	if got := domainList(b); !slices.Equal(got, []string{"a.example", "b"}) {
 		t.Fatalf("domainList = %v", got)
+	}
+}
+
+// RFC 8415 18.2.1: the first SOLICIT RT is above IRT even with a negative
+// RAND; other first RTs use RAND as it is.
+func TestFirstSolicitAboveIRT(t *testing.T) {
+	c := &Client{rand: func() float64 { return -0.1 }}
+	if got := c.next(solicitRT, 0); got != 1100*time.Millisecond {
+		t.Errorf("first SOLICIT RT = %s, want 1.1s", got)
+	}
+	if got := c.next(requestRT, 0); got != 900*time.Millisecond {
+		t.Errorf("first REQUEST RT = %s, want 0.9s", got)
 	}
 }
