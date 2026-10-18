@@ -15,16 +15,36 @@ may be lost.
 T(B) = S / B + D + M + N
 ```
 
-- `S`: bytes that the firmware reads from the virtual media. BMCs (iDRAC
-  remote file share, iLO, XCC, Supermicro over HTTP, NFS or CIFS) serve
-  the blocks that the firmware reads, not the whole ISO, so `S` is the
-  boot loader, the kernel and the initramfs. Other ISO files and padding
-  do not count. UEFI reads shim (1,036,152 bytes) and GRUB (2,684,352)
-  from the ESP; BIOS reads ISOLINUX (157,636). The ESP does not hold the
-  kernel or the initramfs, so nothing is streamed twice.
-- `B`: virtual media throughput, commonly 2 to 10 MB/s, worse on BMCs
-  with a 100 Mbit/s port (iDRAC up to 13G) or with encrypted virtual
-  media. Verify per BMC model.
+- `S`: bytes that the firmware reads from the virtual media: the boot
+  loader, the kernel and the initramfs. UEFI reads shim (1,036,152
+  bytes) and GRUB (2,684,352) from the ESP; BIOS reads ISOLINUX
+  (157,636). The ESP does not hold the kernel or the initramfs, so
+  nothing is read twice.
+- `B`: virtual media throughput. **Assumption, not measured:** 2 to
+  10 MB/s, lower on BMCs with a 100 Mbit/s port (iDRAC up to 13G) or
+  with encrypted virtual media. No BMC in this repository's tests was
+  measured; verify per BMC model before using the absolute numbers below.
+
+**Assumption, not measured:** the model above holds for BMCs that map the
+image from a network share (HTTP, NFS or CIFS) and fetch only the blocks
+that the firmware reads, so other ISO files and padding do not count.
+It is false for BMCs that first copy the whole ISO, for example Lenovo
+XCC "mount from web" (the browser uploads the image to the BMC). For
+those:
+
+```
+T_upload(B_up) = I / B_up + S / B_local + D + M + N
+```
+
+- `I`: the whole ISO (default PR ISO about 64 MiB), uploaded at `B_up`
+  before the firmware can read anything. Every ISO byte counts, the BIOS
+  path, the ESP copy and padding included.
+- `B_local`: the read from the BMC's own storage, much faster than `B_up`
+  (not measured).
+
+With an upload the ISO size, not only `S`, sets the boot time: the
+initramfs savings below count in both models, a smaller boot loader only
+in the first.
 - `D`: in-kernel decompression of the initramfs, single-threaded.
 - `M`: module phase, `Run /init` to `starting BOOTy`.
 - `N`: network phase, `starting BOOTy` to `network connectivity
@@ -71,13 +91,22 @@ x86 KVM in CI (GitHub runners), same changes:
 
 | Measurement | main | with the PR | PR |
 |---|---:|---:|---|
-| `TestFlavorInitrdStorageControllersQEMU` (default flavor, Debian kernel, OVMF, NVMe, AHCI, MegaRAID, SAS, RAID; whole test) | 58.1 to 60.9 s | 46.5 s | #758 |
 | `agent-cycle-timing` `network-bring-up`, agent boot | 3.50 s | 0.75 s | #760 |
-| `agent-cycle-timing` `detect-disk` and `select-deprovision-disk` | 2.01 s each | 0.01 s each | #762 |
+| `agent-cycle-timing` `detect-disk` and `select-deprovision-disk` | 2.01 s each | 2.01 s each (automatic selection and wipe of all disks keep the full window) | #762 |
+
+Whole CI test times are not used: they vary from 44 to 60 s across PRs
+that do not touch the measured code.
+
+The disk settle credit of #762 applies only when the selection waits for
+a named disk (`DISK_DEVICE`, `DISK_SERIAL_NUMBER`): an HBA with an
+asynchronous SCSI scan can present disks late, so the wipe of all disks,
+automatic selection and mirroring keep the full 2 s window. The arm64 row
+above names its disk.
 
 QEMU does not rate-limit its UART. A BMC serial-over-LAN UART at 115200
-baud takes about 87 us per byte, so the 43 KB less console output in `M`
-saves about 3.7 s more on hardware.
+baud takes about 87 us per byte. #758 removes about 27.5 KB of console
+output in `M` on x86 (43 KB on arm64), so it saves about 2.4 s more on an
+x86 server.
 
 ### End to end
 
@@ -90,8 +119,10 @@ as measured above (VM, one NIC; 5.89 s before, 1.29 s after):
 | after #757, #758, #759, #760 | 60,515,139 | 31.6 s | 13.4 s | 7.3 s |
 | saved | 3,000,012 | 6.1 s (16%) | 5.2 s (28%) | 4.9 s (40%) |
 
-On hardware add about 3.7 s for the console output, and the disk settle
-saves up to 2 s per provision or deprovision after "network ready".
+The absolute numbers rest on the assumed `B` and on a BMC that reads
+only the blocks the firmware needs (see Model). On x86 hardware add about
+2.4 s for the console output. The disk settle saves up to 2 s per
+provision or deprovision that names its disk, after "network ready".
 
 ### Candidates
 
@@ -99,9 +130,9 @@ saves up to 2 s per provision or deprovision after "network ready".
 |---|---|---|---|
 | lldpd without the SNMP subagent | yes | default 2.28 MB, gobgp 2.09 MB | done, #759 |
 | zstd --ultra -22 --long, files grouped by kind | yes | default 0.98 MB, gobgp 0.52 MB, slim 0.21 MB | done, #757 |
-| Module load in dependency order, in parallel, one log line | yes | 1.6 s, 43 KB console | done, #758 |
+| Module load in dependency order, in parallel, one log line | yes | 1.6 s, 27.5 KB console on x86 (43 KB arm64) | done, #758 |
 | LLDP receive NIC detection in the background | yes | 3.0 s on single-NIC hosts | done, #760 |
-| Disk settle window counted from boot | yes | up to 2 s per run | done, #762 |
+| Disk settle window counted from boot | yes | up to 2 s per run that names its disk | done, #762 (only for a named disk) |
 | xz or lz4 instead of zstd | measured | see codecs | rejected: slower above 1.2 MB/s |
 | Recompress or trim the kernel | no | | rejected: the Debian signature covers the image (Secure Boot), and all ISOs boot with Secure Boot |
 | Strip or compress kernel modules (9.0 MB of the default ramdisk) | no | | rejected: the module signature covers the file; a compressed module inside the compressed ramdisk is larger |
