@@ -222,12 +222,17 @@ same resolution:
     connects itself after 1 to 2 s. This also covers the BFD reset, where
     GoBGP refused connections for the 1 s idle hold time.
     `TestProdTplLeafClear` checks that the leaf session is up again within
-    5 s;
+    5 s. CI (three lab variants): Established again 1.1 to 1.8 s after
+    `clear bgp` on the leaf against 2.1 s for the shadow FRR, ECMP back
+    after 2.8 to 3.5 s against 3.7 to 3.8 s;
   - GoBGP waits a random 1 to 2 s before the first connect after Idle
     ([osrg/gobgp#3736](https://github.com/osrg/gobgp/issues/3736)), where
     FRR connects after its 1 s start timer. Status: open, needs a GoBGP
-    change. After a BFD reset BOOTy restored ECMP in 4.0 to 4.4 s against
-    2.3 to 2.9 s for FRR; without the delay 2.7 s.
+    change; mitigated by the restart above, because the restarted peer
+    accepts the leaf's connection before its own first connect. After a
+    BFD reset BOOTy restored ECMP in 4.0 to 4.4 s against 2.3 to 2.9 s
+    for FRR; with the restart 2.4 to 2.7 s against 2.5 s
+    (`TestProdTplBFDFailover`, CI).
   BOOTy uses the released GoBGP without a fork.
   GoBGP v4 (native BFD, Extended Message) has two regressions against
   3.37 that matter for BOOTy, filed upstream before a move to v4:
