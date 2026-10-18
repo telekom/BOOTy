@@ -871,12 +871,17 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 	case nlri.GetEvpnIpPrefix() != nil:
 		route := nlri.GetEvpnIpPrefix()
 		routerMAC, err := extractRouterMAC(p)
-		routerMACValid := true
-		if err != nil {
-			o.log.Debug("type-5 route with invalid router MAC", "error", err)
-			routerMACValid = false
+		if reason := type5Unusable(route, routerMAC, err); reason != "" && !withdraw {
+			// The update replaces the path of the same route key, so the
+			// old path goes too, as for a withdraw (RFC 7606 section 2).
+			o.log.Warn("type-5 route treated as withdraw", "prefix", route.GetIpPrefix(), "len", route.GetIpPrefixLen(),
+				"vtep", vtep, "reason", reason)
+			withdraw = true
 		}
-		o.handleType5RouteWithRouterMACState(route, vtep, routerMAC, routerMACValid, withdraw)
+		if err != nil {
+			routerMAC = nil
+		}
+		o.handleType5RouteWithRouterMACState(route, vtep, routerMAC, err == nil, withdraw)
 	case nlri.GetEvpnMacadv() != nil:
 		if o.cfg.EnableL2 {
 			o.handleType2Update(nlri.GetEvpnMacadv(), vtep, macMobilityOf(p), withdraw)
@@ -902,6 +907,35 @@ func (o *OverlayTier) handleType3Path(p *apipb.Path, route *apipb.EVPNInclusiveM
 		withdraw = true
 	}
 	o.handleType3Route(route, vtep, withdraw)
+}
+
+// type5Unusable returns why a received Type-5 route must not be used, or
+// "" when BOOTy can install it. RFC 9136 section 3.2 treats a route as
+// withdrawn when both the ESI and the gateway IP are set, or when its
+// router MAC is invalid; with a gateway IP overlay index the router MAC is
+// ignored, so only a route without one is checked. An ESI overlay index
+// (and a zero label, which needs an overlay index) needs a recursive
+// resolution through Type-1 or Type-2 routes, which BOOTy does not do, so
+// such a route cannot be used either.
+func type5Unusable(route *apipb.EVPNIPPrefixRoute, routerMAC net.HardwareAddr, macErr error) string {
+	esi := route.GetEsi()
+	esiSet := esi.GetType() != 0 || slices.ContainsFunc(esi.GetValue(), func(b byte) bool { return b != 0 })
+	gw := net.ParseIP(route.GetGwAddress())
+	gwSet := gw != nil && !gw.IsUnspecified()
+	switch {
+	case !gwSet && macErr != nil:
+		return "invalid router MAC: " + macErr.Error()
+	case !gwSet && len(routerMAC) == ethernetMACLength &&
+		(routerMAC[0]&1 != 0 || bytes.Equal(routerMAC, make(net.HardwareAddr, ethernetMACLength))):
+		return "router MAC " + routerMAC.String() + " is not a unicast MAC"
+	case esiSet && gwSet:
+		return "both ESI and gateway IP are set"
+	case esiSet:
+		return "ESI overlay index is not supported"
+	case !gwSet && route.GetLabel() == 0:
+		return "label is zero without a gateway IP overlay index"
+	}
+	return ""
 }
 
 // handleType5Route installs or removes a kernel route for an IP prefix
