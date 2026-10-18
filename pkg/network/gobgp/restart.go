@@ -16,8 +16,8 @@ import (
 // while BOOTy keeps the peer up. GoBGP then holds the peer 5 s in Idle
 // (holdtimeIdle, pkg/server/fsm.go) and closes every connection that the
 // peer opens meanwhile, so a leaf that ends the session (clear bgp, BFD
-// down on the leaf, hold timer) and connects again after FRR's 1 s start
-// timer is refused and retries only after its connect timer
+// down on the leaf, hold timer) and connects again when FRR's start timer
+// expires (1 s after a TCP close, 2 s after a NOTIFICATION) is refused and retries only after its connect timer
 // (osrg/gobgp#3735; lab: 36 s against 2.3 s for FRR). FRR accepts
 // connections while it waits. A peer that is added again starts in Active
 // at once: it accepts the leaf's connection and connects itself after 1 to
@@ -25,37 +25,24 @@ import (
 type peerRestarter struct {
 	// peers returns the GoBGP peer addresses whose host is addr: the peer
 	// state events carry the address without the zone of a link-local
-	// peer.
+	// peer, so two unnumbered peers can share a host.
 	peers func(addr string) []string
-	// idle reports whether the peer is in Idle and stays up: not
-	// administratively down (carrier loss, BOOTy stops) and without the
-	// routes that GoBGP keeps for a graceful restart of the peer.
-	idle func(ctx context.Context, addr string) bool
-	// restart deletes the peer and adds it again.
-	restart func(ctx context.Context, addr string) error
+	// restart starts the peer at addr again if it still needs it (see
+	// restartPeer) and reports whether it did.
+	restart func(ctx context.Context, addr string) (bool, error)
 	log     *slog.Logger
 
-	established map[string]bool // host -> the session was up
-	mu          sync.Mutex      // guards stopped and wg.Add
-	stopped     bool
-	wg          sync.WaitGroup
+	mu      sync.Mutex // guards stopped and wg.Add
+	stopped bool
+	wg      sync.WaitGroup
 }
 
 // handle takes a peer state event. GoBGP calls it from one goroutine.
 func (r *peerRestarter) handle(ctx context.Context, p *apipb.Peer) {
+	if p.GetState().GetSessionState() != apipb.PeerState_IDLE || p.GetState().GetAdminState() != apipb.PeerState_UP {
+		return
+	}
 	host := p.GetState().GetNeighborAddress()
-	switch p.GetState().GetSessionState() {
-	case apipb.PeerState_ESTABLISHED:
-		r.established[host] = true
-		return
-	case apipb.PeerState_IDLE:
-	default:
-		return
-	}
-	if !r.established[host] || p.GetState().GetAdminState() != apipb.PeerState_UP {
-		return
-	}
-	delete(r.established, host)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.stopped {
@@ -65,14 +52,14 @@ func (r *peerRestarter) handle(ctx context.Context, p *apipb.Peer) {
 	go func() {
 		defer r.wg.Done()
 		for _, addr := range r.peers(host) {
-			if !r.idle(ctx, addr) {
-				continue
-			}
-			if err := r.restart(ctx, addr); err != nil {
+			restarted, err := r.restart(ctx, addr)
+			if err != nil {
 				r.log.Warn("start the BGP peer again", "neighbor", addr, "error", err)
 				continue
 			}
-			r.log.Info("BGP session ended, peer started again at once like FRR", "neighbor", addr)
+			if restarted {
+				r.log.Info("BGP session ended, peer started again at once like FRR", "neighbor", addr)
+			}
 		}
 	}()
 }
@@ -87,13 +74,7 @@ func (r *peerRestarter) stop() {
 
 // startRestarter starts the peer restarter until Teardown.
 func (u *UnderlayTier) startRestarter() error {
-	r := &peerRestarter{
-		peers:       u.peersOfHost,
-		idle:        u.peerIdleUp,
-		restart:     u.restartPeer,
-		log:         u.log,
-		established: map[string]bool{},
-	}
+	r := &peerRestarter{peers: u.peersOfHost, restart: u.restartPeer, log: u.log}
 	ctx, cancel := context.WithCancel(context.Background())
 	err := u.bgp.WatchEvent(ctx, &apipb.WatchEventRequest{Peer: &apipb.WatchEventRequest_Peer{}}, func(e *apipb.WatchEventResponse) {
 		if pe := e.GetPeer(); pe.GetType() == apipb.WatchEventResponse_PeerEvent_STATE {
@@ -124,13 +105,19 @@ func (u *UnderlayTier) peersOfHost(host string) []string {
 	return out
 }
 
-func (u *UnderlayTier) peerIdleUp(ctx context.Context, addr string) bool {
-	up := false
+// needsRestart reports whether the peer at addr ended a session and waits
+// in Idle while BOOTy keeps it up: it was Established once (it has an
+// uptime), it is in Idle, not administratively down (carrier loss, BOOTy
+// stops), and GoBGP keeps no graceful restart routes of it. The caller
+// holds peerOps, so the state cannot change between the check and the
+// restart through BOOTy.
+func (u *UnderlayTier) needsRestart(ctx context.Context, addr string) bool {
+	needs := false
 	_ = u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
-		up = p.GetState().GetSessionState() == apipb.PeerState_IDLE && p.GetState().GetAdminState() == apipb.PeerState_UP &&
-			!keepsGracefulRestartRoutes(p)
+		needs = p.GetState().GetSessionState() == apipb.PeerState_IDLE && p.GetState().GetAdminState() == apipb.PeerState_UP &&
+			p.GetTimers().GetState().GetUptime() != nil && !keepsGracefulRestartRoutes(p)
 	})
-	return up
+	return needs
 }
 
 // keepsGracefulRestartRoutes reports whether GoBGP keeps routes of the
@@ -148,20 +135,21 @@ func keepsGracefulRestartRoutes(p *apipb.Peer) bool {
 	return false
 }
 
-// restartPeer deletes the peer at addr and adds it again as it was added.
-func (u *UnderlayTier) restartPeer(ctx context.Context, addr string) error {
+// restartPeer deletes the peer at addr and adds it again as it was
+// added, if it needs a restart (needsRestart). It reports whether it did.
+func (u *UnderlayTier) restartPeer(ctx context.Context, addr string) (bool, error) {
 	u.peerOps.Lock()
 	defer u.peerOps.Unlock()
 	conf := u.peerConfs[addr]
-	if conf == nil {
-		return nil // moved by the relearner meanwhile
+	if conf == nil || !u.needsRestart(ctx, addr) {
+		return false, nil // moved by the relearner, or no longer waiting
 	}
 	if err := u.bgp.DeletePeer(ctx, &apipb.DeletePeerRequest{Address: addr}); err != nil {
-		return fmt.Errorf("delete peer %s: %w", addr, err)
+		return false, fmt.Errorf("delete peer %s: %w", addr, err)
 	}
 	peer, _ := proto.Clone(conf).(*apipb.Peer)
 	if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
-		return fmt.Errorf("add peer %s: %w", addr, err)
+		return false, fmt.Errorf("add peer %s: %w", addr, err)
 	}
-	return nil
+	return true, nil
 }

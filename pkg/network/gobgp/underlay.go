@@ -752,6 +752,17 @@ func (u *UnderlayTier) startCarrierWatch() {
 func (u *UnderlayTier) newCarrierWatch(peers map[string]string) *carrierWatch {
 	w := newCarrierWatch(u.bgp, peers, u.log)
 	w.current = u.ifacePeer
+	// Under peerOps, so the peer restarter cannot delete and add a peer
+	// between the stop and its own check, which would leave it up on a
+	// link without carrier.
+	for _, f := range []*func(context.Context, string) error{&w.disable, &w.enable} {
+		op := *f
+		*f = func(ctx context.Context, addr string) error {
+			u.peerOps.Lock()
+			defer u.peerOps.Unlock()
+			return op(ctx, addr)
+		}
+	}
 	return w
 }
 

@@ -148,7 +148,8 @@ func pick(got, want map[string]bfdView) map[string]bfdView {
 }
 
 // maxRestore bounds the time from a working link to ECMP again. FRR
-// connects 1 s after BFD down (BGP_INIT_START_TIMER); the GoBGP default
+// connects 2 s after BFD down (it sends a NOTIFICATION, so v_start
+// doubles BGP_INIT_START_TIMER); the GoBGP default
 // idle hold time after a reset is 30 s. BOOTy takes 3.6 to 4.7 s in CI; the
 // bound leaves room for slow CI runners (one run took 10.02 s, with a BFD
 // session that went down again right after Up, fixed in #703).
@@ -264,8 +265,9 @@ func TestProdTplCarrierLossPastBFD(t *testing.T) {
 }
 
 // The leaf resets the session ("clear bgp", Cease/Administrative Reset).
-// FRR on the leaf and on the server waits 1 s and accepts the other
-// side's connection meanwhile, so the session is up again in about 2 s on
+// FRR on the leaf and on the server waits 2 s (after a NOTIFICATION
+// v_start doubles the 1 s start timer) and accepts the other side's
+// connection meanwhile, so the session is up again in about 2 s on
 // the shadow node. GoBGP alone holds the peer 5 s in Idle and closes the
 // leaf's connections in that time (osrg/gobgp#3735: 36 s seen); BOOTy
 // starts the peer again at once, so the leaf session is Established again

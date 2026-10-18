@@ -4,13 +4,16 @@ package gobgp
 
 import (
 	"context"
+	"io"
 	"log/slog"
+	"net"
 	"slices"
 	"sync"
 	"testing"
 	"time"
 
 	apipb "github.com/osrg/gobgp/v3/api"
+	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
 	"github.com/osrg/gobgp/v3/pkg/server"
 )
 
@@ -18,52 +21,171 @@ func peerEvent(addr string, s apipb.PeerState_SessionState, a apipb.PeerState_Ad
 	return &apipb.Peer{State: &apipb.PeerState{NeighborAddress: addr, SessionState: s, AdminState: a}}
 }
 
-// A session that ends while the peer stays up restarts every peer of the
-// host that is in Idle; a peer that never came up, one that BOOTy
-// disabled and one that is no longer Idle stay.
+// An Idle event of a peer that BOOTy keeps up asks every peer of the host
+// for a restart (restartPeer decides); other states, an administratively
+// down peer and events after stop do not.
 func TestPeerRestarterHandle(t *testing.T) {
 	var mu sync.Mutex
-	var restarted []string
+	var asked []string
 	r := &peerRestarter{
 		peers: func(host string) []string { return []string{host + "%eth0", host + "%eth1"} },
-		idle:  func(_ context.Context, addr string) bool { return addr != "fe80::1%eth1" },
-		restart: func(_ context.Context, addr string) error {
+		restart: func(_ context.Context, addr string) (bool, error) {
 			mu.Lock()
 			defer mu.Unlock()
-			restarted = append(restarted, addr)
-			return nil
+			asked = append(asked, addr)
+			return addr == "fe80::1%eth0", nil
 		},
-		log:         slog.Default(),
-		established: map[string]bool{},
+		log: slog.Default(),
 	}
 	ctx := context.Background()
-	up, idle := apipb.PeerState_ESTABLISHED, apipb.PeerState_IDLE
+	both := []string{"fe80::1%eth0", "fe80::1%eth1"}
 	steps := []struct {
 		event *apipb.Peer
 		want  []string
 	}{
-		{peerEvent("fe80::1", idle, apipb.PeerState_UP), nil},
 		{peerEvent("fe80::1", apipb.PeerState_ACTIVE, apipb.PeerState_UP), nil},
-		{peerEvent("fe80::1", up, apipb.PeerState_UP), nil},
-		{peerEvent("fe80::1", idle, apipb.PeerState_UP), []string{"fe80::1%eth0"}},
-		{peerEvent("fe80::1", idle, apipb.PeerState_UP), []string{"fe80::1%eth0"}},
-		{peerEvent("fe80::1", up, apipb.PeerState_UP), []string{"fe80::1%eth0"}},
-		{peerEvent("fe80::1", idle, apipb.PeerState_DOWN), []string{"fe80::1%eth0"}},
+		{peerEvent("fe80::1", apipb.PeerState_ESTABLISHED, apipb.PeerState_UP), nil},
+		{peerEvent("fe80::1", apipb.PeerState_IDLE, apipb.PeerState_DOWN), nil},
+		{peerEvent("fe80::1", apipb.PeerState_IDLE, apipb.PeerState_UP), both},
 	}
 	for i, s := range steps {
 		r.handle(ctx, s.event)
 		r.wg.Wait()
-		if !slices.Equal(restarted, s.want) {
-			t.Fatalf("step %d: restarted %v, want %v", i, restarted, s.want)
+		if !slices.Equal(asked, s.want) {
+			t.Fatalf("step %d: asked %v, want %v", i, asked, s.want)
 		}
 	}
-	r.handle(ctx, peerEvent("fe80::1", up, apipb.PeerState_UP))
 	r.stop()
-	r.handle(ctx, peerEvent("fe80::1", idle, apipb.PeerState_UP))
+	r.handle(ctx, peerEvent("fe80::1", apipb.PeerState_IDLE, apipb.PeerState_UP))
 	r.wg.Wait()
-	if len(restarted) != 1 {
-		t.Fatalf("restarted after stop: %v", restarted)
+	if !slices.Equal(asked, both) {
+		t.Fatalf("asked after stop: %v", asked)
 	}
+}
+
+// fakeSpeaker accepts the session of a GoBGP peer that u adds for
+// 127.0.0.1 and brings it up by hand: OPEN (with graceful restart and an
+// IPv4 tuple when gr), then KEEPALIVE. Closing the returned connection
+// ends the session without a NOTIFICATION.
+func fakeSpeaker(t *testing.T, u *UnderlayTier, gr bool) net.Conn {
+	t.Helper()
+	ctx := context.Background()
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	peer := &apipb.Peer{
+		Conf:      &apipb.PeerConf{NeighborAddress: "127.0.0.1", PeerAsn: 65500},
+		Transport: &apipb.Transport{RemotePort: uint32(ln.Addr().(*net.TCPAddr).Port)}, //nolint:gosec // test port
+		Timers:    &apipb.Timers{Config: &apipb.TimersConfig{ConnectRetry: 1}},
+		AfiSafis:  ipv4Families(),
+	}
+	caps := []bgp.ParameterCapabilityInterface{bgp.NewCapMultiProtocol(bgp.RF_IPv4_UC), bgp.NewCapFourOctetASNumber(65500)}
+	if gr {
+		peer.GracefulRestart = &apipb.GracefulRestart{Enabled: true, RestartTime: 120}
+		peer.AfiSafis[0].MpGracefulRestart = &apipb.MpGracefulRestart{Config: &apipb.MpGracefulRestartConfig{Enabled: true}}
+		caps = append(caps, bgp.NewCapGracefulRestart(false, false, 120,
+			[]*bgp.CapGracefulRestartTuple{bgp.NewCapGracefulRestartTuple(bgp.RF_IPv4_UC, true)}))
+	}
+	if err := u.addPeer(ctx, peer); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	go func() { _, _ = io.Copy(io.Discard, conn) }()
+	for _, m := range []*bgp.BGPMessage{
+		bgp.NewBGPOpenMessage(65500, 90, "198.51.100.1", []bgp.OptionParameterInterface{bgp.NewOptionParameterCapability(caps)}),
+		bgp.NewBGPKeepAliveMessage(),
+	} {
+		b, err := m.Serialize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := conn.Write(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitPeer(t, u, func(p *apipb.Peer) bool { return p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED })
+	return conn
+}
+
+func waitPeer(t *testing.T, u *UnderlayTier, ok func(*apipb.Peer) bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		done := false
+		_ = u.bgp.ListPeer(context.Background(), &apipb.ListPeerRequest{Address: "127.0.0.1"}, func(p *apipb.Peer) { done = ok(p) })
+		if done {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("peer state not reached")
+}
+
+func idleAfterUp(p *apipb.Peer) bool {
+	return p.GetState().GetSessionState() == apipb.PeerState_IDLE && p.GetTimers().GetState().GetUptime() != nil
+}
+
+// restartPeer against a real GoBGP: it restarts a peer whose session
+// ended, but not one that never came up, an Established one, one that
+// BOOTy stopped (administratively down) or a restarting peer that sent
+// family tuples.
+func TestRestartPeerReal(t *testing.T) {
+	ctx := context.Background()
+	newTier := func() *UnderlayTier {
+		return &UnderlayTier{log: slog.Default(), bgp: startServer(t, 65000, "192.0.2.17", -1)}
+	}
+	t.Run("never up", func(t *testing.T) {
+		u := newTier()
+		if err := u.addPeer(ctx, &apipb.Peer{Conf: &apipb.PeerConf{NeighborAddress: "127.0.0.1", PeerAsn: 65500},
+			Transport: &apipb.Transport{RemotePort: uint32(freePort(t))}}); err != nil { //nolint:gosec // test port
+			t.Fatal(err)
+		}
+		if ok, err := u.restartPeer(ctx, "127.0.0.1"); ok || err != nil {
+			t.Fatalf("restart = %v, %v; want none", ok, err)
+		}
+	})
+	t.Run("session ended", func(t *testing.T) {
+		u := newTier()
+		_ = fakeSpeaker(t, u, false).Close()
+		waitPeer(t, u, idleAfterUp)
+		if ok, err := u.restartPeer(ctx, "127.0.0.1"); !ok || err != nil {
+			t.Fatalf("restart = %v, %v; want a restart", ok, err)
+		}
+		// Added again: a new peer without an uptime.
+		waitPeer(t, u, func(p *apipb.Peer) bool { return p.GetTimers().GetState().GetUptime() == nil })
+	})
+	t.Run("administratively down", func(t *testing.T) {
+		u := newTier()
+		_ = fakeSpeaker(t, u, false)
+		if ok, err := u.restartPeer(ctx, "127.0.0.1"); ok || err != nil {
+			t.Fatalf("restart of an Established peer = %v, %v; want none", ok, err)
+		}
+		if err := u.bgp.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: "127.0.0.1"}); err != nil {
+			t.Fatal(err)
+		}
+		// GoBGP also clears the uptime of a disabled peer.
+		waitPeer(t, u, func(p *apipb.Peer) bool {
+			return p.GetState().GetSessionState() == apipb.PeerState_IDLE && p.GetState().GetAdminState() == apipb.PeerState_DOWN
+		})
+		if ok, err := u.restartPeer(ctx, "127.0.0.1"); ok || err != nil {
+			t.Fatalf("restart = %v, %v; want none", ok, err)
+		}
+	})
+	t.Run("graceful restart with tuples", func(t *testing.T) {
+		u := newTier()
+		_ = fakeSpeaker(t, u, true).Close()
+		waitPeer(t, u, func(p *apipb.Peer) bool { return idleAfterUp(p) && keepsGracefulRestartRoutes(p) })
+		if ok, err := u.restartPeer(ctx, "127.0.0.1"); ok || err != nil {
+			t.Fatalf("restart = %v, %v; want none", ok, err)
+		}
+	})
 }
 
 // GoBGP keeps the stale routes of a restarting peer that sent family
@@ -86,8 +208,8 @@ func TestKeepsGracefulRestartRoutes(t *testing.T) {
 }
 
 // reestablishAfterLeafReset peers BOOTy (127.0.0.1) with a leaf
-// (127.0.0.2) that resets the session like FRR: Idle for 1 s, then it
-// connects. It reports whether BOOTy is Established again within limit.
+// (127.0.0.2) that resets the session and connects again after 1 s in
+// Idle (FRR: 1 s after a TCP close, 2 s after a NOTIFICATION). It reports whether BOOTy is Established again within limit.
 func reestablishAfterLeafReset(t *testing.T, restarter bool, limit time.Duration) bool {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -210,8 +210,11 @@ same resolution:
   log shows it (status: upstream-pending, needs a GoBGP API change). Timing after a
   session ends, against GoBGP 3.37:
   - GoBGP waits a fixed 5 s in Idle (`holdtimeIdle`) when the peer ends
-    the session (for example `clear bgp` on the leaf), where FRR waits
-    1 s, and refuses connections in that time
+    the session (for example `clear bgp` on the leaf), and refuses
+    connections in that time. FRR waits 1 s after a TCP close
+    (`BGP_INIT_START_TIMER`) and 2 s after a NOTIFICATION sent or received
+    (`v_start` doubles, bgp_fsm.c and bgp_packet.c), and accepts
+    connections meanwhile
     ([osrg/gobgp#3735](https://github.com/osrg/gobgp/issues/3735)). In
     the lab a leaf-initiated session to BOOTy took 36 s against 2.3 s for
     FRR (the leaf then retries after its connect timer). Status: worked
@@ -227,7 +230,8 @@ same resolution:
     after 2.8 to 3.5 s against 3.7 to 3.8 s;
   - GoBGP waits a random 1 to 2 s before the first connect after Idle
     ([osrg/gobgp#3736](https://github.com/osrg/gobgp/issues/3736)), where
-    FRR connects after its 1 s start timer. Status: upstream-pending,
+    FRR connects when its start timer (1 s, or 2 s after a NOTIFICATION)
+    expires. Status: upstream-pending,
     needs a GoBGP change; mitigated by the restart above, because the restarted peer
     accepts the leaf's connection before its own first connect. After a
     BFD reset BOOTy restored ECMP in 4.0 to 4.4 s against 2.3 to 2.9 s
