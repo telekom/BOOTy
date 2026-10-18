@@ -44,6 +44,12 @@ type overlayNetlinkOps interface {
 	NeighDel(neigh *netlink.Neigh) error
 	RouteReplace(route *netlink.Route) error
 	RouteDel(route *netlink.Route) error
+	// NexthopReplace, NexthopDel, FDBNhidSet and FDBDel manage the FDB
+	// nexthop groups of remote Ethernet segments (esi.go).
+	NexthopReplace(nh fdbNexthop) error
+	NexthopDel(id uint32) error
+	FDBNhidSet(linkIndex int, mac net.HardwareAddr, nhid uint32) error
+	FDBDel(linkIndex int, mac net.HardwareAddr) error
 }
 
 // netlinkOverlayOps is the production implementation using real netlink calls.
@@ -149,6 +155,13 @@ type OverlayTier struct {
 	// type2IPMACs indexes the MACs with a live MAC/IP route of each IP, so
 	// an update looks only at the routes of its IP.
 	type2IPMACs map[string]map[string]struct{}
+	// type1Paths, esGroups and vtepNexthops are the remote Ethernet
+	// segments (esi.go), guarded by type2Mu: the live EAD routes, the FDB
+	// nexthop group of each ES and the FDB nexthop of each VTEP.
+	type1Paths    map[string]type1Path
+	esGroups      map[string]esGroup
+	vtepNexthops  map[string]uint32
+	lastNexthopID uint32
 	// type5GatewayMAC tracks Type-5 gateway IP → router MAC mappings so
 	// withdrawals without extended communities can still delete the neighbor.
 	// type5GatewayMu serializes gateway MAC/reference updates and the refcount
@@ -327,6 +340,7 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 	o.removeType2FDB()
 	o.removeType2Neighbors()
 	o.type2Paths, o.type2FDB, o.type2Neigh, o.type2IPMACs = nil, nil, nil, nil
+	o.removeESState()
 	o.type2Mu.Unlock()
 
 	if o.gatewayFDB != nil {
@@ -863,6 +877,10 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 	case nlri.GetEvpnMacadv() != nil:
 		if o.cfg.EnableL2 {
 			o.handleType2Update(nlri.GetEvpnMacadv(), vtep, macMobilityOf(p), withdraw)
+		}
+	case nlri.GetEvpnEthernetAd() != nil:
+		if o.cfg.EnableL2 {
+			o.handleType1Route(nlri.GetEvpnEthernetAd(), vtep, withdraw)
 		}
 	case nlri.GetEvpnMulticast() != nil:
 		if o.cfg.EnableL2 {
@@ -1624,13 +1642,15 @@ func buildType5GatewayFDB(vxLink netlink.Link, vtep net.IP, routerMAC net.Hardwa
 	}
 }
 
-// type2Path is one live Type-2 route of a MAC: its VTEP and the sequence
-// number of its MAC Mobility extended community (0 without one).
+// type2Path is one live Type-2 route of a MAC: its VTEP, the sequence
+// number of its MAC Mobility extended community (0 without one) and its
+// non-reserved ESI ("" for a single-homed MAC).
 type type2Path struct {
 	vtep   net.IP
 	seq    uint32
 	sticky bool   // the static (sticky) flag of the MAC Mobility community
 	ip     net.IP // the IP of a MAC/IP route, nil for a MAC-only route
+	esi    string // the non-reserved ESI, "" for a single-homed MAC
 }
 
 // type2Key is the route key of a Type-2 route (RFC 7432 section 7.2): RD,
@@ -1679,13 +1699,12 @@ func (o *OverlayTier) removeType2FDB() {
 	if err != nil {
 		return // the device is gone, and its FDB with it
 	}
-	for macStr, vtep := range o.type2FDB {
+	idx := vxLink.Attrs().Index
+	for macStr, installed := range o.type2FDB {
 		mac, _ := net.ParseMAC(macStr)
-		fdb := &netlink.Neigh{LinkIndex: vxLink.Attrs().Index, Family: syscall.AF_BRIDGE, HardwareAddr: mac,
-			IP: net.ParseIP(vtep), Flags: netlink.NTF_SELF, State: netlink.NUD_PERMANENT}
-		if err := o.netlinkOps.NeighDel(fdb); err != nil {
-			o.log.Debug("failed to delete FDB entry at teardown", "mac", macStr, "vtep", vtep, "error", err)
-		}
+		vtepEntry := &netlink.Neigh{LinkIndex: idx, Family: syscall.AF_BRIDGE, HardwareAddr: mac,
+			IP: net.ParseIP(installed), Flags: netlink.NTF_SELF, State: netlink.NUD_PERMANENT}
+		o.deleteType2FDB(idx, mac, installed, vtepEntry)
 	}
 }
 
@@ -1728,7 +1747,7 @@ func (o *OverlayTier) handleType2Update(route *apipb.EVPNMACIPAdvertisementRoute
 	if withdraw {
 		o.forgetType2Path(macStr, key, ip)
 	} else {
-		o.rememberType2Path(macStr, key, type2Path{vtep: remoteIP, seq: mm.seq, sticky: mm.sticky, ip: ip})
+		o.rememberType2Path(macStr, key, type2Path{vtep: remoteIP, seq: mm.seq, sticky: mm.sticky, ip: ip, esi: esiKey(route.GetEsi())})
 	}
 	o.syncType2FDB(mac)
 	if ip != nil {
@@ -1915,21 +1934,30 @@ func (o *OverlayTier) forgetType2Path(mac, key string, ip net.IP) {
 	}
 }
 
-// syncType2FDB points the FDB entry of mac at its best live route, or
-// removes it when no route is left. The caller holds type2Mu.
-func (o *OverlayTier) syncType2FDB(mac net.HardwareAddr) {
-	macStr := mac.String()
+// bestType2Path returns the best live route of a MAC, or nil. The caller
+// holds type2Mu.
+func (o *OverlayTier) bestType2Path(macStr string) *type2Path {
 	var best *type2Path
 	for _, p := range o.type2Paths[macStr] {
 		if best == nil || p.better(*best) {
 			best = &p
 		}
 	}
-	installed := o.type2FDB[macStr]
+	return best
+}
+
+// syncType2FDB points the FDB entry of mac at its best live route, or
+// removes it when no route is left. A route with a non-reserved ESI uses
+// the FDB nexthop group of its ES (aliasing); while the ES has no active
+// VTEP the MAC is not installed, like zebra. The caller holds type2Mu.
+func (o *OverlayTier) syncType2FDB(mac net.HardwareAddr) {
+	macStr := mac.String()
+	best := o.bestType2Path(macStr)
 	if best == nil {
 		delete(o.type2Paths, macStr)
 	}
-	if (best == nil && installed == "") || (best != nil && best.vtep.String() == installed) {
+	installed, want := o.type2FDB[macStr], o.wantedFDB(best)
+	if want == installed {
 		return
 	}
 
@@ -1939,9 +1967,10 @@ func (o *OverlayTier) syncType2FDB(mac net.HardwareAddr) {
 		o.log.Warn("cannot find VXLAN for FDB update", "vxlan", vxlanName, "error", err)
 		return
 	}
+	idx := vxLink.Attrs().Index
 	fdb := func(ip net.IP) *netlink.Neigh {
 		return &netlink.Neigh{
-			LinkIndex:    vxLink.Attrs().Index,
+			LinkIndex:    idx,
 			Family:       syscall.AF_BRIDGE,
 			HardwareAddr: mac,
 			IP:           ip,
@@ -1950,25 +1979,64 @@ func (o *OverlayTier) syncType2FDB(mac net.HardwareAddr) {
 		}
 	}
 
-	if best == nil {
-		if err := o.netlinkOps.NeighDel(fdb(net.ParseIP(installed))); err != nil {
-			o.log.Debug("failed to delete FDB entry", "mac", mac, "vtep", installed, "error", err)
-		} else {
-			o.log.Info("removed FDB entry from type-2 withdraw", "mac", mac, "vtep", installed)
-		}
-		delete(o.type2FDB, macStr)
+	// A VTEP entry is replaced in place; an entry that goes, or changes
+	// between a VTEP and a nexthop group, is deleted first (the kernel does
+	// not replace one kind with the other).
+	_, oldGroup := parseNhGroupKey(installed)
+	newID, newGroup := parseNhGroupKey(want)
+	if installed != "" && (want == "" || oldGroup || newGroup) {
+		o.deleteType2FDB(idx, mac, installed, fdb(net.ParseIP(installed)))
+	}
+	if want == "" {
 		return
 	}
 
-	if err := o.netlinkOps.NeighSet(fdb(best.vtep)); err != nil {
-		o.log.Debug("failed to add/update FDB entry", "mac", mac, "vtep", best.vtep, "error", err)
+	if newGroup {
+		err = o.netlinkOps.FDBNhidSet(idx, mac, newID)
+	} else {
+		err = o.netlinkOps.NeighSet(fdb(best.vtep))
+	}
+	if err != nil {
+		o.log.Debug("failed to add/update FDB entry", "mac", macStr, "via", want, "error", err)
 		return
 	}
-	o.log.Info("installed FDB entry from type-2 route", "mac", mac, "vtep", best.vtep, "seq", best.seq)
+	o.log.Info("installed FDB entry from type-2 route", "mac", macStr, "via", want, "seq", best.seq, "esi", best.esi)
 	if o.type2FDB == nil {
 		o.type2FDB = map[string]string{}
 	}
-	o.type2FDB[macStr] = best.vtep.String()
+	o.type2FDB[macStr] = want
+}
+
+// wantedFDB is the FDB entry for the best route of a MAC: its VTEP, the
+// nexthop group of its ES, or "" for none. The caller holds type2Mu.
+func (o *OverlayTier) wantedFDB(best *type2Path) string {
+	switch {
+	case best == nil:
+		return ""
+	case best.esi == "":
+		return best.vtep.String()
+	}
+	if g, ok := o.esGroups[best.esi]; ok {
+		return nhGroupKey(g.id)
+	}
+	return ""
+}
+
+// deleteType2FDB deletes the installed FDB entry of a MAC: the whole entry
+// for a nexthop group, else the VTEP entry. The caller holds type2Mu.
+func (o *OverlayTier) deleteType2FDB(idx int, mac net.HardwareAddr, installed string, vtepEntry *netlink.Neigh) {
+	var err error
+	if _, group := parseNhGroupKey(installed); group {
+		err = o.netlinkOps.FDBDel(idx, mac)
+	} else {
+		err = o.netlinkOps.NeighDel(vtepEntry)
+	}
+	if err != nil {
+		o.log.Debug("failed to delete FDB entry", "mac", mac.String(), "via", installed, "error", err)
+	} else {
+		o.log.Info("removed FDB entry", "mac", mac.String(), "via", installed)
+	}
+	delete(o.type2FDB, mac.String())
 }
 
 // macMobilityOf returns the MAC Mobility extended community of a path: the
