@@ -3,6 +3,7 @@
 package gobgp
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -4592,6 +4593,17 @@ func TestType5GatewayIPResolvedByType2(t *testing.T) {
 		noRouterMAC(t, m)
 	})
 
+	t.Run("a Type-2 refresh does not replace the route again", func(t *testing.T) {
+		o, m := setup(true, true)
+		o.handleType2Route(t2, "10.0.0.2", 0, false)
+		o.handleType5Route(t5, "10.0.0.1", rmac, false)
+		o.handleType2Route(t2, "10.0.0.2", 0, false)
+		o.handleType2Route(t2, "10.0.0.3", 1, false) // the MAC moves, the IP stays
+		if count(m.routeReplaces) != 1 {
+			t.Fatalf("route replaces %v, want one", m.routeReplaces)
+		}
+	})
+
 	t.Run("Type-2 first", func(t *testing.T) {
 		o, m := setup(true, true)
 		o.handleType2Route(t2, "10.0.0.2", 0, false)
@@ -4601,4 +4613,20 @@ func TestType5GatewayIPResolvedByType2(t *testing.T) {
 		}
 		noRouterMAC(t, m)
 	})
+}
+
+// Withdrawing a gateway IP route that was never installed finds no kernel
+// route; that is not a failure.
+func TestType5WithdrawOfUninstalledRouteIsQuiet(t *testing.T) {
+	o, m := type2TestOverlay()
+	var logs bytes.Buffer
+	o.log = slog.New(slog.NewTextHandler(&logs, nil))
+	o.cfg.ResolveOverlayIndex = true
+	m.routeDelErr = syscall.ESRCH
+	t5 := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: "10.1.0.5"}
+	o.handleType5Route(t5, "10.0.0.1", nil, false)
+	o.handleType5Route(t5, "10.0.0.1", nil, true)
+	if strings.Contains(logs.String(), "level=WARN") {
+		t.Fatalf("warning for a route that was never installed:\n%s", logs.String())
+	}
 }

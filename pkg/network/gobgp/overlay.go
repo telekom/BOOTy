@@ -1138,30 +1138,36 @@ func (o *OverlayTier) resolveType5Gateway(ip net.IP) {
 		return
 	}
 	for _, prefix := range slices.Sorted(maps.Keys(o.type5Paths)) {
-		uses := false
 		for _, p := range o.type5Paths[prefix] {
-			uses = uses || type5OverlayGateway(p.route).Equal(ip)
-		}
-		if !uses {
-			continue
-		}
-		active, had := o.type5Active[prefix]
-		installed := false
-		for _, p := range o.sortedType5Paths(prefix) {
-			if o.applyType5Path(p) {
-				o.markType5Active(prefix, p.key)
-				installed = true
+			if type5OverlayGateway(p.route).Equal(ip) {
+				o.resolveType5Prefix(prefix, ip)
 				break
 			}
 		}
-		if installed || !had {
-			continue
+	}
+}
+
+// resolveType5Prefix re-evaluates the paths of a prefix with a path via the
+// gateway IP ip. The caller holds type5PathsMu.
+func (o *OverlayTier) resolveType5Prefix(prefix string, ip net.IP) {
+	active, had := o.type5Active[prefix]
+	if p := o.type5Paths[prefix][active]; had && p != nil &&
+		(!type5OverlayGateway(p.route).Equal(ip) || o.type2HasIP(ip)) {
+		return // the installed path does not change
+	}
+	for _, p := range o.sortedType5Paths(prefix) {
+		if o.applyType5Path(p) {
+			o.markType5Active(prefix, p.key)
+			return
 		}
-		delete(o.type5Active, prefix)
-		if p := o.type5Paths[prefix][active]; p != nil {
-			if state, ok := o.type5RouteState(p.route, p.vtep, net.ParseIP(p.vtep)); ok {
-				o.removeType5Prefix(state)
-			}
+	}
+	if !had {
+		return
+	}
+	delete(o.type5Active, prefix)
+	if p := o.type5Paths[prefix][active]; p != nil {
+		if state, ok := o.type5RouteState(p.route, p.vtep, net.ParseIP(p.vtep)); ok {
+			o.removeType5Prefix(state)
 		}
 	}
 }
@@ -1281,6 +1287,12 @@ func (o *OverlayTier) deleteType5KernelRoute(state type5RouteState) bool {
 func (o *OverlayTier) removeType5Prefix(state type5RouteState) {
 	route := buildType5KernelRoute(state.link, state.dst, nil, o.overlayRouteTable())
 	if err := o.netlinkOps.RouteDel(route); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			// Never installed, for example an unresolved gateway IP route.
+			o.log.Debug("no type-5 route to delete", "dst", state.dst)
+			o.clearType5GatewayNeighbor(state.link, state.dst.String())
+			return
+		}
 		// Keep the gateway state, the kernel route may still need it.
 		o.log.Warn("failed to delete type-5 route after failed fallback", "dst", state.dst, "error", err)
 		return
