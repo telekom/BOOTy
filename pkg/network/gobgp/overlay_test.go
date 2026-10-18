@@ -912,7 +912,7 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 		assertType5GatewayDelete(t, mock.dels, 0, "192.168.4.1", "62:db:b8:c1:80:52")
 	})
 
-	t.Run("invalid router MAC still installs route without neighbor", func(t *testing.T) {
+	t.Run("invalid router MAC is treated as withdraw, like FRR", func(t *testing.T) {
 		badExtComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
 			Communities: []*apipb.ExtendedCommunity{
 				mustRT2(t, 65000, 4000),
@@ -926,15 +926,12 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 
 		newOverlay(mock).processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, badExtComm}})
 
-		if len(mock.routeReplaces) != 1 {
-			t.Fatalf("expected 1 route replace, got %d", len(mock.routeReplaces))
-		}
-		if len(mock.sets) != 0 {
-			t.Fatalf("expected no neighbor set for invalid router MAC, got %d", len(mock.sets))
+		if len(mock.routeReplaces) != 0 || len(mock.sets) != 0 {
+			t.Fatalf("got %d route replaces and %d neighbor sets, want none", len(mock.routeReplaces), len(mock.sets))
 		}
 	})
 
-	t.Run("invalid router MAC preserves existing neighbor", func(t *testing.T) {
+	t.Run("invalid router MAC withdraws the installed route and neighbor", func(t *testing.T) {
 		badExtComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
 			Communities: []*apipb.ExtendedCommunity{
 				mustRT2(t, 65000, 4000),
@@ -950,21 +947,15 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 		overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, extComm}})
 		overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, badExtComm}})
 
-		if len(mock.routeReplaces) != 2 {
-			t.Fatalf("expected 2 route replaces, got %d", len(mock.routeReplaces))
+		if len(mock.routeReplaces) != 1 || len(mock.routeDels) != 1 {
+			t.Fatalf("got %d route replaces and %d deletes, want the first install and one delete", len(mock.routeReplaces), len(mock.routeDels))
 		}
-		if len(mock.sets) != 2 {
-			t.Fatalf("expected only initial gateway neighbor and FDB set, got %d sets", len(mock.sets))
+		if len(mock.dels) != 2 {
+			t.Fatalf("got %d neighbor/FDB deletes, want the gateway neighbor and the FDB entry", len(mock.dels))
 		}
-		if len(mock.dels) != 0 {
-			t.Fatalf("invalid router MAC should preserve existing neighbor, got %d deletes", len(mock.dels))
-		}
-		ref, ok := overlay.loadType5GatewayRef("10.100.0.0/24")
-		if !ok {
-			t.Fatal("invalid router MAC should preserve stored Type-5 gateway ref")
-		}
-		if ref.gateway != "192.168.4.1" || ref.routerMAC.String() != "62:db:b8:c1:80:52" {
-			t.Fatalf("stored gateway ref = %+v, want gateway 192.168.4.1 and MAC 62:db:b8:c1:80:52", ref)
+		assertType5GatewayDelete(t, mock.dels, 0, "192.168.4.1", "62:db:b8:c1:80:52")
+		if _, ok := overlay.loadType5GatewayRef("10.100.0.0/24"); ok {
+			t.Fatal("gateway ref kept after the withdraw")
 		}
 	})
 }
@@ -4975,10 +4966,11 @@ func TestProcessRouteUpdateType5TreatAsWithdraw(t *testing.T) {
 	}{
 		{"invalid router MAC", &apipb.EVPNIPPrefixRoute{Label: 4000}, "not-a-mac"},
 		{"multicast router MAC", &apipb.EVPNIPPrefixRoute{Label: 4000}, "01:00:5e:00:00:01"},
-		{"zero router MAC", &apipb.EVPNIPPrefixRoute{Label: 4000}, "00:00:00:00:00:00"},
 		{"ESI and gateway IP", &apipb.EVPNIPPrefixRoute{Label: 4000, Esi: esi, GwAddress: "10.100.0.1"}, rmac},
-		{"ESI overlay index", &apipb.EVPNIPPrefixRoute{Label: 4000, Esi: esi, GwAddress: "0.0.0.0"}, rmac},
+		{"multicast router MAC with a gateway IP", &apipb.EVPNIPPrefixRoute{Label: 4000, GwAddress: "10.100.0.1"}, "01:00:5e:00:00:01"},
+		{"zero label with a router MAC", &apipb.EVPNIPPrefixRoute{GwAddress: "0.0.0.0"}, rmac},
 		{"zero label without overlay index", &apipb.EVPNIPPrefixRoute{GwAddress: "0.0.0.0"}, rmac},
+		{"ESI and gateway IP (gateway differs)", &apipb.EVPNIPPrefixRoute{Label: 4000, Esi: esi, GwAddress: "10.100.0.9"}, rmac},
 	}
 	newOverlay := func(mock *mockOverlayNetlinkOps) *OverlayTier {
 		return &OverlayTier{
@@ -5006,8 +4998,23 @@ func TestProcessRouteUpdateType5TreatAsWithdraw(t *testing.T) {
 			if len(mock.routeReplaces) != 1 {
 				t.Errorf("got %d route replaces after the unusable update, want 1", len(mock.routeReplaces))
 			}
-			if len(mock.routeDels) != 1 || mock.routeDels[0].Dst.String() != "10.100.0.0/24" {
-				t.Errorf("route deletes = %v, want 10.100.0.0/24", mock.routeDels)
+			if len(mock.routeDels) != 1 || mock.routeDels[0].Dst.String() != "10.100.0.0/24" ||
+				!mock.routeDels[0].Gw.Equal(mock.routeReplaces[0].Gw) {
+				t.Errorf("route deletes = %v, want 10.100.0.0/24 via the installed gateway %s", mock.routeDels, mock.routeReplaces[0].Gw)
+			}
+			// The FDB entry of the router MAC of the installed path goes,
+			// not one of the invalid update's MAC.
+			fdbDel := false
+			for _, n := range mock.dels {
+				if n.Family == syscall.AF_BRIDGE {
+					if n.HardwareAddr.String() != rmac {
+						t.Errorf("FDB delete for %s, want only %s", n.HardwareAddr, rmac)
+					}
+					fdbDel = true
+				}
+			}
+			if !fdbDel {
+				t.Errorf("FDB entry %s -> VTEP not deleted", rmac)
 			}
 		})
 	}
@@ -5018,8 +5025,8 @@ func TestProcessRouteUpdateType5TreatAsWithdraw(t *testing.T) {
 		}{
 			{&apipb.EVPNIPPrefixRoute{Label: 4000, GwAddress: "0.0.0.0"}, rmac},
 			{&apipb.EVPNIPPrefixRoute{Label: 4000, GwAddress: "0.0.0.0"}, ""},
-			{&apipb.EVPNIPPrefixRoute{GwAddress: "10.100.0.1"}, "not-a-mac"},
-			{&apipb.EVPNIPPrefixRoute{GwAddress: "10.100.0.1"}, "01:00:5e:00:00:01"},
+			{&apipb.EVPNIPPrefixRoute{Label: 4000, GwAddress: "0.0.0.0"}, "00:00:00:00:00:00"},
+			{&apipb.EVPNIPPrefixRoute{Label: 4000, Esi: esi, GwAddress: "0.0.0.0"}, rmac},
 		} {
 			mock := &mockOverlayNetlinkOps{}
 			newOverlay(mock).processRouteUpdate(path(r.route, r.mac))
