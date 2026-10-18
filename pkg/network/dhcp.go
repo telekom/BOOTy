@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"os"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -28,16 +30,50 @@ type DHCPMode struct {
 	log *slog.Logger
 
 	mu      sync.Mutex
-	clients []*dhclient.Client
+	clients []dhcpClient
 	nics    map[int]dhcpApplied // by link index: what the current lease configured
 	stale   []dhcpApplied       // state that could not be removed; Teardown retries
+	// stopped is set before the clients stop; a lease that arrives after it
+	// is not applied.
+	stopped bool
 }
 
-// dhcpApplied is the address and default route a lease configured.
+// dhcpApplied is the address, default route and NTP servers a lease
+// configured.
 type dhcpApplied struct {
 	link  netlink.Link
 	addr  *netlink.Addr
 	route *netlink.Route
+	ntp   []string
+}
+
+// dhcpClient is the part of a go-dhclient client that DHCPMode uses.
+type dhcpClient interface {
+	Start()
+	Stop()
+}
+
+// Seams for Setup tests.
+var (
+	dhcpInterfaces  = physicalInterfaces
+	dhcpLinkByName  = netlink.LinkByName
+	dhcpLinkSetUp   = netlink.LinkSetUp
+	dhcpPrepareLink = promoteSecondaries
+	dhcpNewClient   = func(iface *net.Interface, hostname string, onBound dhclient.Callback) dhcpClient {
+		return newDHCPClient(iface, hostname, onBound)
+	}
+)
+
+// promoteSecondaries sets net.ipv4.conf.<nic>.promote_secondaries=1, like
+// systemd's sysctl defaults (50-default.conf) in the legacy ramdisk. A
+// renewal with a new address in the same subnet adds it as a secondary
+// address; without promotion, removing the old primary would remove the
+// new address too.
+func promoteSecondaries(ifname string) error {
+	if err := os.WriteFile("/proc/sys/net/ipv4/conf/"+ifname+"/promote_secondaries", []byte("1"), 0o644); err != nil { //nolint:gosec // a sysctl
+		return fmt.Errorf("set promote_secondaries on %s: %w", ifname, err)
+	}
+	return nil
 }
 
 // dhcpRouteMetric is the metric of DHCP default routes: netplan writes
@@ -45,7 +81,7 @@ type dhcpApplied struct {
 const dhcpRouteMetric = 100
 
 // dhcpSetupTimeout bounds the wait for the first lease in Setup.
-const dhcpSetupTimeout = 15 * time.Second
+var dhcpSetupTimeout = 15 * time.Second
 
 // NewDHCPMode creates a DHCPMode with a component logger.
 func NewDHCPMode() *DHCPMode {
@@ -62,7 +98,7 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 	if d.log == nil {
 		d.log = slog.Default().With("component", "dhcp")
 	}
-	ifaces, err := physicalInterfaces(ctx)
+	ifaces, err := dhcpInterfaces(ctx)
 	if err != nil {
 		return fmt.Errorf("listing interfaces: %w", err)
 	}
@@ -71,24 +107,13 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 	}
 
 	d.log.Info("Starting DHCP on all interfaces", "count", len(ifaces))
+	d.mu.Lock()
+	d.stopped = false
+	d.mu.Unlock()
 	leased := make(chan string, len(ifaces))
 	hostname, _ := os.Hostname()
 	for i := range ifaces {
-		iface := ifaces[i]
-		link, err := netlink.LinkByName(iface.Name)
-		if err != nil {
-			d.log.Warn("Cannot find link for DHCP", "interface", iface.Name, "error", err)
-			continue
-		}
-		if err := netlink.LinkSetUp(link); err != nil {
-			d.log.Warn("Cannot bring up link for DHCP", "interface", iface.Name, "error", err)
-			continue
-		}
-		client := newDHCPClient(&iface, hostname, d.onBound(link, iface.Name, leased))
-		client.Start()
-		d.mu.Lock()
-		d.clients = append(d.clients, client)
-		d.mu.Unlock()
+		d.startClient(&ifaces[i], hostname, leased)
 	}
 
 	timer := time.NewTimer(dhcpSetupTimeout)
@@ -98,23 +123,67 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 		d.log.Info("DHCP succeeded", "interface", name)
 		return nil
 	case <-timer.C:
-		d.stopClients()
-		return fmt.Errorf("DHCP failed on all %d interfaces", len(ifaces))
+		// A lease applied while the timer fired counts: stopping now would
+		// leave its address without a client.
+		if d.stopUnlessLeased() {
+			return fmt.Errorf("DHCP failed on all %d interfaces", len(ifaces))
+		}
+		d.log.Info("DHCP succeeded at the timeout")
+		return nil
 	case <-ctx.Done():
 		d.stopClients()
 		return fmt.Errorf("DHCP probing canceled: %w", ctx.Err())
 	}
 }
 
-// stopClients stops every DHCP client.
+// startClient brings a NIC up and starts its DHCP client.
+func (d *DHCPMode) startClient(iface *net.Interface, hostname string, leased chan<- string) {
+	link, err := dhcpLinkByName(iface.Name)
+	if err != nil {
+		d.log.Warn("Cannot find link for DHCP", "interface", iface.Name, "error", err)
+		return
+	}
+	if err := dhcpPrepareLink(iface.Name); err != nil {
+		d.log.Warn("Cannot set promote_secondaries for DHCP", "interface", iface.Name, "error", err)
+	}
+	if err := dhcpLinkSetUp(link); err != nil {
+		d.log.Warn("Cannot bring up link for DHCP", "interface", iface.Name, "error", err)
+		return
+	}
+	client := dhcpNewClient(iface, hostname, d.onBound(link, iface.Name, leased))
+	client.Start()
+	d.mu.Lock()
+	d.clients = append(d.clients, client)
+	d.mu.Unlock()
+}
+
+// stopUnlessLeased stops the clients unless a lease is applied, and tells
+// whether it stopped them. The check and the stop flag are atomic, so no
+// lease is applied after it.
+func (d *DHCPMode) stopUnlessLeased() bool {
+	d.mu.Lock()
+	if len(d.nics) > 0 {
+		d.mu.Unlock()
+		return false
+	}
+	d.mu.Unlock()
+	d.stopClients()
+	return true
+}
+
+// stopClients stops every DHCP client, all at once: go-dhclient's Stop
+// waits up to its 5 s response timeout on a NIC without a server.
 func (d *DHCPMode) stopClients() {
 	d.mu.Lock()
+	d.stopped = true
 	clients := d.clients
 	d.clients = nil
 	d.mu.Unlock()
+	var wg sync.WaitGroup
 	for _, c := range clients {
-		c.Stop()
+		wg.Go(c.Stop)
 	}
+	wg.Wait()
 }
 
 // newDHCPClient builds a client that requests the default parameters
@@ -176,11 +245,14 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- strin
 		}
 		d.mu.Lock()
 		defer d.mu.Unlock()
+		if d.stopped {
+			return
+		}
 		if err := d.apply(link, addr, lease); err != nil {
 			d.log.Warn("failed to apply DHCP lease", "iface", ifName, "error", err)
 			return
 		}
-		recordLeaseNTPServers(lease)
+		d.publishNTP()
 		d.log.Info("DHCP lease applied", "iface", ifName, "addr", addr.IPNet.String())
 		select {
 		case leased <- ifName:
@@ -213,7 +285,7 @@ func (d *DHCPMode) apply(link netlink.Link, addr *netlink.Addr, lease *dhclient.
 			d.stale = append(d.stale, dhcpApplied{link: link, addr: prev.addr})
 		}
 	}
-	d.nics[idx] = dhcpApplied{link: link, addr: addr, route: route}
+	d.nics[idx] = dhcpApplied{link: link, addr: addr, route: route, ntp: leaseNTPServers(lease)}
 	return nil
 }
 
@@ -267,16 +339,30 @@ func (d *DHCPMode) dropUnappliedAddr(link netlink.Link, addr *netlink.Addr, prev
 	}
 }
 
-// recordLeaseNTPServers keeps the NTP servers (option 42) of the applied
-// lease for the time sync.
-func recordLeaseNTPServers(lease *dhclient.Lease) {
-	var data []byte
+// leaseNTPServers returns the NTP servers (option 42) of a lease.
+func leaseNTPServers(lease *dhclient.Lease) []string {
+	var out []string
 	for _, opt := range lease.OtherOptions {
 		if opt.Type == layers.DHCPOptNTPServers {
-			data = opt.Data
+			out = parseNTPServers(opt.Data)
 		}
 	}
-	setDHCPNTPServers(data)
+	return out
+}
+
+// publishNTP publishes the NTP servers of all leases (by NIC index, each
+// once) for the time sync, like networkd hands the servers of every link
+// to timesyncd. The caller holds d.mu.
+func (d *DHCPMode) publishNTP() {
+	var servers []string
+	for _, idx := range slices.Sorted(maps.Keys(d.nics)) {
+		for _, s := range d.nics[idx].ntp {
+			if !slices.Contains(servers, s) {
+				servers = append(servers, s)
+			}
+		}
+	}
+	setDHCPNTPList(servers)
 }
 
 // leaseAddr builds the interface address from a lease. A lease without a
@@ -311,6 +397,7 @@ func (d *DHCPMode) Teardown(_ context.Context) error {
 		applied = append(applied, a)
 	}
 	d.nics, d.stale = nil, nil
+	setDHCPNTPList(nil)
 	d.mu.Unlock()
 	var errs []error
 	for _, a := range applied {

@@ -1073,9 +1073,21 @@ BOOTy retries the scan for up to 10 s while names start with `clab`
 DHCP mode works like systemd-networkd with the legacy ramdisk's netplan
 (`dhcp4: true` on every `en*` and `eth*` NIC): a DHCP client runs on every
 physical NIC for the whole run, and every lease configures its own NIC.
-Setup returns after the first lease. Without a lease on any NIC within
-15 s, BOOTy stops all clients and the network setup fails (the connectivity
-retry starts it again).
+Setup sets `promote_secondaries=1` on each NIC (systemd's sysctl default in
+the legacy ramdisk), so a renewal with a new address in the same subnet
+keeps it when the old address goes. Setup returns after the first lease.
+Without a lease on any NIC within 15 s, BOOTy stops all clients at once and
+the network setup fails (the connectivity retry starts it again).
+
+A client on a NIC without a DHCP server sends a DISCOVER about every 6 s
+(go-dhclient: 5 s response timeout, 1 s pause) for the whole run;
+networkd backs off up to 64 s.
+
+The NTP servers (option 42) of all leases, by NIC and each once, go to the
+time sync, like networkd hands the servers of every link to timesyncd; a
+NIC without option 42 does not drop the servers of another NIC, and
+Teardown drops them all. The legacy ramdisk has no timesyncd, so it sends
+no NTP request.
 
 The client requests the default parameter list: subnet mask, router, time
 server, DNS server, domain name, interface MTU and NTP servers. It sends the

@@ -157,6 +157,51 @@ func TestDHCPNetlinkLeasesOnTwoNICs(t *testing.T) {
 	}
 }
 
+// TestDHCPNetlinkNewAddressSameSubnet: a renewal with a new address in the
+// same subnet adds it as a secondary address. With promote_secondaries=1
+// (systemd's default, set by Setup) removing the old primary keeps it and
+// its default route; without it the kernel removes the new address too.
+func TestDHCPNetlinkNewAddressSameSubnet(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("test requires root (run with sudo)")
+	}
+	enterTestNetns(t)
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "dhcp-e2e9"}}
+	if err := netlink.LinkAdd(link); err != nil {
+		t.Fatalf("add dummy: %v", err)
+	}
+	t.Cleanup(func() { _ = netlink.LinkDel(link) })
+	if err := netlink.LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := promoteSecondaries(link.Name); err != nil {
+		t.Fatalf("promote_secondaries: %v", err)
+	}
+	d := NewDHCPMode()
+	for _, ip := range []string{"198.51.100.7", "198.51.100.8"} {
+		d.onBound(link, link.Name, make(chan string, 1))(&dhclient.Lease{
+			FixedAddress: net.ParseIP(ip), Netmask: net.CIDRMask(24, 32), Router: []net.IP{net.ParseIP("198.51.100.1")},
+		})
+	}
+	addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+	if err != nil || len(addrs) != 1 || addrs[0].IPNet.String() != "198.51.100.8/24" {
+		t.Fatalf("addresses = %v (err %v), want only 198.51.100.8/24", addrs, err)
+	}
+	routes, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var defaults int
+	for _, r := range routes {
+		if (r.Dst == nil || r.Dst.String() == "0.0.0.0/0") && r.Src.Equal(net.ParseIP("198.51.100.8")) {
+			defaults++
+		}
+	}
+	if defaults != 1 {
+		t.Fatalf("routes = %v, want the default route with source 198.51.100.8", routes)
+	}
+}
+
 // enterTestNetns runs the rest of the test in a new network namespace, so
 // the host interfaces and routes are never touched.
 func enterTestNetns(t *testing.T) {
