@@ -1694,6 +1694,7 @@ func keepProvisionerResolvConf(cfg *config.MachineConfig, netCfg *network.Config
 	if cfg.ProvisionerFilesInRamdisk() && provision.HasProvisionerResolvConf() {
 		slog.Info("keeping the provisioner resolv.conf in the ramdisk")
 		netCfg.DNSResolvers = ""
+		netCfg.KeepResolvConf = true
 	}
 }
 
@@ -1935,6 +1936,9 @@ func dhcpFallback(ctx context.Context, netCfg *network.Config) network.Mode {
 	if err := dhcp.Setup(ctx, netCfg); err != nil {
 		slog.Error("DHCP setup failed", "error", err)
 	}
+	// DHCP mode writes resolv.conf itself: the configured resolvers, then
+	// the DNS servers of the leases.
+	netCfg.DNSResolvers = ""
 	return dhcp
 }
 
