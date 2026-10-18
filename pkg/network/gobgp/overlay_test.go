@@ -4931,12 +4931,15 @@ func TestEVPNRoutesCarryVXLANEncapsulation(t *testing.T) {
 // removes the route that an earlier valid update of the same key
 // installed.
 func TestProcessRouteUpdateType5TreatAsWithdraw(t *testing.T) {
-	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
-		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-		NextHops: []string{"192.168.4.1"},
-	})
-	if err != nil {
-		t.Fatal(err)
+	nextHop := func(nh string) *anypb.Any {
+		mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+			Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+			NextHops: []string{nh},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mp
 	}
 	communities := func(mac string) *anypb.Any {
 		c := []*anypb.Any{mustRT2(t, 65000, 4000)}
@@ -4949,13 +4952,23 @@ func TestProcessRouteUpdateType5TreatAsWithdraw(t *testing.T) {
 		}
 		return a
 	}
-	path := func(r *apipb.EVPNIPPrefixRoute, mac string) *apipb.Path {
+	pathVia := func(nh string, r *apipb.EVPNIPPrefixRoute, mac string) *apipb.Path {
 		r.IpPrefix, r.IpPrefixLen = "10.100.0.0", 24
 		n, err := anypb.New(r)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return &apipb.Path{Nlri: n, Pattrs: []*anypb.Any{mp, communities(mac)}}
+		return &apipb.Path{Nlri: n, Pattrs: []*anypb.Any{nextHop(nh), communities(mac)}}
+	}
+	path := func(r *apipb.EVPNIPPrefixRoute, mac string) *apipb.Path { return pathVia("192.168.4.1", r, mac) }
+	fdbDels := func(m *mockOverlayNetlinkOps) []string {
+		var out []string
+		for _, n := range m.dels {
+			if n.Family == syscall.AF_BRIDGE {
+				out = append(out, n.HardwareAddr.String())
+			}
+		}
+		return out
 	}
 	esi := &apipb.EthernetSegmentIdentifier{Type: 0, Value: []byte{0, 0, 0, 0, 0, 0, 0, 0, 1}}
 	const rmac = "62:db:b8:c1:80:52"
@@ -4968,8 +4981,10 @@ func TestProcessRouteUpdateType5TreatAsWithdraw(t *testing.T) {
 		{"multicast router MAC", &apipb.EVPNIPPrefixRoute{Label: 4000}, "01:00:5e:00:00:01"},
 		{"ESI and gateway IP", &apipb.EVPNIPPrefixRoute{Label: 4000, Esi: esi, GwAddress: "10.100.0.1"}, rmac},
 		{"multicast router MAC with a gateway IP", &apipb.EVPNIPPrefixRoute{Label: 4000, GwAddress: "10.100.0.1"}, "01:00:5e:00:00:01"},
-		{"zero label with a router MAC", &apipb.EVPNIPPrefixRoute{GwAddress: "0.0.0.0"}, rmac},
 		{"zero label without overlay index", &apipb.EVPNIPPrefixRoute{GwAddress: "0.0.0.0"}, rmac},
+		// FRR bgp_evpn_is_esi_valid compares all 10 bytes: type 1 with a
+		// zero value is a set ESI.
+		{"ESI type 1 with a zero value and gateway IP", &apipb.EVPNIPPrefixRoute{Label: 4000, Esi: &apipb.EthernetSegmentIdentifier{Type: 1, Value: make([]byte, 9)}, GwAddress: "10.100.0.1"}, rmac},
 		{"ESI and gateway IP (gateway differs)", &apipb.EVPNIPPrefixRoute{Label: 4000, Esi: esi, GwAddress: "10.100.0.9"}, rmac},
 	}
 	newOverlay := func(mock *mockOverlayNetlinkOps) *OverlayTier {
@@ -4994,7 +5009,9 @@ func TestProcessRouteUpdateType5TreatAsWithdraw(t *testing.T) {
 			if len(mock.routeReplaces) != 1 {
 				t.Fatalf("valid route: got %d route replaces, want 1", len(mock.routeReplaces))
 			}
-			o.processRouteUpdate(path(tt.route, tt.mac))
+			// From another next hop: the withdraw must use the installed
+			// path's gateway and router MAC, not the update's.
+			o.processRouteUpdate(pathVia("192.168.4.2", tt.route, tt.mac))
 			if len(mock.routeReplaces) != 1 {
 				t.Errorf("got %d route replaces after the unusable update, want 1", len(mock.routeReplaces))
 			}
@@ -5018,6 +5035,24 @@ func TestProcessRouteUpdateType5TreatAsWithdraw(t *testing.T) {
 			}
 		})
 	}
+	t.Run("an unusable update of an unknown route deletes nothing", func(t *testing.T) {
+		for _, tt := range tests {
+			mock := &mockOverlayNetlinkOps{}
+			newOverlay(mock).processRouteUpdate(pathVia("192.168.4.2", tt.route, tt.mac))
+			if len(mock.routeDels) != 0 || len(fdbDels(mock)) != 0 {
+				t.Errorf("%s: route deletes %v, FDB deletes %v; want none", tt.name, mock.routeDels, fdbDels(mock))
+			}
+		}
+	})
+	t.Run("a tracked path without router MAC keeps the FDB", func(t *testing.T) {
+		mock := &mockOverlayNetlinkOps{}
+		o := newOverlay(mock)
+		o.processRouteUpdate(path(&apipb.EVPNIPPrefixRoute{Label: 4000, GwAddress: "0.0.0.0"}, ""))
+		o.processRouteUpdate(path(&apipb.EVPNIPPrefixRoute{GwAddress: "0.0.0.0"}, rmac)) // zero label: unusable
+		if len(mock.routeDels) != 1 || len(fdbDels(mock)) != 0 {
+			t.Fatalf("route deletes %v, FDB deletes %v; want the route only, the path had no router MAC", mock.routeDels, fdbDels(mock))
+		}
+	})
 	t.Run("valid routes are installed", func(t *testing.T) {
 		for _, r := range []struct {
 			route *apipb.EVPNIPPrefixRoute
