@@ -28,6 +28,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/firmware"
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
+	"github.com/telekom/BOOTy/pkg/logging"
 	"github.com/telekom/BOOTy/pkg/inventory"
 	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
@@ -1138,9 +1139,12 @@ func (o *Orchestrator) validateImageStreamingPrerequisites(ctx context.Context, 
 		}
 	}
 	if err != nil && image.IsTransientFormatProbeError(err) {
-		// The format probe code, not the deadline code of the cause.
+		// The format probe code, not the deadline code of the cause: a
+		// deadline of the parent context that ends the last attempt also
+		// reports BOOTY-IMG-004. The cause is text, redacted like a log
+		// line (credentials, signed URL parameters).
 		return fmt.Errorf("validating image prerequisites before destructive storage: %w after %d attempts, stopping before the disk wipe: %s",
-			image.ErrFormatProbe, probeAttempts, err.Error())
+			image.ErrFormatProbe, probeAttempts, logging.RedactText(err.Error()))
 	}
 	if err != nil {
 		return fmt.Errorf("validating image prerequisites before destructive storage: %w", err)
