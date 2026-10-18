@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -152,14 +153,7 @@ func TestCLIUsage(t *testing.T) {
 // The senders record each frame (decoded) or why they did not send, and
 // the state file has the transmit state and the neighbors.
 func TestRecordTX(t *testing.T) {
-	origPath := StatePath
-	t.Cleanup(func() {
-		StatePath = origPath
-		live.Lock()
-		live.tx = nil
-		live.Unlock()
-	})
-	StatePath = filepath.Join(t.TempDir(), "booty", "lldp.json")
+	testState(t, 0)
 	mac, _ := net.ParseMAC("02:00:00:00:00:01")
 	frame, err := Frame("eth1", mac, &Info{MachineID: "m", Profile: ProfileBM4XCableCheck})
 	if err != nil {
@@ -183,4 +177,73 @@ func TestRecordTX(t *testing.T) {
 		eth2.Error != "network is down" {
 		t.Errorf("eth0 = %+v, eth2 = %+v", eth0, eth2)
 	}
+}
+
+// The state file is written at most once per interval; the last update
+// within an interval is written when it ends. Receive writes it at once,
+// before any frame.
+func TestWriteStateRate(t *testing.T) {
+	testState(t, 300*time.Millisecond)
+	t.Cleanup(func() {
+		current.Lock()
+		current.r = nil
+		current.Unlock()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	Receive(ctx, nil, slog.Default())
+	if _, err := os.Stat(StatePath); err != nil {
+		t.Fatalf("no state file after Receive started: %v", err)
+	}
+	for range 5 {
+		recordTX("eth0", &Info{}, nil, nil, time.Now())
+	}
+	if s, _ := readState(StatePath, time.Now()); len(s.Transmit) != 0 {
+		t.Fatalf("written within the interval: %+v", s.Transmit)
+	}
+	time.Sleep(600 * time.Millisecond)
+	if s, _ := readState(StatePath, time.Now()); len(s.Transmit) != 1 || s.Transmit[0].Error != "no carrier" {
+		t.Fatalf("last update not written after the interval: %+v", s.Transmit)
+	}
+}
+
+// Without frames a running receiver keeps the state file fresh.
+func TestReceiveRefreshesState(t *testing.T) {
+	testState(t, 0)
+	origRefresh := stateRefresh
+	stateRefresh = 50 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		stateRefresh = origRefresh
+		current.Lock()
+		current.r = nil
+		current.Unlock()
+	})
+	Receive(ctx, nil, slog.Default())
+	first, _ := readState(StatePath, time.Now())
+	time.Sleep(300 * time.Millisecond)
+	later, _ := readState(StatePath, time.Now())
+	if !later.UpdatedAt.After(first.UpdatedAt) {
+		t.Fatalf("state not refreshed: %v, then %v", first.UpdatedAt, later.UpdatedAt)
+	}
+}
+
+// testState points the state file to a temporary path with an interval,
+// under the writer lock that the delayed writes take too.
+func testState(t *testing.T, interval time.Duration) {
+	t.Helper()
+	stateWrite.Lock()
+	origPath, origInterval := StatePath, stateInterval
+	StatePath, stateInterval, stateWrite.last = filepath.Join(t.TempDir(), "booty", "lldp.json"), interval, time.Time{}
+	stateWrite.Unlock()
+	t.Cleanup(func() {
+		stateWrite.Lock()
+		StatePath, stateInterval = origPath, origInterval
+		stateWrite.Unlock()
+		live.Lock()
+		live.tx = nil
+		live.Unlock()
+	})
 }

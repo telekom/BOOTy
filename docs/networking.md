@@ -745,8 +745,9 @@ The BOOTy binary is also the diagnosis command, so the ramdisk needs no
 
 `--json` prints JSON (the inventory form of the neighbors). The running
 BOOTy keeps its LLDP state in `/run/booty/lldp.json` (`--state`); only its
-LLDP senders and receivers write it, after each sent and each received
-frame. A capture shows the time of each captured frame. When BOOTy is not running or
+LLDP senders and receivers write it: at the start, after each sent and
+each received frame (at most once per second) and every 30 s while the
+receiver runs. A capture shows the time of each captured frame. When BOOTy is not running or
 the file is older than 75 s, `neighbors` listens on every physical NIC
 itself for `--capture` (default `35s`; switches send every 30 s) and
 `status` fails. The command runs only when BOOTy is not PID 1, so words on

@@ -72,15 +72,48 @@ func recordTX(iface string, info *Info, frame []byte, err error, now time.Time) 
 	writeState(now)
 }
 
-// stateWrite serializes the writers of the state file (senders and
-// receivers).
-var stateWrite sync.Mutex
+// stateInterval is the shortest time between two writes of the state
+// file: every NIC sends a frame and a busy switch port may send many, but
+// the file is only for diagnosis.
+var stateInterval = time.Second
 
-// writeState writes the state file atomically. Errors are ignored: the
-// file is only for diagnosis.
+// stateRefresh is how often a running receiver rewrites the state file
+// without frames.
+var stateRefresh = 30 * time.Second
+
+// stateWrite serializes the writers of the state file (senders and
+// receivers) and limits the rate: an update within stateInterval of the
+// last write is written once that interval has passed.
+var stateWrite struct {
+	sync.Mutex
+	last    time.Time
+	pending bool
+}
+
+// writeState writes the state file, at most once per stateInterval; now
+// is the time it reports.
 func writeState(now time.Time) {
 	stateWrite.Lock()
 	defer stateWrite.Unlock()
+	if wait := stateInterval - time.Since(stateWrite.last); wait > 0 {
+		if !stateWrite.pending {
+			stateWrite.pending = true
+			time.AfterFunc(wait, func() {
+				stateWrite.Lock()
+				stateWrite.pending = false
+				stateWrite.Unlock()
+				writeState(time.Now())
+			})
+		}
+		return
+	}
+	stateWrite.last = time.Now()
+	writeStateFile(now)
+}
+
+// writeStateFile writes the state file atomically. Errors are ignored: the
+// file is only for diagnosis.
+func writeStateFile(now time.Time) {
 	live.Lock()
 	s := State{PID: os.Getpid(), UpdatedAt: now.UTC(), Transmit: slices.Clone(live.tx), Neighbors: Neighbors()}
 	live.Unlock()
