@@ -13,14 +13,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 )
 
 // testCluster is one guest cluster of a qcow2 fixture.
 type testCluster struct {
-	kind  string // "data", "zero", "unalloc", "compressed", "sub"
-	data  []byte // guest bytes for data, compressed and sub
+	kind  string // "data", "zero", "zeroalloc", "unalloc", "compressed", "rawcompressed", "sub"
+	data  []byte // guest bytes; the stored bytes for rawcompressed
 	alloc uint32 // sub: allocated subclusters
 	zeros uint32 // sub: zero subclusters
 }
@@ -37,8 +38,8 @@ type qcow2Fixture struct {
 // build writes the fixture as a qcow2 file: header in cluster 0, L1 in
 // cluster 1, the L2 tables, the data clusters, then the compressed clusters
 // packed at unaligned offsets.
-func (f qcow2Fixture) build(t *testing.T) []byte {
-	t.Helper()
+func (f qcow2Fixture) build(tb testing.TB) []byte {
+	tb.Helper()
 	cs := 1 << f.clusterBits
 	width := 8
 	if f.extendedL2 {
@@ -87,8 +88,17 @@ func (f qcow2Fixture) build(t *testing.T) []byte {
 			}
 		case "zero":
 			be.PutUint64(img[e:], qcow2ZeroFlag)
+		case "zeroalloc":
+			// The zero flag on an allocated cluster with non-zero data:
+			// the guest reads zeros (QEMU write -z without unmap).
+			off := len(img)
+			img = append(img, c.data...)
+			be.PutUint64(img[e:], uint64(off)|1<<63|qcow2ZeroFlag)
 		case "compressed":
-			compressed = append(compressed, f.compress(t, c.data))
+			compressed = append(compressed, f.compress(tb, c.data))
+			compressedAt = append(compressedAt, e)
+		case "rawcompressed":
+			compressed = append(compressed, c.data)
 			compressedAt = append(compressedAt, e)
 		}
 	}
@@ -104,19 +114,19 @@ func (f qcow2Fixture) build(t *testing.T) []byte {
 	return img
 }
 
-func (f qcow2Fixture) compress(t *testing.T, data []byte) []byte {
-	t.Helper()
+func (f qcow2Fixture) compress(tb testing.TB, data []byte) []byte {
+	tb.Helper()
 	if f.compression == qcow2CompressZstd {
 		enc, err := zstd.NewWriter(nil)
 		if err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
 		return enc.EncodeAll(data, nil)
 	}
 	var b bytes.Buffer
 	w, err := flate.NewWriter(&b, flate.BestCompression)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	_, _ = w.Write(data)
 	_ = w.Close()
@@ -220,6 +230,11 @@ func TestQCOW2ToRawRejects(t *testing.T) {
 		{"huge cluster", func(b []byte) { binary.BigEndian.PutUint32(b[20:], 30) }, "cluster bits"},
 		{"small L1", func(b []byte) { binary.BigEndian.PutUint64(b[24:], 1<<40) }, "L1 table"},
 		{"compression type", func(b []byte) { b[79] |= qcow2IncompatCompressType; b[104] = 9 }, "compression type 9"},
+		{"compression type without its bit", func(b []byte) { b[104] = qcow2CompressZstd }, "without the compression type feature bit"},
+		// Cluster 1 is the L1 table, cluster 2 the L2 table, cluster 3 the data.
+		{"L1 past EOF", func(b []byte) { binary.BigEndian.PutUint64(b[40:], 1<<20) }, "past the end"},
+		{"L2 past EOF", func(b []byte) { binary.BigEndian.PutUint64(b[512:], 1<<20|1<<63) }, "past the end"},
+		{"data past EOF", func(b []byte) { binary.BigEndian.PutUint64(b[1024:], 1<<20|1<<63) }, "past the end"},
 		{"not qcow2", func(b []byte) { b[0] = 0 }, "not a valid qcow2 header"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -230,6 +245,50 @@ func TestQCOW2ToRawRejects(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// The zero flag wins over the host cluster that it keeps allocated.
+func TestQCOW2ToRawZeroFlagHidesHostCluster(t *testing.T) {
+	f := qcow2Fixture{version: 3, clusterBits: 9, size: 1024, clusters: []testCluster{
+		{kind: "zeroalloc", data: pattern(512, 9)},
+		{kind: "data", data: pattern(512, 4)},
+	}}
+	got, err := convertFixture(t, f.build(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := append(make([]byte, 512), pattern(512, 4)...); !bytes.Equal(got, want) {
+		t.Fatal("a zero-flag cluster did not read as zeros")
+	}
+}
+
+// A zstd frame that claims a window larger than a cluster fails before the
+// decoder allocates it.
+func TestQCOW2ToRawRejectsLargeZstdWindow(t *testing.T) {
+	// Magic, descriptor 0x44 (2-byte content size, checksum), window
+	// descriptor 0x98 (2^29 bytes), content size, then a raw last block.
+	frame := []byte{0x28, 0xb5, 0x2f, 0xfd, 0x44, 0x98, 0x00, 0x01, 0x01, 0x10, 0x00, 0xaa, 0xaa}
+	f := qcow2Fixture{version: 3, clusterBits: 9, compression: qcow2CompressZstd, size: 512,
+		clusters: []testCluster{{kind: "rawcompressed", data: frame}}}
+	if _, err := convertFixture(t, f.build(t)); err == nil || !strings.Contains(err.Error(), "window") {
+		t.Fatalf("err = %v, want a zstd window error", err)
+	}
+}
+
+func TestCheckQCOW2FitsDevice(t *testing.T) {
+	f := qcow2Fixture{version: 3, clusterBits: 9, size: 512, clusters: []testCluster{{kind: "data", data: pattern(512, 1)}}}
+	path := filepath.Join(t.TempDir(), "img.qcow2")
+	if err := os.WriteFile(path, f.build(t), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// /dev/null is a device of size 0.
+	if err := checkQCOW2FitsDevice(path, "/dev/null"); err == nil || !strings.Contains(err.Error(), "larger than the target device") {
+		t.Fatalf("err = %v, want larger than the target device", err)
+	}
+	// A regular file as target has no fixed size.
+	if err := checkQCOW2FitsDevice(path, filepath.Join(t.TempDir(), "disk")); err != nil {
+		t.Fatalf("regular file target: %v", err)
 	}
 }
 
@@ -294,4 +353,119 @@ func TestQCOW2ToRawMatchesQemuImg(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestQCOW2ToRawMatchesQemuIO builds images with qemu-io and qemu-img
+// snapshot, which reach the zero flag on allocated clusters, discarded
+// clusters and snapshots (shared clusters, a second L1 table), and compares
+// the conversion with `qemu-img convert -O raw` of the same image.
+func TestQCOW2ToRawMatchesQemuIO(t *testing.T) {
+	qemuImg, err := exec.LookPath("qemu-img")
+	if err != nil {
+		t.Skip("qemu-img not installed")
+	}
+	qemuIO, err := exec.LookPath("qemu-io")
+	if err != nil {
+		t.Skip("qemu-io not installed")
+	}
+	type step struct{ tool, arg string } // tool "io": qemu-io -c arg; "snap": qemu-img snapshot -c arg
+	for _, tt := range []struct {
+		name  string
+		opts  string
+		steps []step
+	}{
+		{"zero flag on allocated clusters", "", []step{
+			{"io", "write -P 0xaa 0 1M"},
+			{"io", "write -z 64k 128k"},
+		}},
+		{"snapshots", "cluster_size=4k", []step{
+			{"io", "write -P 0x11 0 2M"},
+			{"snap", "s1"},
+			{"io", "write -P 0x22 512k 256k"},
+			{"io", "write -z 1M 64k"},
+			{"snap", "s2"},
+			{"io", "write -P 0x33 1536k 128k"},
+			{"io", "discard 0 64k"},
+			{"io", "write -z -u 256k 64k"},
+		}},
+		{"snapshots zstd extended L2", "compression_type=zstd,extended_l2=on", []step{
+			{"io", "write -c -P 0x44 0 256k"},
+			{"snap", "s1"},
+			{"io", "write -P 0x55 8k 4k"},
+			{"io", "write -z 300k 16k"},
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			img := filepath.Join(dir, "img.qcow2")
+			args := []string{"create", "-f", "qcow2"}
+			if tt.opts != "" {
+				args = append(args, "-o", tt.opts)
+			}
+			runTool(t, qemuImg, append(args, img, "4M")...)
+			for _, s := range tt.steps {
+				if s.tool == "snap" {
+					runTool(t, qemuImg, "snapshot", "-c", s.arg, img)
+					continue
+				}
+				runTool(t, qemuIO, "-f", "qcow2", "-c", s.arg, img)
+			}
+			ref := filepath.Join(dir, "ref.raw")
+			runTool(t, qemuImg, "convert", "-f", "qcow2", "-O", "raw", img, ref)
+			want, err := os.ReadFile(ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(img)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := convertFixture(t, data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Fatal("conversion differs from qemu-img convert")
+			}
+		})
+	}
+}
+
+func runTool(t *testing.T, name string, args ...string) {
+	t.Helper()
+	if out, err := exec.CommandContext(t.Context(), name, args...).CombinedOutput(); err != nil {
+		t.Fatalf("%s %v: %v: %s", name, args, err, out)
+	}
+}
+
+// FuzzQCOW2ToRaw converts arbitrary images: no panic, no hang. Images with
+// a virtual size above 64 MiB are skipped to bound the work per input.
+func FuzzQCOW2ToRaw(f *testing.F) {
+	for _, fx := range []qcow2Fixture{
+		{version: 2, clusterBits: 9, size: 1024, clusters: []testCluster{{kind: "data", data: pattern(512, 1)}, {kind: "compressed", data: pattern(512, 2)}}},
+		{version: 3, clusterBits: 9, size: 1536, clusters: []testCluster{{kind: "zero"}, {kind: "zeroalloc", data: pattern(512, 3)}, {kind: "unalloc"}}},
+		{version: 3, clusterBits: 9, compression: qcow2CompressZstd, size: 512, clusters: []testCluster{{kind: "compressed", data: pattern(512, 4)}}},
+		{version: 3, clusterBits: 10, extendedL2: true, size: 2048, clusters: []testCluster{
+			{kind: "sub", data: pattern(1024, 5), alloc: 0b1011, zeros: 0b0100}, {kind: "data", data: pattern(1024, 6)}}},
+	} {
+		f.Add(fx.build(f))
+	}
+	dir := f.TempDir()
+	f.Fuzz(func(t *testing.T, img []byte) {
+		if h, err := parseQCOW2Header(img[:min(len(img), 512)]); err == nil && h.size > 64<<20 {
+			t.Skip("virtual size above 64 MiB")
+		}
+		src := filepath.Join(dir, "in.qcow2")
+		dst := filepath.Join(dir, "out.raw")
+		if err := os.WriteFile(src, img, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		start := time.Now()
+		_ = convertQCOW2ToRaw(ctx, src, dst)
+		if d := time.Since(start); d > 5*time.Second {
+			t.Fatalf("conversion took %s", d)
+		}
+	})
 }

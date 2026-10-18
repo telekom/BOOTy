@@ -617,5 +617,7 @@ QCOW2 images. It converts a QCOW2 image to raw in process, in a tmpfs ramdisk,
 before it writes the disk; the ramdisk has no `qemu-img`. QCOW2 versions 2 and
 3 work, with zlib or zstd compressed clusters and extended L2 entries. A QCOW2
 image must be self-contained: BOOTy rejects images with a backing file, an
-external data file or encryption. See
+external data file or encryption, a truncated image (a table or cluster past
+the end of the file), and an image whose virtual size is larger than the
+target disk. See
 [README.md](../README.md#caprf-mode) for the image source rules.

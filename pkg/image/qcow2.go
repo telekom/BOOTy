@@ -71,6 +71,9 @@ func ConvertQCOW2FromReader(ctx context.Context, src io.Reader, sourceName, devi
 		return fmt.Errorf("writing qcow2 image: %w", err)
 	}
 
+	if err := checkQCOW2FitsDevice(qcow2Path, device); err != nil {
+		return err
+	}
 	if err := convertQCOW2ToRaw(ctx, qcow2Path, rawPath); err != nil {
 		return fmt.Errorf("converting qcow2 to raw: %w", err)
 	}
@@ -164,6 +167,38 @@ func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("close raw image: %w", err)
 	}
 	slog.Info("qcow2 conversion complete")
+	return nil
+}
+
+// checkQCOW2FitsDevice fails, before the conversion, when the virtual size
+// of the qcow2 image is larger than the target device. A regular file as
+// target (tests) has no fixed size and is not checked.
+func checkQCOW2FitsDevice(qcow2Path, device string) error {
+	fi, err := os.Stat(device)
+	if err != nil || fi.Mode()&os.ModeDevice == 0 {
+		return nil //nolint:nilerr // the write reports a missing device
+	}
+	src, err := os.Open(qcow2Path) //nolint:gosec // controlled ramdisk path
+	if err != nil {
+		return fmt.Errorf("open qcow2 image: %w", err)
+	}
+	defer func() { _ = src.Close() }()
+	h, err := readQCOW2Header(src)
+	if err != nil {
+		return err
+	}
+	dev, err := os.Open(device) //nolint:gosec // device from config
+	if err != nil {
+		return fmt.Errorf("open target device %s: %w", device, err)
+	}
+	defer func() { _ = dev.Close() }()
+	size, err := dev.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("size of target device %s: %w", device, err)
+	}
+	if h.size > uint64(size) { //nolint:gosec // a size is not negative
+		return fmt.Errorf("qcow2 virtual size %d bytes is larger than the target device %s (%d bytes)", h.size, device, size)
+	}
 	return nil
 }
 

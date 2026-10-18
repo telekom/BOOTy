@@ -136,10 +136,15 @@ func parseQCOW2V3Fields(h *qcow2Header, b []byte) error {
 		return fmt.Errorf("qcow2 image has unknown incompatible features %#x", unknown)
 	}
 	h.extendedL2 = incompat&qcow2IncompatExtendedL2 != 0
+	hasField := len(b) > qcow2V3HeaderLen && binary.BigEndian.Uint32(b[100:104]) > qcow2V3HeaderLen
 	if incompat&qcow2IncompatCompressType == 0 {
+		// Like QEMU: a compression type other than zlib needs the bit.
+		if hasField && b[104] != qcow2CompressZlib {
+			return fmt.Errorf("qcow2 compression type %d without the compression type feature bit", b[104])
+		}
 		return nil
 	}
-	if len(b) < qcow2V3HeaderLen+1 || binary.BigEndian.Uint32(b[100:104]) <= qcow2V3HeaderLen {
+	if !hasField {
 		return fmt.Errorf("qcow2 header announces a compression type but has no field for it")
 	}
 	h.compression = b[104]
@@ -153,18 +158,18 @@ func parseQCOW2V3Fields(h *qcow2Header, b []byte) error {
 // dst. Unallocated and zero clusters, and zero runs of sparseBlock bytes,
 // stay holes, so a tmpfs only holds the data, like with qemu-img convert.
 func qcow2ToRaw(ctx context.Context, src, dst *os.File) error {
-	hb := make([]byte, 512)
-	n, err := src.ReadAt(hb, 0)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("read qcow2 header: %w", err)
-	}
-	h, err := parseQCOW2Header(hb[:n])
+	h, err := readQCOW2Header(src)
 	if err != nil {
 		return err
 	}
-	c := &qcow2Converter{h: h, src: src, dst: dst, cluster: make([]byte, h.clusterSize())}
+	fi, err := src.Stat()
+	if err != nil {
+		return fmt.Errorf("stat qcow2 image: %w", err)
+	}
+	c := &qcow2Converter{h: h, src: src, srcSize: fi.Size(), dst: dst, cluster: make([]byte, h.clusterSize())}
+	defer c.close()
 	l1 := make([]byte, int64(h.l1Size)*8)
-	if err := readFullAt(src, l1, int64(h.l1Offset)); err != nil { //nolint:gosec // bounded by the file
+	if err := c.readFullAt(l1, int64(h.l1Offset)); err != nil { //nolint:gosec // bounded by the file
 		return fmt.Errorf("read qcow2 L1 table: %w", err)
 	}
 	l2 := make([]byte, h.clusterSize())
@@ -180,7 +185,7 @@ func qcow2ToRaw(ctx context.Context, src, dst *os.File) error {
 		if l2Offset&uint64(h.clusterSize()-1) != 0 { //nolint:gosec // at most 2 MiB
 			return fmt.Errorf("qcow2 L2 table offset %#x is not cluster aligned", l2Offset)
 		}
-		if err := readFullAt(src, l2, int64(l2Offset)); err != nil { //nolint:gosec // masked to 56 bits
+		if err := c.readFullAt(l2, int64(l2Offset)); err != nil { //nolint:gosec // masked to 56 bits
 			return fmt.Errorf("read qcow2 L2 table %d: %w", i, err)
 		}
 		if err := c.convertL2(l2, i*perL2); err != nil {
@@ -193,12 +198,29 @@ func qcow2ToRaw(ctx context.Context, src, dst *os.File) error {
 	return nil
 }
 
+// readQCOW2Header reads and validates the header of the qcow2 file f.
+func readQCOW2Header(f *os.File) (*qcow2Header, error) {
+	hb := make([]byte, 512)
+	n, err := f.ReadAt(hb, 0)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("read qcow2 header: %w", err)
+	}
+	return parseQCOW2Header(hb[:n])
+}
+
 type qcow2Converter struct {
 	h       *qcow2Header
 	src     *os.File
+	srcSize int64
 	dst     *os.File
 	cluster []byte
 	zstd    *zstd.Decoder
+}
+
+func (c *qcow2Converter) close() {
+	if c.zstd != nil {
+		c.zstd.Close()
+	}
 }
 
 // convertL2 writes the guest clusters that one L2 table maps, starting at
@@ -244,7 +266,7 @@ func (c *qcow2Converter) convertCluster(entry, bitmap uint64, guest int64) error
 	if host&uint64(cs-1) != 0 { //nolint:gosec // at most 2 MiB
 		return fmt.Errorf("data cluster offset %#x is not cluster aligned", host)
 	}
-	if err := readFullAt(c.src, c.cluster, int64(host)); err != nil { //nolint:gosec // masked to 56 bits
+	if err := c.readFullAt(c.cluster, int64(host)); err != nil { //nolint:gosec // masked to 56 bits
 		return fmt.Errorf("read data cluster: %w", err)
 	}
 	if c.h.extendedL2 {
@@ -269,6 +291,9 @@ func (c *qcow2Converter) readCompressed(entry uint64) error {
 	offset := entry & (1<<shift - 1)
 	sectors := (entry>>shift)&(1<<(c.h.clusterBits-8)-1) + 1
 	size := int64(sectors)*512 - int64(offset&511) //nolint:gosec // at most 2 * cluster size
+	if int64(offset) >= c.srcSize {                //nolint:gosec // masked to 62 bits
+		return fmt.Errorf("compressed cluster at %#x starts past the end of the image (%d bytes): truncated download?", offset, c.srcSize)
+	}
 	buf := make([]byte, size)
 	n, err := c.src.ReadAt(buf, int64(offset)) //nolint:gosec // masked to 62 bits
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -280,7 +305,10 @@ func (c *qcow2Converter) readCompressed(entry uint64) error {
 	switch c.h.compression {
 	case qcow2CompressZstd:
 		if c.zstd == nil {
-			c.zstd, err = zstd.NewReader(nil, zstd.WithDecoderConcurrency(1))
+			// A cluster never needs a window larger than itself; a frame
+			// that claims one is refused before any allocation.
+			window := uint64(max(c.h.clusterSize(), zstd.MinWindowSize)) //nolint:gosec // at most 2 MiB
+			c.zstd, err = zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxWindow(window))
 			if err != nil {
 				return fmt.Errorf("zstd decoder: %w", err)
 			}
@@ -323,11 +351,18 @@ func allZero(b []byte) bool {
 	return true
 }
 
-// readFullAt reads len(b) bytes at off. Bytes past the end of the file read
-// as zeros, like QEMU's file driver: a data cluster may end the image file
-// early.
-func readFullAt(f *os.File, b []byte, off int64) error {
-	n, err := f.ReadAt(b, off)
+// readFullAt reads len(b) bytes at off. A table or cluster that starts past
+// the end of the file fails (a truncated download); bytes past the end of a
+// table or cluster that starts inside the file read as zeros, like QEMU's
+// file driver: the last data cluster may end the image file early.
+func (c *qcow2Converter) readFullAt(b []byte, off int64) error {
+	if len(b) == 0 {
+		return nil
+	}
+	if off >= c.srcSize {
+		return fmt.Errorf("offset %#x is past the end of the image (%d bytes): truncated download?", off, c.srcSize)
+	}
+	n, err := c.src.ReadAt(b, off)
 	if errors.Is(err, io.EOF) {
 		clear(b[n:])
 		return nil
