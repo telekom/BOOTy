@@ -41,6 +41,8 @@ type DHCPMode struct {
 	// stopped is set before the clients stop; a lease that arrives after it
 	// is not applied.
 	stopped bool
+	// watchDone ends the watch for new NICs.
+	watchDone chan struct{}
 	// expiry ends the lease of a NIC at its expiry time. go-dhclient v1.0.2
 	// does not: after a failed renewal it renews again forever and never
 	// reaches the expiry, so OnExpire only comes for a DHCPNAK.
@@ -106,6 +108,7 @@ var (
 	dhcpLinkByName  = netlink.LinkByName
 	dhcpLinkSetUp   = netlink.LinkSetUp
 	dhcpPrepareLink = promoteSecondaries
+	dhcpSubscribe   = netlink.LinkSubscribe
 	dhcpNewClient   = func(iface *net.Interface, hostname string, onBound, onExpire dhclient.Callback) dhcpClient {
 		return newDHCPClient(iface, hostname, dhcpClientID(iface.Name, lldp.MachineID()), onBound, onExpire)
 	}
@@ -182,6 +185,7 @@ func (d *DHCPMode) Setup(ctx context.Context, cfg *Config) error {
 	for i := range ifaces {
 		d.startClient(&ifaces[i], hostname, leased)
 	}
+	d.watchNewNICs(hostname, leased)
 
 	timer := time.NewTimer(dhcpSetupTimeout)
 	defer timer.Stop()
@@ -221,11 +225,55 @@ func (d *DHCPMode) startClient(iface *net.Interface, hostname string, leased cha
 	start := func() dhcpClient { return dhcpStart(d.clientFor(iface, link, hostname, leased)) }
 	nc := &nicClient{client: start(), start: start}
 	d.mu.Lock()
+	if d.stopped {
+		d.mu.Unlock()
+		nc.client.Stop() // the stop came while this client started
+		return
+	}
 	if d.clients == nil {
 		d.clients = map[int]*nicClient{}
 	}
 	d.clients[link.Attrs().Index] = nc
 	d.mu.Unlock()
+}
+
+// watchNewNICs starts a client on every physical NIC that appears after
+// Setup, like networkd matches a link when udev announces it: a driver can
+// bring up its ports late. It runs until the clients stop.
+func (d *DHCPMode) watchNewNICs(hostname string, leased chan<- string) {
+	updates := make(chan netlink.LinkUpdate, 16)
+	done := make(chan struct{})
+	if err := dhcpSubscribe(updates, done); err != nil {
+		d.log.Warn("NICs that appear later get no DHCP client", "error", err)
+		return
+	}
+	d.mu.Lock()
+	d.watchDone = done
+	d.mu.Unlock()
+	go func() {
+		for u := range updates {
+			if u.Header.Type != unix.RTM_NEWLINK || u.Link == nil {
+				continue
+			}
+			d.mu.Lock()
+			_, known := d.clients[u.Attrs().Index]
+			stopped := d.stopped
+			d.mu.Unlock()
+			if known || stopped {
+				continue
+			}
+			ifaces, err := dhcpInterfaces(context.Background())
+			if err != nil {
+				continue
+			}
+			for i := range ifaces {
+				if ifaces[i].Index == u.Attrs().Index {
+					d.log.Info("Starting DHCP on a new NIC", "interface", ifaces[i].Name)
+					d.startClient(&ifaces[i], hostname, leased)
+				}
+			}
+		}
+	}()
 }
 
 // stopClients stops every DHCP client, all at once: go-dhclient's Stop
@@ -240,6 +288,10 @@ func (d *DHCPMode) stopClients() {
 	for idx, t := range d.retry {
 		t.Stop()
 		delete(d.retry, idx)
+	}
+	if d.watchDone != nil {
+		close(d.watchDone)
+		d.watchDone = nil
 	}
 	d.mu.Unlock()
 	var wg sync.WaitGroup
