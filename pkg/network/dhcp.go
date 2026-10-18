@@ -92,8 +92,10 @@ func NewDHCPMode() *DHCPMode {
 
 // Setup starts a DHCP client on every physical interface and returns when
 // the first lease is applied. The clients keep running: later leases, also
-// on other NICs, configure their NIC too. Without a lease within 15 s every
-// client is stopped and Setup fails.
+// on other NICs, configure their NIC too. Without a lease within 15 s Setup
+// fails, but the clients keep sending, like networkd retries forever: a
+// switch port without portfast forwards only after 30 to 50 s, and the
+// connectivity wait that follows gets the lease. Teardown stops them.
 func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 	if d.log == nil {
 		d.log = slog.Default().With("component", "dhcp")
@@ -123,13 +125,14 @@ func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
 		d.log.Info("DHCP succeeded", "interface", name)
 		return nil
 	case <-timer.C:
-		// A lease applied while the timer fired counts: stopping now would
-		// leave its address without a client.
-		if d.stopUnlessLeased() {
-			return fmt.Errorf("DHCP failed on all %d interfaces", len(ifaces))
+		d.mu.Lock()
+		leasedNow := len(d.nics) > 0 // a lease applied while the timer fired
+		d.mu.Unlock()
+		if leasedNow {
+			d.log.Info("DHCP succeeded at the timeout")
+			return nil
 		}
-		d.log.Info("DHCP succeeded at the timeout")
-		return nil
+		return fmt.Errorf("no DHCP lease on any of %d interfaces after %s, the clients keep trying", len(ifaces), dhcpSetupTimeout)
 	case <-ctx.Done():
 		d.stopClients()
 		return fmt.Errorf("DHCP probing canceled: %w", ctx.Err())
@@ -155,20 +158,6 @@ func (d *DHCPMode) startClient(iface *net.Interface, hostname string, leased cha
 	d.mu.Lock()
 	d.clients = append(d.clients, client)
 	d.mu.Unlock()
-}
-
-// stopUnlessLeased stops the clients unless a lease is applied, and tells
-// whether it stopped them. The check and the stop flag are atomic, so no
-// lease is applied after it.
-func (d *DHCPMode) stopUnlessLeased() bool {
-	d.mu.Lock()
-	if len(d.nics) > 0 {
-		d.mu.Unlock()
-		return false
-	}
-	d.mu.Unlock()
-	d.stopClients()
-	return true
 }
 
 // stopClients stops every DHCP client, all at once: go-dhclient's Stop
