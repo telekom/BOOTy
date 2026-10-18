@@ -24,9 +24,10 @@ var (
 	panicGetpid     = os.Getpid
 )
 
-// setPanicReboot sets kernel.panic unless the kernel command line has a
-// panic= parameter, which wins (for example panic=0 to keep a panicked host
-// for debugging). Only PID 1 sets it: kernel.panic is global for the host,
+// setPanicReboot sets kernel.panic unless the kernel command line sets it,
+// with panic= or sysctl.kernel.panic= (Linux 5.8, also written
+// sysctl.kernel/panic=), which wins (for example panic=0 to keep a panicked
+// host for debugging). Only PID 1 sets it: kernel.panic is global for the host,
 // and BOOTy also runs as a normal process (the containerlab e2e nodes), where
 // it must not change the CI runner's or a laptop's setting.
 func setPanicReboot() {
@@ -43,7 +44,8 @@ func setPanicReboot() {
 		if p == "--" {
 			break
 		}
-		if name, _, _ := strings.Cut(p, "="); name == "panic" {
+		switch name, _, _ := strings.Cut(p, "="); name {
+		case "panic", "sysctl.kernel.panic", "sysctl.kernel/panic":
 			return
 		}
 	}
