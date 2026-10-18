@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -88,5 +89,93 @@ func TestMemInfoMiB(t *testing.T) {
 	}
 	if total, available := memInfoMiB(filepath.Join(t.TempDir(), "missing")); total != 0 || available != 0 {
 		t.Fatalf("missing file: %d, %d, want zeros", total, available)
+	}
+}
+
+// longPollProvider holds every poll like a CAPRF long poll and records the
+// heartbeat times; the heartbeats come from another goroutine.
+type longPollProvider struct {
+	standbyProvider
+	hold time.Duration
+
+	mu         sync.Mutex
+	heartbeats []time.Time
+}
+
+func (p *longPollProvider) Heartbeat(context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.heartbeats = append(p.heartbeats, time.Now())
+	return nil
+}
+
+func (p *longPollProvider) FetchCommands(ctx context.Context) ([]config.Command, error) {
+	select {
+	case <-time.After(p.hold):
+	case <-ctx.Done():
+	}
+	return nil, nil
+}
+
+// A long poll must not delay the heartbeats: the poll holds the loop for
+// several heartbeat intervals here.
+func TestStandbyHeartbeatsDoNotWaitForTheLongPoll(t *testing.T) {
+	defer func(h, p time.Duration) { heartbeatInterval, pollInterval = h, p }(heartbeatInterval, pollInterval)
+	heartbeatInterval, pollInterval = 20*time.Millisecond, 0
+
+	provider := &longPollProvider{hold: 100 * time.Millisecond}
+	mode := &StandbyMode{deps: Deps{Cfg: standbyConfig(), Client: provider}}
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+	if err := mode.Run(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Run error = %v, want the context deadline", err)
+	}
+
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	// The first heartbeat is the readiness heartbeat before the first poll.
+	if n := len(provider.heartbeats); n < 15 {
+		t.Fatalf("heartbeats = %d in 600 ms with a 20 ms interval, want at least 15", n)
+	}
+	for i := 2; i < len(provider.heartbeats); i++ {
+		if gap := provider.heartbeats[i].Sub(provider.heartbeats[i-1]); gap > 80*time.Millisecond {
+			t.Fatalf("heartbeat gap %v, want about the 20 ms interval, not the 100 ms poll", gap)
+		}
+	}
+}
+
+// failOnceProvider fails the first loop poll and then returns a reboot.
+type failOnceProvider struct {
+	standbyProvider
+}
+
+func (p *failOnceProvider) FetchCommands(context.Context) ([]config.Command, error) {
+	p.fetches++
+	switch p.fetches {
+	case 1: // readiness poll
+		return nil, nil
+	case 2:
+		return nil, errors.New("poll failed")
+	default:
+		return []config.Command{{ID: "r1", Type: "reboot"}}, nil
+	}
+}
+
+// A failed poll schedules the next one.
+func TestStandbyPollsAgainAfterAFailedPoll(t *testing.T) {
+	defer func(d time.Duration) { pollInterval = d }(pollInterval)
+	pollInterval = 10 * time.Millisecond
+
+	provider := &failOnceProvider{}
+	mode := &StandbyMode{deps: Deps{Cfg: standbyConfig(), Client: provider}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var reboot *RebootRequestedError
+	if err := mode.Run(ctx); !errors.As(err, &reboot) {
+		t.Fatalf("Run error = %v, want the reboot command of the poll after the failed one", err)
+	}
+	if provider.fetches != 3 {
+		t.Fatalf("fetches = %d, want 3", provider.fetches)
 	}
 }

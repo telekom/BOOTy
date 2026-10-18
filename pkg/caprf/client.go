@@ -440,6 +440,9 @@ func longPollURL(raw string) string {
 	}
 	q := u.Query()
 	q.Set("wait", strconv.Itoa(int(CommandsWait/time.Second)))
+	// q.Encode() sorts the keys and re-escapes the values, so a COMMANDS_URL
+	// with a signed query (a signature over the exact query string) no
+	// longer verifies. CAPRF URLs carry no query.
 	u.RawQuery = q.Encode()
 	return u.String()
 }

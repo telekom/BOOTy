@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -19,10 +20,10 @@ import (
 	"github.com/telekom/BOOTy/pkg/rescue"
 )
 
-const (
-	ackTimeout        = 10 * time.Second
-	heartbeatInterval = 30 * time.Second
-)
+const ackTimeout = 10 * time.Second
+
+// heartbeatInterval is the time between two heartbeats; tests change it.
+var heartbeatInterval = 30 * time.Second
 
 // pollInterval is the shortest time between the starts of two command
 // polls, and repollAfterCommands the pause after a poll that returned
@@ -38,6 +39,9 @@ var (
 type StandbyMode struct {
 	deps             Deps
 	newDeprovisioner func(*config.MachineConfig) standbyDeprovisioner
+	// commandRunning pauses the heartbeats while a command runs: the
+	// contract sends none then.
+	commandRunning atomic.Bool
 }
 
 type standbyDeprovisioner interface {
@@ -90,8 +94,19 @@ func (m *StandbyMode) Run(ctx context.Context) error {
 		return result.err
 	}
 
-	heartbeatTicker := time.NewTicker(heartbeatInterval)
-	defer heartbeatTicker.Stop()
+	// Heartbeats have their own goroutine: a long poll holds the loop for
+	// up to 20 s, and a heartbeat that waits behind it can miss the CAPRF
+	// heartbeat timeout.
+	hbCtx, stopHeartbeats := context.WithCancel(ctx)
+	hbDone := make(chan struct{})
+	go func() {
+		defer close(hbDone)
+		m.sendHeartbeats(hbCtx)
+	}()
+	defer func() {
+		stopHeartbeats()
+		<-hbDone
+	}()
 
 	nextPoll := time.NewTimer(nextPollDelay(pollStart, ran))
 	defer nextPoll.Stop()
@@ -101,11 +116,6 @@ func (m *StandbyMode) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			slog.Info("standby context canceled, shutting down")
 			return fmt.Errorf("standby canceled: %w", ctx.Err())
-
-		case <-heartbeatTicker.C:
-			if err := m.deps.Client.Heartbeat(ctx); err != nil {
-				slog.Warn("heartbeat failed", "error", err)
-			}
 
 		case <-nextPoll.C:
 			start := time.Now()
@@ -117,6 +127,26 @@ func (m *StandbyMode) Run(ctx context.Context) error {
 				return result.err
 			}
 			nextPoll.Reset(nextPollDelay(start, ran))
+		}
+	}
+}
+
+// sendHeartbeats sends a heartbeat every heartbeatInterval until ctx ends,
+// except while a command runs.
+func (m *StandbyMode) sendHeartbeats(ctx context.Context) {
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if m.commandRunning.Load() {
+				continue
+			}
+			if err := m.deps.Client.Heartbeat(ctx); err != nil && ctx.Err() == nil {
+				slog.Warn("heartbeat failed", "error", err)
+			}
 		}
 	}
 }
@@ -149,6 +179,8 @@ func (m *StandbyMode) pollCommands(ctx context.Context) (result *commandResult, 
 	if err != nil {
 		return nil, false, err
 	}
+	m.commandRunning.Store(true)
+	defer m.commandRunning.Store(false)
 	for _, cmd := range cmds {
 		if r := m.handleCommand(ctx, cmd); r != nil {
 			return r, true, nil
