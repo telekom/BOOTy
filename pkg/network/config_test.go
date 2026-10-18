@@ -353,7 +353,25 @@ func TestConfigureResolvConfWritesSearchDomains(t *testing.T) {
 	if got, want := string(data), "nameserver 10.0.2.3\nsearch l2.example b.example\n"; got != want {
 		t.Fatalf("resolv.conf = %q, want %q", got, want)
 	}
-	if err := ConfigureResolvConf([]string{"10.0.2.3"}, []string{"bad domain"}); err == nil {
-		t.Fatal("ConfigureResolvConf accepted a search domain with a space")
+	// A bad domain is left out, the rest is written.
+	if err := ConfigureResolvConf([]string{"10.0.2.3"}, []string{"corp_lan.example", "bad domain", "ok.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ = os.ReadFile(path); string(data) != "nameserver 10.0.2.3\nsearch ok.example\n" {
+		t.Fatalf("resolv.conf = %q, want the valid domain only", data)
+	}
+	// No servers: no search line either.
+	if err := ConfigureResolvConf(nil, []string{"ok.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ = os.ReadFile(path); string(data) != "# no DNS servers\n" {
+		t.Fatalf("resolv.conf without servers = %q", data)
+	}
+}
+
+func TestValidSearchDomainLength(t *testing.T) {
+	long := strings.Repeat("a.", 126) + "b" // 253 characters
+	if !validSearchDomain(long) || validSearchDomain(long+"c") {
+		t.Fatalf("validSearchDomain: 253 characters must pass, 254 must not")
 	}
 }
