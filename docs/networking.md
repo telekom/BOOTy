@@ -1135,7 +1135,8 @@ On every lease (also renewals and leases on the other NICs), BOOTy:
   restores the MTU from before;
 - writes `/etc/resolv.conf` with the configured resolvers (`dns_resolver`,
   netplan `nameservers`) first and then the DNS servers (option 6) of all
-  leases, like systemd-resolved with `UseDNS=yes`. With
+  leases, like systemd-resolved with `UseDNS=yes`, and the lease domains
+  (option 15) as `search` line, as in the legacy ramdisk's resolv.conf. With
   `PROVISIONER_FILES_TARGET=ramdisk` and a provisioner `/etc/resolv.conf`,
   that file stays, as in the legacy ramdisk.
 
