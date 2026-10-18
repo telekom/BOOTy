@@ -11,14 +11,14 @@ import (
 	"time"
 )
 
-// Size budgets in MiB, about 5% above main (default 42.2, gobgp 37.7,
-// slim 29.4, micro 10.3 MiB). Every MB is up to 0.5 s of boot time on
+// Size budgets in MiB, about 5% above main (default 40.3, gobgp 35.8,
+// slim 23.6, micro 10.3 MiB). Every MB is up to 0.5 s of boot time on
 // slow BMC virtual media; see docs/size-optimization.md.
 const (
 	maxMicroInitramfsMB   = 11.0
-	maxSlimInitramfsMB    = 31.0
-	maxGoBGPInitramfsMB   = 40.0
-	maxDefaultInitramfsMB = 45.0
+	maxSlimInitramfsMB    = 25.0
+	maxGoBGPInitramfsMB   = 38.0
+	maxDefaultInitramfsMB = 42.5
 )
 
 func dockerAvailable(t *testing.T) {
