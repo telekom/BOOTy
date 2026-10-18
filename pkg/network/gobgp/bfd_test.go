@@ -4,6 +4,7 @@ package gobgp
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net"
 	"net/netip"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	apipb "github.com/osrg/gobgp/v3/api"
+	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
 	"github.com/osrg/gobgp/v3/pkg/server"
 
 	"github.com/telekom/BOOTy/pkg/network"
@@ -129,6 +131,7 @@ func TestBFDChangedAtBGPStart(t *testing.T) {
 		{"up for 2 s", now.Add(-2 * time.Second), apipb.PeerState_ESTABLISHED, true},
 		{"uptime in the future (clock stepped back)", now.Add(time.Hour), apipb.PeerState_ESTABLISHED, true},
 		{"OpenConfirm", time.Time{}, apipb.PeerState_OPENCONFIRM, false},
+		{"established, uptime not set yet", time.Time{}, apipb.PeerState_ESTABLISHED, false},
 		{"OpenSent", time.Time{}, apipb.PeerState_OPENSENT, true},
 		{"Active", time.Time{}, apipb.PeerState_ACTIVE, true},
 		{"unknown peer", time.Time{}, apipb.PeerState_UNKNOWN, true},
@@ -276,4 +279,68 @@ func TestResetPeerReestablishes(t *testing.T) {
 	t.Logf("connecting %s after the reset", time.Since(start).Round(100*time.Millisecond))
 	wait("Established again", is(apipb.PeerState_ESTABLISHED), 15*time.Second)
 	t.Logf("established again %s after the reset", time.Since(start).Round(100*time.Millisecond))
+}
+
+// The start race of the prodtpl lab, reproduced with a real GoBGP: a peer
+// (the RR) that sent its OPEN but not yet its KEEPALIVE holds our session
+// in OpenConfirm. A BFD Down then (the RR re-keys BFD when its own side
+// comes up) does not reset the session, which comes up with the
+// KEEPALIVE.
+func TestBFDDownInOpenConfirm(t *testing.T) {
+	ctx := context.Background()
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	resets := 0
+	u := &UnderlayTier{log: slog.Default(), bgp: startServer(t, 65000, "192.0.2.17", -1),
+		resetBGP: func(context.Context, string, string) { resets++ }}
+	if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: &apipb.Peer{
+		Conf:      &apipb.PeerConf{NeighborAddress: "127.0.0.1", PeerAsn: 65500},
+		Transport: &apipb.Transport{RemotePort: uint32(ln.Addr().(*net.TCPAddr).Port)}, //nolint:gosec // test port
+		Timers:    &apipb.Timers{Config: &apipb.TimersConfig{ConnectRetry: 1}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	send := func(m *bgp.BGPMessage) {
+		t.Helper()
+		b, err := m.Serialize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := conn.Write(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	go func() { _, _ = io.Copy(io.Discard, conn) }() // our OPEN and KEEPALIVEs
+	send(bgp.NewBGPOpenMessage(65500, 90, "198.51.100.1", []bgp.OptionParameterInterface{
+		bgp.NewOptionParameterCapability([]bgp.ParameterCapabilityInterface{
+			bgp.NewCapMultiProtocol(bgp.RF_IPv4_UC), bgp.NewCapFourOctetASNumber(65500),
+		}),
+	}))
+	waitState := func(want apipb.PeerState_SessionState) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if state, _ := u.sessionState(ctx, "127.0.0.1"); state == want {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Fatalf("session not %v", want)
+	}
+	waitState(apipb.PeerState_OPENCONFIRM)
+	u.bfdChanged(&bfd.Peer{Name: "127.0.0.1"}, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
+	if resets != 0 {
+		t.Fatal("a BFD Down in OpenConfirm reset the session")
+	}
+	send(bgp.NewBGPKeepAliveMessage())
+	waitState(apipb.PeerState_ESTABLISHED)
 }

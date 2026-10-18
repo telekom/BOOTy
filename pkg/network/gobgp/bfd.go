@@ -165,7 +165,10 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 // when it receives our KEEPALIVE and can re-key BFD before its KEEPALIVE
 // moves our session from OpenConfirm to Established, so a BFD Down in
 // OpenConfirm does not reset the session either: it carries no routes
-// yet, and the hold timer still ends it if the peer is gone.
+// yet, and the hold timer still ends it if the peer is gone. GoBGP's
+// ListPeer shows OpenConfirm until its server loop handles the state
+// change, after the FSM logged "Peer Up", and then Established without
+// an uptime until the FSM sets it; both count as coming up.
 func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag) {
 	if from != bfd.StateUp || to != bfd.StateDown {
 		return
@@ -187,7 +190,7 @@ func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag
 	case state == apipb.PeerState_OPENCONFIRM:
 		u.log.Info("BFD down while the BGP session is coming up (OpenConfirm), not resetting it", "peer", p.Name, "diag", diag)
 		return
-	case state == apipb.PeerState_ESTABLISHED && now().Unix() == at.Unix():
+	case state == apipb.PeerState_ESTABLISHED && (at.IsZero() || now().Unix() == at.Unix()):
 		u.log.Info("BFD down in the second the BGP session came up, not resetting it, like FRR", "peer", p.Name, "diag", diag)
 		return
 	}
