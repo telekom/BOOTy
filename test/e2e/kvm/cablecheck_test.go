@@ -192,15 +192,66 @@ func TestCheckISOVarsHoldQEMU(t *testing.T) {
 	requireHeldCableCheck(t, out, running, pcaps)
 }
 
-// BOOTY_CHECK_ISO is a booty-check.iso built with make check-iso: booted
-// from CD with nothing else, it runs the cable check and holds.
-func TestCheckISOQEMU(t *testing.T) {
+// checkISO returns BOOTY_CHECK_ISO, a booty-check.iso built with make
+// check-iso; the tests skip without it.
+func checkISO(t *testing.T) string {
+	t.Helper()
 	iso := os.Getenv("BOOTY_CHECK_ISO")
 	if iso == "" {
 		t.Skip("BOOTY_CHECK_ISO not set (make check-iso)")
 	}
 	qemuAvailable(t)
-	boot := []string{"-cdrom", iso, "-boot", "d"}
-	out, running, pcaps := runCableCheckVM(t, boot, 2*time.Minute)
+	return iso
+}
+
+// checkISOBoot boots the cable check ISO from a SCSI CD, like BMC virtual
+// media, with the firmware of the ISO tests: bios, uefi or secureboot
+// (OVMF with the Microsoft keys). extra adds devices, such as a decoy disk.
+func checkISOBoot(t *testing.T, iso, mode string, extra ...string) []string {
+	t.Helper()
+	return append(append(isoFirmware(t, mode), extra...), isoCDArgs(iso)...)
+}
+
+// The cable check ISO booted from CD with nothing else (BIOS, ISOLINUX)
+// runs the cable check and holds.
+func TestCheckISOQEMU(t *testing.T) {
+	iso := checkISO(t)
+	out, running, pcaps := runCableCheckVM(t, checkISOBoot(t, iso, "bios"), 240*time.Second)
+	requireHeldCableCheck(t, out, running, pcaps)
+}
+
+// The same with UEFI: shim, GRUB and the kernel from the EFI system
+// partition of make-iso.sh.
+func TestCheckISOUEFIQEMU(t *testing.T) {
+	iso := checkISO(t)
+	out, running, pcaps := runCableCheckVM(t, checkISOBoot(t, iso, "uefi"), 240*time.Second)
+	requireHeldCableCheck(t, out, running, pcaps)
+}
+
+// With Secure Boot on (Microsoft keys enrolled): shim (Microsoft-signed),
+// GRUB and the kernel (Debian-signed) pass the verification and the kernel
+// reports Secure Boot.
+func TestCheckISOSecureBootQEMU(t *testing.T) {
+	iso := checkISO(t)
+	out, running, pcaps := runCableCheckVM(t, checkISOBoot(t, iso, "secureboot"), 240*time.Second)
+	if !strings.Contains(string(out), "Secure boot enabled") {
+		t.Fatalf("the kernel does not report Secure Boot. tail:\n%s", tail(out, 4000))
+	}
+	requireHeldCableCheck(t, out, running, pcaps)
+}
+
+// A second disk with the BOOTy volume label and GRUB configs at every path
+// (decoyDisk of the ISO tests) must not take over the boot: GRUB uses the
+// ISO it was started from, and the cable check runs from it.
+func TestCheckISOIgnoresOtherBootyDiskQEMU(t *testing.T) {
+	iso := checkISO(t)
+	decoy := []string{
+		"-drive", fmt.Sprintf("file=%s,format=raw,if=none,id=decoy,readonly=on", decoyDisk(t)),
+		"-device", "virtio-blk-pci,drive=decoy,bootindex=2", // in the boot order, so OVMF connects it
+	}
+	out, running, pcaps := runCableCheckVM(t, checkISOBoot(t, iso, "secureboot", decoy...), 240*time.Second)
+	if strings.Contains(string(out), wrongMediaMarker) {
+		t.Fatalf("GRUB loaded the config of the decoy disk. tail:\n%s", tail(out, 4000))
+	}
 	requireHeldCableCheck(t, out, running, pcaps)
 }
