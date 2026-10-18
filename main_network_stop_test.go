@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -219,4 +220,132 @@ type orderMode struct {
 func (m *orderMode) Teardown(context.Context) error {
 	*m.order = append(*m.order, "teardown")
 	return nil
+}
+
+// recordStop replaces the reboot and the log flush and records them.
+func recordStop(t *testing.T, order *[]string) func() {
+	t.Helper()
+	recordOrder(t, order)
+	prev := rebootNow
+	t.Cleanup(func() { rebootNow = prev })
+	rebootNow = func() { *order = append(*order, "reboot") }
+	return func() { *order = append(*order, "stop") }
+}
+
+// The ends of a run outside a mode stop the network before the reboot:
+// a failed network or token setup, a token failure, and the grace reboot of
+// the token fatal handler.
+func TestRunEndsOutsideAModeStopTheNetwork(t *testing.T) {
+	const want = "flush,stop,reboot"
+	t.Run("failed setup", func(t *testing.T) {
+		var order []string
+		stop := recordStop(t, &order)
+		failNetworkSetup(context.Background(), &config.MachineConfig{}, nil, errors.New("token"), stop)
+		if got := strings.Join(order, ","); got != want {
+			t.Fatalf("order = %s, want %s", got, want)
+		}
+	})
+	t.Run("token stop", func(t *testing.T) {
+		var order []string
+		stop := recordStop(t, &order)
+		endTokenStoppedRun(context.Background(), &config.MachineConfig{}, nil, stop)
+		if got := strings.Join(order, ","); got != want {
+			t.Fatalf("order = %s, want %s", got, want)
+		}
+	})
+	t.Run("token grace reboot", func(t *testing.T) {
+		var order []string
+		var mu sync.Mutex
+		prevFlush, prevReboot, prevGrace := flushLogs, rebootNow, tokenShutdownGrace
+		t.Cleanup(func() {
+			flushLogs, rebootNow, tokenShutdownGrace = prevFlush, prevReboot, prevGrace
+			tokenTaskDone.Store(false)
+		})
+		tokenTaskDone.Store(false)
+		tokenShutdownGrace = time.Millisecond
+		rebooted := make(chan struct{})
+		add := func(s string) { mu.Lock(); order = append(order, s); mu.Unlock() }
+		flushLogs = func() { add("flush") }
+		rebootNow = func() { add("reboot"); close(rebooted) }
+		tokenFatalHandler(&config.MachineConfig{}, func() { add("stop") }, func() {})(errors.New("expired"))
+		select {
+		case <-rebooted:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no grace reboot")
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if got := strings.Join(order, ","); got != want {
+			t.Fatalf("order = %s, want %s", got, want)
+		}
+	})
+}
+
+// connectivityMode fails the connectivity check and records the teardown.
+type connectivityMode struct {
+	network.Mode
+	teardowns atomic.Int32
+	waits     atomic.Int32
+}
+
+func (m *connectivityMode) WaitForConnectivity(context.Context, string, time.Duration) error {
+	m.waits.Add(1)
+	return errors.New("no route")
+}
+
+func (m *connectivityMode) Teardown(context.Context) error {
+	m.teardowns.Add(1)
+	return nil
+}
+
+// A connectivity failure returns the stop of the network that came up, so
+// the failed run still sends the BGP Cease.
+func TestSetupNetworkConnectivityFailureReturnsTheStop(t *testing.T) {
+	mode := &connectivityMode{}
+	prev := setupNetworkModeFn
+	t.Cleanup(func() { setupNetworkModeFn = prev })
+	setupNetworkModeFn = func(context.Context, *config.MachineConfig) (network.Mode, error) { return mode, nil }
+	cfg := &config.MachineConfig{}
+	cfg.Transport.InitURL = "https://caprf.example.invalid/status/init"
+	cfg.Network.WaitMode = config.NetworkWaitRounds
+	zero := 0
+	cfg.Network.WaitMaxAttempts = &zero
+
+	_, stop, err := setupNetworkAndTokenFlow(context.Background(), cfg, nil, func() {})
+	if err == nil {
+		t.Fatal("connectivity failure lost")
+	}
+	stop()
+	if got := mode.teardowns.Load(); got != 1 {
+		t.Fatalf("teardowns = %d, want 1 from the returned stop", got)
+	}
+}
+
+// The restore waits for a teardown that still runs and skips while it
+// does; afterwards it sets the network up once with one connectivity
+// check.
+func TestRestoreNetworkWaitsForTheTeardown(t *testing.T) {
+	prevSetup, prevStop, prevRestore := setupNetworkModeFn, networkStopTimeout, restoreTimeout
+	t.Cleanup(func() {
+		setupNetworkModeFn, networkStopTimeout, restoreTimeout = prevSetup, prevStop, prevRestore
+		teardownDone.Store(nil)
+	})
+	networkStopTimeout, restoreTimeout = 20*time.Millisecond, time.Second
+	restored := &connectivityMode{}
+	setups := 0
+	setupNetworkModeFn = func(context.Context, *config.MachineConfig) (network.Mode, error) { setups++; return restored, nil }
+	cfg := &config.MachineConfig{}
+	cfg.Transport.ErrorURL = "https://caprf.example.invalid/status/error"
+
+	hung := &teardownMode{block: make(chan struct{})}
+	stopNetworkOnce(context.Background(), hung)() // times out, teardown still runs
+	restoreNetwork(context.Background(), cfg)
+	if setups != 0 {
+		t.Fatal("restored while the teardown still runs")
+	}
+	close(hung.block)
+	restoreNetwork(context.Background(), cfg)
+	if setups != 1 || restored.waits.Load() != 1 {
+		t.Fatalf("setups %d, connectivity checks %d; want one each", setups, restored.waits.Load())
+	}
 }

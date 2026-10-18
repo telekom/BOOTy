@@ -586,14 +586,8 @@ func runCAPRF(ctx context.Context) {
 	defer stopRun()
 
 	netMode, stopNetwork, err := setupNetworkAndTokenFlow(ctx, cfg, client, stopRun)
-	stopAndReboot := func() {
-		flushLogs()
-		stopNetwork()
-		rebootNow()
-	}
 	if err != nil {
-		code := provision.CodeOf(err)
-		failRun(ctx, cfg, client, "network-setup", code, fmt.Sprintf("network or token setup failed [%s]: %v", code, err), stopAndReboot)
+		failNetworkSetup(ctx, cfg, client, err, stopNetwork)
 		return
 	}
 
@@ -617,7 +611,7 @@ func runCAPRF(ctx context.Context) {
 	})
 	if err != nil {
 		slog.Error("unknown operating mode", "mode", cfg.Mode, "error", err)
-		stopAndReboot()
+		stopAndReboot(stopNetwork)()
 		return
 	}
 
@@ -631,7 +625,7 @@ func runCAPRF(ctx context.Context) {
 		stopTokenGraceReboot()
 	}
 	if runCtx.Err() != nil && ctx.Err() == nil && !isTerminalSuccess(modeErr) {
-		tokenShutdown(ctx, cfg, client, tokenStopMessage(), stopAndReboot)
+		endTokenStoppedRun(ctx, cfg, client, stopNetwork)
 		return
 	}
 
@@ -652,11 +646,7 @@ var (
 // BFD AdminDown), then hands off; only the rescue shell keeps the network.
 func endRun(ctx context.Context, cfg *config.MachineConfig, client provisionStatusReporter,
 	diskMgr *disk.Manager, stopNetwork func(), modeName string, modeErr error) {
-	stopAndReboot := func() {
-		flushLogs()
-		stopNetwork()
-		rebootNow()
-	}
+	leave := stopAndReboot(stopNetwork)
 
 	// Handle mode-specific exit behavior before network teardown,
 	// so rescue shell SSH access remains available.
@@ -672,7 +662,7 @@ func endRun(ctx context.Context, cfg *config.MachineConfig, client provisionStat
 		rebootNow()
 		return
 	case errors.As(modeErr, &rebootErr):
-		stopAndReboot()
+		leave()
 		return
 	case errors.As(modeErr, &powerOffErr):
 		// Do not reboot when the power off fails: CAPRF has not ejected the
@@ -697,12 +687,20 @@ func endRun(ctx context.Context, cfg *config.MachineConfig, client provisionStat
 		slog.Error("mode exited with error", "mode", modeName, "error", modeErr)
 	}
 	time.Sleep(endRunPause)
-	stopAndReboot()
+	leave()
 }
 
 // networkStopTimeout bounds the network teardown before a kexec or reboot;
 // tests shorten it.
 var networkStopTimeout = 5 * time.Second
+
+// setupNetworkModeFn is setupNetworkMode; tests replace it.
+var setupNetworkModeFn = setupNetworkMode
+
+// teardownDone is closed when the teardown of stopNetworkOnce has finished;
+// nil before a stop. A teardown that timed out may still run, and it
+// removes devices by name, so a restore must wait for it.
+var teardownDone atomic.Pointer[chan struct{}]
 
 // stopNetworkOnce returns a function that tears the network mode down once
 // and waits at most networkStopTimeout. GoBGP sends a Cease NOTIFICATION to
@@ -717,7 +715,12 @@ func stopNetworkOnce(ctx context.Context, netMode network.Mode) func() {
 			return
 		}
 		done := make(chan error, 1)
-		go func() { done <- netMode.Teardown(context.WithoutCancel(ctx)) }()
+		finished := make(chan struct{})
+		teardownDone.Store(&finished)
+		go func() {
+			defer close(finished)
+			done <- netMode.Teardown(context.WithoutCancel(ctx))
+		}()
 		select {
 		case err := <-done:
 			if err != nil {
@@ -770,12 +773,29 @@ func withNetworkStopBeforeHandoff(ops provisionHandoffOps, stopNetwork, restore 
 	return ops
 }
 
+// restoreTimeout bounds the network setup and the one connectivity check
+// of restoreNetwork; tests shorten it.
+var restoreTimeout = time.Minute
+
 // restoreNetwork sets the network up again after a failed handoff, so the
-// error report reaches CAPRF; tests replace it. The stopped mode is not
-// reused.
+// error report reaches CAPRF; tests replace it. It waits for the teardown
+// of the stop first (bounded by networkStopTimeout) and skips the restore
+// while it still runs: the teardown removes the VRF, VXLAN and bridge by
+// name and would remove the new ones. One setup and one connectivity check
+// within restoreTimeout: the report is best effort.
 var restoreNetwork = func(ctx context.Context, cfg *config.MachineConfig) {
+	if done := teardownDone.Load(); done != nil {
+		select {
+		case <-*done:
+		case <-time.After(networkStopTimeout):
+			slog.Error("handoff failed and the network teardown still runs, not setting the network up again")
+			return
+		}
+	}
 	slog.Warn("handoff failed after the network stop, setting the network up again")
-	netMode, err := setupNetworkMode(ctx, cfg)
+	ctx, cancel := context.WithTimeout(ctx, restoreTimeout)
+	defer cancel()
+	netMode, err := setupNetworkModeFn(ctx, cfg)
 	if err != nil {
 		slog.Error("network setup after the failed handoff failed", "error", err)
 		return
@@ -787,7 +807,7 @@ var restoreNetwork = func(ctx context.Context, cfg *config.MachineConfig) {
 	if target == "" {
 		return
 	}
-	if _, err := ensureNetworkConnectivity(ctx, cfg, netMode, target); err != nil {
+	if err := netMode.WaitForConnectivity(ctx, target, restoreTimeout); err != nil {
 		slog.Error("no connectivity after the failed handoff", "error", err)
 	}
 }
@@ -856,7 +876,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 
 	// Set up networking with retry — if connectivity fails, teardown and
 	// rebuild the entire network stack before giving up.
-	netMode, err := setupNetworkMode(ctx, cfg)
+	netMode, err := setupNetworkModeFn(ctx, cfg)
 	if err != nil {
 		return nil, func() {}, &provision.CodedError{Code: provision.CodeNetworkSetup, Err: err}
 	}
@@ -899,13 +919,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		}
 	}
 
-	client.SetTokenRenewalFatalHandler(func(err error) {
-		tokenRenewalFatal(cfg, err, func() {
-			flushLogs()
-			stopNetwork()
-			rebootNow()
-		}, stopRun)
-	})
+	client.SetTokenRenewalFatalHandler(tokenFatalHandler(cfg, stopNetwork, stopRun))
 
 	if err := client.StartTokenRenewal(ctx); err != nil {
 		slog.Error("failed to start token renewal", "error", err)
@@ -916,6 +930,34 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	}
 
 	return netMode, stopNetwork, nil
+}
+
+// stopAndReboot returns a reboot that ships the queued log lines and stops
+// the network first.
+func stopAndReboot(stopNetwork func()) func() {
+	return func() {
+		flushLogs()
+		stopNetwork()
+		rebootNow()
+	}
+}
+
+// tokenFatalHandler is the token renewal fatal handler of the run: its
+// grace reboot stops the network first.
+func tokenFatalHandler(cfg *config.MachineConfig, stopNetwork, stopRun func()) func(error) {
+	return func(err error) { tokenRenewalFatal(cfg, err, stopAndReboot(stopNetwork), stopRun) }
+}
+
+// failNetworkSetup ends a run whose network or token setup failed; a
+// network that came up stops before the reboot.
+func failNetworkSetup(ctx context.Context, cfg *config.MachineConfig, reporter provisionStatusReporter, err error, stopNetwork func()) {
+	code := provision.CodeOf(err)
+	failRun(ctx, cfg, reporter, "network-setup", code, fmt.Sprintf("network or token setup failed [%s]: %v", code, err), stopAndReboot(stopNetwork))
+}
+
+// endTokenStoppedRun ends a run that a token failure stopped.
+func endTokenStoppedRun(ctx context.Context, cfg *config.MachineConfig, reporter provisionStatusReporter, stopNetwork func()) {
+	tokenShutdown(ctx, cfg, reporter, tokenStopMessage(), stopAndReboot(stopNetwork))
 }
 
 // failRun ends a run that failed outside a mode in step with the failure
@@ -1069,7 +1111,7 @@ func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, n
 			if tErr := netMode.Teardown(ctx); tErr != nil {
 				slog.Warn("network teardown failed", "error", tErr)
 			}
-			newMode, setupErr := setupNetworkMode(ctx, cfg)
+			newMode, setupErr := setupNetworkModeFn(ctx, cfg)
 			if setupErr != nil {
 				return nil, fmt.Errorf("network retry setup: %w", setupErr)
 			}
