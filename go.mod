@@ -3,13 +3,13 @@ module github.com/telekom/BOOTy
 go 1.27.2
 
 require (
-	github.com/digineo/go-dhclient v1.0.2
 	github.com/dustin/go-humanize v1.1.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/go-containerregistry v0.22.1
 	github.com/google/go-tpm v0.9.8
 	github.com/google/gopacket v1.1.19
 	github.com/klauspost/compress v1.20.3
+	github.com/mdlayher/packet v1.2.0
 	github.com/osrg/gobgp/v4 v4.10.0
 	github.com/pierrec/lz4/v4 v4.1.33
 	github.com/spf13/cobra v1.10.2
@@ -35,8 +35,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/k-sone/critbitgo v1.4.0 // indirect
-	github.com/mdlayher/packet v1.2.0 // indirect
-	github.com/mdlayher/raw v0.1.0 // indirect
 	github.com/mdlayher/socket v0.8.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
