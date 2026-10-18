@@ -3,6 +3,7 @@
 package kvm
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -79,6 +80,12 @@ func readCableCheckPcap(t *testing.T, path, mac string) cablecheckTraffic {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	var tr cablecheckTraffic
+	// The chassis of the NIC's first bm4x frame; every later frame of the
+	// NIC, also the shutdown LLDPDU, must carry the same.
+	var chassis *layers.LLDPChassisID
+	sameChassis := func(c layers.LLDPChassisID) bool {
+		return chassis != nil && c.Subtype == chassis.Subtype && bytes.Equal(c.ID, chassis.ID)
+	}
 	for {
 		data, _, err := r.ReadPacketData()
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
@@ -98,12 +105,18 @@ func readCableCheckPcap(t *testing.T, path, mac string) cablecheckTraffic {
 			info, _ := pkt.Layer(layers.LayerTypeLinkLayerDiscoveryInfo).(*layers.LinkLayerDiscoveryInfo)
 			ownPort := l != nil && l.PortID.Subtype == layers.LLDPPortIDSubtypeMACAddr &&
 				net.HardwareAddr(l.PortID.ID).String() == mac
+			bm4x := ownPort && l.TTL > 0 && info != nil && info.SysName == "bare-minimal"
+			if bm4x && chassis == nil {
+				c := l.ChassisID
+				chassis = &c
+			}
 			switch {
-			case ownPort && l.TTL == 0:
+			case ownPort && l.TTL == 0 && len(l.Values) == 0 && sameChassis(l.ChassisID):
 				// IEEE 802.1AB shutdown LLDPDU when BOOTy stops sending:
-				// the same chassis and port, only the mandatory TLVs.
+				// the chassis and port of the frames before it, only the
+				// mandatory TLVs.
 				tr.shutdown++
-			case ownPort && info != nil && info.SysName == "bare-minimal":
+			case bm4x && sameChassis(l.ChassisID):
 				tr.lldp++
 			default:
 				tr.otherLLDP = append(tr.otherLLDP, fmt.Sprintf("%x", data))
