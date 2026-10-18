@@ -580,6 +580,9 @@ func stubDHCPSetup(t *testing.T, onBound func(name string, cb dhcp4.Callback)) m
 	})
 	origSub := dhcpSubscribe
 	t.Cleanup(func() { dhcpSubscribe = origSub })
+	origRA := dhcp6WatchRA
+	t.Cleanup(func() { dhcp6WatchRA = origRA })
+	dhcp6WatchRA = func(context.Context, *net.Interface, func(bool, bool)) error { return nil }
 	dhcpSubscribe = func(chan<- netlink.LinkUpdate, <-chan struct{}, netlink.LinkSubscribeOptions) error { return nil }
 	dhcpInterfaces = func(context.Context) ([]net.Interface, error) {
 		return []net.Interface{{Name: "eth0", Index: 1}, {Name: "eth1", Index: 2}}, nil
