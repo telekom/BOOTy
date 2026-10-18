@@ -2560,7 +2560,7 @@ func TestHandleType2RouteInstallsFDB(t *testing.T) {
 	route := &apipb.EVPNMACIPAdvertisementRoute{
 		MacAddress: "aa:bb:cc:dd:ee:ff",
 	}
-	overlay.handleType2Route(route, "10.0.0.1", false)
+	overlay.handleType2Route(route, "10.0.0.1", 0, false)
 
 	if len(mock.sets) != 1 {
 		t.Fatalf("expected 1 NeighSet call, got %d", len(mock.sets))
@@ -2571,8 +2571,8 @@ func TestHandleType2RouteInstallsFDB(t *testing.T) {
 	if !mock.sets[0].IP.Equal(net.ParseIP("10.0.0.1")) {
 		t.Errorf("VTEP IP = %s, want 10.0.0.1", mock.sets[0].IP)
 	}
-	if got, ok := overlay.macVTEP.Load("aa:bb:cc:dd:ee:ff"); !ok || got != "10.0.0.1" {
-		t.Errorf("macVTEP not tracked")
+	if got := overlay.type2FDB["aa:bb:cc:dd:ee:ff"]; got != "10.0.0.1" {
+		t.Errorf("installed FDB VTEP = %q, want 10.0.0.1", got)
 	}
 }
 
@@ -2585,7 +2585,7 @@ func TestHandleType2RouteSelfSkipped(t *testing.T) {
 	}
 
 	route := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
-	overlay.handleType2Route(route, "10.0.0.99", false)
+	overlay.handleType2Route(route, "10.0.0.99", 0, false)
 
 	if len(mock.sets) != 0 {
 		t.Error("self-originated type-2 route should be skipped")
@@ -2599,16 +2599,16 @@ func TestHandleType2RouteWithdraw(t *testing.T) {
 		log:        slog.Default(),
 		netlinkOps: mock,
 	}
-	overlay.macVTEP.Store("aa:bb:cc:dd:ee:ff", "10.0.0.1")
-
 	route := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
-	overlay.handleType2Route(route, "", true)
+	overlay.handleType2Route(route, "10.0.0.1", 0, false)
+	// A withdraw may come without next hop.
+	overlay.handleType2Route(route, "", 0, true)
 
-	if len(mock.dels) != 1 {
-		t.Fatalf("expected 1 NeighDel call, got %d", len(mock.dels))
+	if len(mock.dels) != 1 || !mock.dels[0].IP.Equal(net.ParseIP("10.0.0.1")) {
+		t.Fatalf("expected 1 NeighDel call for 10.0.0.1, got %v", mock.dels)
 	}
-	if _, ok := overlay.macVTEP.Load("aa:bb:cc:dd:ee:ff"); ok {
-		t.Error("macVTEP entry should be removed on withdraw")
+	if _, ok := overlay.type2FDB["aa:bb:cc:dd:ee:ff"]; ok {
+		t.Error("installed FDB entry should be forgotten on withdraw")
 	}
 }
 
@@ -2621,7 +2621,7 @@ func TestHandleType2RouteInvalidMAC(t *testing.T) {
 	}
 
 	route := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "not-a-mac"}
-	overlay.handleType2Route(route, "10.0.0.1", false)
+	overlay.handleType2Route(route, "10.0.0.1", 0, false)
 
 	if len(mock.sets) != 0 {
 		t.Error("invalid MAC should be skipped")
@@ -4315,5 +4315,111 @@ func TestProcessRouteUpdateType3TunnelType(t *testing.T) {
 	o.processRouteUpdate(path(mustPMSI(t, pimSSM)))
 	if len(mock.dels) != 1 || !mock.dels[0].IP.Equal(net.ParseIP("10.0.0.1")) {
 		t.Fatalf("update to PIM-SSM: deletes %v, want the BUM entry to 10.0.0.1", mock.dels)
+	}
+}
+
+// TestHandleType2RouteBestPathPerMAC checks the receive rules of RFC 7432:
+// the withdraw of a MAC/IP route keeps the FDB entry while the MAC-only
+// route lives (section 10), the route with the higher MAC Mobility
+// sequence number wins, also across a wrap around, and on a tie the lower
+// VTEP address wins (section 15).
+func TestHandleType2RouteBestPathPerMAC(t *testing.T) {
+	const mac = "aa:bb:cc:dd:ee:ff"
+	newOverlay := func() (*OverlayTier, *mockOverlayNetlinkOps) {
+		mock := &mockOverlayNetlinkOps{}
+		return &OverlayTier{
+			cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+			log:        slog.Default(),
+			netlinkOps: mock,
+		}, mock
+	}
+	route := func(rd uint32, ip string) *apipb.EVPNMACIPAdvertisementRoute {
+		a, err := buildRouteDistinguisher(65000, rd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &apipb.EVPNMACIPAdvertisementRoute{Rd: a, MacAddress: mac, IpAddress: ip}
+	}
+	lastSet := func(t *testing.T, mock *mockOverlayNetlinkOps) string {
+		t.Helper()
+		if len(mock.sets) == 0 {
+			t.Fatal("no FDB entry installed")
+		}
+		return mock.sets[len(mock.sets)-1].IP.String()
+	}
+
+	t.Run("MAC/IP withdraw keeps the MAC-only entry", func(t *testing.T) {
+		o, mock := newOverlay()
+		o.handleType2Route(route(1, ""), "10.0.0.1", 0, false)
+		o.handleType2Route(route(1, "10.100.0.5"), "10.0.0.1", 0, false)
+		o.handleType2Route(route(1, "10.100.0.5"), "10.0.0.1", 0, true)
+		if len(mock.dels) != 0 {
+			t.Fatalf("MAC/IP withdraw deleted the FDB entry: %v", mock.dels)
+		}
+		o.handleType2Route(route(1, ""), "", 0, true)
+		if len(mock.dels) != 1 || mock.dels[0].IP.String() != "10.0.0.1" {
+			t.Fatalf("MAC-only withdraw: deletes %v, want 10.0.0.1", mock.dels)
+		}
+	})
+	t.Run("higher sequence number wins in any order", func(t *testing.T) {
+		o, mock := newOverlay()
+		o.handleType2Route(route(2, ""), "10.0.0.2", 1, false)
+		o.handleType2Route(route(1, ""), "10.0.0.1", 0, false) // stale route of the old PE
+		if got := lastSet(t, mock); got != "10.0.0.2" {
+			t.Fatalf("FDB VTEP = %s, want 10.0.0.2 (sequence 1)", got)
+		}
+		if len(mock.sets) != 1 {
+			t.Errorf("the stale route rewrote the FDB entry: %d sets", len(mock.sets))
+		}
+		o.handleType2Route(route(2, ""), "", 0, true)
+		if got := lastSet(t, mock); got != "10.0.0.1" {
+			t.Fatalf("after the withdraw of the new PE: FDB VTEP = %s, want 10.0.0.1", got)
+		}
+	})
+	t.Run("sequence number wrap around", func(t *testing.T) {
+		o, mock := newOverlay()
+		o.handleType2Route(route(1, ""), "10.0.0.1", 0xffffffff, false)
+		o.handleType2Route(route(2, ""), "10.0.0.2", 0, false)
+		if got := lastSet(t, mock); got != "10.0.0.2" {
+			t.Fatalf("FDB VTEP = %s, want 10.0.0.2 (0 follows 0xffffffff)", got)
+		}
+	})
+	t.Run("lowest VTEP on equal sequence numbers", func(t *testing.T) {
+		o, mock := newOverlay()
+		o.handleType2Route(route(2, ""), "10.0.0.2", 3, false)
+		o.handleType2Route(route(1, ""), "10.0.0.1", 3, false)
+		if got := lastSet(t, mock); got != "10.0.0.1" {
+			t.Fatalf("FDB VTEP = %s, want 10.0.0.1", got)
+		}
+	})
+	t.Run("teardown forgets the routes", func(t *testing.T) {
+		o, mock := newOverlay()
+		o.handleType2Route(route(1, ""), "10.0.0.1", 0, false)
+		o.type2Mu.Lock()
+		o.type2Paths, o.type2FDB = nil, nil
+		o.type2Mu.Unlock()
+		o.handleType2Route(route(1, ""), "10.0.0.1", 0, false)
+		if len(mock.sets) != 2 {
+			t.Fatalf("got %d FDB sets, want the entry again after a new setup", len(mock.sets))
+		}
+	})
+}
+
+// TestMacMobilitySeq reads the sequence number of the MAC Mobility
+// extended community.
+func TestMacMobilitySeq(t *testing.T) {
+	mm, err := anypb.New(&apipb.MacMobilityExtended{SequenceNum: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ext, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{Communities: []*anypb.Any{mustRT2(t, 65000, 100), mm}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := macMobilitySeq(&apipb.Path{Pattrs: []*anypb.Any{ext}}); got != 7 {
+		t.Errorf("sequence = %d, want 7", got)
+	}
+	if got := macMobilitySeq(&apipb.Path{}); got != 0 {
+		t.Errorf("sequence without community = %d, want 0", got)
 	}
 }
