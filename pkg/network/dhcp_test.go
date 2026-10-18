@@ -863,3 +863,88 @@ func TestClientForWiresOnExpire(t *testing.T) {
 		t.Fatal("the NIC client has no OnBound or OnExpire callback")
 	}
 }
+
+// fakeRestartClient counts Start and Stop; onStop runs inside Stop.
+type fakeRestartClient struct {
+	starts, stops int
+	onStop        func()
+}
+
+func (c *fakeRestartClient) Start() { c.starts++ }
+func (c *fakeRestartClient) Stop() {
+	c.stops++
+	if c.onStop != nil {
+		c.onStop()
+	}
+}
+
+// RFC 2131 section 4.4.5: after the expiry the client starts over in INIT.
+// go-dhclient keeps the old lease after failed renewals, so BOOTy replaces
+// the client of the NIC, like networkd. The old client stops without d.mu
+// held (its OnBound may wait for d.mu), and after Teardown a restart stops
+// the fresh client again.
+func TestLeaseExpiryRestartsTheClient(t *testing.T) {
+	stubDHCPNetlink(t)
+	t.Cleanup(func() { setDHCPNTPServers(nil) })
+	var timers fakeAfterFunc
+	timers.install(t)
+
+	d := NewDHCPMode()
+	eth0 := dummyLink("eth0", 7)
+	old := &fakeRestartClient{}
+	old.onStop = func() {
+		if !d.mu.TryLock() {
+			t.Error("the old client stopped with d.mu held")
+			return
+		}
+		d.mu.Unlock()
+	}
+	var fresh []*fakeRestartClient
+	start := func() dhcpClient {
+		c := &fakeRestartClient{starts: 1}
+		fresh = append(fresh, c)
+		return c
+	}
+	d.clients = map[int]*nicClient{7: {client: old, start: start}}
+	l := lease24("10.0.2.15", "10.0.2.2")
+	l.Expire = time.Now().Add(time.Hour)
+	d.onBound(eth0, "eth0", make(chan string, 2))(l)
+	timers.funcs[0]()
+	if old.stops != 1 || len(fresh) != 1 || d.clients[7] == nil || d.clients[7].client != fresh[0] {
+		t.Fatalf("old stops %d, fresh clients %d, NIC client %+v; want the old one stopped and a fresh one in place",
+			old.stops, len(fresh), d.clients[7])
+	}
+
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fresh[0].stops != 1 {
+		t.Fatalf("Teardown stopped the fresh client %d times, want once", fresh[0].stops)
+	}
+	d.restartClient(7, "eth0", &nicClient{client: &fakeRestartClient{}, start: start})
+	if len(fresh) != 2 || fresh[1].stops != 1 || len(d.clients) != 0 {
+		t.Fatalf("a restart after Teardown left a client running: %d clients, stops %d", len(d.clients), fresh[len(fresh)-1].stops)
+	}
+	d.onBound(eth0, "eth0", make(chan string, 1))(lease24("10.0.2.16", "10.0.2.2"))
+	if len(d.nics) != 0 {
+		t.Fatalf("a lease after Teardown was applied: %+v", d.nics)
+	}
+}
+
+// A DHCPNAK (OnExpire) also stops the expiry timer; go-dhclient starts
+// over itself.
+func TestOnExpireStopsLeaseExpiryTimer(t *testing.T) {
+	stubDHCPNetlink(t)
+	t.Cleanup(func() { setDHCPNTPServers(nil) })
+	var timers fakeAfterFunc
+	timers.install(t)
+	d := NewDHCPMode()
+	eth0 := dummyLink("eth0", 7)
+	l := lease24("10.0.2.15", "10.0.2.2")
+	l.Expire = time.Now().Add(time.Hour)
+	d.onBound(eth0, "eth0", make(chan string, 1))(l)
+	d.onExpire(eth0, "eth0")(nil)
+	if len(timers.timers) != 1 || timers.timers[0].Stop() || len(d.expiry) != 0 {
+		t.Fatal("the expiry timer still runs after the DHCPNAK")
+	}
+}

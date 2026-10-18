@@ -822,9 +822,13 @@ On every lease (also renewals and leases on the other NICs), BOOTy:
 When the lease of a NIC ends (it expires before a renewal or rebind, or the
 server answers with DHCPNAK), BOOTy removes the address and default route
 of that NIC (RFC 2131 sections 3.2 and 4.4.5), like networkd. The client
-starts over, and its next lease is applied again. BOOTy keeps its own
-expiry timer per lease: the DHCP client library (go-dhclient v1.0.2)
-renews forever after a failed renewal and does not report the expiry.
+starts over in INIT with a DHCPDISCOVER, and its next lease is applied
+again. BOOTy keeps its own expiry timer per lease: the DHCP client library
+(go-dhclient v1.0.2) renews forever after a failed renewal, does not
+report the expiry and keeps requesting the old address from the old
+server, so at the expiry BOOTy replaces the client of that NIC with a new
+one, like networkd restarts its client. After a DHCPNAK go-dhclient starts
+over itself.
 
 BOOTy does not apply DNS servers or the MTU from the lease. Set
 `dns_resolver` for DNS.

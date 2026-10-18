@@ -468,7 +468,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 
 ### Fixes
 
-- dhcp: when a lease expires or the server answers DHCPNAK, BOOTy removes its address and default route (RFC 2131) (#751)
+- dhcp: when a lease expires or the server answers DHCPNAK, BOOTy removes its address and default route, and after an expiry the client of the NIC starts over with a DHCPDISCOVER (RFC 2131) (#751)
 - GoBGP mode: an L3VNI provision VNI without `provision_gateway` (bm4x IPv6
   provisioning network) selects Type-5 only, instead of failing with
   `provision gateway is required for GoBGP VXLAN data plane` (#662).
