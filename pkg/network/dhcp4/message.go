@@ -95,9 +95,19 @@ type reply struct {
 	rapidCommit bool
 }
 
+// bootpLen is the fixed BOOTP header and the magic cookie (RFC 2131).
+const bootpLen = 240
+
 // decodeReply parses a BOOTP payload; ok is false for anything that is
-// not a server reply.
+// not a usable server reply. Like networkd it drops an OFFER or ACK
+// without an address, a server identifier (54) or a lease time (51), and a
+// NAK without a server identifier.
 func decodeReply(payload []byte, now time.Time) (reply, bool) {
+	// Ethernet only (htype 1, hlen 6): gopacket slices chaddr by hlen
+	// unchecked, and one frame with hlen 255 would end the process.
+	if len(payload) < bootpLen || payload[1] != 1 || payload[2] != 6 {
+		return reply{}, false
+	}
 	var d layers.DHCPv4
 	if err := d.DecodeFromBytes(payload, gopacket.NilDecodeFeedback); err != nil || d.Operation != layers.DHCPOpReply {
 		return reply{}, false
@@ -113,24 +123,47 @@ func decodeReply(payload []byte, now time.Time) (reply, bool) {
 		r.apply(o, &t)
 	}
 	t.set(&r.lease, now)
-	return r, true
+	ok := r.usable(t.has)
+	return r, ok
 }
 
-// leaseTimes are options 51, 58 and 59 in seconds.
-type leaseTimes struct{ lease, t1, t2 uint32 }
+// usable tells whether a reply has what networkd requires: an OFFER or
+// ACK an address, a server identifier and a lease time (hasLease), a NAK
+// a server identifier.
+func (r *reply) usable(hasLease bool) bool {
+	switch r.typ {
+	case layers.DHCPMsgTypeOffer, layers.DHCPMsgTypeAck:
+		yi := r.lease.FixedAddress
+		return yi != nil && !yi.IsUnspecified() && r.lease.ServerID != nil && hasLease
+	case layers.DHCPMsgTypeNak:
+		return r.lease.ServerID != nil
+	default:
+		return true
+	}
+}
 
-// set derives the lease times; T1 and T2 default to 0.5 and 0.875 of the
-// lease time (RFC 2131 section 4.4.5). Without a lease time the lease does
-// not end.
+// leaseTimes are options 51, 58 and 59 in seconds; has is set when the
+// reply carries option 51.
+type leaseTimes struct {
+	lease, t1, t2 uint32
+	has           bool
+}
+
+// set derives the lease times like networkd (sd-dhcp-client.c): T2 defaults
+// to 7/8 and T1 to 1/2 of the lease time (RFC 2131 section 4.4.5), a T2 at
+// or past the lease time and a T1 at or past T2 too.
 func (t leaseTimes) set(l *Lease, now time.Time) {
 	if t.lease == 0 {
 		return
 	}
-	if t.t1 == 0 || t.t1 >= t.lease {
-		t.t1 = t.lease / 2
+	if t.t2 == 0 || t.t2 >= t.lease {
+		t.t2 = uint32(uint64(t.lease) * 7 / 8)
 	}
-	if t.t2 == 0 || t.t2 >= t.lease || t.t2 <= t.t1 {
-		t.t2 = t.lease / 8 * 7
+	if t.t1 == 0 || t.t1 >= t.t2 {
+		t.t1 = t.lease / 2
+		if t.t1 >= t.t2 {
+			t.t2 = uint32(uint64(t.lease) * 7 / 8)
+		}
 	}
 	l.Expire = now.Add(time.Duration(t.lease) * time.Second)
 	l.Renew = now.Add(time.Duration(t.t1) * time.Second)
@@ -147,7 +180,7 @@ func (r *reply) apply(o layers.DHCPOption, t *leaseTimes) {
 	case optRapidCommit:
 		r.rapidCommit = true
 	case layers.DHCPOptLeaseTime:
-		t.lease = u32(o.Data)
+		t.lease, t.has = u32(o.Data), len(o.Data) == 4
 	case layers.DHCPOptT1:
 		t.t1 = u32(o.Data)
 	case layers.DHCPOptT2:

@@ -1104,9 +1104,17 @@ The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
 - DHCPRELEASE at stop (Teardown, before kexec or reboot) from the lease
   address to the server, with the client identifier only, like networkd
   (`SendRelease=yes`; the legacy ramdisk sends it, captured in kindmetal).
-- The UDP socket of a unicast exchange stays open until the reply, so the
-  kernel does not answer the server's unicast ACK with ICMP port
-  unreachable.
+- The UDP socket on lease-address:68 of an exchange with `ciaddr`
+  (RENEWING and REBINDING) stays open until the reply, so the kernel does
+  not answer the server's unicast ACK with ICMP port unreachable.
+- T2 defaults to 7/8 and T1 to 1/2 of the lease time; a T2 at or past the
+  lease time and a T1 at or past T2 get the defaults, like networkd.
+- Replies, like networkd: only Ethernet BOOTP (htype 1, hlen 6, at least
+  240 bytes); an OFFER or ACK needs an address, a server identifier (54)
+  and a lease time (51), a NAK a server identifier. The IP header and UDP
+  checksums are checked unless the kernel marks the frame as not yet
+  checksummed (`PACKET_AUXDATA`, checksum offload). Replies larger than
+  1500 bytes (jumbo MTU) are read whole.
 - DHCP packets carry the IP TOS of networkd (CS6). Debug logging only, one
   line per message.
 
