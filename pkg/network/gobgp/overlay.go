@@ -138,6 +138,9 @@ type OverlayTier struct {
 	type2Mu    sync.Mutex
 	type2Paths map[string]map[string]type2Path
 	type2FDB   map[string]string
+	// type2Stopped is set by Teardown, so a Type-2 callback that is still
+	// in flight does not install anything afterwards.
+	type2Stopped bool
 	// type5GatewayMAC tracks Type-5 gateway IP → router MAC mappings so
 	// withdrawals without extended communities can still delete the neighbor.
 	// type5GatewayMu serializes gateway MAC/reference updates and the refcount
@@ -216,6 +219,9 @@ func (o *OverlayTier) Setup(ctx context.Context) error {
 	o.type5PathsMu.Lock()
 	o.type5Stopped = false
 	o.type5PathsMu.Unlock()
+	o.type2Mu.Lock()
+	o.type2Stopped = false
+	o.type2Mu.Unlock()
 
 	if err := o.setupCreateVXLANAndBridge(); err != nil {
 		return o.cleanupSetupFailure(ctx, "create VXLAN/bridge", err)
@@ -309,6 +315,7 @@ func (o *OverlayTier) Teardown(_ context.Context) error {
 	// BOOTy did not create stays, and so would they. A new Setup learns
 	// the routes again.
 	o.type2Mu.Lock()
+	o.type2Stopped = true
 	o.removeType2FDB()
 	o.type2Paths, o.type2FDB = nil, nil
 	o.type2Mu.Unlock()
@@ -1593,6 +1600,9 @@ func (o *OverlayTier) handleType2Update(route *apipb.EVPNMACIPAdvertisementRoute
 
 	o.type2Mu.Lock()
 	defer o.type2Mu.Unlock()
+	if o.type2Stopped {
+		return
+	}
 	if withdraw {
 		delete(o.type2Paths[macStr], key)
 	} else {

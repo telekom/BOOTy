@@ -4486,8 +4486,8 @@ func TestProcessRouteUpdateType2MobilityAndSticky(t *testing.T) {
 }
 
 // The real Teardown removes the FDB entries (a VXLAN device BOOTy did not
-// create would keep them) and forgets the routes, so a new Setup installs
-// them again.
+// create would keep them) and forgets the routes; a callback after it
+// installs nothing, and a new Setup installs them again.
 func TestType2TeardownRemovesAndForgets(t *testing.T) {
 	o, mock := type2TestOverlay()
 	r := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
@@ -4499,8 +4499,22 @@ func TestType2TeardownRemovesAndForgets(t *testing.T) {
 		t.Fatalf("teardown deletes %v, want the FDB entry", mock.dels)
 	}
 	o.handleType2Route(r, "10.0.0.1", 0, false)
+	if len(mock.sets) != 1 {
+		t.Fatalf("sets = %d, a callback after teardown installed an entry", len(mock.sets))
+	}
+	// Setup clears the flag; it fails here after that, at the VXLAN step.
+	o.cfg.OverlayType = string(OverlayEVPNVXLAN)
+	o.bgp = server.NewBgpServer()
+	o.hooks = &overlaySetupHooks{
+		createVXLANAndBridge: func() error { return errors.New("stop here") },
+		teardown:             func(context.Context) error { return nil },
+	}
+	if err := o.Setup(context.Background()); err == nil {
+		t.Fatal("Setup with a failing VXLAN step succeeded")
+	}
+	o.handleType2Route(r, "10.0.0.1", 0, false)
 	if len(mock.sets) != 2 {
-		t.Fatalf("sets = %d, want the entry again after teardown", len(mock.sets))
+		t.Fatalf("sets = %d, want the entry again after a new Setup", len(mock.sets))
 	}
 }
 
