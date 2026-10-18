@@ -323,11 +323,13 @@ func TestProdTplType5CAPRFOverIPv6(t *testing.T) {
 
 // A Type-5 route for a prefix that a server has connected in the L3VNI
 // VRF (here the management subnet on eth0, in the default VRF like the
-// L3VNI) is not installed, like zebra: connected beats BGP. dcgw01
-// originates the management subnet as an IPv4 Type-5 route; every server
-// must keep its connected route. Before, BOOTy installed IPv4 Type-5
-// routes with metric 0, which replaced the connected route of the same
-// prefix (and with it the path to the CAPRF mock).
+// L3VNI) does not win over the connected route, like zebra. dcgw01
+// originates the management subnet as an IPv4 Type-5 route. On every
+// server the kernel must still send the subnet to eth0 (ip route get);
+// BOOTy installs its Type-5 route next to it with metric 20 (protocol
+// bgp), which takes over only if the address goes away. Before, BOOTy
+// installed IPv4 Type-5 routes with metric 0, which replaced the
+// connected route (and with it the path to the CAPRF mock).
 func TestProdTplType5ConnectedPrefixKept(t *testing.T) {
 	const mgmt = "172.31.250.0/24"
 	ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)
@@ -364,19 +366,29 @@ func TestProdTplType5ConnectedPrefixKept(t *testing.T) {
 	}
 	time.Sleep(5 * time.Second) // BOOTy imports it within a second
 	for _, node := range prodtplServers {
-		out, err := prodtplExec(ctx, prodtplContainer(node), "ip", "-j", "route", "show", "table", "main", mgmt)
+		c := prodtplContainer(node)
+		out, err := prodtplExec(ctx, c, "ip", "-j", "route", "get", "172.31.250.10")
+		if err != nil {
+			t.Fatalf("%s route get: %v", node.name, err)
+		}
+		var got []struct {
+			Dev string `json:"dev"`
+		}
+		if err := json.Unmarshal([]byte(out), &got); err != nil || len(got) != 1 || got[0].Dev != "eth0" {
+			t.Errorf("%s: ip route get 172.31.250.10 = %s (%v), want the connected route on eth0", node.name, out, err)
+		}
+		if node.name == "shadow" {
+			continue // zebra keeps the BGP route out of the kernel
+		}
+		out, err = prodtplExec(ctx, c, "ip", "-j", "route", "show", "table", "main", mgmt, "proto", "bgp")
 		if err != nil {
 			t.Fatalf("%s routes: %v", node.name, err)
 		}
-		var routes []struct {
-			Dev      string `json:"dev"`
-			Protocol string `json:"protocol"`
+		var bgp []struct {
+			Metric int `json:"metric"`
 		}
-		if err := json.Unmarshal([]byte(out), &routes); err != nil {
-			t.Fatalf("%s: decode routes: %v\n%s", node.name, err, out)
-		}
-		if len(routes) != 1 || routes[0].Dev != "eth0" || routes[0].Protocol != "kernel" {
-			t.Errorf("%s: routes for %s = %+v, want only the connected route on eth0", node.name, mgmt, routes)
+		if err := json.Unmarshal([]byte(out), &bgp); err != nil || len(bgp) != 1 || bgp[0].Metric != 20 {
+			t.Errorf("%s: Type-5 routes for %s = %s (%v), want one with metric 20", node.name, mgmt, out, err)
 		}
 	}
 }

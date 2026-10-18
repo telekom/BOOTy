@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"maps"
 	"net"
-	"net/netip"
 	"slices"
 	"strings"
 	"sync"
@@ -22,8 +21,6 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/types/known/anypb"
-
-	"github.com/telekom/BOOTy/pkg/network"
 )
 
 const (
@@ -114,14 +111,11 @@ func isMappedGatewayRoute(route *netlink.Route) bool {
 // When EnableL2 is set, it also handles Type-2 (MAC/IP) and Type-3
 // (Inclusive Multicast) routes for L2 overlay use cases.
 type OverlayTier struct {
-	bgp        *server.BgpServer
-	cfg        *Config
-	log        *slog.Logger
-	cancel     context.CancelFunc
-	netlinkOps overlayNetlinkOps
-	// connected returns the connected prefixes of the VRF of the provision
-	// bridge; nil = connectedPrefixes (netlink). Tests replace it.
-	connected       func(bridge string) []netip.Prefix
+	bgp             *server.BgpServer
+	cfg             *Config
+	log             *slog.Logger
+	cancel          context.CancelFunc
+	netlinkOps      overlayNetlinkOps
 	hooks           *overlaySetupHooks
 	ensureVTEPRoute func(net.IP) error
 
@@ -915,18 +909,13 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 		return
 	}
 	prefix, key := dst.String(), type5PathKey(route)
+	if withdraw {
+		// Always processed, so no route of ours stays behind.
+		o.withdrawType5Path(prefix, key, route, vtep, routerMAC)
+		return
+	}
 	if o.isBlackhole(prefix) {
 		o.log.Debug("type-5 route for a static blackhole prefix, static route wins", "prefix", prefix)
-		return
-	}
-	if o.isConnected(dst) {
-		// zebra: a connected route beats BGP (distance 0), so the Type-5
-		// route is not installed and the connected route stays.
-		o.log.Debug("type-5 route for a connected prefix, connected route wins", "prefix", prefix)
-		return
-	}
-	if withdraw {
-		o.withdrawType5Path(prefix, key, route, vtep, routerMAC)
 		return
 	}
 	// Remember the path before any kernel change, so a later withdraw of
@@ -1426,71 +1415,13 @@ func buildType5KernelRoute(link netlink.Link, dst *net.IPNet, gw net.IP, tableID
 	if tableID != 0 {
 		route.Table = tableID
 	}
-	// Like zebra: protocol bgp, metric 20. With metric 0 an IPv4 route
-	// for a connected prefix replaced the kernel's connected route.
+	// Like zebra: protocol bgp, metric 20. A connected route of the same
+	// prefix (metric 0) stays preferred, and the Type-5 route takes over
+	// when the address goes away. With metric 0 an IPv4 Type-5 route
+	// replaced the kernel's connected route.
 	route.Protocol = unix.RTPROT_BGP
 	route.Priority = zebraRouteMetric
 	return route
-}
-
-// isConnected reports whether dst is exactly a connected prefix of the
-// VRF of the provision bridge, like a zebra connected route.
-func (o *OverlayTier) isConnected(dst *net.IPNet) bool {
-	p, ok := netipPrefix(dst)
-	if !ok {
-		return false
-	}
-	connected := o.connected
-	if connected == nil {
-		connected = connectedPrefixes
-	}
-	return slices.Contains(connected(o.cfg.BridgeName), p)
-}
-
-func netipPrefix(n *net.IPNet) (netip.Prefix, bool) {
-	a, ok := netip.AddrFromSlice(n.IP)
-	if !ok {
-		return netip.Prefix{}, false
-	}
-	ones, _ := n.Mask.Size()
-	return netip.PrefixFrom(a.Unmap(), ones).Masked(), true
-}
-
-// connectedPrefixes returns the prefixes of the addresses on the links of
-// the bridge's VRF (the default VRF when the bridge has no VRF master).
-func connectedPrefixes(bridge string) []netip.Prefix {
-	br, err := netlink.LinkByName(bridge)
-	if err != nil {
-		return nil
-	}
-	links, err := network.RetryDump(netlink.LinkList)
-	if err != nil {
-		return nil
-	}
-	vrf := br.Attrs().MasterIndex
-	if _, isVRF := br.(*netlink.Vrf); isVRF {
-		vrf = br.Attrs().Index
-	}
-	var out []netip.Prefix
-	for _, l := range links {
-		master := l.Attrs().MasterIndex
-		if _, isVRF := l.(*netlink.Vrf); isVRF {
-			master = l.Attrs().Index
-		}
-		if master != vrf {
-			continue
-		}
-		addrs, err := network.RetryDump(func() ([]netlink.Addr, error) { return netlink.AddrList(l, netlink.FAMILY_ALL) })
-		if err != nil {
-			continue
-		}
-		for _, a := range addrs {
-			if p, ok := netipPrefix(a.IPNet); ok {
-				out = append(out, p)
-			}
-		}
-	}
-	return out
 }
 
 func buildType5GatewayNeighbor(link netlink.Link, gw net.IP, routerMAC net.HardwareAddr) *netlink.Neigh {

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"log/slog"
 	"net"
-	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -4231,37 +4230,43 @@ func TestOverlaySetupAdvertisesType2And3OnlyWithL2(t *testing.T) {
 	}
 }
 
-// Like zebra: a Type-5 route for a connected prefix of the bridge's VRF is
-// not installed (connected beats BGP), a more specific one is, and Type-5
-// routes get protocol bgp and metric 20 in both families. Before, an IPv4
-// route got metric 0 and replaced the connected route of the same prefix.
-func TestHandleType5RouteConnectedAndZebraMetric(t *testing.T) {
+// Like zebra, Type-5 routes get protocol bgp and metric 20 in both
+// families, so a connected route of the same prefix (metric 0, for example
+// the provision /24) stays preferred in the kernel and the Type-5 route
+// takes over when the address goes away. A withdraw is always processed:
+// for such a prefix it deletes the route it installed, and for a static
+// blackhole prefix (never installed) it deletes only a Type-5 route with a
+// gateway, never the blackhole route.
+func TestHandleType5RouteZebraMetricAndWithdraw(t *testing.T) {
 	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{
-		cfg: &Config{RouterID: "192.168.4.10", ProvisionVNI: 1000, BridgeName: "br.provision"},
+		cfg: &Config{RouterID: "192.168.4.10", ProvisionVNI: 1000, BridgeName: "br.provision",
+			BlackholeRoutes: []string{"10.250.0.0/24"}},
 		log: slog.Default(), netlinkOps: mock,
-		connected: func(bridge string) []netip.Prefix {
-			if bridge != "br.provision" {
-				t.Errorf("connected prefixes of %q, want the bridge", bridge)
-			}
-			return []netip.Prefix{netip.MustParsePrefix("10.200.0.0/24"), netip.MustParsePrefix("2001:db8::/64")}
-		},
 	}
 	mac := mustParseMAC(t, "62:db:b8:c1:80:52")
-	for _, r := range []*apipb.EVPNIPPrefixRoute{
-		{IpPrefix: "10.200.0.0", IpPrefixLen: 24, GwAddress: "192.168.4.1"},
-		{IpPrefix: "2001:db8::", IpPrefixLen: 64},
-	} {
-		overlay.handleType5Route(r, "192.168.4.1", mac, false)
-	}
-	if len(mock.routeReplaces) != 0 {
-		t.Fatalf("connected prefixes installed: %v", mock.routeReplaces)
-	}
-	overlay.handleType5Route(&apipb.EVPNIPPrefixRoute{IpPrefix: "10.200.0.7", IpPrefixLen: 32, GwAddress: "192.168.4.1"}, "192.168.4.1", mac, false)
+	connected := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.200.0.0", IpPrefixLen: 24, GwAddress: "192.168.4.1"}
+	overlay.handleType5Route(connected, "192.168.4.1", mac, false)
 	if len(mock.routeReplaces) != 1 {
-		t.Fatalf("route replaces = %d, want the /32 inside the connected /24", len(mock.routeReplaces))
+		t.Fatalf("route replaces = %d, want the Type-5 route next to the connected one", len(mock.routeReplaces))
 	}
-	if r := mock.routeReplaces[0]; r.Protocol != unix.RTPROT_BGP || r.Priority != zebraRouteMetric {
-		t.Fatalf("IPv4 Type-5 route protocol %v metric %d, want bgp and %d like zebra", r.Protocol, r.Priority, zebraRouteMetric)
+	if r := mock.routeReplaces[0]; r.Protocol != unix.RTPROT_BGP || r.Priority != zebraRouteMetric || r.Dst.String() != "10.200.0.0/24" {
+		t.Fatalf("IPv4 Type-5 route %+v, want protocol bgp and metric %d like zebra", r, zebraRouteMetric)
+	}
+	overlay.handleType5Route(connected, "192.168.4.1", mac, true)
+	if len(mock.routeDels) != 1 || mock.routeDels[0].Dst.String() != "10.200.0.0/24" || mock.routeDels[0].Priority != zebraRouteMetric {
+		t.Fatalf("route deletes after the withdraw = %v, want the Type-5 route", mock.routeDels)
+	}
+
+	blackhole := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.250.0.0", IpPrefixLen: 24, GwAddress: "192.168.4.1"}
+	overlay.handleType5Route(blackhole, "192.168.4.1", mac, false)
+	if len(mock.routeReplaces) != 1 {
+		t.Fatalf("a Type-5 route for a static blackhole prefix was installed: %v", mock.routeReplaces)
+	}
+	overlay.handleType5Route(blackhole, "192.168.4.1", mac, true)
+	for _, r := range mock.routeDels[1:] {
+		if r.Gw == nil {
+			t.Fatalf("the withdraw for a blackhole prefix deleted a route without gateway: %+v", r)
+		}
 	}
 }
