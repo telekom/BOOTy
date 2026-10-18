@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -24,8 +25,10 @@ import (
 // DHCPMode implements the Mode interface with DHCPv4 on every physical
 // interface, like systemd-networkd with the legacy ramdisk's netplan
 // ("dhcp4: true" on every en* and eth* NIC): a client runs on every NIC for
-// the whole run, every lease configures its NIC (address and a default route
-// with the netplan metric), and renewals update it.
+// the whole run, every lease configures its NIC (address, a default route
+// with the netplan metric, the MTU), and renewals update it. The DNS servers
+// of all leases go to resolv.conf after the configured ones, like
+// systemd-resolved with UseDNS=yes.
 type DHCPMode struct {
 	log *slog.Logger
 
@@ -40,6 +43,11 @@ type DHCPMode struct {
 	// does not: after a failed renewal it renews again forever and never
 	// reaches the expiry, so OnExpire only comes for a DHCPNAK.
 	expiry map[int]leaseTimer
+	mtus   map[int]dhcpMTU // by link index: MTU before the first lease changed it
+
+	manageDNS bool     // false: the provisioner resolv.conf stays
+	resolvers []string // configured DNS servers, written before the lease ones
+	written   string   // the resolver list last written
 }
 
 // nicClient is the running DHCP client of one NIC and how to start a fresh
@@ -64,12 +72,13 @@ type leaseTimer struct {
 // dhcpAfterFunc is time.AfterFunc; tests replace it.
 var dhcpAfterFunc = time.AfterFunc
 
-// dhcpApplied is the address, default route and NTP servers a lease
-// configured.
+// dhcpApplied is what a lease configured: address, default route, DNS
+// and NTP servers.
 type dhcpApplied struct {
 	link  netlink.Link
 	addr  *netlink.Addr
 	route *netlink.Route
+	dns   []string
 	ntp   []string
 }
 
@@ -102,6 +111,17 @@ func promoteSecondaries(ifname string) error {
 	return nil
 }
 
+// dhcpMTU is the MTU a NIC had before the first lease changed it, and the
+// MTU the leases set.
+type dhcpMTU struct {
+	link      netlink.Link
+	orig, set int
+}
+
+// dhcpMinMTU is the smallest lease MTU that is used. systemd-networkd
+// ignores option 26 below the minimum DHCP packet size (RFC 2131: 576).
+const dhcpMinMTU = 576
+
 // dhcpRouteMetric is the metric of DHCP default routes: netplan writes
 // RouteMetric=100 for ethernets, so the routes of all NICs are equal.
 const dhcpRouteMetric = 100
@@ -120,10 +140,22 @@ func NewDHCPMode() *DHCPMode {
 // the first lease is applied. The clients keep running: later leases, also
 // on other NICs, configure their NIC too. Without a lease within 15 s every
 // client is stopped and Setup fails.
-func (d *DHCPMode) Setup(ctx context.Context, _ *Config) error {
+func (d *DHCPMode) Setup(ctx context.Context, cfg *Config) error {
 	if d.log == nil {
 		d.log = slog.Default().With("component", "dhcp")
 	}
+	d.mu.Lock()
+	d.manageDNS = cfg != nil && !cfg.KeepResolvConf
+	d.resolvers = nil
+	if d.manageDNS {
+		for _, r := range strings.Split(cfg.DNSResolvers, ",") {
+			if r = strings.TrimSpace(r); r != "" {
+				d.resolvers = append(d.resolvers, r)
+			}
+		}
+	}
+	d.writeResolvers()
+	d.mu.Unlock()
 	ifaces, err := dhcpInterfaces(ctx)
 	if err != nil {
 		return fmt.Errorf("listing interfaces: %w", err)
@@ -260,12 +292,14 @@ func newDHCPClient(iface *net.Interface, hostname string, onBound, onExpire dhcl
 	return client
 }
 
-// Netlink seams for onBound tests.
+// Netlink and resolv.conf seams for onBound tests.
 var (
-	dhcpAddrReplace = replaceLeaseAddr
-	dhcpAddrDel     = netlink.AddrDel
-	dhcpRouteAdd    = netlink.RouteAppend
-	dhcpRouteDel    = netlink.RouteDel
+	dhcpAddrReplace    = replaceLeaseAddr
+	dhcpAddrDel        = netlink.AddrDel
+	dhcpRouteAdd       = netlink.RouteAppend
+	dhcpRouteDel       = netlink.RouteDel
+	dhcpSetMTU         = netlink.LinkSetMTU
+	dhcpWriteResolvers = ConfigureResolvers
 )
 
 // replaceLeaseAddr sets addr on link. The kernel keys IPv4 addresses by
@@ -381,7 +415,17 @@ func (d *DHCPMode) endLease(link netlink.Link, ifName string) {
 		return
 	}
 	delete(d.nics, idx)
-	d.publishNTP() // its NTP servers go with the lease
+	// Its NTP and DNS servers and its MTU go with the lease.
+	d.publishNTP()
+	d.writeResolvers()
+	if m, ok := d.mtus[idx]; ok {
+		delete(d.mtus, idx)
+		if m.set != m.orig {
+			if err := dhcpSetMTU(link, m.orig); err != nil {
+				d.log.Warn("failed to restore the MTU of an ended DHCP lease", "iface", ifName, "error", err)
+			}
+		}
+	}
 	removed := true
 	if a.route != nil {
 		if err := dhcpRouteDel(a.route); err != nil && !errors.Is(err, syscall.ESRCH) {
@@ -425,8 +469,73 @@ func (d *DHCPMode) apply(link netlink.Link, addr *netlink.Addr, lease *dhclient.
 			d.stale = append(d.stale, dhcpApplied{link: link, addr: prev.addr})
 		}
 	}
-	d.nics[idx] = dhcpApplied{link: link, addr: addr, route: route, ntp: leaseNTPServers(lease)}
+	d.nics[idx] = dhcpApplied{link: link, addr: addr, route: route, dns: leaseDNS(lease), ntp: leaseNTPServers(lease)}
+	d.applyMTU(link, lease.MTU)
+	d.writeResolvers()
 	return nil
+}
+
+// leaseDNS returns the DNS servers of a lease (option 6).
+func leaseDNS(lease *dhclient.Lease) []string {
+	var out []string
+	for _, ip := range lease.DNS {
+		if ip.To4() != nil && !ip.IsUnspecified() {
+			out = append(out, ip.String())
+		}
+	}
+	return out
+}
+
+// applyMTU sets the lease MTU (option 26) on the NIC, like networkd with
+// netplan's UseMTU=true. Teardown restores the MTU from before the first
+// change. The caller holds d.mu.
+func (d *DHCPMode) applyMTU(link netlink.Link, mtu uint16) {
+	if mtu < dhcpMinMTU {
+		return
+	}
+	idx := link.Attrs().Index
+	m, ok := d.mtus[idx]
+	if !ok {
+		m = dhcpMTU{link: link, orig: link.Attrs().MTU, set: link.Attrs().MTU}
+	}
+	if m.set == int(mtu) {
+		return
+	}
+	if err := dhcpSetMTU(link, int(mtu)); err != nil {
+		d.log.Warn("failed to set the DHCP MTU", "iface", link.Attrs().Name, "mtu", mtu, "error", err)
+		return
+	}
+	m.set = int(mtu)
+	if d.mtus == nil {
+		d.mtus = map[int]dhcpMTU{}
+	}
+	d.mtus[idx] = m
+}
+
+// writeResolvers writes the configured DNS servers and then those of the
+// leases (by NIC index, without duplicates) to resolv.conf when the list
+// changed. The caller holds d.mu.
+func (d *DHCPMode) writeResolvers() {
+	if !d.manageDNS {
+		return
+	}
+	list := slices.Clone(d.resolvers)
+	for _, idx := range slices.Sorted(maps.Keys(d.nics)) {
+		for _, s := range d.nics[idx].dns {
+			if !slices.Contains(list, s) {
+				list = append(list, s)
+			}
+		}
+	}
+	joined := strings.Join(list, ",")
+	if joined == d.written {
+		return
+	}
+	if err := dhcpWriteResolvers(joined); err != nil {
+		d.log.Warn("failed to write the DHCP DNS servers", "servers", joined, "error", err)
+		return
+	}
+	d.written = joined
 }
 
 // applyRoute adds the default route of a lease (proto dhcp, the lease
@@ -540,10 +649,11 @@ func (d *DHCPMode) Teardown(_ context.Context) error {
 	for _, a := range d.nics {
 		applied = append(applied, a)
 	}
-	d.nics, d.stale = nil, nil
+	mtus := d.mtus
+	d.nics, d.stale, d.mtus, d.written = nil, nil, nil, ""
 	setDHCPNTPList(nil)
 	d.mu.Unlock()
-	var errs []error
+	errs := restoreMTUs(mtus)
 	for _, a := range applied {
 		if a.route != nil {
 			if err := dhcpRouteDel(a.route); err != nil && !errors.Is(err, syscall.ESRCH) {
@@ -558,6 +668,20 @@ func (d *DHCPMode) Teardown(_ context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// restoreMTUs sets the MTU from before the first lease again.
+func restoreMTUs(mtus map[int]dhcpMTU) []error {
+	var errs []error
+	for _, m := range mtus {
+		if m.set == m.orig {
+			continue
+		}
+		if err := dhcpSetMTU(m.link, m.orig); err != nil {
+			errs = append(errs, fmt.Errorf("restore MTU %d on %s: %w", m.orig, m.link.Attrs().Name, err))
+		}
+	}
+	return errs
 }
 
 // physicalInterfaces returns non-loopback, non-virtual interfaces.
