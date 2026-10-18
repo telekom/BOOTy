@@ -756,3 +756,110 @@ func TestNewDHCPClientSetsExpireCallback(t *testing.T) {
 		t.Fatal("OnExpire is not the given callback")
 	}
 }
+
+// fakeAfterFunc records the expiry timers instead of starting them.
+type fakeAfterFunc struct {
+	funcs  []func()
+	timers []*time.Timer
+}
+
+func (f *fakeAfterFunc) install(t *testing.T) {
+	t.Helper()
+	orig := dhcpAfterFunc
+	t.Cleanup(func() { dhcpAfterFunc = orig })
+	dhcpAfterFunc = func(_ time.Duration, fn func()) *time.Timer {
+		f.funcs = append(f.funcs, fn)
+		tm := time.NewTimer(time.Hour) // never fires in the test
+		f.timers = append(f.timers, tm)
+		return tm
+	}
+}
+
+// RFC 2131 section 4.4.5: a lease that expires without a renewal ends,
+// even though go-dhclient v1.0.2 never calls OnExpire after a failed
+// renewal. Each renewal moves the expiry, and a timer of an older lease
+// does nothing.
+func TestLeaseExpiryTimerEndsLease(t *testing.T) {
+	stubDHCPNetlink(t)
+	var delAddrs []*netlink.Addr
+	dhcpAddrDel = func(_ netlink.Link, a *netlink.Addr) error { delAddrs = append(delAddrs, a); return nil }
+	t.Cleanup(func() { setDHCPNTPServers(nil) })
+	var timers fakeAfterFunc
+	timers.install(t)
+
+	d := NewDHCPMode()
+	eth0 := dummyLink("eth0", 7)
+	bound := d.onBound(eth0, "eth0", make(chan string, 4))
+	first := lease24("10.0.2.15", "10.0.2.2")
+	first.Expire = time.Now().Add(time.Hour)
+	bound(first)
+	renewed := lease24("10.0.2.15", "10.0.2.2")
+	renewed.Expire = time.Now().Add(2 * time.Hour)
+	bound(renewed)
+	if len(timers.funcs) != 2 {
+		t.Fatalf("armed %d expiry timers, want one per bound lease", len(timers.funcs))
+	}
+	timers.funcs[0]() // the timer of the first lease, after the renewal
+	if len(delAddrs) != 0 {
+		t.Fatalf("an old expiry timer removed the renewed lease: %v", delAddrs)
+	}
+	timers.funcs[1]()
+	if len(delAddrs) != 1 || delAddrs[0].IPNet.String() != "10.0.2.15/24" {
+		t.Fatalf("expiry removed %v, want 10.0.2.15/24", delAddrs)
+	}
+	if _, ok := d.nics[7]; ok {
+		t.Fatal("eth0 still has lease state after the expiry")
+	}
+}
+
+// Teardown stops the expiry timers.
+func TestTeardownStopsLeaseExpiry(t *testing.T) {
+	stubDHCPNetlink(t)
+	t.Cleanup(func() { setDHCPNTPServers(nil) })
+	var timers fakeAfterFunc
+	timers.install(t)
+	d := NewDHCPMode()
+	l := lease24("10.0.2.15", "10.0.2.2")
+	l.Expire = time.Now().Add(time.Hour)
+	d.onBound(dummyLink("eth0", 7), "eth0", make(chan string, 1))(l)
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(timers.timers) != 1 || timers.timers[0].Stop() {
+		t.Fatal("Teardown did not stop the expiry timer")
+	}
+}
+
+// A delete that fails keeps the state tracked for Teardown.
+func TestEndLeaseKeepsFailedDeletesForTeardown(t *testing.T) {
+	stubDHCPNetlink(t)
+	t.Cleanup(func() { setDHCPNTPServers(nil) })
+	boom := errors.New("boom")
+	d := NewDHCPMode()
+	eth0 := dummyLink("eth0", 7)
+	d.onBound(eth0, "eth0", make(chan string, 1))(lease24("10.0.2.15", "10.0.2.2"))
+	dhcpRouteDel = func(*netlink.Route) error { return boom }
+	dhcpAddrDel = func(netlink.Link, *netlink.Addr) error { return boom }
+	d.onExpire(eth0, "eth0")(nil)
+	if len(d.stale) != 2 || d.stale[0].route == nil || d.stale[1].addr == nil {
+		t.Fatalf("stale state %+v, want the route and the address", d.stale)
+	}
+	var routes, addrs int
+	dhcpRouteDel = func(*netlink.Route) error { routes++; return nil }
+	dhcpAddrDel = func(netlink.Link, *netlink.Addr) error { addrs++; return nil }
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if routes != 1 || addrs != 1 {
+		t.Fatalf("Teardown removed %d routes and %d addresses, want the stale ones", routes, addrs)
+	}
+}
+
+// Setup builds every NIC's client with the lease end callback.
+func TestClientForWiresOnExpire(t *testing.T) {
+	d := NewDHCPMode()
+	c, ok := d.clientFor(&net.Interface{Name: "eth0"}, dummyLink("eth0", 7), "", make(chan string, 1)).(*dhclient.Client)
+	if !ok || c.OnBound == nil || c.OnExpire == nil {
+		t.Fatal("the NIC client has no OnBound or OnExpire callback")
+	}
+}

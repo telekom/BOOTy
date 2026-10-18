@@ -36,7 +36,20 @@ type DHCPMode struct {
 	// stopped is set before the clients stop; a lease that arrives after it
 	// is not applied.
 	stopped bool
+	// expiry ends the lease of a NIC at its expiry time. go-dhclient v1.0.2
+	// does not: after a failed renewal it renews again forever and never
+	// reaches the expiry, so OnExpire only comes for a DHCPNAK.
+	expiry map[int]leaseTimer
 }
+
+// leaseTimer is the expiry timer of the lease of one NIC.
+type leaseTimer struct {
+	timer *time.Timer
+	at    time.Time // the expiry time it was armed for
+}
+
+// dhcpAfterFunc is time.AfterFunc; tests replace it.
+var dhcpAfterFunc = time.AfterFunc
 
 // dhcpApplied is the address, default route and NTP servers a lease
 // configured.
@@ -150,7 +163,7 @@ func (d *DHCPMode) startClient(iface *net.Interface, hostname string, leased cha
 		d.log.Warn("Cannot bring up link for DHCP", "interface", iface.Name, "error", err)
 		return
 	}
-	client := dhcpNewClient(iface, hostname, d.onBound(link, iface.Name, leased), d.onExpire(link, iface.Name))
+	client := d.clientFor(iface, link, hostname, leased)
 	client.Start()
 	d.mu.Lock()
 	d.clients = append(d.clients, client)
@@ -184,6 +197,11 @@ func (d *DHCPMode) stopClients() {
 		wg.Go(c.Stop)
 	}
 	wg.Wait()
+}
+
+// clientFor builds the DHCP client of one NIC with its lease callbacks.
+func (d *DHCPMode) clientFor(iface *net.Interface, link netlink.Link, hostname string, leased chan<- string) dhcpClient {
+	return dhcpNewClient(iface, hostname, d.onBound(link, iface.Name, leased), d.onExpire(link, iface.Name))
 }
 
 // newDHCPClient builds a client that requests the default parameters
@@ -252,6 +270,7 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- strin
 			d.log.Warn("failed to apply DHCP lease", "iface", ifName, "error", err)
 			return
 		}
+		d.armExpiry(link, ifName, lease.Expire)
 		d.publishNTP()
 		d.log.Info("DHCP lease applied", "iface", ifName, "addr", addr.IPNet.String())
 		select {
@@ -261,32 +280,75 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- strin
 	}
 }
 
-// onExpire returns the callback for the end of a lease of one NIC: it
-// expired before a renewal or a rebind succeeded, or the server sent a
-// DHCPNAK (go-dhclient calls OnExpire for both). RFC 2131 sections 4.4.5
-// and 3.2 say the client then stops using the address and starts over in
-// INIT, so the address and default route of the lease go. The client keeps
-// running; its next lease is applied like any other.
+// onExpire returns the callback for the end of a lease of one NIC that
+// go-dhclient reports: a DHCPNAK, or an expiry it notices. RFC 2131
+// sections 4.4.5 and 3.2 say the client then stops using the address and
+// starts over in INIT, so the address and default route of the lease go.
+// The client keeps running; its next lease is applied like any other.
 func (d *DHCPMode) onExpire(link netlink.Link, ifName string) func(*dhclient.Lease) {
 	return func(*dhclient.Lease) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		a, ok := d.nics[link.Attrs().Index]
-		if !ok {
+		d.endLease(link, ifName)
+	}
+}
+
+// armExpiry (re)starts the expiry timer of the lease of a NIC; each bound
+// lease, also a renewal, moves it. A zero expiry disarms it. The caller
+// holds d.mu.
+func (d *DHCPMode) armExpiry(link netlink.Link, ifName string, at time.Time) {
+	idx := link.Attrs().Index
+	if old, ok := d.expiry[idx]; ok {
+		old.timer.Stop()
+		delete(d.expiry, idx)
+	}
+	if at.IsZero() {
+		return
+	}
+	if d.expiry == nil {
+		d.expiry = map[int]leaseTimer{}
+	}
+	d.expiry[idx] = leaseTimer{at: at, timer: dhcpAfterFunc(time.Until(at), func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		// A renewal may have moved the expiry while this timer fired.
+		if cur, ok := d.expiry[idx]; !ok || !cur.at.Equal(at) {
 			return
 		}
-		delete(d.nics, link.Attrs().Index)
-		d.publishNTP() // its NTP servers go with the lease
-		if a.route != nil {
-			if err := dhcpRouteDel(a.route); err != nil && !errors.Is(err, syscall.ESRCH) {
-				d.log.Warn("failed to remove the default route of an ended DHCP lease", "iface", ifName, "error", err)
-				d.stale = append(d.stale, dhcpApplied{link: link, route: a.route})
-			}
+		d.log.Warn("DHCP lease expired without renewal", "iface", ifName)
+		d.endLease(link, ifName)
+	})}
+}
+
+// endLease removes the address and default route of the lease of a NIC
+// and its expiry timer. State that cannot be removed stays tracked for
+// Teardown. The caller holds d.mu.
+func (d *DHCPMode) endLease(link netlink.Link, ifName string) {
+	idx := link.Attrs().Index
+	if t, ok := d.expiry[idx]; ok {
+		t.timer.Stop()
+		delete(d.expiry, idx)
+	}
+	a, ok := d.nics[idx]
+	if !ok {
+		return
+	}
+	delete(d.nics, idx)
+	d.publishNTP() // its NTP servers go with the lease
+	removed := true
+	if a.route != nil {
+		if err := dhcpRouteDel(a.route); err != nil && !errors.Is(err, syscall.ESRCH) {
+			d.log.Warn("failed to remove the default route of an ended DHCP lease", "iface", ifName, "error", err)
+			d.stale = append(d.stale, dhcpApplied{link: link, route: a.route})
+			removed = false
 		}
-		if err := dhcpAddrDel(link, a.addr); err != nil && !errors.Is(err, syscall.EADDRNOTAVAIL) {
-			d.log.Warn("failed to remove the address of an ended DHCP lease", "iface", ifName, "error", err)
-			d.stale = append(d.stale, dhcpApplied{link: link, addr: a.addr})
-		}
+	}
+	if err := dhcpAddrDel(link, a.addr); err != nil && !errors.Is(err, syscall.EADDRNOTAVAIL) {
+		d.log.Warn("failed to remove the address of an ended DHCP lease", "iface", ifName, "error", err)
+		d.stale = append(d.stale, dhcpApplied{link: link, addr: a.addr})
+		removed = false
+	}
+	if removed {
 		d.log.Warn("DHCP lease ended (expired or refused), address removed until a new lease", "iface", ifName,
 			"addr", a.addr.IPNet.String())
 	}
@@ -423,6 +485,10 @@ func (d *DHCPMode) WaitForConnectivity(ctx context.Context, target string, timeo
 func (d *DHCPMode) Teardown(_ context.Context) error {
 	d.stopClients()
 	d.mu.Lock()
+	for _, t := range d.expiry {
+		t.timer.Stop()
+	}
+	d.expiry = nil
 	applied := d.stale
 	for _, a := range d.nics {
 		applied = append(applied, a)
