@@ -2073,7 +2073,8 @@ func TestApplyBGPOptions(t *testing.T) {
 			{"BGP_DEFAULTS wins", "datacenter", "traditional", "traditional", "8.3", false, true},
 			{"frr version 7.5.1", "", "", "datacenter", "7.5.1", true, false},
 			{"frr version 10.2.1", "", "", "datacenter", "10.2.1", true, true},
-			{"unparsable frr version", "", "", "datacenter", "8", true, true},
+			{"frr version 8 (8.0)", "", "", "datacenter", "8", true, false},
+			{"unparsable frr version", "", "", "datacenter", "git", true, true},
 		} {
 			n := &network.Config{BGPDefaults: tt.parsed, BGPFRRVersion: tt.frrVersion}
 			applyBGPOptions(&config.BGPConfig{Defaults: tt.native}, n)
@@ -3041,5 +3042,19 @@ func TestLLDPWatchErrors(t *testing.T) {
 	logErr(errors.New("Receive failed: use of closed file"))
 	if buf.Len() != 0 {
 		t.Fatalf("the closed subscription logged %q", buf.String())
+	}
+}
+
+// frrVersionBelow compares like FRR's frr_version_cmp: leading digits per
+// part, a missing minor is 0, "~" sorts older.
+func TestFRRVersionBelow(t *testing.T) {
+	for v, want := range map[string]bool{
+		"8": true, "8.2-dev": true, "8.3~rc1": true, "8.2.2": true, "7.5.1": true,
+		"8.3": false, "8.3.1": false, "8.3.0~rc1": false, "10.2.1": false, "9": false,
+		"": false, "git": false,
+	} {
+		if got := frrVersionBelow(v, 8, 3); got != want {
+			t.Errorf("frrVersionBelow(%q, 8, 3) = %v, want %v", v, got, want)
+		}
 	}
 }

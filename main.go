@@ -1576,19 +1576,38 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 }
 
 // frrVersionBelow reports whether the "frr version" v is below
-// major.minor, like the match_version of FRR's FRR_CFG_DEFAULT_*. An empty
-// or unparsable version is the running FRR, so it is not below.
+// major.minor, like frr_version_cmp of FRR's match_version (lib/defaults.c):
+// each part counts by its leading digits ("8.2-dev" is 8.2), a missing
+// minor counts as 0 ("8" is 8.0), and a "~" after major.minor sorts older
+// ("8.3~rc1" is below 8.3). A version without leading digits (empty or
+// unparsable) is the running FRR, so it is not below.
 func frrVersionBelow(v string, major, minor int) bool {
-	f := strings.SplitN(v, ".", 3)
-	if len(f) < 2 {
+	ma, rest, ok := leadingInt(v)
+	if !ok {
 		return false
 	}
-	ma, err1 := strconv.Atoi(f[0])
-	mi, err2 := strconv.Atoi(f[1])
-	if err1 != nil || err2 != nil {
-		return false
+	mi := 0
+	if r, found := strings.CutPrefix(rest, "."); found {
+		mi, rest, _ = leadingInt(r)
 	}
-	return ma < major || ma == major && mi < minor
+	if ma != major {
+		return ma < major
+	}
+	if mi != minor {
+		return mi < minor
+	}
+	return strings.HasPrefix(rest, "~")
+}
+
+// leadingInt returns the number of the leading digits of s and the rest;
+// ok is false without a leading digit.
+func leadingInt(s string) (n int, rest string, ok bool) {
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	n, err := strconv.Atoi(s[:i])
+	return n, s[i:], err == nil
 }
 
 // applyBGPOptions applies the BGP options that frr.conf can also set. With
