@@ -4731,11 +4731,7 @@ func TestType2NeighborTiebreakOnMAC(t *testing.T) {
 func TestType2NeighborKeptByTheOtherRD(t *testing.T) {
 	o, m := type2TestOverlay()
 	route := func(rd uint32) *apipb.EVPNMACIPAdvertisementRoute {
-		r, err := buildRouteDistinguisher(65000, rd)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return &apipb.EVPNMACIPAdvertisementRoute{Rd: r, MacAddress: "aa:bb:cc:00:00:01", IpAddress: "10.0.0.50"}
+		return &apipb.EVPNMACIPAdvertisementRoute{Rd: buildRouteDistinguisher(65000, rd), MacAddress: "aa:bb:cc:00:00:01", IpAddress: "10.0.0.50"}
 	}
 	o.handleType2Route(route(1), "10.0.0.1", 0, false)
 	o.handleType2Route(route(2), "10.0.0.1", 0, false)
