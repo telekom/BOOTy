@@ -258,10 +258,12 @@ func (c *Client) renewState() state {
 		func(tr transport, m *message, l *Lease) error { return tr.unicast(l.FixedAddress, l.ServerID, m) })
 }
 
-// rebindState broadcasts DHCPREQUESTs until the lease expires.
+// rebindState broadcasts DHCPREQUESTs until the lease expires. Like
+// every networkd broadcast, they have the IP source 0.0.0.0; the lease
+// address is in ciaddr.
 func (c *Client) rebindState() state {
 	return c.extend(stateInit, func(l *Lease) time.Time { return l.Expire },
-		func(tr transport, m *message, l *Lease) error { return tr.broadcast(l.FixedAddress, m) })
+		func(tr transport, m *message, _ *Lease) error { return tr.broadcast(nil, m) })
 }
 
 func (c *Client) extend(next state, until func(*Lease) time.Time, send func(transport, *message, *Lease) error) state {

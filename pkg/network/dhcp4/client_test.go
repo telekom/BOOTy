@@ -261,7 +261,7 @@ func TestRenewUnicastRebindBroadcast(t *testing.T) {
 		t.Errorf("RENEWING REQUEST = %s from %s to %s ciaddr %s options %v", r.kind, r.src, r.dst, r.m.ciaddr, optionTypes(r.m))
 	}
 	b := rebind[0]
-	if !b.src.Equal(testAddr) || !b.m.ciaddr.Equal(testAddr) || !slices.Equal(optionTypes(b.m), []int{53, 61, 55, 57, 12}) {
+	if b.src != nil || !b.m.ciaddr.Equal(testAddr) || !slices.Equal(optionTypes(b.m), []int{53, 61, 55, 57, 12}) {
 		t.Errorf("REBINDING REQUEST = %s from %s ciaddr %s options %v", b.kind, b.src, b.m.ciaddr, optionTypes(b.m))
 	}
 	f.mu.Lock()

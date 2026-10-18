@@ -1124,7 +1124,8 @@ The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
   unicast), with `ciaddr` and without 50/54, again after half the time to
   T2 (at least 60 s).
 - REBINDING at T2: the same DHCPREQUEST as broadcast, until the lease
-  expires.
+  expires. Like every networkd broadcast it has the IP source 0.0.0.0
+  (the lease address is in `ciaddr`), as captured in kindmetal.
 - INIT-REBOOT (`Reboot`): DHCPREQUEST with only the requested address.
 - DHCPRELEASE at stop (Teardown, before kexec or reboot) from the lease
   address to the server, with the client identifier only, like networkd
