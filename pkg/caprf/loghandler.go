@@ -434,14 +434,6 @@ func (h *RemoteHandler) Handle(ctx context.Context, r slog.Record) error { //nol
 	return nil
 }
 
-// ShipRemoteOnly queues text for the server without writing it to the
-// console, for bulk text such as the kernel log. Secret values are
-// redacted like in Handle.
-func (h *RemoteHandler) ShipRemoteOnly(level slog.Level, text string) {
-	h.sink.ring.push(levelRank(level), logging.RedactText("["+level.String()+"] "+text))
-	h.maybeWarnDropped(h.sink.ring.droppedTotal())
-}
-
 // maybeWarnDropped emits a console warning every dropWarnEvery drops.
 // It uses h.inner directly to avoid re-entering RemoteHandler when it is
 // the default slog handler.

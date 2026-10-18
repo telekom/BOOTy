@@ -573,10 +573,11 @@ func runCAPRF(ctx context.Context) {
 		caprfRemoteLogHandler = caprf.NewRemoteHandler(client, remoteInner, slog.LevelInfo, 8192)
 		defer flushObservability()
 		slog.SetDefault(slog.New(caprfRemoteLogHandler))
-		// The console shows only kernel errors (loglevel=4); the server
-		// gets the whole kernel log once, as one record.
-		caprfRemoteLogHandler.ShipRemoteOnly(slog.LevelInfo, "kernel log\n"+readKernelLogFn())
 	}
+
+	// The console shows only kernel errors (loglevel=4). With DEBUG_URL
+	// the server gets the whole kernel log once.
+	go shipKernelLog(ctx, client, cfg.Transport.DebugURL)
 
 	slog.Info("CAPRF mode active",
 		"hostname", cfg.Hostname,

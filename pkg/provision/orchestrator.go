@@ -3499,9 +3499,9 @@ func DumpDebugState(failedStep string) {
 		{"pvs", "pvs"},
 		{"lvs", "lvs"},
 
-		// Kernel messages: all of them, the console shows only errors
-		// (loglevel=4).
-		{"dmesg", "dmesg"},
+		// Kernel messages. The whole kernel log goes to DEBUG_URL and the
+		// crash metadata, not to LOG_URL: CAPRF classifies its lines.
+		{"dmesg tail", "dmesg | tail -100"},
 
 		// Network interfaces & routes (IPv4 + IPv6).
 		{"network interfaces", "ip -br addr"},

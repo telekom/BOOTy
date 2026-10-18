@@ -484,38 +484,3 @@ func TestRemoteHandlerConcurrentLogAndClose(t *testing.T) {
 	root.Close()
 	wg.Wait()
 }
-
-// ShipRemoteOnly sends bulk text such as the kernel log to the server as
-// one record, redacted, and writes nothing to the console.
-func TestRemoteHandlerShipRemoteOnly(t *testing.T) {
-	var mu sync.Mutex
-	var bodies []string
-	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		mu.Lock()
-		bodies = append(bodies, string(b))
-		mu.Unlock()
-	}))
-	t.Cleanup(srv.Close)
-	cfg := &config.MachineConfig{
-		Transport: config.TransportConfig{Token: "kernel-token", LogURL: srv.URL + "/log"},
-	}
-	var console bytes.Buffer
-	handler := NewRemoteHandler(NewFromConfig(cfg), slog.NewTextHandler(&console, nil), slog.LevelInfo, 100)
-
-	handler.ShipRemoteOnly(slog.LevelInfo, "kernel log\n<6>[    0.000000] Linux version 6.12\n<5>[    0.1] token=s3cret")
-	handler.Close()
-
-	if console.Len() != 0 {
-		t.Fatalf("console got %q, want nothing", console.String())
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(bodies) != 1 {
-		t.Fatalf("shipped %d records, want 1: %q", len(bodies), bodies)
-	}
-	got := bodies[0]
-	if !strings.Contains(got, "[INFO] kernel log") || !strings.Contains(got, "Linux version 6.12") || strings.Contains(got, "s3cret") {
-		t.Fatalf("shipped %q, want the redacted kernel log as one record", got)
-	}
-}

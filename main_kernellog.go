@@ -3,11 +3,15 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/telekom/BOOTy/pkg/logging"
 )
 
 // readKernelLogFn is a test seam for readKernelLog.
@@ -73,4 +77,25 @@ func uptimeSeconds() string {
 	}
 	up, _, _ := strings.Cut(strings.TrimSpace(string(data)), " ")
 	return up
+}
+
+// kernelLogShipper is the part of the CAPRF client that shipKernelLog uses.
+type kernelLogShipper interface {
+	ShipDebug(ctx context.Context, message string) error
+}
+
+// shipKernelLog sends the whole kernel log, redacted, as one message to
+// DEBUG_URL when it is set. It never uses LOG_URL: CAPRF classifies each
+// /log message, and kernel lines with "error" and "image" (the RAS
+// "Correctable Errors" line, "Freeing unused kernel image", BOOT_IMAGE=)
+// would raise an ImageError event that carries the whole log.
+func shipKernelLog(ctx context.Context, client kernelLogShipper, debugURL string) {
+	if debugURL == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := client.ShipDebug(ctx, logging.RedactText("kernel log\n"+readKernelLogFn())); err != nil {
+		slog.Warn("kernel log not sent to DEBUG_URL", "reason", err.Error())
+	}
 }
