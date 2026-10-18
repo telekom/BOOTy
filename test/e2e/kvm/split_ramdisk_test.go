@@ -17,12 +17,10 @@ import (
 // TestSplitRamdiskPayloadsQEMU boots the split ramdisk (initrd.Dockerfile
 // --target split) the way a boot loader loads it: the base archive, the
 // payload archives the run needs, and the deploy vars, concatenated. With
-// FRR vars, base + frr + vars passes the payload check and runs the FRR
-// daemons: they load their libraries (a missing library or executable
-// would end with exit status 127 or "no such file"). Without a fabric the
-// daemons do not stay up in QEMU, with the default flavor too, so the
-// test does not need them running. base + vars fails with BOOTY-PAY-001
-// before the FRR start.
+// FRR vars, base + frr + vars passes the payload check and starts the FRR
+// daemons (the payload resolves its libraries, its manifest matches the
+// build, and the frr user of #794 resolves). base + vars fails with
+// BOOTY-PAY-001 and starts no FRR daemon.
 //
 // BOOTY_SPLIT_DIR: the output of --target split and --target kernel-image.
 func TestSplitRamdiskPayloadsQEMU(t *testing.T) {
@@ -53,11 +51,12 @@ func TestSplitRamdiskPayloadsQEMU(t *testing.T) {
 		payloads []string
 		want     string
 	}{
-		{name: "base + frr + vars", payloads: []string{"frr"}, want: `FRR daemon`},
+		{name: "base + frr + vars", payloads: []string{"frr"}, want: `msg="started FRR daemon"`},
 		{name: "base + vars", want: "BOOTY-PAY-001"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			parts := []string{filepath.Join(dir, "base.cpio.zst")}
+			parts := make([]string, 0, len(tt.payloads)+2)
+			parts = append(parts, filepath.Join(dir, "base.cpio.zst"))
 			for _, p := range tt.payloads {
 				parts = append(parts, filepath.Join(dir, p+".cpio.zst"))
 			}
@@ -67,6 +66,9 @@ func TestSplitRamdiskPayloadsQEMU(t *testing.T) {
 				t.Fatalf("serial output lacks %q; tail:\n%s", tt.want, tail(out, 3000))
 			}
 			if tt.payloads == nil {
+				if strings.Contains(string(out), "started FRR daemon") {
+					t.Fatalf("an FRR daemon started without the FRR payload; tail:\n%s", tail(out, 3000))
+				}
 				return
 			}
 			for _, bad := range []string{"BOOTY-PAY-", "daemons not found", "exit status 127", "no such file", "error while loading shared libraries"} {
@@ -113,13 +115,12 @@ func concatFiles(t *testing.T, files ...string) string {
 // contains want or the timeout ends.
 func runQEMUUntil(t *testing.T, kernel, initrd, want string, timeout time.Duration) ([]byte, bool) {
 	t.Helper()
-	args := []string{
+	args := append([]string{
 		"-m", "2048", "-nographic", "-no-reboot",
 		"-kernel", kernel, "-initrd", initrd,
 		"-net", "nic,model=virtio,macaddr=52:54:00:12:34:56", "-net", "user",
 		"-append", "console=ttyS0 panic=1 net.ifnames=0",
-	}
-	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
+	}, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", args...)
