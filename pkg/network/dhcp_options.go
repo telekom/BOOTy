@@ -24,6 +24,7 @@ import (
 var networkdParams = []layers.DHCPOpt{1, 3, 6, 12, 15, 26, 33, 42, 114, 119, 120, 121}
 
 const (
+	dhcpOptStaticRoutes    layers.DHCPOpt = 33
 	dhcpOptDomainSearch    layers.DHCPOpt = 119
 	dhcpOptClasslessRoutes layers.DHCPOpt = 121
 	// systemdEnterprise is the IANA enterprise number of systemd in its
@@ -77,6 +78,22 @@ type dhcpRoute struct {
 
 // classlessRoutes decodes option 121 (RFC 3442). A malformed option is
 // ignored as a whole, like networkd does.
+// staticRoutes parses option 33 (RFC 2132 5.8): pairs of a destination,
+// with its classful mask, and a router. 0.0.0.0 is not a valid
+// destination; a truncated pair ends the list.
+func staticRoutes(data []byte) []dhcpRoute {
+	var out []dhcpRoute
+	for b := data; len(b) >= 8; b = b[8:] {
+		dst := net.IP(append([]byte(nil), b[:4]...))
+		if dst.IsUnspecified() || dst[0] >= 224 {
+			continue // no classful mask for class D and E
+		}
+		mask := dst.DefaultMask()
+		out = append(out, dhcpRoute{dst: &net.IPNet{IP: dst.Mask(mask), Mask: mask}, gw: net.IP(append([]byte(nil), b[4:8]...))})
+	}
+	return out
+}
+
 func classlessRoutes(data []byte) ([]dhcpRoute, bool) {
 	var out []dhcpRoute
 	for b := data; len(b) > 0; {
@@ -87,8 +104,9 @@ func classlessRoutes(data []byte) ([]dhcpRoute, bool) {
 		}
 		dst := make(net.IP, net.IPv4len)
 		copy(dst, b[1:1+n])
+		mask := net.CIDRMask(width, 32)
 		gw := net.IP(append([]byte(nil), b[1+n:5+n]...))
-		out = append(out, dhcpRoute{dst: &net.IPNet{IP: dst, Mask: net.CIDRMask(width, 32)}, gw: gw})
+		out = append(out, dhcpRoute{dst: &net.IPNet{IP: dst.Mask(mask), Mask: mask}, gw: gw})
 		b = b[5+n:]
 	}
 	return out, len(out) > 0
@@ -114,7 +132,7 @@ func domainSearch(data []byte) []string {
 // dnsName reads the name at off and returns it and the offset after it.
 func dnsName(data []byte, off int) (name string, next int, ok bool) {
 	var labels []string
-	next = -1
+	next, wire := -1, 0
 	for jumps := 0; off < len(data) && jumps < 64; {
 		l := int(data[off])
 		switch {
@@ -134,6 +152,9 @@ func dnsName(data []byte, off int) (name string, next int, ok bool) {
 			jumps++
 		case off+1+l <= len(data):
 			labels = append(labels, string(data[off+1:off+1+l]))
+			if wire += 1 + l; wire > 254 {
+				return "", 0, false // over 255 octets (RFC 1035 2.3.4)
+			}
 			off += 1 + l
 		default:
 			return "", 0, false
@@ -146,22 +167,39 @@ func dnsName(data []byte, off int) (name string, next int, ok bool) {
 // routes of option 121, which replace the router of option 3 (RFC 3442), or
 // a default route through the first router; first a host route to every
 // gateway. All have the lease address as source, metric 100 and proto dhcp.
-func leaseRoutes(link netlink.Link, addr *netlink.Addr, lease *dhclient.Lease) []*netlink.Route {
-	routes := []dhcpRoute{}
+// leaseRouteSet returns the routes of a lease: option 121, or without it
+// option 33 and a default route through the first router that is not
+// 0.0.0.0 (none when all are), like networkd-dhcp4.c.
+func leaseRouteSet(lease *dhclient.Lease) []dhcpRoute {
 	if data, ok := leaseOption(lease, dhcpOptClasslessRoutes); ok {
-		routes, _ = classlessRoutes(data)
+		if routes, ok := classlessRoutes(data); ok {
+			return routes
+		}
 	}
-	if len(routes) == 0 && len(lease.Router) > 0 {
-		routes = []dhcpRoute{{dst: &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)}, gw: lease.Router[0]}}
+	var routes []dhcpRoute
+	if data, ok := leaseOption(lease, dhcpOptStaticRoutes); ok {
+		routes = staticRoutes(data)
 	}
+	if i := slices.IndexFunc(lease.Router, func(r net.IP) bool { return r.To4() != nil && !r.IsUnspecified() }); i >= 0 {
+		routes = append(routes, dhcpRoute{dst: &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)}, gw: lease.Router[i]})
+	}
+	return routes
+}
+
+func leaseRoutes(link netlink.Link, addr *netlink.Addr, lease *dhclient.Lease) []*netlink.Route {
+	routes := leaseRouteSet(lease)
 	route := func(dst *net.IPNet, gw net.IP) *netlink.Route {
 		r := &netlink.Route{LinkIndex: link.Attrs().Index, Src: addr.IP, Priority: dhcpRouteMetric, Protocol: unix.RTPROT_DHCP}
 		if ones, _ := dst.Mask.Size(); ones > 0 {
 			r.Dst = dst
 		}
-		if gw == nil || gw.IsUnspecified() {
+		switch {
+		case dst.IP.IsLoopback() || dst.IP.Equal(addr.IP):
+			// localhost or the lease address: a host route, like networkd.
+			r.Scope, r.Src = netlink.SCOPE_HOST, nil
+		case gw == nil || gw.IsUnspecified():
 			r.Scope = netlink.SCOPE_LINK
-		} else {
+		default:
 			r.Gw = gw
 		}
 		return r
@@ -169,7 +207,8 @@ func leaseRoutes(link netlink.Link, addr *netlink.Addr, lease *dhclient.Lease) [
 	out := make([]*netlink.Route, 0, len(routes))
 	var gws []*netlink.Route
 	for _, r := range routes {
-		if r.gw != nil && !r.gw.IsUnspecified() && !containsGateway(gws, r.gw) {
+		host := r.dst.IP.IsLoopback() || r.dst.IP.Equal(addr.IP)
+		if !host && r.gw != nil && !r.gw.IsUnspecified() && !containsGateway(gws, r.gw) {
 			gws = append(gws, route(&net.IPNet{IP: r.gw, Mask: net.CIDRMask(32, 32)}, nil))
 		}
 		out = append(out, route(r.dst, r.gw))

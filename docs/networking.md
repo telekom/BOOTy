@@ -1105,10 +1105,13 @@ On every lease (also renewals and leases on the other NICs), BOOTy:
 - adds the leased address with the leased mask to the NIC and removes the
   address of the previous lease of that NIC;
 - adds the routes of the lease like networkd with netplan: the classless
-  static routes of option 121, which replace the router of option 3 (RFC
-  3442), or else a default route through the first router; first a host
-  route (scope link) to every gateway. All have the lease address as
-  source, metric 100 and `proto dhcp`. The routes of all NICs stay next to
+  static routes of option 121 (destinations masked to their width), which
+  replace options 3 and 33 (RFC 3442); or else the static routes of option
+  33 (classful masks, RFC 2132) and a default route through the first
+  router that is not 0.0.0.0 (none when all are); first a host route
+  (scope link) to every gateway. A route to localhost or to the lease
+  address is a host route (scope host), like networkd. All have the lease
+  address as source, metric 100 and `proto dhcp`. The routes of all NICs stay next to
   each other; routes of the previous lease that the new one does not have
   are removed;
 - sets the lease MTU (option 26) on the NIC, like networkd with netplan's

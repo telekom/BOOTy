@@ -1371,3 +1371,73 @@ func TestLeaseSearchDomains(t *testing.T) {
 		t.Fatalf("a pointer loop gave %q", got)
 	}
 }
+
+// leaseRoutes cases: null routers (networkd-dhcp4.c), option 33 without
+// 121, masked option 121 destinations, host routes for localhost and the
+// lease address.
+func TestLeaseRoutesTable(t *testing.T) {
+	link := dummyLink("eth0", 1)
+	addr := &netlink.Addr{IPNet: &net.IPNet{IP: net.ParseIP("10.0.2.15").To4(), Mask: net.CIDRMask(24, 32)}}
+	show := func(rs []*netlink.Route) []string {
+		out := make([]string, 0, len(rs))
+		for _, r := range rs {
+			out = append(out, fmt.Sprintf("%s via %v scope %d src %v", routeDst(r), r.Gw, r.Scope, r.Src))
+		}
+		return out
+	}
+	opt := func(typ layers.DHCPOpt, data ...byte) []dhclient.Option {
+		return []dhclient.Option{{Type: typ, Data: data}}
+	}
+	for _, tt := range []struct {
+		name    string
+		routers []string
+		opts    []dhclient.Option
+		want    []string
+	}{
+		{"first router not null", []string{"0.0.0.0", "10.0.2.2"}, nil,
+			[]string{"10.0.2.2/32 via <nil> scope 253 src 10.0.2.15", "default via 10.0.2.2 scope 0 src 10.0.2.15"}},
+		{"all routers null", []string{"0.0.0.0"}, nil, nil},
+		{"option 33 and router", []string{"10.0.2.2"}, opt(dhcpOptStaticRoutes, 10, 30, 1, 0, 10, 0, 2, 5, 0, 0, 0, 0, 10, 0, 2, 6, 224, 0, 0, 1, 10, 0, 2, 7),
+			[]string{"10.0.2.5/32 via <nil> scope 253 src 10.0.2.15", "10.0.2.2/32 via <nil> scope 253 src 10.0.2.15",
+				"10.0.0.0/8 via 10.0.2.5 scope 0 src 10.0.2.15", "default via 10.0.2.2 scope 0 src 10.0.2.15"}},
+		{"option 121 masked, host routes", []string{"10.0.2.99"}, append(opt(dhcpOptStaticRoutes, 10, 30, 1, 0, 10, 0, 2, 5),
+			opt(dhcpOptClasslessRoutes, 12, 10, 47, 10, 0, 2, 2, 32, 127, 0, 0, 1, 0, 0, 0, 0, 32, 10, 0, 2, 15, 10, 0, 2, 2)...),
+			[]string{"10.0.2.2/32 via <nil> scope 253 src 10.0.2.15", "10.32.0.0/12 via 10.0.2.2 scope 0 src 10.0.2.15",
+				"127.0.0.1/32 via <nil> scope 254 src <nil>", "10.0.2.15/32 via <nil> scope 254 src <nil>"}},
+	} {
+		l := lease24("10.0.2.15", tt.routers...)
+		l.OtherOptions = tt.opts
+		if got := show(leaseRoutes(link, addr, l)); !slices.Equal(got, tt.want) {
+			t.Errorf("%s: routes =\n%q\nwant\n%q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func FuzzClasslessRoutes(f *testing.F) {
+	f.Add([]byte{0, 10, 0, 2, 1, 16, 10, 20, 10, 0, 2, 2})
+	f.Add([]byte{33, 1, 2, 3, 4, 5, 6, 7, 8})
+	f.Add([]byte{24, 10, 0})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		routes, _ := classlessRoutes(data)
+		for _, r := range routes {
+			ones, bits := r.dst.Mask.Size()
+			if bits != 32 || ones > 32 || !r.dst.IP.Equal(r.dst.IP.Mask(r.dst.Mask)) || len(r.gw) != 4 {
+				t.Fatalf("bad route %v via %v", r.dst, r.gw)
+			}
+		}
+		_ = staticRoutes(data)
+	})
+}
+
+func FuzzDomainSearch(f *testing.F) {
+	f.Add([]byte{1, 'a', 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 0, 1, 'b', 0xc0, 2})
+	f.Add([]byte{0xc0, 0})
+	f.Add([]byte{3, 'c', 'o', 'm', 0, 1, 'x', 0xc0, 0, 1, 'y', 0xc0, 5})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		for _, d := range domainSearch(data) {
+			if len(d) > 253 {
+				t.Fatalf("name of %d bytes", len(d))
+			}
+		}
+	})
+}
