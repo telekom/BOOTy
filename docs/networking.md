@@ -1105,12 +1105,16 @@ On every lease (also renewals and leases on the other NICs), BOOTy:
   netplan. The default routes of all NICs stay next to each other. A lease
   without a router removes the default route of its NIC;
 - sets the lease MTU (option 26) on the NIC, like networkd with netplan's
-  `UseMTU=true`; values below 576 are ignored, as in networkd. Teardown
-  restores the MTU from before;
+  `UseMTU=true`, clamped like networkd: at least 576 (1280 when the NIC
+  has IPv6) and at most the largest MTU of the NIC. Teardown restores the
+  MTU from before;
 - writes `/etc/resolv.conf` with the configured resolvers (`dns_resolver`,
   netplan `nameservers`) first and then the DNS servers (option 6) of all
   leases, like systemd-resolved with `UseDNS=yes`, and the lease domains
-  (option 15) as `search` line, as in the legacy ramdisk's resolv.conf. With
+  (option 15) as `search` line, as in the legacy ramdisk's resolv.conf. A
+  lease domain that is not a DNS name (an underscore, for example) is left
+  out; the rest is written. When the last lease ends, its servers leave
+  resolv.conf. With
   `PROVISIONER_FILES_TARGET=ramdisk` and a provisioner `/etc/resolv.conf`,
   that file stays, as in the legacy ramdisk.
 

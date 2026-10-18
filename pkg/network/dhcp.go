@@ -19,6 +19,7 @@ import (
 	"github.com/digineo/go-dhclient"
 	"github.com/google/gopacket/layers"
 	"github.com/vishvananda/netlink"
+	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
 )
 
@@ -127,9 +128,13 @@ type dhcpMTU struct {
 	orig, set int
 }
 
-// dhcpMinMTU is the smallest lease MTU that is used. systemd-networkd
-// ignores option 26 below the minimum DHCP packet size (RFC 2131: 576).
-const dhcpMinMTU = 576
+// dhcpMinMTU is the smallest MTU that a lease sets, the minimum DHCP packet
+// size (RFC 2131: 576); with IPv6 on the NIC it is 1280 (RFC 8200), like
+// systemd-networkd clamps the lease MTU.
+const (
+	dhcpMinMTU     = 576
+	dhcpMinMTUIPv6 = 1280
+)
 
 // dhcpRouteMetric is the metric of DHCP default routes: netplan writes
 // RouteMetric=100 for ethernets, so the routes of all NICs are equal.
@@ -346,6 +351,8 @@ var (
 	dhcpRouteAdd       = netlink.RouteAppend
 	dhcpRouteDel       = netlink.RouteDel
 	dhcpSetMTU         = netlink.LinkSetMTU
+	dhcpLinkMaxMTU     = linkMaxMTU
+	dhcpIPv6Enabled    = ipv6Enabled
 	dhcpWriteResolvers = ConfigureResolvConf
 )
 
@@ -536,23 +543,24 @@ func leaseDNS(lease *dhclient.Lease) []string {
 // applyMTU sets the lease MTU (option 26) on the NIC, like networkd with
 // netplan's UseMTU=true. Teardown restores the MTU from before the first
 // change. The caller holds d.mu.
-func (d *DHCPMode) applyMTU(link netlink.Link, mtu uint16) {
-	if mtu < dhcpMinMTU {
-		return
+func (d *DHCPMode) applyMTU(link netlink.Link, leaseMTU uint16) {
+	if leaseMTU == 0 {
+		return // no option 26
 	}
+	mtu := clampMTU(int(leaseMTU), dhcpLinkMaxMTU(link.Attrs().Index), dhcpIPv6Enabled(link.Attrs().Name))
 	idx := link.Attrs().Index
 	m, ok := d.mtus[idx]
 	if !ok {
 		m = dhcpMTU{link: link, orig: link.Attrs().MTU, set: link.Attrs().MTU}
 	}
-	if m.set == int(mtu) {
+	if m.set == mtu {
 		return
 	}
-	if err := dhcpSetMTU(link, int(mtu)); err != nil {
+	if err := dhcpSetMTU(link, mtu); err != nil {
 		d.log.Warn("failed to set the DHCP MTU", "iface", link.Attrs().Name, "mtu", mtu, "error", err)
 		return
 	}
-	m.set = int(mtu)
+	m.set = mtu
 	if d.mtus == nil {
 		d.mtus = map[int]dhcpMTU{}
 	}
@@ -580,7 +588,10 @@ func (d *DHCPMode) writeResolvers() {
 		}
 	}
 	content := strings.Join(servers, ",") + " search " + strings.Join(search, " ")
-	if len(servers) == 0 || content == d.written {
+	// Nothing to write before the first write without servers (the
+	// provisioner resolv.conf stays); after it, no servers left means the
+	// last lease ended, and its servers must go.
+	if content == d.written || d.written == "" && len(servers) == 0 {
 		return
 	}
 	if err := dhcpWriteResolvers(servers, search); err != nil {
@@ -734,6 +745,48 @@ func (d *DHCPMode) Teardown(_ context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// clampMTU keeps a lease MTU between the minimum (576, 1280 with IPv6) and
+// the largest MTU of the NIC (0: unknown), like networkd.
+func clampMTU(mtu, linkMax int, ipv6 bool) int {
+	mtu = max(mtu, dhcpMinMTU)
+	if ipv6 {
+		mtu = max(mtu, dhcpMinMTUIPv6)
+	}
+	if linkMax > 0 {
+		mtu = min(mtu, linkMax)
+	}
+	return mtu
+}
+
+// linkMaxMTU returns the largest MTU of a link (IFLA_MAX_MTU), 0 when the
+// kernel does not say.
+func linkMaxMTU(index int) int {
+	req := nl.NewNetlinkRequest(unix.RTM_GETLINK, unix.NLM_F_ACK)
+	msg := nl.NewIfInfomsg(unix.AF_UNSPEC)
+	msg.Index = int32(index) //nolint:gosec // an interface index
+	req.AddData(msg)
+	msgs, err := req.Execute(unix.NETLINK_ROUTE, unix.RTM_NEWLINK)
+	if err != nil || len(msgs) == 0 || len(msgs[0]) < unix.SizeofIfInfomsg {
+		return 0
+	}
+	attrs, err := nl.ParseRouteAttr(msgs[0][unix.SizeofIfInfomsg:])
+	if err != nil {
+		return 0
+	}
+	for _, a := range attrs {
+		if a.Attr.Type == unix.IFLA_MAX_MTU && len(a.Value) >= 4 {
+			return int(nl.NativeEndian().Uint32(a.Value))
+		}
+	}
+	return 0
+}
+
+// ipv6Enabled tells whether IPv6 is on for a NIC.
+func ipv6Enabled(name string) bool {
+	b, err := os.ReadFile("/proc/sys/net/ipv6/conf/" + name + "/disable_ipv6")
+	return err == nil && strings.TrimSpace(string(b)) == "0"
 }
 
 // restoreMTUs sets the MTU from before the first lease again.

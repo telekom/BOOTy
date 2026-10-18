@@ -248,10 +248,14 @@ func stubDHCPNetlink(t *testing.T) {
 	t.Helper()
 	origAddr, origAddrDel, origRoute, origRouteDel := dhcpAddrReplace, dhcpAddrDel, dhcpRouteAdd, dhcpRouteDel
 	origMTU, origResolvers := dhcpSetMTU, dhcpWriteResolvers
+	origMax, origV6 := dhcpLinkMaxMTU, dhcpIPv6Enabled
 	t.Cleanup(func() {
 		dhcpAddrReplace, dhcpAddrDel, dhcpRouteAdd, dhcpRouteDel = origAddr, origAddrDel, origRoute, origRouteDel
 		dhcpSetMTU, dhcpWriteResolvers = origMTU, origResolvers
+		dhcpLinkMaxMTU, dhcpIPv6Enabled = origMax, origV6
 	})
+	dhcpLinkMaxMTU = func(int) int { return 0 }
+	dhcpIPv6Enabled = func(string) bool { return false }
 	dhcpSetMTU = func(netlink.Link, int) error { return nil }
 	dhcpWriteResolvers = func([]string, []string) error { t.Fatal("unexpected resolv.conf write"); return nil }
 	dhcpAddrReplace = func(netlink.Link, *netlink.Addr) error { return nil }
@@ -1131,14 +1135,14 @@ func TestOnBoundSetsLeaseMTU(t *testing.T) {
 	bound(l) // renewal: no change
 	small := lease24("10.0.2.15", "10.0.2.2")
 	small.MTU = 500
-	bound(small)
-	if want := []int{9000}; !slices.Equal(mtus, want) {
+	bound(small) // raised to the minimum, 576
+	if want := []int{9000, 576}; !slices.Equal(mtus, want) {
 		t.Fatalf("MTUs set = %v, want %v", mtus, want)
 	}
 	if err := d.Teardown(context.Background()); err != nil {
 		t.Fatalf("Teardown() error = %v", err)
 	}
-	if want := []int{9000, 1500}; !slices.Equal(mtus, want) {
+	if want := []int{9000, 576, 1500}; !slices.Equal(mtus, want) {
 		t.Fatalf("MTUs set = %v, want %v (Teardown restores 1500)", mtus, want)
 	}
 }
@@ -1178,5 +1182,68 @@ func TestEndLeaseDropsDNSAndMTU(t *testing.T) {
 	}
 	if want := []int{9000, 1500}; !slices.Equal(mtus, want) {
 		t.Fatalf("MTUs = %v, want %v", mtus, want)
+	}
+}
+
+func TestClampMTU(t *testing.T) {
+	for _, tt := range []struct {
+		mtu, linkMax int
+		ipv6         bool
+		want         int
+	}{
+		{500, 0, false, 576}, {500, 0, true, 1280}, {9000, 1500, false, 1500},
+		{9000, 0, false, 9000}, {1400, 9216, true, 1400}, {576, 576, true, 576},
+	} {
+		if got := clampMTU(tt.mtu, tt.linkMax, tt.ipv6); got != tt.want {
+			t.Errorf("clampMTU(%d, %d, %v) = %d, want %d", tt.mtu, tt.linkMax, tt.ipv6, got, tt.want)
+		}
+	}
+}
+
+// A lease without option 26, or with the MTU the NIC has, sets nothing, and
+// Teardown restores nothing.
+func TestLeaseMTUUnchangedRestoresNothing(t *testing.T) {
+	stubDHCPNetlink(t)
+	var mtus []int
+	dhcpSetMTU = func(_ netlink.Link, mtu int) error { mtus = append(mtus, mtu); return nil }
+	d := NewDHCPMode()
+	eth0 := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 1, MTU: 1500}}
+	eth1 := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth1", Index: 2, MTU: 1500}}
+	same := lease24("10.0.2.15", "10.0.2.2")
+	same.MTU = 1500
+	d.onBound(eth0, "eth0", make(chan string, 1))(same)
+	d.onBound(eth1, "eth1", make(chan string, 1))(lease24("10.0.3.15", "10.0.3.2"))
+	d.onExpire(eth0, "eth0")(nil)
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(mtus) != 0 {
+		t.Fatalf("MTUs set = %v, want none", mtus)
+	}
+}
+
+// Only IPv4 servers that are not 0.0.0.0 go to resolv.conf.
+func TestLeaseDNSFilter(t *testing.T) {
+	l := lease24("10.0.2.15")
+	l.DNS = []net.IP{net.IPv4zero, net.ParseIP("10.0.2.3"), net.ParseIP("fd00::1")}
+	if got := leaseDNS(l); !slices.Equal(got, []string{"10.0.2.3"}) {
+		t.Fatalf("leaseDNS = %v", got)
+	}
+}
+
+// When the last lease ends, its DNS servers leave resolv.conf.
+func TestEndLeaseRemovesLastDNSServers(t *testing.T) {
+	stubDHCPNetlink(t)
+	var written []string
+	dhcpWriteResolvers = func(servers, _ []string) error { written = append(written, strings.Join(servers, ",")); return nil }
+	d := NewDHCPMode()
+	d.manageDNS = true
+	link := dummyLink("eth0", 1)
+	l := lease24("10.0.2.15", "10.0.2.2")
+	l.DNS = []net.IP{net.ParseIP("10.0.2.3")}
+	d.onBound(link, "eth0", make(chan string, 1))(l)
+	d.onExpire(link, "eth0")(nil)
+	if want := []string{"10.0.2.3", ""}; !slices.Equal(written, want) {
+		t.Fatalf("resolv.conf writes = %q, want %q", written, want)
 	}
 }

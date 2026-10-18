@@ -405,8 +405,9 @@ func ConfigureResolvers(resolvers string) error {
 }
 
 // ConfigureResolvConf writes nameserver lines and, with search domains, a
-// search line, like the stub resolv.conf of systemd-resolved. Nothing is
-// written without servers.
+// search line, like the stub resolv.conf of systemd-resolved. A search
+// domain that is not a DNS name is left out (a lease can carry one). With
+// no servers it writes a resolv.conf without servers.
 func ConfigureResolvConf(servers, search []string) error {
 	lines, err := ResolverLines(strings.Join(servers, ","))
 	if err != nil {
@@ -414,12 +415,14 @@ func ConfigureResolvConf(servers, search []string) error {
 	}
 	var domains []string
 	for _, d := range search {
-		if !validSearchDomain(d) {
-			return fmt.Errorf("invalid DNS search domain %q", d)
+		if validSearchDomain(d) {
+			domains = append(domains, d)
 		}
-		domains = append(domains, d)
 	}
-	if len(lines) > 0 && len(domains) > 0 {
+	if len(lines) == 0 {
+		return writeResolvConf([]string{"# no DNS servers"})
+	}
+	if len(domains) > 0 {
 		lines = append(lines, "search "+strings.Join(domains, " "))
 	}
 	return writeResolvConf(lines)
