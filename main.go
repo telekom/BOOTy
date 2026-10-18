@@ -425,22 +425,14 @@ func requestReboot() error {
 	watchdogHandoff(false)
 	stopLLDPEmit()
 	flushObservability()
-	if err := realmRequestReboot(); err != nil {
-		resumeLLDPEmit() // the host stays up: keep announcing it
-		return err
-	}
-	return nil
+	return realmRequestReboot()
 }
 
 func requestPowerOff() error {
 	watchdogHandoff(true)
 	stopLLDPEmit()
 	flushObservability()
-	if err := realmRequestPowerOff(); err != nil {
-		resumeLLDPEmit()
-		return err
-	}
-	return nil
+	return realmRequestPowerOff()
 }
 
 func shell() {
@@ -740,6 +732,7 @@ func withNetworkStopBeforeHandoff(ops provisionHandoffOps, stopNetwork func(), r
 				mu.Lock()
 				current = restored
 				mu.Unlock()
+				resumeLLDPEmit() // after the network is back: the host stays up
 			}
 			return err
 		}
@@ -1291,10 +1284,14 @@ func setLLDPEmitStop(stop func()) {
 	lldpEmitStop = stop
 }
 
-// waitLLDPEmit waits for the senders, at most lldpStopTimeout. Senders
-// still alive then stay pending, so a restart does not run next to them.
+// waitLLDPEmit waits for the senders, at most lldpStopTimeout. Their done
+// channel is pending from the start of the stop, so a restart, also one
+// during the wait, does not run next to them.
 func waitLLDPEmit(wait func()) {
 	done := make(chan struct{})
+	lldpEmitMu.Lock()
+	lldpEmitPending = done
+	lldpEmitMu.Unlock()
 	go func() {
 		wait()
 		close(done)
@@ -1303,9 +1300,6 @@ func waitLLDPEmit(wait func()) {
 	case <-done:
 	case <-time.After(lldpStopTimeout):
 		slog.Warn("LLDP senders did not stop in time, handing off without waiting", "timeout", lldpStopTimeout)
-		lldpEmitMu.Lock()
-		lldpEmitPending = done
-		lldpEmitMu.Unlock()
 	}
 }
 
