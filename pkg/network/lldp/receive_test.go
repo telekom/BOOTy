@@ -5,10 +5,12 @@ package lldp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -240,4 +242,57 @@ func TestWaitForNeighborsWaitsForEveryCarrier(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"eth1"}) {
 		t.Fatalf("missing = %v, want [eth1] (its carrier came up after 200 ms)", got)
 	}
+}
+
+// ReceiveDetected returns before the NIC detection ends and registers its
+// receiver at once, so NeighborsWithin waits for it. A failed detection is
+// logged.
+func TestReceiveDetectedDoesNotWaitForDetection(t *testing.T) {
+	current.Lock()
+	prev := current.r
+	current.Unlock()
+	t.Cleanup(func() { current.Lock(); current.r = prev; current.Unlock() })
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	log := slog.New(slog.NewTextHandler(&lockedWriter{w: &buf, mu: &mu}, nil))
+	release := make(chan struct{})
+	detected := make(chan struct{})
+	ReceiveDetected(context.Background(), func(context.Context) ([]string, error) {
+		<-release
+		defer close(detected)
+		return nil, errors.New("no NICs")
+	}, log)
+
+	current.Lock()
+	r := current.r
+	current.Unlock()
+	if r == nil || r == prev {
+		t.Fatal("ReceiveDetected did not register its receiver before the detection ended")
+	}
+	close(release)
+	<-detected
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		mu.Lock()
+		logged := strings.Contains(buf.String(), "LLDP receive not started")
+		mu.Unlock()
+		if logged {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("failed detection not logged")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+type lockedWriter struct {
+	w  *bytes.Buffer
+	mu *sync.Mutex
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }

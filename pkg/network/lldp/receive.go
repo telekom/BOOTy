@@ -38,10 +38,35 @@ var current struct {
 // Receive listens for LLDP frames on every interface until ctx ends and
 // logs each new or changed neighbor. Neighbors returns what it learned.
 func Receive(ctx context.Context, ifaces []string, log *slog.Logger) {
+	newReceiver(log).listen(ctx, ifaces)
+}
+
+// ReceiveDetected is Receive on the interfaces that detect returns. The
+// receiver counts as started at once, so NeighborsWithin waits for it,
+// but detect runs in the background: it may wait seconds for the NIC set
+// to settle, and the boot must not wait for a passive receiver.
+func ReceiveDetected(ctx context.Context, detect func(context.Context) ([]string, error), log *slog.Logger) {
+	r := newReceiver(log)
+	go func() {
+		ifaces, err := detect(ctx)
+		if err != nil || len(ifaces) == 0 {
+			log.Warn("LLDP receive not started: no physical NICs", "error", err)
+			return
+		}
+		r.listen(ctx, ifaces)
+	}()
+}
+
+// newReceiver makes the receiver of the process.
+func newReceiver(log *slog.Logger) *receiver {
 	r := &receiver{started: time.Now(), neighbors: map[string]Neighbor{}, expires: map[string]time.Time{}, log: log}
 	current.Lock()
 	current.r = r
 	current.Unlock()
+	return r
+}
+
+func (r *receiver) listen(ctx context.Context, ifaces []string) {
 	// The state file exists from the start and stays fresh without frames,
 	// so "booty lldp status" tells "no neighbor yet" from "not running"
 	// (a file older than 75 s).
