@@ -221,6 +221,17 @@ same resolution:
     FRR connects at once. After a BFD reset BOOTy restored ECMP in 4.0 to
     4.4 s against 2.3 to 2.9 s for FRR; without the delay 2.7 s.
   BOOTy uses the released GoBGP without a fork.
+  GoBGP v4 (native BFD, Extended Message) has two regressions against
+  3.37 that matter for BOOTy, filed upstream before a move to v4:
+  - `ResetPeer` on a peer without a session (for example a BFD reset of
+    a peer that carrier loss stopped) does not apply
+    `IdleHoldTimeAfterReset`, so the peer
+    waits 5 s in Idle instead of 1 s
+    ([osrg/gobgp#3740](https://github.com/osrg/gobgp/issues/3740));
+  - after a connection collision (BOOTy and the leaf connect at the same
+    time), the FSM goes to Idle for 5 s when the peer closes the incoming
+    connection, instead of using its own completed connection
+    ([osrg/gobgp#3741](https://github.com/osrg/gobgp/issues/3741)).
 - `bgp bestpath as-path multipath-relax` (native `network.bgp.multipathRelax`,
   `BGP_MULTIPATH_RELAX`) installs equal-cost paths with different AS paths
   of the same length as one multipath route.
