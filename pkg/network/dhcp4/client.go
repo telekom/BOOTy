@@ -12,6 +12,7 @@ import (
 	"net"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/gopacket/layers"
@@ -48,15 +49,27 @@ type Client struct {
 	stop   chan struct{}
 	done   chan struct{}
 	reboot chan struct{}
-	tr     transport // the open transport of the running exchange
-	lease  *Lease
+	// rebootReq is set by Reboot until the client starts the INIT-REBOOT;
+	// it ends any wait or exchange of the client.
+	rebootReq atomic.Bool
+	tr        transport // the open transport of the running exchange
+	lease     *Lease
 	// lastAddr is the address of the lease that ended last.
 	lastAddr net.IP
 	started  time.Time
 }
 
-// errStopped ends a wait because Stop was called.
-var errStopped = errors.New("stopped")
+// errStopped ends a wait because Stop was called; errReboot because
+// Reboot was called.
+var (
+	errStopped = errors.New("stopped")
+	errReboot  = errors.New("reboot requested")
+)
+
+// interrupted tells whether err ends the current state: Stop or Reboot.
+func interrupted(err error) bool {
+	return errors.Is(err, errStopped) || errors.Is(err, errReboot)
+}
 
 // timeout of the n-th retransmission (0 based), like networkd and RFC 2131
 // section 4.1: 2, 4, 8, 16, 32, then 64 s, each +-1 s.
@@ -113,13 +126,21 @@ func (c *Client) Stop() {
 	}
 }
 
-// Reboot asks the client to confirm its address (INIT-REBOOT), like
-// networkd does when the carrier comes back.
+// Reboot asks the client to confirm its address (INIT-REBOOT) at once,
+// like networkd restarts its client when the carrier comes back: it ends
+// any wait or exchange in progress (a renewal that waits for an answer or
+// after a failed send, the INIT backoff).
 func (c *Client) Reboot() {
+	c.rebootReq.Store(true)
 	select {
 	case c.reboot <- struct{}{}:
 	default:
 	}
+	c.mu.Lock()
+	if c.tr != nil {
+		_ = c.tr.close() // ends a receive in progress
+	}
+	c.mu.Unlock()
 }
 
 func (c *Client) stopped() bool {
@@ -146,6 +167,13 @@ func (c *Client) run() {
 	defer close(c.done)
 	st := stateInit
 	for !c.stopped() {
+		if c.rebootReq.Swap(false) {
+			select {
+			case <-c.reboot:
+			default:
+			}
+			st = stateRebooting
+		}
 		switch st {
 		case stateInit:
 			st = c.initState()
@@ -166,10 +194,20 @@ func (c *Client) initState() state {
 	c.started = c.now()
 	xid := rand.Uint32() //nolint:gosec // a transaction ID
 	for n := 0; ; n++ {
+		// A lease kept after failed INIT-REBOOTs (the carrier came back but
+		// the server does not answer) still ends at its expiry.
+		timeout := c.timeout(n)
+		if left, ok := c.leaseLeft(); ok {
+			if left <= 0 {
+				c.expire()
+			} else {
+				timeout = min(timeout, left)
+			}
+		}
 		r, err := c.exchange(func(tr transport, m *message) error { return tr.broadcast(nil, m) },
-			c.discover(xid), c.timeout(n), nil, layers.DHCPMsgTypeOffer, layers.DHCPMsgTypeAck)
+			c.discover(xid), timeout, nil, layers.DHCPMsgTypeOffer, layers.DHCPMsgTypeAck)
 		switch {
-		case errors.Is(err, errStopped):
+		case interrupted(err):
 			return stateInit
 		case err != nil:
 			continue
@@ -188,7 +226,7 @@ func (c *Client) selecting(xid uint32, offer *Lease) state {
 		r, err := c.exchange(func(tr transport, m *message) error { return tr.broadcast(nil, m) },
 			c.request(xid, nil, offer.ServerID, offer.FixedAddress), c.timeout(n), offer.ServerID, layers.DHCPMsgTypeAck, layers.DHCPMsgTypeNak)
 		switch {
-		case errors.Is(err, errStopped):
+		case interrupted(err):
 			return stateInit
 		case err != nil:
 			continue
@@ -218,7 +256,7 @@ func (c *Client) rebootState() state {
 		r, err := c.exchange(func(tr transport, m *message) error { return tr.broadcast(nil, m) },
 			c.request(xid, nil, nil, last.FixedAddress), c.timeout(n), last.ServerID, layers.DHCPMsgTypeAck, layers.DHCPMsgTypeNak)
 		switch {
-		case errors.Is(err, errStopped):
+		case interrupted(err):
 			return stateInit
 		case err != nil:
 			continue
@@ -293,7 +331,7 @@ func (c *Client) extend(next state, until func(*Lease) time.Time, send func(tran
 		r, err := c.exchange(func(tr transport, m *message) error { return send(tr, m, l) },
 			c.request(xid, l.FixedAddress, nil, nil), wait, l.ServerID, layers.DHCPMsgTypeAck, layers.DHCPMsgTypeNak)
 		switch {
-		case errors.Is(err, errStopped):
+		case interrupted(err):
 			return stateBound
 		case err != nil:
 			continue
@@ -316,6 +354,18 @@ func (c *Client) bind(l *Lease) state {
 		c.OnBound(l)
 	}
 	return stateBound
+}
+
+// leaseLeft returns the time to the expiry of the lease the client keeps;
+// ok is false without a lease or for a lease without an end.
+func (c *Client) leaseLeft() (time.Duration, bool) {
+	c.mu.Lock()
+	l := c.lease
+	c.mu.Unlock()
+	if l == nil || l.Expire.IsZero() {
+		return 0, false
+	}
+	return l.Expire.Sub(c.now()), true
 }
 
 // expire ends the lease and starts over in INIT.
@@ -360,6 +410,9 @@ func (c *Client) exchange(send func(transport, *message) error, m *message, time
 		if c.stopped() {
 			return reply{}, errStopped
 		}
+		if c.rebootReq.Load() {
+			return reply{}, errReboot
+		}
 		if err != nil {
 			if errors.Is(err, errTimeout) {
 				return reply{}, errTimeout
@@ -389,9 +442,14 @@ func (c *Client) wanted(r *reply, m *message, server net.IP, types []layers.DHCP
 
 // pause waits d after a transport error, so a failing socket does not spin.
 func (c *Client) pause(d time.Duration) error {
+	if c.rebootReq.Load() {
+		return errReboot
+	}
 	select {
 	case <-c.stop:
 		return errStopped
+	case <-c.reboot:
+		return errReboot
 	case <-c.after(d):
 		return errTimeout
 	}
