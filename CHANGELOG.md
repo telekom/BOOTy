@@ -374,9 +374,10 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - Standby picks up commands faster (#716): the command poll is a long poll
   (`GET COMMANDS_URL?wait=20`; CAPRF holds it until a command is queued, at
   most 25 s), the next poll starts 10 s after the start of the previous one
-  (also after a failed poll, at once when the poll took longer), and 1 s after
-  a poll that returned commands. Heartbeats run in their own goroutine, so a
-  long poll does not delay them. The disk settle wait is skipped when the set
+  (also after a failed poll, at once when the poll took longer), and after a
+  poll that returned commands after 1 s or the rest of the 10 s, whichever is
+  shorter. Heartbeats run in their own goroutine, so a long poll does not
+  delay them; they pause while a command runs. The disk settle wait is skipped when the set
   of block devices did not change since the last settle in the same boot, the
   2 s pause before the handoff (kexec, reboot, power off) is removed, and the
   standby start logs `memTotalMiB` and `memAvailableMiB`.

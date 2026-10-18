@@ -156,7 +156,7 @@ paths are the ones of the CAPRF agent endpoints
 | Method and path | BOOTy variable | Request | Response |
 |-----------------|----------------|---------|----------|
 | `POST /agent/heartbeat` | `HEARTBEAT_URL` | `text/plain` body `heartbeat` | `2xx`. BOOTy logs a failure and sends the next heartbeat 30 seconds later. |
-| `GET /agent/commands` | `COMMANDS_URL` with `?wait=20` added | No body | A long poll: the server may hold the request until a command is queued or the wait ends. `204`: no command. `200`: a JSON array of commands, at most 1 MiB. Other codes count as a failed poll; BOOTy logs it. The next poll starts 10 seconds after the start of the previous one (at once when the poll took longer, also after a failed poll), and 1 second after a poll that returned commands. |
+| `GET /agent/commands` | `COMMANDS_URL` with `?wait=20` added | No body | A long poll: the server may hold the request until a command is queued or the wait ends. `204`: no command. `200`: a JSON array of commands, at most 1 MiB. Other codes count as a failed poll; BOOTy logs it. The next poll starts 10 seconds after the start of the previous one (at once when the poll took longer, also after a failed poll), and after a poll that returned commands, after 1 second or the rest of the 10 seconds, whichever is shorter. |
 | `POST /agent/commands/ack` | `COMMANDS_URL` + `/ack` | JSON `{"id": "...", "status": "completed" or "failed", "message": "..."}` | `2xx`. BOOTy logs a failed ACK and does not send it again. |
 
 Rules:
@@ -171,8 +171,9 @@ Rules:
   command once and sends one ACK for it.
 - `payload` is optional. It is base64 in JSON, like a Go `[]byte`. The
   decoded payload has lines in the [vars file format](configuration.md#vars-file-format).
-- BOOTy sends no heartbeat while a `provision` or `deprovision` command
-  runs. CAPRF must not mark the agent unhealthy before the command ACK.
+- Heartbeats pause while a command runs; a heartbeat that already started
+  may still arrive. CAPRF must not mark the agent unhealthy before the
+  command ACK.
 
 At start, standby sends `standby` to `INIT_URL`, one heartbeat and one
 command poll. If one of them fails, the run fails. Then it loops. The

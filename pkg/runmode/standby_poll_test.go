@@ -7,7 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -92,55 +92,138 @@ func TestMemInfoMiB(t *testing.T) {
 	}
 }
 
-// longPollProvider holds every poll like a CAPRF long poll and records the
-// heartbeat times; the heartbeats come from another goroutine.
-type longPollProvider struct {
+// heartbeatProvider signals every heartbeat on beats and counts them. Its
+// FetchCommands (with hold) holds the first loop poll, like a CAPRF long
+// poll, until it has seen three more heartbeats, then returns a reboot.
+type heartbeatProvider struct {
 	standbyProvider
-	hold time.Duration
-
-	mu         sync.Mutex
-	heartbeats []time.Time
+	beats  chan struct{}
+	count  atomic.Int32
+	hold   bool
+	polls  int
+	failed error
+	// batches are the commands of the polls after the readiness poll.
+	batches [][]config.Command
 }
 
-func (p *longPollProvider) Heartbeat(context.Context) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.heartbeats = append(p.heartbeats, time.Now())
+func newHeartbeatProvider() *heartbeatProvider {
+	return &heartbeatProvider{beats: make(chan struct{}, 1024)}
+}
+
+func (p *heartbeatProvider) Heartbeat(context.Context) error {
+	p.count.Add(1)
+	select {
+	case p.beats <- struct{}{}:
+	default:
+	}
 	return nil
 }
 
-func (p *longPollProvider) FetchCommands(ctx context.Context) ([]config.Command, error) {
-	select {
-	case <-time.After(p.hold):
-	case <-ctx.Done():
+func (p *heartbeatProvider) FetchCommands(ctx context.Context) ([]config.Command, error) {
+	p.polls++
+	if p.polls == 1 { // readiness poll
+		return nil, nil
 	}
-	return nil, nil
+	if p.hold {
+		p.failed = p.awaitHeartbeats(ctx, 3)
+		return []config.Command{{ID: "r1", Type: "reboot"}}, nil
+	}
+	if len(p.batches) == 0 {
+		return []config.Command{{ID: "r1", Type: "reboot"}}, nil
+	}
+	b := p.batches[0]
+	p.batches = p.batches[1:]
+	return b, nil
 }
 
-// A long poll must not delay the heartbeats: the poll holds the loop for
-// several heartbeat intervals here.
+// awaitHeartbeats waits for n heartbeats after the call, or fails after a
+// timeout that only a missing heartbeat goroutine reaches.
+func (p *heartbeatProvider) awaitHeartbeats(ctx context.Context, n int) error {
+	for drained := false; !drained; {
+		select {
+		case <-p.beats:
+		default:
+			drained = true
+		}
+	}
+	timeout := time.After(5 * time.Second)
+	for range n {
+		select {
+		case <-p.beats:
+		case <-timeout:
+			return errors.New("no heartbeat while the poll was held")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+// A held poll must not hold the heartbeats.
 func TestStandbyHeartbeatsDoNotWaitForTheLongPoll(t *testing.T) {
 	defer func(h, p time.Duration) { heartbeatInterval, pollInterval = h, p }(heartbeatInterval, pollInterval)
-	heartbeatInterval, pollInterval = 20*time.Millisecond, 0
+	heartbeatInterval, pollInterval = 10*time.Millisecond, 0
 
-	provider := &longPollProvider{hold: 100 * time.Millisecond}
+	provider := newHeartbeatProvider()
+	provider.hold = true
 	mode := &StandbyMode{deps: Deps{Cfg: standbyConfig(), Client: provider}}
-	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := mode.Run(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Run error = %v, want the context deadline", err)
-	}
 
-	provider.mu.Lock()
-	defer provider.mu.Unlock()
-	// The first heartbeat is the readiness heartbeat before the first poll.
-	if n := len(provider.heartbeats); n < 15 {
-		t.Fatalf("heartbeats = %d in 600 ms with a 20 ms interval, want at least 15", n)
+	var reboot *RebootRequestedError
+	if err := mode.Run(ctx); !errors.As(err, &reboot) {
+		t.Fatalf("Run error = %v, want the reboot command", err)
 	}
-	for i := 2; i < len(provider.heartbeats); i++ {
-		if gap := provider.heartbeats[i].Sub(provider.heartbeats[i-1]); gap > 80*time.Millisecond {
-			t.Fatalf("heartbeat gap %v, want about the 20 ms interval, not the 100 ms poll", gap)
-		}
+	if provider.failed != nil {
+		t.Fatal(provider.failed)
+	}
+}
+
+// slowDeprovisioner blocks until the test lets it end.
+type slowDeprovisioner struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (d *slowDeprovisioner) Deprovision(context.Context) error {
+	close(d.started)
+	<-d.release
+	return nil
+}
+
+// Heartbeats pause while a command runs; one already started may still
+// arrive.
+func TestStandbyPausesHeartbeatsWhileACommandRuns(t *testing.T) {
+	defer func(h, p time.Duration) { heartbeatInterval, pollInterval = h, p }(heartbeatInterval, pollInterval)
+	heartbeatInterval, pollInterval = 5*time.Millisecond, 0
+
+	cfg := standbyConfig()
+	cfg.Agent.DeprovisionSuccessAction = config.AgentDeprovisionStandby
+	provider := newHeartbeatProvider()
+	provider.batches = [][]config.Command{{{ID: "d1", Type: "deprovision"}}}
+	deprov := &slowDeprovisioner{started: make(chan struct{}), release: make(chan struct{})}
+	mode := &StandbyMode{
+		deps:             Deps{Cfg: cfg, Client: provider},
+		newDeprovisioner: func(*config.MachineConfig) standbyDeprovisioner { return deprov },
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- mode.Run(ctx) }()
+	<-deprov.started
+	before := provider.count.Load()
+	// Sixty heartbeat intervals.
+	time.Sleep(300 * time.Millisecond)
+	during := provider.count.Load() - before
+	close(deprov.release)
+
+	var reboot *RebootRequestedError
+	if err := <-done; !errors.As(err, &reboot) {
+		t.Fatalf("Run error = %v, want the reboot command after the deprovision", err)
+	}
+	if during > 1 {
+		t.Fatalf("%d heartbeats while the command ran, want at most the one already started", during)
 	}
 }
 
