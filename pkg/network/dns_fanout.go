@@ -10,15 +10,20 @@ import (
 )
 
 // dnsFanout makes the DNS lookups of the process send every UDP query to
-// all DNS servers at once and take the first answer, like
-// systemd-resolved in the legacy ramdisk queries the servers of every link
-// (the lease DNS servers of each NIC, plus the global ones). The Go
+// one DNS server per link at once and take the first answer, like
+// systemd-resolved in the legacy ramdisk queries the current server of
+// every link. The Go
 // resolver alone asks the first resolv.conf server and the next only when
 // it fails. DHCP mode sets the servers whenever it writes resolv.conf.
 var dnsFanout fanout
 
 // dnsPort is the server port; tests change it.
 var dnsPort = "53"
+
+// fanoutLinger keeps the sockets of a lookup open after the first answer,
+// so the answers of the other servers find a socket (no ICMP port
+// unreachable); systemd-resolved keeps its transactions open as well.
+var fanoutLinger = 2 * time.Second
 
 type fanout struct {
 	mu      sync.Mutex
@@ -126,11 +131,13 @@ func (c *fanoutConn) ReadFrom(b []byte) (int, net.Addr, error) {
 func (c *fanoutConn) WriteTo(b []byte, _ net.Addr) (int, error) { return c.Write(b) }
 
 func (c *fanoutConn) Close() error {
-	errs := make([]error, 0, len(c.conns))
-	for _, conn := range c.conns {
-		errs = append(errs, conn.Close())
-	}
-	return errors.Join(errs...)
+	_ = c.SetReadDeadline(time.Now().Add(fanoutLinger))
+	time.AfterFunc(fanoutLinger, func() {
+		for _, conn := range c.conns {
+			_ = conn.Close()
+		}
+	})
+	return nil
 }
 
 func (c *fanoutConn) LocalAddr() net.Addr  { return c.conns[0].LocalAddr() }
