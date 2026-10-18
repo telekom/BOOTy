@@ -279,7 +279,7 @@ func TestQCOW2ToRawMatchesQemuImg(t *testing.T) {
 			q := filepath.Join(t.TempDir(), "img.qcow2")
 			args := append([]string{"convert", "-f", "raw", "-O", "qcow2"}, tt.args...)
 			if out, err := exec.CommandContext(t.Context(), qemuImg, append(args, raw, q)...).CombinedOutput(); err != nil {
-				t.Skipf("qemu-img %v: %v: %s", tt.args, err, out)
+				t.Fatalf("qemu-img %v: %v: %s", tt.args, err, out)
 			}
 			img, err := os.ReadFile(q)
 			if err != nil {
