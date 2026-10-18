@@ -250,15 +250,18 @@ files are files, not vars.
   validates `deploy/vars`: a line that is not `KEY=VALUE` or a value that
   does not parse or validate fails the command, and the error names keys,
   never values. An unknown key is logged and ignored, like in the vars of
-  an ISO. The three directories replace the ones in `/deploy` only after
-  every check of the command passed, right before the command runs; a
-  command that is rejected leaves `/deploy` unchanged. A directory that the
+  an ISO; vars without any known key fail the command. The three
+  directories replace the ones in `/deploy` only after every check of the
+  command passed, right before the command runs. A command that is
+  rejected leaves `/deploy` unchanged, and its staged files are dropped:
+  they never reach a later command. A directory that the
   archive does not have is removed, so no file of the previous job stays.
   `/deploy/vars` itself is not changed.
 - With `PROVISIONER_FILES_TARGET=ramdisk` (a `CAPRF_LEGACY_COMPAT` preset)
-  a `provision` command copies the new `deploy/file-system` into the
-  running ramdisk, as the boot does for `/deploy/file-system`. Settings
-  that the ramdisk already uses (the network) do not change.
+  the command copies the new `deploy/file-system` into the running ramdisk
+  right after the swap, before it runs, so a CA bundle or `/etc/hosts` is
+  in place for the image download. `etc/frr` and `etc/netplan` are left
+  out: the network of the agent keeps the settings of the boot.
 - The settings that the running ramdisk uses keep their values from
   `/deploy/vars`, as for a vars payload: transport (the agent token),
   agent, network, `MODE`, `DRY_RUN`, `CAPRF_LEGACY_COMPAT` and the URLs that

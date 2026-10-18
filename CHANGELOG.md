@@ -412,8 +412,11 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   (no setuid, setgid or sticky), ignores unknown vars keys like the ISO, and
   keeps the agent token, network and `CAPRF_LEGACY_COMPAT` of the running
   ramdisk. With `PROVISIONER_FILES_TARGET=ramdisk` the new provisioner files
-  go into the ramdisk. Symlinks, hard links, paths outside `deploy/` and
-  oversized archives fail the command.
+  go into the ramdisk before the command runs, without `etc/frr` and
+  `etc/netplan`. Symlinks, hard links, paths outside `deploy/`, `..`
+  anywhere in an entry name (also `a..b`), vars without a known key and
+  oversized archives fail the command; a failed command drops its staged
+  files.
 - Standby picks up commands faster (#716): the command poll is a long poll
   (`GET COMMANDS_URL?wait=20`; CAPRF holds it until a command is queued, at
   most 25 s), the next poll starts 10 s after the start of the previous one

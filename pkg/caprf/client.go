@@ -93,6 +93,8 @@ func (c *Client) CommandConfig(payload []byte) (cfg *config.MachineConfig, keys 
 	if c.vars == nil {
 		return nil, nil, fmt.Errorf("command payloads need a client created from a vars file")
 	}
+	// The staged archive of an earlier command never applies to this one.
+	c.DiscardCommandFiles()
 	if isDeployArchive(payload) {
 		return c.stageDeployArchive(payload)
 	}

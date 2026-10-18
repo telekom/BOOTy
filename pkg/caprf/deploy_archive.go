@@ -66,7 +66,6 @@ var errArchiveVars = errors.New("deploy archive vars do not parse or validate")
 // CAPRF_LEGACY_COMPAT and the bearer-token URLs) keep the values of the base
 // vars: the agent keeps its token and network.
 func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, keys []string, err error) {
-	c.DiscardCommandFiles()
 	ref, err := ParseVars(bytes.NewReader(c.vars))
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse base vars: %w", err)
@@ -89,6 +88,11 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 	if err != nil {
 		return nil, nil, err
 	}
+	if len(keys) == 0 {
+		// Standby would run such a command with the base config, and the
+		// files of the archive would not match it.
+		return nil, nil, errors.New("deploy archive vars have no known key")
+	}
 	c.stagedDeploy = staging
 	cfg.Transport, cfg.Agent, cfg.Network = ref.Transport, ref.Agent, ref.Network
 	cfg.Mode, cfg.DryRun, cfg.LegacyCompat = ref.Mode, ref.DryRun, ref.LegacyCompat
@@ -101,16 +105,20 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 	return cfg, keys, nil
 }
 
-// ApplyCommandFiles swaps the staged per-job directories of the last deploy
-// archive into /deploy. Without a staged archive it does nothing.
-func (c *Client) ApplyCommandFiles() error {
+// ApplyCommandFiles swaps the staged per-job directories of the deploy
+// archive of the current command into /deploy and reports whether there
+// was one.
+func (c *Client) ApplyCommandFiles() (bool, error) {
 	if c.stagedDeploy == "" {
-		return nil
+		return false, nil
 	}
 	staging := c.stagedDeploy
 	c.stagedDeploy = ""
 	defer os.RemoveAll(staging) //nolint:errcheck // best-effort cleanup of the staging tree
-	return swapDeployDirs(filepath.Join(staging, "deploy"), deployRoot, filepath.Join(staging, "old"))
+	if err := swapDeployDirs(filepath.Join(staging, "deploy"), deployRoot, filepath.Join(staging, "old")); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // DiscardCommandFiles drops the staged directories of a deploy archive whose

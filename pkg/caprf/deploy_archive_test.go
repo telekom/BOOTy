@@ -65,7 +65,8 @@ func applyArchive(c *Client, payload []byte) (*config.MachineConfig, []string, e
 	if err != nil {
 		return nil, nil, err
 	}
-	return cfg, keys, c.ApplyCommandFiles()
+	_, err = c.ApplyCommandFiles()
+	return cfg, keys, err
 }
 
 // validVars is a deploy/vars that passes, so in the unsafe-entry tests only
@@ -309,11 +310,53 @@ func TestDeployArchiveAppliesOnlyAfterTheChecks(t *testing.T) {
 	if _, err := os.Stat(staging); !os.IsNotExist(err) {
 		t.Fatalf("staging directory left after the discard (%v)", err)
 	}
-	if err := c.ApplyCommandFiles(); err != nil {
-		t.Fatal(err)
+	if applied, err := c.ApplyCommandFiles(); err != nil || applied {
+		t.Fatalf("apply after the discard: %t, %v", applied, err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "machine-files/new")); !os.IsNotExist(err) {
 		t.Fatalf("a discarded archive was applied (%v)", err)
+	}
+}
+
+// The archive of a command that did not run never applies to the next
+// command: a vars payload gets no files.
+func TestDeployArchiveNotAppliedToTheNextCommand(t *testing.T) {
+	root := useDeployRoot(t)
+	c := &Client{vars: []byte(baseAgentVars)}
+	if _, _, err := c.CommandConfig(deployArchive(t, validVars, archiveEntry{name: "deploy/machine-files/new", body: "job A"})); err != nil {
+		t.Fatal(err)
+	}
+	staging := c.stagedDeploy
+	if _, _, err := c.CommandConfig([]byte("HOSTNAME=job-b\n")); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := c.ApplyCommandFiles(); err != nil || applied {
+		t.Fatalf("apply for the vars payload: %t, %v; want nothing", applied, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "machine-files/new")); !os.IsNotExist(err) {
+		t.Fatalf("the files of job A reached job B (%v)", err)
+	}
+	if _, err := os.Stat(staging); !os.IsNotExist(err) {
+		t.Fatalf("staging directory of job A left (%v)", err)
+	}
+}
+
+// An archive whose vars have no known key is rejected: standby would run
+// the command with the base config and the files of another job.
+func TestDeployArchiveWithoutKnownVarsIsRejected(t *testing.T) {
+	root := useDeployRoot(t)
+	c := &Client{vars: []byte(baseAgentVars)}
+	_, _, err := c.CommandConfig(deployArchive(t,
+		archiveEntry{name: "deploy/vars", body: "# only a comment\nNOT_A_BOOTY_KEY=v\n"},
+		archiveEntry{name: "deploy/machine-files/new", body: "x"}))
+	if err == nil || !strings.Contains(err.Error(), "no known key") {
+		t.Fatalf("err = %v, want no known key", err)
+	}
+	if c.stagedDeploy != "" {
+		t.Fatal("rejected archive left staged")
+	}
+	if _, err := os.Stat(filepath.Join(root, "machine-files/new")); !os.IsNotExist(err) {
+		t.Fatalf("rejected archive applied (%v)", err)
 	}
 }
 
