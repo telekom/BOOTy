@@ -59,8 +59,8 @@ var (
 	dhcpLinkByName  = netlink.LinkByName
 	dhcpLinkSetUp   = netlink.LinkSetUp
 	dhcpPrepareLink = promoteSecondaries
-	dhcpNewClient   = func(iface *net.Interface, hostname string, onBound dhclient.Callback) dhcpClient {
-		return newDHCPClient(iface, hostname, onBound)
+	dhcpNewClient   = func(iface *net.Interface, hostname string, onBound, onExpire dhclient.Callback) dhcpClient {
+		return newDHCPClient(iface, hostname, onBound, onExpire)
 	}
 )
 
@@ -150,7 +150,7 @@ func (d *DHCPMode) startClient(iface *net.Interface, hostname string, leased cha
 		d.log.Warn("Cannot bring up link for DHCP", "interface", iface.Name, "error", err)
 		return
 	}
-	client := dhcpNewClient(iface, hostname, d.onBound(link, iface.Name, leased))
+	client := dhcpNewClient(iface, hostname, d.onBound(link, iface.Name, leased), d.onExpire(link, iface.Name))
 	client.Start()
 	d.mu.Lock()
 	d.clients = append(d.clients, client)
@@ -190,8 +190,8 @@ func (d *DHCPMode) stopClients() {
 // (subnet mask, router, DNS, MTU and more) and sends the hostname.
 // dhclient only adds the parameter request list when no option is set, so
 // adding the hostname alone would drop it.
-func newDHCPClient(iface *net.Interface, hostname string, onBound dhclient.Callback) *dhclient.Client {
-	client := &dhclient.Client{Iface: iface, OnBound: onBound}
+func newDHCPClient(iface *net.Interface, hostname string, onBound, onExpire dhclient.Callback) *dhclient.Client {
+	client := &dhclient.Client{Iface: iface, OnBound: onBound, OnExpire: onExpire}
 	for _, param := range dhclient.DefaultParamsRequestList {
 		client.AddParamRequest(param)
 	}
@@ -258,6 +258,37 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- strin
 		case leased <- ifName:
 		default:
 		}
+	}
+}
+
+// onExpire returns the callback for the end of a lease of one NIC: it
+// expired before a renewal or a rebind succeeded, or the server sent a
+// DHCPNAK (go-dhclient calls OnExpire for both). RFC 2131 sections 4.4.5
+// and 3.2 say the client then stops using the address and starts over in
+// INIT, so the address and default route of the lease go. The client keeps
+// running; its next lease is applied like any other.
+func (d *DHCPMode) onExpire(link netlink.Link, ifName string) func(*dhclient.Lease) {
+	return func(*dhclient.Lease) {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		a, ok := d.nics[link.Attrs().Index]
+		if !ok {
+			return
+		}
+		delete(d.nics, link.Attrs().Index)
+		d.publishNTP() // its NTP servers go with the lease
+		if a.route != nil {
+			if err := dhcpRouteDel(a.route); err != nil && !errors.Is(err, syscall.ESRCH) {
+				d.log.Warn("failed to remove the default route of an ended DHCP lease", "iface", ifName, "error", err)
+				d.stale = append(d.stale, dhcpApplied{link: link, route: a.route})
+			}
+		}
+		if err := dhcpAddrDel(link, a.addr); err != nil && !errors.Is(err, syscall.EADDRNOTAVAIL) {
+			d.log.Warn("failed to remove the address of an ended DHCP lease", "iface", ifName, "error", err)
+			d.stale = append(d.stale, dhcpApplied{link: link, addr: a.addr})
+		}
+		d.log.Warn("DHCP lease ended (expired or refused), address removed until a new lease", "iface", ifName,
+			"addr", a.addr.IPNet.String())
 	}
 }
 
