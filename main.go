@@ -124,7 +124,10 @@ func main() {
 	// their settle time from here, while the network comes up.
 	disk.StartBlockWatch(ctx, "/sys", 250*time.Millisecond)
 
-	slog.Info("starting BOOTy", "version", Version, "build", Build)
+	// uptime is the seconds since the kernel started: the console has no
+	// kernel banner at loglevel=4, so it marks the kernel start.
+	slog.Info("starting BOOTy", "version", Version, "build", Build, "uptime", uptimeSeconds())
+	logSecureBootState(readKernelLogFn())
 	ux.Captain()
 	ux.SysInfo()
 
@@ -570,6 +573,9 @@ func runCAPRF(ctx context.Context) {
 		caprfRemoteLogHandler = caprf.NewRemoteHandler(client, remoteInner, slog.LevelInfo, 8192)
 		defer flushObservability()
 		slog.SetDefault(slog.New(caprfRemoteLogHandler))
+		// The console shows only kernel errors (loglevel=4); the server
+		// gets the whole kernel log once, as one record.
+		caprfRemoteLogHandler.ShipRemoteOnly(slog.LevelInfo, "kernel log\n"+readKernelLogFn())
 	}
 
 	slog.Info("CAPRF mode active",

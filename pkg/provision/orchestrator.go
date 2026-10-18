@@ -3499,8 +3499,9 @@ func DumpDebugState(failedStep string) {
 		{"pvs", "pvs"},
 		{"lvs", "lvs"},
 
-		// Kernel messages.
-		{"dmesg tail", "dmesg | tail -100"},
+		// Kernel messages: all of them, the console shows only errors
+		// (loglevel=4).
+		{"dmesg", "dmesg"},
 
 		// Network interfaces & routes (IPv4 + IPv6).
 		{"network interfaces", "ip -br addr"},
