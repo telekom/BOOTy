@@ -82,3 +82,24 @@ func TestIsLinksMode(t *testing.T) {
 		t.Error("links mode without NETWORK_MODE=links")
 	}
 }
+
+// A sysctl that cannot be set fails the setup before any NIC goes up; a
+// NIC without an IPv6 configuration (IPv6 off) needs no sysctl.
+func TestLinksModeSysctlFailure(t *testing.T) {
+	procSys, up := fakeLinks(t, []string{"eth0"}, nil)
+	if err := os.Remove(filepath.Join(procSys, "eth0", "autoconf")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(procSys, "eth0", "autoconf"), 0o755); err != nil { // write fails
+		t.Fatal(err)
+	}
+	if err := (&LinksMode{}).Setup(context.Background(), &Config{}); err == nil || len(*up) != 0 {
+		t.Fatalf("Setup = %v, NICs up %v; want an error and none up", err, *up)
+	}
+
+	_, up = fakeLinks(t, []string{"eth1"}, nil)
+	linksDetect = func(context.Context) ([]string, error) { return []string{"eth1", "noipv6"}, nil }
+	if err := (&LinksMode{}).Setup(context.Background(), &Config{}); err != nil || !reflect.DeepEqual(*up, []string{"eth1", "noipv6"}) {
+		t.Fatalf("NIC without IPv6: %v, up %v", err, *up)
+	}
+}

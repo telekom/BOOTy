@@ -965,13 +965,17 @@ retry.
 `NETWORK_MODE=links` (YAML `network.mode: links`) is for checks that only
 need the link layer, such as the LLDP cable check. It is never selected
 automatically. It sets every physical NIC up with its IPv6 link-local
-address only: BOOTy writes `accept_ra=0` and `autoconf=0` first, so no
-router advertisement adds an address or a route. It runs no DHCP, adds no
-address or route and starts no BGP. A DHCP client would hang on fabric
+address only: BOOTy writes `accept_ra=0` and `autoconf=0` first and reads
+them back, so no router advertisement adds an address or a route; a failed
+write fails the setup (a NIC with IPv6 off needs none). It runs no DHCP,
+adds no address or route and starts no BGP. A DHCP client would hang on fabric
 ports, which have no DHCP server. Links mode does not wait for
 connectivity (it logs that there is no routed network), so the CAPRF status
-and report URLs are not reachable in this mode. The vars and netplan
-network keys (BGP, static, EVPN) are ignored. `TestLinksModeLLDPQEMU`
+and report URLs are not reachable in this mode. BOOTy still parses and
+validates the netplan files and `frr.conf` (a strict parse error fails),
+applies the netplan `set-name` renames, the predictable NIC names and the
+bonds and VLANs, and parses `VLANS`. It does not use the addressing keys:
+BGP, static addresses, EVPN and DHCP. `TestLinksModeLLDPQEMU`
 checks that the NICs send no IPv4 or ARP frame and no IPv6 frame from a
 non link-local address.
 
