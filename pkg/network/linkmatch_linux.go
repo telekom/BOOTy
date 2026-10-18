@@ -124,6 +124,27 @@ func renameLink(from, to string) error {
 	return nil
 }
 
+// ResolveLinkMatches returns every physical NIC that one of the matches
+// selects, each once.
+func ResolveLinkMatches(ctx context.Context, matches []LinkMatch) ([]string, error) {
+	if len(matches) == 0 {
+		return nil, nil
+	}
+	links, err := physicalLinks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, m := range matches {
+		for _, n := range m.Matches(links) {
+			if !slices.Contains(names, n) {
+				names = append(names, n)
+			}
+		}
+	}
+	return names, nil
+}
+
 // ResolveLinkMatch returns the single physical NIC that m selects.
 func ResolveLinkMatch(ctx context.Context, m LinkMatch) (string, error) {
 	links, err := physicalLinks(ctx)

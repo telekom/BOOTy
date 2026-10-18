@@ -314,6 +314,7 @@
     "ens1f0np0",
     "ens1f1np1"
   ],
+  "EmitLLDPMatches": null,
   "IPForwarding": false,
   "IPv6Forwarding": null,
   "VLANs": null

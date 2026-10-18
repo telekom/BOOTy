@@ -602,7 +602,10 @@ per boot, kept in `/run/booty/machine-id`; it never uses or writes
 `/etc/machine-id`, so no ID is shared by hosts or written into the
 provisioned OS), port ID the interface name, TTL 120 s, system name the
 hostname, and the capabilities station, bridge and router (station
-enabled). With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
+enabled). An `emit-lldp: true` on a netplan match block without
+`set-name` (the legacy L2 netplan has `all-en` with `name: "en*"`) sends
+on every NIC the block selects. BOOTy sends in every network mode, like
+networkd, which sends whatever the addressing (DHCP, static, FRR). With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
 physical NIC, logs each new or changed neighbor and adds the current
 neighbors to the hardware inventory report; the legacy ramdisk only
 sends. The receive joins the LLDP multicast groups (01:80:c2:00:00:0e,

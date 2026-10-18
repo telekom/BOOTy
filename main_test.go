@@ -2419,3 +2419,55 @@ func TestLLDPReceiveStartGated(t *testing.T) {
 		t.Fatal("startLLDPReceive is not called once, behind lldpReceiveEnabled")
 	}
 }
+
+// networkd sends LLDP on emit-lldp NICs in every addressing mode; outside
+// GoBGP mode (whose underlay sends) networkModeWithResolvers starts the
+// sender and the mode's Teardown stops it.
+func TestNetworkModeWithResolversStartsLLDP(t *testing.T) {
+	orig := startLLDPEmit
+	t.Cleanup(func() { startLLDPEmit = orig })
+	var started [][]string
+	stopped := 0
+	startLLDPEmit = func(nics []string) func() {
+		started = append(started, nics)
+		return func() { stopped++ }
+	}
+	mode := teardownRecorderMode{teardown: func() error { return nil }}
+
+	got, err := networkModeWithResolvers(context.Background(), &network.Config{EmitLLDP: []string{"eth0", "eth1"}}, mode, &linkLayerCleanup{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(started) != 1 || strings.Join(started[0], ",") != "eth0,eth1" {
+		t.Fatalf("LLDP started on %v, want eth0,eth1", started)
+	}
+	if err := got.Teardown(context.Background()); err != nil || stopped != 1 {
+		t.Fatalf("Teardown() = %v, LLDP stops = %d, want 1", err, stopped)
+	}
+
+	gobgp := &network.Config{EmitLLDP: []string{"eth0"}, ASN: 65000, UnderlayIP: "192.0.2.1", NetworkMode: "gobgp"}
+	if !gobgp.IsGoBGPMode() {
+		t.Skip("test config is not GoBGP mode")
+	}
+	if _, err := networkModeWithResolvers(context.Background(), gobgp, mode, &linkLayerCleanup{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(started) != 1 {
+		t.Fatalf("LLDP started %d times, want no second sender in GoBGP mode", len(started))
+	}
+}
+
+// A native EMIT_LLDP list replaces the netplan values, also match blocks.
+func TestMergeNetplanConfigEmitLLDPMatches(t *testing.T) {
+	src := &network.Config{EmitLLDPMatches: []network.LinkMatch{{Name: "en*"}}}
+	dst := &network.Config{}
+	mergeNetplanConfig(dst, src)
+	if len(dst.EmitLLDPMatches) != 1 {
+		t.Fatalf("EmitLLDPMatches = %v, want the netplan match", dst.EmitLLDPMatches)
+	}
+	dst = &network.Config{EmitLLDP: []string{"eth3"}}
+	mergeNetplanConfig(dst, src)
+	if len(dst.EmitLLDPMatches) != 0 {
+		t.Fatalf("EmitLLDPMatches = %v, want none with a native list", dst.EmitLLDPMatches)
+	}
+}

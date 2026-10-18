@@ -1312,16 +1312,39 @@ func networkModeWithResolvers(ctx context.Context, netCfg *network.Config, mode 
 		}
 		return nil, fmt.Errorf("configure initramfs DNS: %w", err)
 	}
+	// networkd sends LLDP with "emit-lldp: true" whatever the addressing.
+	// The GoBGP underlay sends itself; the other modes send from here, after
+	// their setup brought the NICs up.
+	if len(netCfg.EmitLLDP) > 0 && !netCfg.IsGoBGPMode() && cleanup != nil {
+		cleanup.stopLLDP = startLLDPEmit(netCfg.EmitLLDP)
+	}
 	return wrapLinkLayerMode(mode, cleanup), nil
 }
 
 // resolveLinkMatch is network.ResolveLinkMatch; tests replace it.
-var resolveLinkMatch = network.ResolveLinkMatch
+var (
+	resolveLinkMatch   = network.ResolveLinkMatch
+	resolveLinkMatches = network.ResolveLinkMatches
+	startLLDPEmit      = func(nics []string) func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		wait := lldp.Emit(ctx, nics, lldp.SystemInfo(), slog.With("component", "lldp"))
+		return func() { cancel(); wait() }
+	}
+)
 
 func prepareLinkLayers(ctx context.Context, netCfg *network.Config) (*linkLayerCleanup, error) {
 	cleanup := &linkLayerCleanup{}
 	if err := network.ApplyLinkRenames(ctx, netCfg.LinkRenames); err != nil {
 		return nil, fmt.Errorf("netplan set-name: %w", err)
+	}
+	if names, err := resolveLinkMatches(ctx, netCfg.EmitLLDPMatches); err != nil {
+		slog.Warn("netplan match blocks with emit-lldp not resolved", "error", err)
+	} else {
+		for _, n := range names {
+			if !slices.Contains(netCfg.EmitLLDP, n) {
+				netCfg.EmitLLDP = append(netCfg.EmitLLDP, n)
+			}
+		}
 	}
 	if netCfg.StaticIface == "" && netCfg.StaticMatch != nil {
 		name, err := resolveLinkMatch(ctx, *netCfg.StaticMatch)
@@ -1377,17 +1400,22 @@ func setupVLANLayers(ctx context.Context, netCfg *network.Config, cleanup *linkL
 }
 
 type linkLayerCleanup struct {
-	bond  network.Mode
-	vlans []network.VLANConfig
+	bond     network.Mode
+	vlans    []network.VLANConfig
+	stopLLDP func()
 }
 
 func (c *linkLayerCleanup) empty() bool {
-	return c == nil || (c.bond == nil && len(c.vlans) == 0)
+	return c == nil || (c.bond == nil && len(c.vlans) == 0 && c.stopLLDP == nil)
 }
 
 func (c *linkLayerCleanup) Teardown(ctx context.Context) error {
 	if c.empty() {
 		return nil
+	}
+	if c.stopLLDP != nil {
+		c.stopLLDP()
+		c.stopLLDP = nil
 	}
 	var errs []error
 	for i := len(c.vlans) - 1; i >= 0; i-- {
@@ -1592,6 +1620,9 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	mergeBGPPolicy(dst, src)
 	mergeOverlayDevices(&dst.OverlayDevices, &src.OverlayDevices)
 	nativeList("network.noAcceptRA", &dst.NoAcceptRA, src.NoAcceptRA)
+	if len(dst.EmitLLDP) == 0 {
+		dst.EmitLLDPMatches = src.EmitLLDPMatches
+	}
 	nativeList("network.emitLLDP", &dst.EmitLLDP, src.EmitLLDP)
 	// "no ip forwarding" in frr.conf is a default; an explicit option wins.
 	if dst.IPForwarding == nil {

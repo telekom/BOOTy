@@ -137,6 +137,7 @@
     "hbn"
   ],
   "EmitLLDP": null,
+  "EmitLLDPMatches": null,
   "IPForwarding": null,
   "IPv6Forwarding": null,
   "VLANs": null

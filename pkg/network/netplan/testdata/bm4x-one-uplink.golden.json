@@ -219,6 +219,7 @@
   "EmitLLDP": [
     "ens1f0np0"
   ],
+  "EmitLLDPMatches": null,
   "IPForwarding": false,
   "IPv6Forwarding": null,
   "VLANs": null
