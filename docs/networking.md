@@ -1163,11 +1163,11 @@ The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
 - DHCP packets carry the IP TOS of networkd (CS6). Debug logging only, one
   line per message.
 
-The NTP servers (option 42) of all leases, by NIC and each once, go to the
-time sync, like networkd hands the servers of every link to timesyncd; a
-NIC without option 42 does not drop the servers of another NIC, and
-Teardown drops them all. The legacy ramdisk has no timesyncd, so it sends
-no NTP request.
+The NTP servers (option 42) of all leases, by NIC and each once, are kept
+for the time sync; a NIC without option 42 does not drop the servers of
+another NIC, and Teardown drops them all. The time sync queries them only
+with `TIME_DHCP_NTP=true`: the legacy ramdisk has no timesyncd and sends
+no NTP request, so by default BOOTy sends none either.
 
 The client sends the options of systemd-networkd (systemd 255, captured
 in the CAPRF L2 parity fixture), in its order after the message type: client
@@ -1207,7 +1207,11 @@ On every lease (also renewals and leases on the other NICs), BOOTy:
   domain that is not a DNS name (an underscore, an empty label, a label
   starting or ending with `-`, `localhost`) is left out; the rest is
   written. A configured resolver that is not an IP address fails the
-  setup. When the last lease ends, its servers leave resolv.conf. With
+  setup. When the last lease ends, its servers leave resolv.conf. Like
+  systemd-resolved, which queries the DNS servers of every link, BOOTy's
+  lookups send each UDP query to all these servers at once and take the
+  first answer (the Go resolver alone asks the first server and the next
+  only after a timeout). With
   `PROVISIONER_FILES_TARGET=ramdisk` and a provisioner `/etc/resolv.conf`,
   that file stays, as in the legacy ramdisk.
 

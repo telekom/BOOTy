@@ -245,6 +245,9 @@ func stubDHCPNetlink(t *testing.T) {
 		dhcpSetMTU, dhcpWriteResolvers = origMTU, origResolvers
 		dhcpLinkMaxMTU, dhcpIPv6Enabled = origMax, origV6
 	})
+	origDNS := dhcpSetDNSServers
+	t.Cleanup(func() { dhcpSetDNSServers = origDNS })
+	dhcpSetDNSServers = func([]string) {}
 	dhcpLinkMaxMTU = func(int) int { return 0 }
 	dhcpIPv6Enabled = func(string) bool { return false }
 	dhcpSetMTU = func(netlink.Link, int) error { return nil }
