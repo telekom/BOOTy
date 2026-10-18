@@ -32,7 +32,8 @@ type Client struct {
 	// OnExpire runs when the lease ends: it expired before a renewal or a
 	// rebind, or the server sent a DHCPNAK.
 	OnExpire Callback
-	// SendRelease sends a DHCPRELEASE for a bound lease at Stop.
+	// SendRelease sends a DHCPRELEASE for a bound lease at Stop, like
+	// networkd (SendRelease=yes).
 	SendRelease bool
 	Log         *slog.Logger
 
@@ -419,7 +420,9 @@ func (c *Client) release() {
 		return
 	}
 	defer func() { _ = tr.close() }()
-	opts := []layers.DHCPOption{layers.NewDHCPOption(layers.DHCPOptServerID, l.ServerID.To4())}
+	// networkd sends the client identifier only (captured in kindmetal:
+	// options 53, 61), unicast from the lease address to the server.
+	var opts []layers.DHCPOption
 	if len(c.ClientID) > 0 {
 		opts = append(opts, layers.NewDHCPOption(layers.DHCPOptClientID, c.ClientID))
 	}

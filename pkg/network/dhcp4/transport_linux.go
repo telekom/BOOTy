@@ -22,6 +22,10 @@ import (
 type rawTransport struct {
 	iface *net.Interface
 	conn  *packet.Conn
+	// udp is the unicast socket of the exchange. It stays open until the
+	// exchange ends, so the server's unicast reply finds a socket; without
+	// one the kernel answers with ICMP port unreachable.
+	udp int
 }
 
 // dhcpReplies passes IPv4 UDP datagrams to port 68 that are not fragments.
@@ -46,7 +50,7 @@ func openTransport(iface *net.Interface) (transport, error) {
 	if err != nil {
 		return nil, fmt.Errorf("packet socket on %s: %w", iface.Name, err)
 	}
-	return &rawTransport{iface: iface, conn: conn}, nil
+	return &rawTransport{iface: iface, conn: conn, udp: -1}, nil
 }
 
 // broadcast sends with the IP TOS of networkd (CS6).
@@ -77,11 +81,15 @@ func (t *rawTransport) unicast(src, dst net.IP, m *message) error {
 	if err != nil {
 		return fmt.Errorf("encode DHCP %s: %w", m.typ, err)
 	}
+	if t.udp >= 0 {
+		_ = unix.Close(t.udp)
+		t.udp = -1
+	}
 	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, unix.IPPROTO_UDP)
 	if err != nil {
 		return fmt.Errorf("UDP socket: %w", err)
 	}
-	defer func() { _ = unix.Close(fd) }()
+	t.udp = fd
 	for _, o := range []struct{ level, opt int }{{unix.SOL_SOCKET, unix.SO_REUSEADDR}, {unix.SOL_SOCKET, unix.SO_REUSEPORT}} {
 		if err := unix.SetsockoptInt(fd, o.level, o.opt, 1); err != nil {
 			return fmt.Errorf("setsockopt: %w", err)
@@ -127,5 +135,9 @@ func (t *rawTransport) receive(timeout time.Duration) ([]byte, error) {
 }
 
 func (t *rawTransport) close() error {
+	if t.udp >= 0 {
+		_ = unix.Close(t.udp)
+		t.udp = -1
+	}
 	return t.conn.Close() //nolint:wrapcheck // closing
 }
