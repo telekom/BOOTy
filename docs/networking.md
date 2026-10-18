@@ -207,7 +207,7 @@ same resolution:
   BOOTy resets the BGP session. Known deviation: the peer gets
   Cease/Administrative Reset (subcode 4), not Cease/BFD Down (subcode 10,
   RFC 9384), because the GoBGP API sends no other subcode. Only the peer
-  log shows it (status: open, needs a GoBGP API change). Timing after a
+  log shows it (status: upstream-pending, needs a GoBGP API change). Timing after a
   session ends, against GoBGP 3.37:
   - GoBGP waits a fixed 5 s in Idle (`holdtimeIdle`) when the peer ends
     the session (for example `clear bgp` on the leaf), where FRR waits
@@ -227,8 +227,8 @@ same resolution:
     after 2.8 to 3.5 s against 3.7 to 3.8 s;
   - GoBGP waits a random 1 to 2 s before the first connect after Idle
     ([osrg/gobgp#3736](https://github.com/osrg/gobgp/issues/3736)), where
-    FRR connects after its 1 s start timer. Status: open, needs a GoBGP
-    change; mitigated by the restart above, because the restarted peer
+    FRR connects after its 1 s start timer. Status: upstream-pending,
+    needs a GoBGP change; mitigated by the restart above, because the restarted peer
     accepts the leaf's connection before its own first connect. After a
     BFD reset BOOTy restored ECMP in 4.0 to 4.4 s against 2.3 to 2.9 s
     for FRR; with the restart 2.4 to 2.7 s against 2.5 s
