@@ -167,7 +167,7 @@ The changelog line comes from that title, so write it for the reader of the
 changelog: `<type>(<scope>): <what an operator sees>`, for example
 `fix(gobgp): flood BUM traffic to a VTEP only for ingress replication`.
 
-The `PR Title` check in `.github/workflows/changelog.yml` requires one of these
+The `PR Title` check in `.github/workflows/pr-title.yml` requires one of these
 types. The type selects the changelog section:
 
 | Type | Section |
@@ -177,13 +177,23 @@ types. The type selects the changelog section:
 | `perf` | Performance |
 | `docs` | Docs |
 | `build`, `ci`, `test` | CI, build and tests |
-| `build(deps)` and other `(deps...)` scopes | Dependencies |
+| any type with a `(deps...)` scope, also `chore(deps)` | Dependencies |
 | `refactor` | Maintenance |
-| `chore`, `style`, `revert` | not in the changelog |
+| `revert` | Reverts |
+| `chore`, `style` | not in the changelog |
+
+Use `chore` or `style` only for changes that no user sees. A change that a user
+or operator can see needs one of the other types, or it is missing from the
+changelog.
 
 Add `!` after the type or scope (`feat(config)!: ...`) for a breaking change:
-the line goes to "Breaking changes". A commit that is reverted later in the
-same release is left out together with its revert.
+the line goes to "Breaking changes".
+
+GitHub titles a revert PR `Revert "..."`, which the check rejects. Retitle it
+`revert: <title of the reverted PR>`, for example
+`revert: fix(gobgp): flood BUM traffic only for ingress replication`. A commit
+that is reverted in the same release is left out together with its revert; a
+revert of a change from an earlier release is listed under "Reverts".
 
 ### Changelog
 

@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, edited, reopened, synchronize]
   workflow_dispatch:
 
 concurrency:
@@ -19,27 +18,8 @@ env:
   GIT_CLIFF_VERSION: "2.14.2"
 
 jobs:
-  pr-title:
-    name: PR Title
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      # The squash merge uses the PR title as the commit title, and the
-      # changelog line comes from it. See CONTRIBUTING.md#pull-request-titles.
-      - name: Check that the PR title is a Conventional Commit
-        env:
-          TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          types='feat|fix|perf|docs|build|ci|test|refactor|chore|revert|style'
-          if ! printf '%s\n' "$TITLE" | grep -Eq "^(${types})(\([a-z0-9._/,-]+\))?!?: [^ ]"; then
-            echo "::error::PR title \"$TITLE\" is not '<type>(<scope>): <description>' with type one of ${types//|/, }"
-            exit 1
-          fi
-
   preview:
     name: Changelog Preview
-    if: github.event.action != 'edited'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

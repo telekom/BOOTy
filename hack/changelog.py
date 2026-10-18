@@ -39,9 +39,13 @@ ORDER = [
     "Docs",
     "Dependencies",
     "Maintenance",
+    "Reverts",
     "Upgrade notes for CAPRF",
 ]
-PR_REF = re.compile(r"#(\d+)\b")
+# PR references in the hand-written text: "#123" or a ".../pull/123" link.
+PR_REF = re.compile(r"(?:#|/pull/)(\d+)\b")
+# The PR number that GitHub appends to a squash-merge title.
+TITLE_PR = re.compile(r"\(#(\d+)\)$")
 
 
 def git(*args):
@@ -64,7 +68,7 @@ def reverted(rng):
 
 
 def commit_entries(rng):
-    """(section, line) for each commit in rng, oldest first."""
+    """(section, line, PR number or None) for each commit in rng, oldest first."""
     cmd = shlex.split(os.environ.get("GIT_CLIFF", "git-cliff")) + ["--context", rng]
     for sha in reverted(rng):
         cmd += ["--skip-commit", sha]
@@ -73,13 +77,14 @@ def commit_entries(rng):
     for release in json.loads(out):
         for c in release["commits"]:
             group = "Breaking changes" if c.get("breaking") else c["group"]
-            entries.append((group, entry_line(c.get("scope"), c["message"])))
+            message = c["message"].splitlines()[0].strip()
+            pr = TITLE_PR.search(message)
+            entries.append((group, entry_line(c.get("scope"), message), pr and pr.group(1)))
     return entries
 
 
 def entry_line(scope, message):
-    message = message.splitlines()[0].strip()
-    message = re.sub(r"\(#(\d+)\)$", rf"([#\1]({REPO_URL}/pull/\1))", message)
+    message = TITLE_PR.sub( rf"([#\1]({REPO_URL}/pull/\1))", message)
     if scope and not scope.startswith("deps"):
         message = f"{scope}: {message}"
     return f"- {message}"
@@ -92,8 +97,8 @@ def read_fragments(directory=CHANGES):
         if path.name == "README.md":
             continue
         m = re.match(r"---\n(.*?)\n---\n(.*)", path.read_text(), re.S)
-        section = m and re.search(r"^section:\s*(.+?)\s*$", m.group(1), re.M)
-        if not section or not m.group(2).strip():
+        section = re.search(r"^section:\s*(.+?)\s*$", m.group(1), re.M) if m else None
+        if not m or not section or not m.group(2).strip():
             sys.exit(f"{path}: needs front matter with 'section: <heading>' and a text")
         frags.append((section.group(1).strip("\"'"), m.group(2).strip()))
     return frags
@@ -109,13 +114,15 @@ def render(frozen, entries, fragments):
     """Merge commit lines and fragments into the frozen Unreleased text."""
     intro, sections = split_sections(frozen)
     known = set(PR_REF.findall(frozen))
-    added = [(s, line) for s, line in entries if not known & set(PR_REF.findall(line))]
-    for heading, text in added + fragments:
+    added = [(s, line) for s, line, pr in entries if pr not in known]
+    for i, (heading, text) in enumerate(added + fragments):
         for sec in sections:
             if sec[0] == heading:
                 sec[1] = f"{sec[1]}\n{text}".strip()
                 break
         else:
+            if i >= len(added) and heading not in ORDER:
+                print(f"warning: changes/ fragment makes a new section {heading!r}", file=sys.stderr)
             sections.append([heading, text])
     key, keys = -1, []
     for heading, _ in sections:
@@ -137,15 +144,25 @@ def find_section(text, version):
     return m.end(), end
 
 
+def unreleased(text):
+    """(start, end) of the body of "## [Unreleased]"; exits if there is none."""
+    span = find_section(text, "Unreleased")
+    if span is None:
+        sys.exit("CHANGELOG.md has no '## [Unreleased]' section")
+    return span
+
+
 def generate(rng):
     text = CHANGELOG.read_text()
-    start, end = find_section(text, "Unreleased")
+    start, end = unreleased(text)
     return render(text[start:end].strip(), commit_entries(rng), read_fragments())
 
 
 def release(version, body, text, today):
     """CHANGELOG text with body as section version and an empty Unreleased."""
-    start, end = find_section(text, "Unreleased")
+    if find_section(text, version):
+        sys.exit(f"CHANGELOG.md already has a '## [{version}]' section")
+    start, end = unreleased(text)
     text = text[:start] + f"\n## [{version}] - {today}\n\n{body}\n\n" + text[end:]
     return re.sub(
         r"^\[Unreleased\]: .*$",

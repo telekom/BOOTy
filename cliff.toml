@@ -23,8 +23,9 @@ filter_unconventional = true
 split_commits = false
 commit_parsers = [
     { message = "^[a-z]+(\\([^)]*\\))?!:", group = "Breaking changes" },
-    { message = "^(revert|chore|style)", skip = true },
     { message = "^[a-z]+\\(deps[^)]*\\)", group = "Dependencies" },
+    { message = "^(chore|style)", skip = true },
+    { message = "^revert", group = "Reverts" },
     { message = "^feat", group = "Features" },
     { message = "^fix", group = "Fixes" },
     { message = "^perf", group = "Performance" },

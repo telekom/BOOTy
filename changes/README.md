@@ -18,8 +18,13 @@ section: Upgrade notes for CAPRF
   under 20 s breaks standby at boot (#716).
 ```
 
+A fragment does not replace the line from the pull request title: both are in
+the release section, the fragment in its own section. Name the pull request in
+the fragment text, as above, so that readers can connect the two.
+
 Common sections: `Breaking changes`, `Behaviour changes in all modes`,
-`Upgrade notes for CAPRF`, `Highlights`. Another name makes a new section.
+`Upgrade notes for CAPRF`, `Highlights`. Another name makes a new section,
+and `make changelog` prints a warning for it.
 
 `make changelog` prints the next release section with the fragments. The
 release commit (`make changelog-release`) writes them into `CHANGELOG.md` and
