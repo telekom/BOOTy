@@ -415,18 +415,32 @@ func reboot() {
 	realm.Reboot()
 }
 
+// The realm handoff requests; tests replace them.
+var (
+	realmRequestReboot   = realm.RequestReboot
+	realmRequestPowerOff = realm.RequestPowerOff
+)
+
 func requestReboot() error {
 	watchdogHandoff(false)
 	stopLLDPEmit()
 	flushObservability()
-	return realm.RequestReboot()
+	if err := realmRequestReboot(); err != nil {
+		resumeLLDPEmit() // the host stays up: keep announcing it
+		return err
+	}
+	return nil
 }
 
 func requestPowerOff() error {
 	watchdogHandoff(true)
 	stopLLDPEmit()
 	flushObservability()
-	return realm.RequestPowerOff()
+	if err := realmRequestPowerOff(); err != nil {
+		resumeLLDPEmit()
+		return err
+	}
+	return nil
 }
 
 func shell() {
@@ -657,6 +671,9 @@ var teardownDone atomic.Pointer[chan struct{}]
 // failure (RFC 5882 3.2).
 func stopNetworkOnce(ctx context.Context, netMode network.Mode) func() {
 	return sync.OnceFunc(func() {
+		// The every-NIC LLDP sender first, so its shutdown LLDPDUs go out
+		// while the NICs still have their links.
+		stopLLDPEmit()
 		if netMode == nil {
 			return
 		}
@@ -805,6 +822,7 @@ func setupRestoredNetwork(ctx context.Context, cfg *config.MachineConfig) (netwo
 		return nil, false
 	}
 }
+
 
 func handleProvisionHandoff(
 	ctx context.Context,
@@ -1235,19 +1253,31 @@ func startLLDPEmitAll(ctx context.Context, l *config.LLDPConfig) {
 	// Its own context: the run context is not canceled before kexec,
 	// reboot or power off, so the handoff stops it to send the shutdown
 	// LLDPDU (IEEE 802.1AB), like the GoBGP sender at its teardown.
-	emitCtx, cancel := context.WithCancel(ctx)
-	wait := lldp.Emit(emitCtx, nics, &info, slog.With("component", "lldp"))
-	setLLDPEmitStop(func() {
-		cancel()
-		wait()
-	})
+	start := func() func() {
+		emitCtx, cancel := context.WithCancel(ctx)
+		wait := lldp.Emit(emitCtx, nics, &info, slog.With("component", "lldp"))
+		return func() {
+			cancel()
+			waitLLDPEmit(wait)
+		}
+	}
+	lldpEmitMu.Lock()
+	lldpEmitStart = start
+	lldpEmitMu.Unlock()
+	setLLDPEmitStop(start())
 }
 
 // lldpEmitStop stops the every-NIC LLDP sender; nil when none runs.
+// lldpEmitStart starts it again and returns its stop function.
 var (
-	lldpEmitMu   sync.Mutex
-	lldpEmitStop func()
+	lldpEmitMu    sync.Mutex
+	lldpEmitStop  func()
+	lldpEmitStart func() func()
 )
+
+// lldpStopTimeout bounds the wait for the shutdown LLDPDUs: BOOTy is PID 1
+// right before kexec or power off and must not hang there.
+var lldpStopTimeout = 2 * time.Second
 
 func setLLDPEmitStop(stop func()) {
 	lldpEmitMu.Lock()
@@ -1255,9 +1285,24 @@ func setLLDPEmitStop(stop func()) {
 	lldpEmitStop = stop
 }
 
+// waitLLDPEmit waits for the senders, at most lldpStopTimeout.
+func waitLLDPEmit(wait func()) {
+	done := make(chan struct{})
+	go func() {
+		wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(lldpStopTimeout):
+		slog.Warn("LLDP senders did not stop in time, handing off without waiting", "timeout", lldpStopTimeout)
+	}
+}
+
 // stopLLDPEmit stops the every-NIC LLDP sender, which then sends the
-// shutdown LLDPDU on each NIC, and waits for it. The handoff calls it
-// before kexec, reboot or power off; a second call does nothing.
+// shutdown LLDPDU on each NIC, and waits for it (bounded). The network
+// teardown before a reboot and every handoff call it; a second call does
+// nothing.
 func stopLLDPEmit() {
 	lldpEmitMu.Lock()
 	stop := lldpEmitStop
@@ -1266,6 +1311,21 @@ func stopLLDPEmit() {
 	if stop != nil {
 		stop()
 	}
+}
+
+// resumeLLDPEmit starts the every-NIC LLDP sender again after a handoff
+// request failed and the host stays up; nothing when it runs or was never
+// started.
+func resumeLLDPEmit() {
+	lldpEmitMu.Lock()
+	start := lldpEmitStart
+	running := lldpEmitStop != nil
+	lldpEmitMu.Unlock()
+	if start == nil || running {
+		return
+	}
+	slog.Info("handoff failed, sending LLDP frames again")
+	setLLDPEmitStop(start())
 }
 
 // setupNetworkMode detects and configures the appropriate network mode.

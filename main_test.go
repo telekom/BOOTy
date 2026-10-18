@@ -2439,7 +2439,7 @@ func TestLLDPReceiveStartGated(t *testing.T) {
 // The every-NIC LLDP sender is stopped (and waited for) once, so it sends
 // the shutdown LLDPDU before the handoff.
 func TestStopLLDPEmit(t *testing.T) {
-	t.Cleanup(func() { setLLDPEmitStop(nil) })
+	t.Cleanup(resetLLDPEmit)
 	stopLLDPEmit() // none running
 	calls := 0
 	setLLDPEmitStop(func() { calls++ })
@@ -2480,3 +2480,93 @@ func TestHandoffsStopLLDPEmit(t *testing.T) {
 		}
 	}
 }
+
+func resetLLDPEmit() {
+	lldpEmitMu.Lock()
+	lldpEmitStop, lldpEmitStart = nil, nil
+	lldpEmitMu.Unlock()
+}
+
+// The stop waits for the shutdown frames at most lldpStopTimeout: BOOTy is
+// PID 1 right before kexec or power off.
+func TestWaitLLDPEmitIsBounded(t *testing.T) {
+	orig := lldpStopTimeout
+	t.Cleanup(func() { lldpStopTimeout = orig })
+	lldpStopTimeout = 20 * time.Millisecond
+	block := make(chan struct{})
+	defer close(block)
+	start := time.Now()
+	waitLLDPEmit(func() { <-block })
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("waited %v for a sender that never stops", d)
+	}
+}
+
+// A failed reboot or power off request leaves the host up: the LLDP sender
+// starts again. A request that succeeds does not restart it.
+func TestFailedHandoffResumesLLDPEmit(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	origReboot, origPowerOff := realmRequestReboot, realmRequestPowerOff
+	t.Cleanup(func() { realmRequestReboot, realmRequestPowerOff = origReboot, origPowerOff })
+	starts, stops := 0, 0
+	start := func() func() {
+		starts++
+		return func() { stops++ }
+	}
+	lldpEmitMu.Lock()
+	lldpEmitStart = start
+	lldpEmitMu.Unlock()
+	setLLDPEmitStop(start())
+	resumeLLDPEmit() // running: no second sender
+	if starts != 1 {
+		t.Fatalf("resume while running started %d senders", starts)
+	}
+
+	realmRequestReboot = func() error { return errors.New("refused") }
+	realmRequestPowerOff = func() error { return errors.New("refused") }
+	if err := requestReboot(); err == nil {
+		t.Fatal("requestReboot succeeded")
+	}
+	if err := requestPowerOff(); err == nil {
+		t.Fatal("requestPowerOff succeeded")
+	}
+	if starts != 3 || stops != 2 {
+		t.Fatalf("starts %d, stops %d; want a restart after each failed request", starts, stops)
+	}
+	realmRequestReboot = func() error { return nil }
+	if err := requestReboot(); err != nil {
+		t.Fatal(err)
+	}
+	if starts != 3 || stops != 3 {
+		t.Fatalf("starts %d, stops %d after a successful request; want no restart", starts, stops)
+	}
+}
+
+type orderNetMode struct {
+	network.Mode
+	order *[]string
+}
+
+func (m orderNetMode) Teardown(context.Context) error {
+	*m.order = append(*m.order, "teardown")
+	return nil
+}
+
+// The shutdown LLDPDUs go out before the network stop of a handoff, while
+// the NICs still have their links; stopNetworkOnce is the one path every
+// kexec, reboot and power off takes (#723).
+func TestStopNetworkOnceStopsLLDPFirst(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	var order []string
+	setLLDPEmitStop(func() { order = append(order, "lldp") })
+	stopNetworkOnce(context.Background(), orderNetMode{order: &order})()
+	if strings.Join(order, ",") != "lldp,teardown" {
+		t.Fatalf("order %v, want lldp before teardown", order)
+	}
+	setLLDPEmitStop(func() { order = append(order, "lldp") })
+	stopNetworkOnce(context.Background(), nil)() // no network mode: LLDP still stops
+	if strings.Join(order, ",") != "lldp,teardown,lldp" {
+		t.Fatalf("order %v, want the LLDP stop without a network mode", order)
+	}
+}
+
