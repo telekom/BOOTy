@@ -576,16 +576,22 @@ func stoppedAll(t *testing.T, clients map[string]*fakeDHCPClient, want int) {
 	}
 }
 
-func TestSetupStopsClientsOnTimeoutInParallel(t *testing.T) {
+// Without a lease at the timeout Setup fails, but the clients keep
+// sending until Teardown, which stops them in parallel.
+func TestSetupKeepsClientsOnTimeout(t *testing.T) {
 	clients := stubDHCPSetup(t, nil)
 	dhcpSetupTimeout = 50 * time.Millisecond
 	d := NewDHCPMode()
-	start := time.Now()
 	if err := d.Setup(context.Background(), &Config{}); err == nil {
 		t.Fatal("Setup() = nil without a lease")
 	}
+	stoppedAll(t, clients, 0)
+	start := time.Now()
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if took := time.Since(start); took > 350*time.Millisecond {
-		t.Fatalf("Setup took %s: the clients were not stopped in parallel", took)
+		t.Fatalf("Teardown took %s: the clients were not stopped in parallel", took)
 	}
 	stoppedAll(t, clients, 1)
 }
@@ -619,21 +625,16 @@ func TestSetupKeepsClientsUntilTeardown(t *testing.T) {
 
 // A lease applied while the setup timer fires counts as success; a lease
 // after the stop is not applied.
+// A lease applied when the timer fires counts.
 func TestSetupTimeoutRace(t *testing.T) {
-	stubDHCPNetlink(t)
+	clients := stubDHCPSetup(t, nil)
+	dhcpSetupTimeout = 50 * time.Millisecond
 	d := NewDHCPMode()
-	d.onBound(dummyLink("eth0", 1), "eth0", make(chan string))(lease24("10.0.2.15", "10.0.2.2"))
-	if d.stopUnlessLeased() {
-		t.Fatal("stopUnlessLeased() stopped the clients although a lease is applied")
+	d.onBound(dummyLink("eth0", 1), "eth0", make(chan string))(lease24("10.0.2.15", "10.0.2.2")) // nobody reads the channel
+	if err := d.Setup(context.Background(), &Config{}); err != nil {
+		t.Fatalf("Setup() = %v with a lease applied", err)
 	}
-	d2 := NewDHCPMode()
-	if !d2.stopUnlessLeased() {
-		t.Fatal("stopUnlessLeased() kept the clients without a lease")
-	}
-	d2.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 1))(lease24("10.0.2.15", "10.0.2.2"))
-	if len(d2.nics) != 0 {
-		t.Fatalf("a lease after the stop was applied: %v", d2.nics)
-	}
+	stoppedAll(t, clients, 0)
 }
 
 // Like networkd hands the servers of every link to timesyncd: a NIC

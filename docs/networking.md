@@ -1102,8 +1102,11 @@ physical NIC for the whole run, and every lease configures its own NIC.
 Setup sets `promote_secondaries=1` on each NIC (systemd's sysctl default in
 the legacy ramdisk), so a renewal with a new address in the same subnet
 keeps it when the old address goes. Setup returns after the first lease.
-Without a lease on any NIC within 15 s, BOOTy stops all clients at once and
-the network setup fails (the connectivity retry starts it again).
+Without a lease on any NIC within 15 s the network setup reports a
+failure, but the clients keep sending, like networkd: a switch port
+without portfast forwards only after 30 to 50 s, and the connectivity wait
+gets the lease. A connectivity retry tears the mode down (Teardown stops
+every client at once) and starts it again.
 
 A client on a NIC without a DHCP server sends a DISCOVER about every 6 s
 (go-dhclient: 5 s response timeout, 1 s pause) for the whole run;
