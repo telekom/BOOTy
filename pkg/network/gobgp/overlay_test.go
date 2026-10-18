@@ -4185,7 +4185,7 @@ func TestHandleType2RouteBestPathPerMAC(t *testing.T) {
 		}, mock
 	}
 	route := func(rd uint32, ip string) *apipb.EVPNMACIPAdvertisementRoute {
-		a := buildRouteDistinguisher(65000, rd)
+		a := mustRD(t, fmt.Sprintf("65000:%d", rd))
 		return &apipb.EVPNMACIPAdvertisementRoute{Rd: a, MacAddress: mac, IpAddress: ip}
 	}
 	lastSet := func(t *testing.T, mock *mockOverlayNetlinkOps) string {
@@ -4284,12 +4284,12 @@ func type2TestOverlay() (*OverlayTier, *mockOverlayNetlinkOps) {
 
 func type2TestPath(t *testing.T, rd uint32, nh string, mm *apipb.MacMobilityExtended) *apipb.Path {
 	t.Helper()
-	r := buildRouteDistinguisher(65000, rd)
-	n, err := wrapNLRI(&apipb.EVPNMACIPAdvertisementRoute{Rd: r, MacAddress: "aa:bb:cc:dd:ee:ff"})
+	r := mustRD(t, fmt.Sprintf("65000:%d", rd))
+	n, err := anypb.New(&apipb.EVPNMACIPAdvertisementRoute{Rd: r, MacAddress: "aa:bb:cc:dd:ee:ff"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
+	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
 		Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}, NextHops: []string{nh}})
 	if err != nil {
 		t.Fatal(err)
