@@ -22,7 +22,7 @@ import (
 	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
-	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -2189,7 +2189,7 @@ func extractNextHop(p *apipb.Path) string {
 // routeDistinguisher marshals an RD of the Config ("ASN:NN" or
 // "IPv4:NN"). An empty one is "<router-id>:1", FRR's RD of the only
 // "router bgp" instance.
-func (o *OverlayTier) routeDistinguisher(rd string) (*anypb.Any, error) {
+func (o *OverlayTier) routeDistinguisher(rd string) (*apipb.RouteDistinguisher, error) {
 	return parseRouteDistinguisher(cmp.Or(rd, o.cfg.RouterID+":1"))
 }
 

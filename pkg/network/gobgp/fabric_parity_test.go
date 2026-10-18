@@ -7,10 +7,8 @@ import (
 	"log/slog"
 	"testing"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/apiutil"
-	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
-	"google.golang.org/protobuf/types/known/anypb"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
 
 	"github.com/telekom/BOOTy/pkg/network"
 )
@@ -18,20 +16,16 @@ import (
 // pathMED returns the MED of a path.
 func pathMED(t *testing.T, p *apipb.Path) (uint32, bool) {
 	t.Helper()
-	attrs, err := apiutil.UnmarshalPathAttributes(p.GetPattrs())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, a := range attrs {
-		if m, ok := a.(*bgp.PathAttributeMultiExitDisc); ok {
-			return m.Value, true
+	for _, a := range p.GetPattrs() {
+		if m := a.GetMultiExitDisc(); m != nil {
+			return m.GetMed(), true
 		}
 	}
 	return 0, false
 }
 
 // rdString returns an RD as "admin:assigned".
-func rdString(t *testing.T, a *anypb.Any) string {
+func rdString(t *testing.T, a *apipb.RouteDistinguisher) string {
 	t.Helper()
 	rd, err := apiutil.UnmarshalRD(a)
 	if err != nil {
@@ -49,8 +43,9 @@ func TestAnnounceUnderlayRouteMED(t *testing.T) {
 		t.Fatal(err)
 	}
 	var paths []*apipb.Path
-	_ = s.ListPath(ctx, &apipb.ListPathRequest{TableType: apipb.TableType_GLOBAL, Family: ipv4Families()[0].GetConfig().GetFamily()},
-		func(d *apipb.Destination) { paths = append(paths, d.GetPaths()...) })
+	for _, ps := range listPaths(t, s, ipv4Families()[0].GetConfig().GetFamily()) {
+		paths = append(paths, ps...)
+	}
 	if len(paths) != 1 {
 		t.Fatalf("%d paths, want the underlay /32", len(paths))
 	}
