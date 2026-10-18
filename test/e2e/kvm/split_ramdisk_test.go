@@ -51,7 +51,9 @@ func TestSplitRamdiskPayloadsQEMU(t *testing.T) {
 		payloads []string
 		want     string
 	}{
-		{name: "base + frr + vars", payloads: []string{"frr"}, want: `msg="started FRR daemon"`},
+		// bfdd starts last (mgmtd, zebra, staticd, bgpd, bfdd); only a
+		// started daemon logs daemon=<name>.
+		{name: "base + frr + vars", payloads: []string{"frr"}, want: "daemon=bfdd"},
 		{name: "base + vars", want: "BOOTY-PAY-001"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -64,6 +66,9 @@ func TestSplitRamdiskPayloadsQEMU(t *testing.T) {
 			out, found := runQEMUUntil(t, kernel, initrd, tt.want, 4*time.Minute)
 			if !found {
 				t.Fatalf("serial output lacks %q; tail:\n%s", tt.want, tail(out, 3000))
+			}
+			if tt.payloads != nil && !strings.Contains(string(out), `msg="started FRR daemon"`) {
+				t.Fatalf("no started FRR daemon; tail:\n%s", tail(out, 3000))
 			}
 			if tt.payloads == nil {
 				if strings.Contains(string(out), "started FRR daemon") {
