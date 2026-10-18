@@ -376,9 +376,11 @@ func TestVrnetlabProvisionAttemptsImageDownload(t *testing.T) {
 		t.Logf("Serial log:\n%s", logs)
 		t.Fatal("provision VM did not attempt image download through EVPN")
 	}
-	// The format probe read the image over EVPN: the response came back.
-	if !waitForVMLog(t, vmProvision, "image prerequisites validated", 10*time.Second) {
-		t.Fatalf("provision VM did not read the image over EVPN (no response to the format probe)\n%s", getVMSerialLog(t, vmProvision))
+	// The format probe read the image over EVPN, and the stream wrote it.
+	for _, marker := range []string{"image prerequisites validated", `msg="image written"`} {
+		if !waitForVMLog(t, vmProvision, marker, 60*time.Second) {
+			t.Fatalf("provision VM log lacks %q: the image did not come over EVPN\n%s", marker, getVMSerialLog(t, vmProvision))
+		}
 	}
 	t.Log("provision VM: image download attempted through EVPN")
 }
