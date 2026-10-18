@@ -2016,14 +2016,22 @@ func (o *OverlayTier) syncType2FDB(mac net.HardwareAddr) {
 // A single-active ES (RFC 7432 sections 8.4 and 14.1.1: an EAD-per-ES route
 // with the Single-Active flag of the ESI Label community) uses only the
 // primary PE, the VTEP of the MAC route; FRR aliases there too, but the RFC
-// MUST wins, because a backup PE drops the traffic. When the group cannot
-// be installed (FDB nexthops need Linux 5.8), the MAC also uses its VTEP.
+// MUST wins, because a backup PE drops the traffic. Once the primary PE is
+// no longer active on the ES (its EAD routes withdrawn), the MAC is not
+// installed and floods (mass withdraw, section 8.2) until its route moves.
+// When the group cannot be installed (FDB nexthops need Linux 5.8), the
+// MAC of an active ES uses its VTEP.
 func (o *OverlayTier) wantedFDB(best *type2Path) string {
 	switch {
 	case best == nil:
 		return ""
-	case best.esi == "", o.esSingleActive(best.esi):
+	case best.esi == "":
 		return best.vtep.String()
+	case o.esSingleActive(best.esi):
+		if slices.Contains(o.activeVTEPs(best.esi), best.vtep.String()) {
+			return best.vtep.String()
+		}
+		return ""
 	}
 	if g, ok := o.esGroups[best.esi]; ok {
 		return nhGroupKey(g.id)

@@ -327,8 +327,9 @@ func parseNhGroupKey(s string) (uint32, bool) {
 	return id, err == nil
 }
 
-// The netlink package has no nexthop objects and no NDA_NH_ID on FDB
-// entries, so these requests are built here, like `ip nexthop add id N
+// The netlink package has no nexthop objects, and its Neigh struct has no
+// field for the NDA_NH_ID attribute of FDB entries (the attribute constant
+// exists), so these requests are built here, like `ip nexthop add id N
 // via VTEP fdb`, `ip nexthop add id G group N1/N2 fdb` and `bridge fdb
 // replace MAC dev vxlan nhid G self`.
 

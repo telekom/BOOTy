@@ -220,8 +220,133 @@ func TestESSingleActiveFlagFromThePath(t *testing.T) {
 		}
 		p.Pattrs = append(p.Pattrs, ec)
 		e.o.processRouteUpdate(p)
-		if len(e.o.type1Paths) != 1 || !e.o.esSingleActive(esiKey(e.esi)) == single {
+		if len(e.o.type1Paths) != 1 || e.o.esSingleActive(esiKey(e.esi)) != single {
 			t.Fatalf("Single-Active %v: EAD routes %+v", single, e.o.type1Paths)
 		}
+	}
+}
+
+// RFC 7432 sections 8.2 and 14.1.1: when the primary PE of a single-active
+// ES withdraws its EAD routes, its MACs leave the FDB at once (they flood)
+// instead of staying on the failed PE until each MAC route is withdrawn.
+func TestESSingleActivePrimaryWithdrawRemovesTheMAC(t *testing.T) {
+	e := newESTest(t)
+	e.ead("10.0.0.1", maxET, true, false)
+	e.ead("10.0.0.1", 0, false, false)
+	e.ead("10.0.0.2", maxET, true, false)
+	e.ead("10.0.0.2", 0, false, false)
+	e.mac("10.0.0.1")
+	if e.installed() != "10.0.0.1" {
+		t.Fatalf("installed %q, want the primary PE", e.installed())
+	}
+	e.ead("10.0.0.1", maxET, true, true)
+	if e.installed() != "" || len(e.mock.dels) != 1 {
+		t.Fatalf("after the primary's EAD withdraw: installed %q, deletes %v; want the MAC removed", e.installed(), e.mock.dels)
+	}
+}
+
+// Only the EAD-per-ES route carries the Single-Active flag; a flagged
+// EAD-per-EVI route does not make the ES single-active.
+func TestESSingleActiveFlagOnlyFromPerES(t *testing.T) {
+	e := newESTest(t)
+	e.ead("10.0.0.1", maxET, false, false)
+	e.ead("10.0.0.1", 0, true, false)
+	e.activate("10.0.0.2")
+	e.mac("10.0.0.1")
+	if _, group := parseNhGroupKey(e.installed()); !group {
+		t.Fatalf("installed %q, want the group of an all-active ES", e.installed())
+	}
+}
+
+// Two ESs: a single-active one does not change the MACs of the other, and
+// a VTEP nexthop that another ES group still uses stays.
+func TestESTwoSegments(t *testing.T) {
+	e := newESTest(t)
+	esiA := e.esi
+	esiB := &apipb.EthernetSegmentIdentifier{Value: []byte{0, 0x11, 0x22, 0x33, 0x44, 0x55, 0, 0, 2}}
+	for _, vtep := range []string{"10.0.0.1", "10.0.0.2"} {
+		e.esi = esiA
+		e.ead(vtep, maxET, true, false)
+		e.ead(vtep, 0, false, false)
+		e.esi = esiB
+		e.activate(vtep)
+	}
+	e.mac("10.0.0.1") // a MAC of ES B
+	if _, group := parseNhGroupKey(e.installed()); !group {
+		t.Fatalf("ES B MAC installed %q; the single-active ES A changed it", e.installed())
+	}
+	id, ok := e.o.vtepNexthops["10.0.0.1"]
+	if !ok || len(e.mock.nexthopDels) != 0 {
+		t.Fatalf("VTEP 1 nexthop %v, deletes %v; want it in both groups", ok, e.mock.nexthopDels)
+	}
+	e.esi = esiA
+	e.ead("10.0.0.1", maxET, true, true) // VTEP 1 leaves ES A only
+	if got, ok := e.o.vtepNexthops["10.0.0.1"]; !ok || got != id || slices.Contains(e.mock.nexthopDels, id) {
+		t.Fatalf("the nexthop of VTEP 1, still in the group of ES B, went: nexthops %v, deletes %v", e.o.vtepNexthops, e.mock.nexthopDels)
+	}
+}
+
+// A VTEP nexthop is installed once and reused by later group changes.
+func TestESVTEPNexthopReused(t *testing.T) {
+	e := newESTest(t)
+	e.activate("10.0.0.1")
+	e.activate("10.0.0.2")
+	e.activate("10.0.0.3")
+	e.ead("10.0.0.3", maxET, false, true)
+	vtepInstalls := 0
+	for _, nh := range e.mock.nexthops {
+		if nh.vtep != nil {
+			vtepInstalls++
+		}
+	}
+	if vtepInstalls != 3 {
+		t.Fatalf("%d VTEP nexthop installs for 3 VTEPs, want each once", vtepInstalls)
+	}
+}
+
+// A failed VTEP nexthop install, or a failed replace of an existing group,
+// moves the MACs of the ES to their VTEP; the old group goes.
+func TestESNexthopFailuresFallBackToTheVTEP(t *testing.T) {
+	t.Run("VTEP nexthop", func(t *testing.T) {
+		e := newESTest(t)
+		e.activate("10.0.0.1")
+		e.mac("10.0.0.1")
+		g := e.o.esGroups[esiKey(e.esi)].id
+		e.mock.nexthopVTEPErr = errors.New("boom")
+		e.activate("10.0.0.2")
+		if e.installed() != "10.0.0.1" || len(e.o.esGroups) != 0 || !slices.Contains(e.mock.nexthopDels, g) {
+			t.Fatalf("installed %q, groups %v, deletes %v; want the VTEP entry and the old group deleted",
+				e.installed(), e.o.esGroups, e.mock.nexthopDels)
+		}
+	})
+	t.Run("replace of an existing group", func(t *testing.T) {
+		e := newESTest(t)
+		e.activate("10.0.0.1")
+		e.mac("10.0.0.1")
+		g := e.o.esGroups[esiKey(e.esi)].id
+		e.mock.nexthopErr = errors.New("boom")
+		e.activate("10.0.0.2")
+		if e.installed() != "10.0.0.1" || len(e.o.esGroups) != 0 || !slices.Contains(e.mock.nexthopDels, g) {
+			t.Fatalf("installed %q, groups %v, deletes %v; want the VTEP entry and the old group deleted",
+				e.installed(), e.o.esGroups, e.mock.nexthopDels)
+		}
+	})
+}
+
+// Teardown also deletes the nexthops of earlier failed deletes.
+func TestESTeardownDeletesStaleNexthops(t *testing.T) {
+	e := newESTest(t)
+	e.activate("10.0.0.1")
+	e.mac("10.0.0.1")
+	g := e.o.esGroups[esiKey(e.esi)].id
+	e.mock.nexthopDelErr = errors.New("busy")
+	e.ead("10.0.0.1", maxET, false, true)
+	e.mock.nexthopDelErr = nil
+	e.mock.nexthopDels = nil
+	if err := e.o.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(e.mock.nexthopDels, g) {
+		t.Fatalf("Teardown deletes %v, want the stale group %d", e.mock.nexthopDels, g)
 	}
 }

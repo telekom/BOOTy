@@ -49,6 +49,7 @@ type mockOverlayNetlinkOps struct {
 	fdbNhids        []string
 	fdbDels         []string
 	nexthopErr      error // NexthopReplace of a group fails
+	nexthopVTEPErr  error // NexthopReplace of a VTEP nexthop fails
 	nexthopDelErr   error
 	fdbNhidErr      error
 }
@@ -101,7 +102,7 @@ func (m *mockOverlayNetlinkOps) NexthopReplace(nh fdbNexthop) error {
 	if nh.vtep == nil {
 		return m.nexthopErr
 	}
-	return nil
+	return m.nexthopVTEPErr
 }
 
 func (m *mockOverlayNetlinkOps) NexthopDel(id uint32) error {
