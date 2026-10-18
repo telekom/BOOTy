@@ -2,6 +2,7 @@ package linkcheck
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -72,8 +73,12 @@ func actual(l *Link) Endpoint {
 // bm4x connection check from the host side: one entry per NIC whose
 // switch port differs from the expected one, per NIC with a neighbor but
 // no expected port, and per expected port without a NIC. Switch names
-// compare without case.
+// compare without case. Without any expected cabling there is nothing to
+// compare, so the diff is empty.
 func Diff(host string, links []Link, unmatched []config.ExpectedLink) []ConnectionEntry {
+	if len(unmatched) == 0 && !slices.ContainsFunc(links, func(l Link) bool { return l.Expected != nil }) {
+		return nil
+	}
 	var diff []ConnectionEntry
 	for i := range links {
 		l := &links[i]

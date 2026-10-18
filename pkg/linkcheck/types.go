@@ -86,12 +86,15 @@ type Counters struct {
 	TxErrors  uint64 `json:"txErrors"`
 }
 
-// PCIe is the PCIe link of the NIC function and its maximum.
+// PCIe is the PCIe link of the NIC function, its maximum and the maximum
+// of the slot (the upstream port); a link can only train to the lower one.
 type PCIe struct {
-	Speed    string `json:"speed"` // for example "16.0 GT/s PCIe"
-	Width    int    `json:"width"`
-	MaxSpeed string `json:"maxSpeed"`
-	MaxWidth int    `json:"maxWidth"`
+	Speed        string `json:"speed"` // for example "16.0 GT/s PCIe"
+	Width        int    `json:"width"`
+	MaxSpeed     string `json:"maxSpeed"`
+	MaxWidth     int    `json:"maxWidth"`
+	SlotMaxSpeed string `json:"slotMaxSpeed,omitempty"`
+	SlotMaxWidth int    `json:"slotMaxWidth,omitempty"`
 }
 
 // Endpoint is one end of a connection in the bm4x ConnectionReport

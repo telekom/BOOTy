@@ -123,6 +123,8 @@ func TestFinish(t *testing.T) {
 		{[]health.CheckResult{{Status: health.StatusPass}, {Status: health.StatusSkip, Severity: health.SeverityCritical}}, "pass", false},
 		{[]health.CheckResult{{Status: health.StatusFail, Severity: health.SeverityWarning}}, "warn", false},
 		{[]health.CheckResult{{Status: health.StatusFail, Severity: health.SeverityWarning}, {Status: health.StatusFail, Severity: health.SeverityCritical}}, "fail", true},
+		// A later warning does not turn a failed run into a warning.
+		{[]health.CheckResult{{Status: health.StatusFail, Severity: health.SeverityCritical}, {Status: health.StatusFail, Severity: health.SeverityWarning}}, "fail", true},
 	} {
 		d := &Document{Checks: tt.checks}
 		if failed := d.Finish(time.Unix(0, 0)); failed != tt.failed || d.Status != tt.status {
@@ -173,5 +175,21 @@ func TestDeliver(t *testing.T) {
 	}
 	if len(r.result) == 0 || len(r.checks) != 1 {
 		t.Fatalf("reporter got result %d bytes, %d checks", len(r.result), len(r.checks))
+	}
+}
+
+// Without any expected cabling there is no diff, also not for the links
+// with a neighbor; one NIC on one switch is not a dual-homing problem.
+func TestDiffWithoutExpectedCabling(t *testing.T) {
+	links := []Link{
+		{Ifname: "eth0", Carrier: true, LLDP: &lldp.Neighbor{SystemName: "leaf01", ChassisID: "c1", PortDescription: "Ethernet1/1"}},
+		{Ifname: "eth1", Carrier: true, LLDP: &lldp.Neighbor{SystemName: "leaf02", ChassisID: "c2", PortDescription: "Ethernet1/1"}},
+	}
+	if d := Diff("host1", links, nil); d != nil {
+		t.Fatalf("diff without expected cabling = %+v", d)
+	}
+	r := findCheck(t, cablingChecks(links[:1], nil, false, &config.CheckThresholds{}), CheckUplinkDualHome)
+	if r.Status != health.StatusPass {
+		t.Fatalf("one NIC: %+v", r)
 	}
 }

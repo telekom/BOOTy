@@ -93,7 +93,7 @@ type CheckThresholds struct {
 	OpticsWarning   string `yaml:"opticsWarning,omitempty" json:"opticsWarning,omitempty"`     // (warn) a transceiver warning
 
 	MinSpeedMbps int    `yaml:"minSpeedMbps,omitempty" json:"minSpeedMbps,omitempty"`
-	MaxFlaps     *int   `yaml:"maxFlaps,omitempty" json:"maxFlaps,omitempty"`   // default 2
+	MaxFlaps     *int   `yaml:"maxFlaps,omitempty" json:"maxFlaps,omitempty"`   // default 4
 	MaxErrors    uint64 `yaml:"maxErrors,omitempty" json:"maxErrors,omitempty"` // default 0
 }
 

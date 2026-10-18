@@ -205,3 +205,15 @@ func (m *Module) flagSet(name string, highAlarm, lowAlarm, highWarn, lowWarn boo
 }
 
 func bit(b byte, n uint) bool { return b&(1<<n) != 0 }
+
+// latched reads a page of SFF-8636 or CMIS flags again. These flags latch
+// until the host reads them, so the first read also reports conditions
+// that are long gone, such as the loss of signal at power-up or a Tx
+// disable. The second read reports only what still holds.
+func latched(read Reader, page, offset int) ([]byte, error) {
+	b, err := read(0x50, page, offset, 128)
+	if err != nil || len(b) < 128 {
+		return nil, fmt.Errorf("read the flags of page %02xh again: %w", page, errShort(err, b))
+	}
+	return b, nil
+}

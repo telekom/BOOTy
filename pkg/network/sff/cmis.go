@@ -16,7 +16,11 @@ func decodeCMIS(read Reader, lower []byte) (*Module, error) {
 		Revision: text(up[164-128 : 166-128]), Serial: text(up[166-128 : 182-128]), DateCode: date(up[182-128 : 190-128]),
 		DOM: true, TempC: tempC(lower[14:16]), VccV: vccV(lower[16:18]),
 	}
-	f := lower[9]
+	flags, err := latched(read, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	f := flags[9]
 	m.flagSet("temperature", bit(f, 0), bit(f, 1), bit(f, 2), bit(f, 3))
 	m.flagSet("vcc", bit(f, 4), bit(f, 5), bit(f, 6), bit(f, 7))
 	if bit(lower[2], 7) { // flat memory: passive copper, no lane pages
@@ -32,6 +36,10 @@ func decodeCMIS(read Reader, lower []byte) (*Module, error) {
 		pages[p] = b
 	}
 	p1, p2, p11 := pages[0x01], pages[0x02], pages[0x11]
+	p11flags, err := latched(read, 0x11, 128)
+	if err != nil {
+		return nil, err
+	}
 	m.WavelengthNm = float64(u16(p1[138-128:140-128])) * 0.05
 	scale := float64(int(1) << ((p1[160-128] >> 3) & 0x3)) // TxBias scaling x1, x2, x4
 	m.Thresholds = &Thresholds{
@@ -51,9 +59,9 @@ func decodeCMIS(read Reader, lower []byte) (*Module, error) {
 		// Page 11h flags, one bit per lane: Tx power 139-142, Tx bias
 		// 143-146, Rx power 149-152 (high alarm, low alarm, high
 		// warning, low warning).
-		m.flagSet("tx-power"+lane, bit(p11[139-128], n), bit(p11[140-128], n), bit(p11[141-128], n), bit(p11[142-128], n))
-		m.flagSet("tx-bias"+lane, bit(p11[143-128], n), bit(p11[144-128], n), bit(p11[145-128], n), bit(p11[146-128], n))
-		m.flagSet("rx-power"+lane, bit(p11[149-128], n), bit(p11[150-128], n), bit(p11[151-128], n), bit(p11[152-128], n))
+		m.flagSet("tx-power"+lane, bit(p11flags[139-128], n), bit(p11flags[140-128], n), bit(p11flags[141-128], n), bit(p11flags[142-128], n))
+		m.flagSet("tx-bias"+lane, bit(p11flags[143-128], n), bit(p11flags[144-128], n), bit(p11flags[145-128], n), bit(p11flags[146-128], n))
+		m.flagSet("rx-power"+lane, bit(p11flags[149-128], n), bit(p11flags[150-128], n), bit(p11flags[151-128], n), bit(p11flags[152-128], n))
 	}
 	return m, nil
 }

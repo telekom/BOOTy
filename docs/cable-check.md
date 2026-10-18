@@ -57,10 +57,10 @@ checks the cabling from the host side, after `LLDP_NEIGHBOR_WAIT`:
 | `cabling-match` | a NIC is on another switch port than `CHECK_EXPECTED_CABLING` says, a NIC with a neighbor is not in it, or an expected NIC is missing (skipped without an expected cabling) | block |
 | `uplink-dual-homed` | all NICs with a neighbor reach the same switch (chassis ID) | warn |
 | `link-speed` | a NIC with carrier runs below `minSpeedMbps` or not at its expected `speedMbps` | warn |
-| `link-flaps` | a NIC lost carrier more than `maxFlaps` times (default 2) since the driver loaded (`carrier_down_count`) | warn |
+| `link-flaps` | a NIC lost carrier more than `maxFlaps` times (default 4: a boot bounce, the link setup and the firmware LLDP agent switch of ice and i40e each reset the port) since the driver loaded (`carrier_down_count`) | warn |
 | `link-errors` | a NIC has more than `maxErrors` (default 0) receive and transmit errors since the driver loaded | warn |
 | `fec` | a NIC has uncorrectable FEC blocks, or runs without FEC on lanes that need it: PAM4 lanes (50G and more per lane) always, 25G lanes (25G, 50G-R2, 100G-R4 such as SR4 and CR4) unless the module is a long-reach optic (LR, LR4, ER, ER4), a CA-N cable or a BER 1e-12 AOC/ACC (SFF-8024 compliance code). 10G lanes (10G, 40G) need no FEC | warn |
-| `pcie-link` | the PCIe link of a NIC runs below the speed or width that the device can (downtrained) | warn |
+| `pcie-link` | the PCIe link of a NIC runs below the speed or width that both the device and its slot (the upstream port) can (downtrained) | warn |
 | `optics-alarm` | a transceiver raised an alarm flag (temperature, supply voltage, Tx bias, Tx or Rx power, per lane) | block |
 | `optics-warning` | a transceiver raised a warning flag | warn |
 

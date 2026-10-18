@@ -29,6 +29,8 @@ func TestLinkStateAndPCIe(t *testing.T) {
 		"ens1f0np0/carrier_down_count": "4\n", "ens1f0np0/device/current_link_speed": "8.0 GT/s PCIe\n",
 		"ens1f0np0/device/max_link_speed": "16.0 GT/s PCIe\n", "ens1f0np0/device/current_link_width": "8\n",
 		"ens1f0np0/device/max_link_width": "16\n",
+		// The parent of the device directory is the slot (upstream port).
+		"ens1f0np0/max_link_speed": "8.0 GT/s PCIe\n", "ens1f0np0/max_link_width": "8\n",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(v), 0o600); err != nil {
 			t.Fatal(err)
@@ -46,7 +48,8 @@ func TestLinkStateAndPCIe(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("link state = %+v, want %+v", got, want)
 	}
-	if p := pcie("ens1f0np0"); !reflect.DeepEqual(p, &PCIe{Speed: "8.0 GT/s PCIe", Width: 8, MaxSpeed: "16.0 GT/s PCIe", MaxWidth: 16}) {
+	if p := pcie("ens1f0np0"); !reflect.DeepEqual(p, &PCIe{Speed: "8.0 GT/s PCIe", Width: 8, MaxSpeed: "16.0 GT/s PCIe", MaxWidth: 16,
+		SlotMaxSpeed: "8.0 GT/s PCIe", SlotMaxWidth: 8}) {
 		t.Fatalf("pcie = %+v", p)
 	}
 	if p := pcie("veth0"); p != nil {

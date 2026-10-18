@@ -284,3 +284,48 @@ func TestDecodeSFP28Compliance(t *testing.T) {
 		}
 	}
 }
+
+// clearOnRead clears flag bytes of a page after their first read, like the
+// latched flags of SFF-8636 and CMIS modules.
+func clearOnRead(t *testing.T, m memory, page int, offsets ...int) Reader {
+	t.Helper()
+	r := m.reader(t)
+	return func(addr, p, offset, length int) ([]byte, error) {
+		b, err := r(addr, p, offset, length)
+		if addr == 0x50 && p == page {
+			for _, o := range offsets {
+				if o >= offset && o < offset+length {
+					m.page(0x50, page)[o] = 0
+				}
+			}
+		}
+		return b, err
+	}
+}
+
+// A latched flag of a past event (cleared by the first read) is not
+// reported; a condition that still holds is.
+func TestDecodeLatchedFlags(t *testing.T) {
+	got, err := Decode(clearOnRead(t, qsfp28(), 0, 6)) // temperature warning latched only
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Alarms, []string{"rx-power lane 2 low"}) || got.Warnings != nil {
+		t.Errorf("SFF-8636: alarms %v, warnings %v", got.Alarms, got.Warnings)
+	}
+	m := qsfpDD()
+	got, err = Decode(clearOnRead(t, m, 0, 9)) // temperature alarm latched only
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Alarms != nil || !reflect.DeepEqual(got.Warnings, []string{"rx-power lane 3 low"}) {
+		t.Errorf("CMIS module flags: alarms %v, warnings %v", got.Alarms, got.Warnings)
+	}
+	got, err = Decode(clearOnRead(t, qsfpDD(), 0x11, 152)) // rx power low warning latched only
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Alarms, []string{"temperature high"}) || got.Warnings != nil {
+		t.Errorf("CMIS lane flags: alarms %v, warnings %v", got.Alarms, got.Warnings)
+	}
+}

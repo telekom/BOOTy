@@ -69,6 +69,10 @@ func pcie(nic string) *PCIe {
 	if p.Speed == "" || p.MaxSpeed == "" {
 		return nil // not a PCIe function
 	}
+	if resolved, err := filepath.EvalSymlinks(dev); err == nil {
+		slot := filepath.Dir(resolved) // the upstream port: root port or switch port
+		p.SlotMaxSpeed, p.SlotMaxWidth = sysString(filepath.Join(slot, "max_link_speed")), sysInt(filepath.Join(slot, "max_link_width"))
+	}
 	return p
 }
 

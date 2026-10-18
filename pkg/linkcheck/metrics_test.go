@@ -13,7 +13,7 @@ import (
 func metricLinks() []Link {
 	return []Link{
 		{Ifname: "ens1f0np0", Carrier: true, Expected: &config.ExpectedLink{SpeedMbps: 25000},
-			State: &LinkState{SpeedMbps: 10000, Flaps: 3, Errors: &Counters{RxErrors: 5, RxCRC: 5}, FEC: &FEC{Active: "rs", Uncorrectable: 2}},
+			State: &LinkState{SpeedMbps: 10000, Flaps: 5, Errors: &Counters{RxErrors: 5, RxCRC: 5}, FEC: &FEC{Active: "rs", Uncorrectable: 2}},
 			PCIe:  &PCIe{Speed: "8.0 GT/s PCIe", Width: 8, MaxSpeed: "16.0 GT/s PCIe", MaxWidth: 8}},
 		{Ifname: "ens1f1np1", Carrier: true,
 			State: &LinkState{SpeedMbps: 25000, Flaps: 2, Errors: &Counters{}, FEC: &FEC{Active: "off"}},
@@ -32,10 +32,10 @@ func TestLinkChecks(t *testing.T) {
 		details []string
 	}{
 		{CheckLinkSpeed, []string{"ens1f0np0: 10000 Mb/s, want at least 25000", "ens1f0np0: 10000 Mb/s, want 25000"}},
-		{CheckLinkFlaps, []string{"ens1f0np0: carrier lost 3 times"}},
+		{CheckLinkFlaps, []string{"ens1f0np0: carrier lost 5 times"}},
 		{CheckLinkErrors, []string{"ens1f0np0: 5 receive errors (CRC 5, frame 0), 0 transmit errors"}},
 		{CheckFEC, []string{"ens1f0np0: 2 uncorrectable FEC blocks", "ens1f1np1: no FEC at 25000 Mb/s (25000 Mb/s per lane)"}},
-		{CheckPCIeLink, []string{"ens1f0np0: PCIe 8.0 GT/s PCIe x8, the device can 16.0 GT/s PCIe x8", "ens1f1np1: PCIe 16.0 GT/s PCIe x4, the device can 16.0 GT/s PCIe x8"}},
+		{CheckPCIeLink, []string{"ens1f0np0: PCIe 8.0 GT/s PCIe x8, device and slot can 16.0 GT/s PCIe x8", "ens1f1np1: PCIe 16.0 GT/s PCIe x4, device and slot can 16.0 GT/s PCIe x8"}},
 	} {
 		r := findCheck(t, results, tt.name)
 		if r.Status != health.StatusFail || r.Severity != health.SeverityWarning || r.Details != strings.Join(tt.details, "; ") {
@@ -43,10 +43,10 @@ func TestLinkChecks(t *testing.T) {
 		}
 	}
 
-	// Limits: three flaps and five errors are fine with these limits;
+	// Limits: five flaps and five errors are fine with these limits;
 	// block makes FEC critical.
 	links := metricLinks()
-	results = linkChecks(links, &config.CheckThresholds{MaxFlaps: new(3), MaxErrors: 5, FEC: "block"})
+	results = linkChecks(links, &config.CheckThresholds{MaxFlaps: new(5), MaxErrors: 5, FEC: "block"})
 	for _, name := range []string{CheckLinkFlaps, CheckLinkErrors, CheckLinkSpeed} {
 		if r := findCheck(t, results, name); name != CheckLinkSpeed && r.Status != health.StatusPass {
 			t.Errorf("%s with higher limits = %+v", name, r)
@@ -163,6 +163,48 @@ func TestFECRequiredFromSFPEEPROM(t *testing.T) {
 		l := &Link{Carrier: true, Module: mod, State: &LinkState{SpeedMbps: 25000, Lanes: 1, FEC: &FEC{Active: "off"}}}
 		if got := fecRequired(l); got != tt.want {
 			t.Errorf("%s: fecRequired = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+// The PCIe link counts as downtrained only below what both the device and
+// its slot support; one lane less is downtrained.
+func TestPCIeAgainstSlot(t *testing.T) {
+	g4, g3 := "16.0 GT/s PCIe", "8.0 GT/s PCIe"
+	for _, tt := range []struct {
+		name string
+		p    PCIe
+		want bool
+	}{
+		{"full link", PCIe{Speed: g4, Width: 16, MaxSpeed: g4, MaxWidth: 16}, false},
+		{"one lane less", PCIe{Speed: g4, Width: 15, MaxSpeed: g4, MaxWidth: 16}, true},
+		{"x16 device in a x8 slot", PCIe{Speed: g4, Width: 8, MaxSpeed: g4, MaxWidth: 16, SlotMaxSpeed: g4, SlotMaxWidth: 8}, false},
+		{"Gen4 device in a Gen3 slot", PCIe{Speed: g3, Width: 16, MaxSpeed: g4, MaxWidth: 16, SlotMaxSpeed: g3, SlotMaxWidth: 16}, false},
+		{"x8 in a x16 slot, device x16", PCIe{Speed: g4, Width: 8, MaxSpeed: g4, MaxWidth: 16, SlotMaxSpeed: g4, SlotMaxWidth: 16}, true},
+		{"Gen3 below a Gen4 slot", PCIe{Speed: g3, Width: 16, MaxSpeed: g4, MaxWidth: 16, SlotMaxSpeed: g4, SlotMaxWidth: 16}, true},
+	} {
+		r := findCheck(t, linkChecks([]Link{{Ifname: "eth0", PCIe: &tt.p}}, &config.CheckThresholds{}), CheckPCIeLink)
+		if got := r.Status == health.StatusFail; got != tt.want {
+			t.Errorf("%s: pcie-link %+v, want fail %v", tt.name, r, tt.want)
+		}
+	}
+}
+
+// Four carrier losses are the default limit, the fifth fails.
+func TestDefaultMaxFlaps(t *testing.T) {
+	for flaps, want := range map[int]bool{4: false, 5: true} {
+		r := findCheck(t, linkChecks([]Link{{Ifname: "eth0", State: &LinkState{Flaps: flaps}}}, &config.CheckThresholds{}), CheckLinkFlaps)
+		if got := r.Status == health.StatusFail; got != want {
+			t.Errorf("%d flaps: %+v, want fail %v", flaps, r, want)
+		}
+	}
+}
+
+// The lane count of a speed when the driver does not report it.
+func TestLaneRate(t *testing.T) {
+	for speed, want := range map[int]int{10000: 10000, 25000: 25000, 40000: 10000, 50000: 25000, 100000: 25000, 200000: 50000, 400000: 50000} {
+		if got := laneRate(&LinkState{SpeedMbps: speed}); got != want {
+			t.Errorf("%d Mb/s: lane rate %d, want %d", speed, got, want)
 		}
 	}
 }

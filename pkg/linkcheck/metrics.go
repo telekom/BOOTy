@@ -21,8 +21,10 @@ const (
 )
 
 // defaultMaxFlaps is the carrier losses since the driver loaded that are
-// fine: the switch port may bounce once while the host boots.
-const defaultMaxFlaps = 2
+// fine: the switch port may bounce while the host boots, BOOTy's link
+// setup takes the link down and up, and the firmware LLDP agent switch
+// resets the port of ice and i40e NICs.
+const defaultMaxFlaps = 4
 
 // linkChecks runs the link speed, flap, error, FEC and PCIe checks.
 func linkChecks(links []Link, t *config.CheckThresholds) []health.CheckResult {
@@ -44,8 +46,10 @@ func linkChecks(links []Link, t *config.CheckThresholds) []health.CheckResult {
 			}
 			fec = append(fec, fecProblems(l)...)
 		}
-		if p := l.PCIe; p != nil && (gts(p.Speed) < gts(p.MaxSpeed) || p.Width < p.MaxWidth) {
-			pci = append(pci, fmt.Sprintf("%s: PCIe %s x%d, the device can %s x%d", l.Ifname, p.Speed, p.Width, p.MaxSpeed, p.MaxWidth))
+		if p := l.PCIe; p != nil {
+			if speed, width := pcieCap(p); gts(p.Speed) < gts(speed) || p.Width < width {
+				pci = append(pci, fmt.Sprintf("%s: PCIe %s x%d, device and slot can %s x%d", l.Ifname, p.Speed, p.Width, speed, width))
+			}
 		}
 	}
 	warn := config.CheckActionWarn
@@ -132,6 +136,20 @@ func fecRequired(l *Link) bool {
 		return true
 	}
 	return false
+}
+
+// pcieCap is the best link that the device and its slot both support: a
+// x16 device in a x8 slot (or a Gen4 device in a Gen3 slot) is not
+// downtrained.
+func pcieCap(p *PCIe) (speed string, width int) {
+	speed, width = p.MaxSpeed, p.MaxWidth
+	if p.SlotMaxSpeed != "" && gts(p.SlotMaxSpeed) < gts(speed) {
+		speed = p.SlotMaxSpeed
+	}
+	if p.SlotMaxWidth > 0 && p.SlotMaxWidth < width {
+		width = p.SlotMaxWidth
+	}
+	return speed, width
 }
 
 // gts parses a PCIe link speed such as "16.0 GT/s PCIe"; 0 when unknown.

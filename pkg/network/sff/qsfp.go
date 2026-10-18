@@ -21,13 +21,17 @@ func decode8636(read Reader, lower []byte) (*Module, error) {
 	}
 	m.DOM = true
 	m.TempC, m.VccV = tempC(lower[22:24]), vccV(lower[26:28])
+	flags, err := latched(read, 0, 0)
+	if err != nil {
+		return nil, err
+	}
 	for l := range 4 {
 		m.Lanes = append(m.Lanes, Lane{
 			RxPowerDBm: powerDBm(lower[34+2*l:]), BiasMA: biasMA(lower[42+2*l:]), TxPowerDBm: powerDBm(lower[50+2*l:]),
 		})
 	}
-	m.flagSet("temperature", bit(lower[6], 7), bit(lower[6], 6), bit(lower[6], 5), bit(lower[6], 4))
-	m.flagSet("vcc", bit(lower[7], 7), bit(lower[7], 6), bit(lower[7], 5), bit(lower[7], 4))
+	m.flagSet("temperature", bit(flags[6], 7), bit(flags[6], 6), bit(flags[6], 5), bit(flags[6], 4))
+	m.flagSet("vcc", bit(flags[7], 7), bit(flags[7], 6), bit(flags[7], 5), bit(flags[7], 4))
 	// Lane flags: two lanes per byte, high nibble first, bits high alarm,
 	// low alarm, high warning, low warning.
 	for _, f := range []struct {
@@ -35,7 +39,7 @@ func decode8636(read Reader, lower []byte) (*Module, error) {
 		at   int
 	}{{"rx-power", 9}, {"tx-bias", 11}, {"tx-power", 13}} {
 		for l := range 4 {
-			b, shift := lower[f.at+l/2], uint(4-4*(l%2))
+			b, shift := flags[f.at+l/2], uint(4-4*(l%2))
 			m.flagSet(fmt.Sprintf("%s lane %d", f.name, l+1), bit(b, shift+3), bit(b, shift+2), bit(b, shift+1), bit(b, shift))
 		}
 	}
