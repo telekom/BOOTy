@@ -4896,18 +4896,9 @@ func TestType2ESIAliasingAndMassWithdraw(t *testing.T) {
 // community. Without it a receiver assumes MPLS or a configured
 // encapsulation for BOOTy's Type-2 and Type-3 routes.
 func TestEVPNRoutesCarryVXLANEncapsulation(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t2, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t3, err := buildEVPNType3NLRI(rd, "10.0.0.1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	rd := buildRouteDistinguisher(65000, 4000)
+	t2 := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
+	t3 := buildEVPNType3NLRI(rd, "10.0.0.1")
 	t5, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", type5DirectGateway, 4000)
 	if err != nil {
 		t.Fatal(err)
@@ -4924,23 +4915,11 @@ func TestEVPNRoutesCarryVXLANEncapsulation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, pattrs := range map[string][]*anypb.Any{"type-2": type2, "type-3": type3, "type-5": type5} {
+	for name, pattrs := range map[string][]*apipb.Attribute{"type-2": type2, "type-3": type3, "type-5": type5} {
 		var encaps []uint32
 		for _, attr := range pattrs {
-			msg, err := attr.UnmarshalNew()
-			if err != nil {
-				t.Fatal(err)
-			}
-			ext, ok := msg.(*apipb.ExtendedCommunitiesAttribute)
-			if !ok {
-				continue
-			}
-			for _, c := range ext.GetCommunities() {
-				m, err := c.UnmarshalNew()
-				if err != nil {
-					t.Fatal(err)
-				}
-				if e, ok := m.(*apipb.EncapExtended); ok {
+			for _, c := range attr.GetExtendedCommunities().GetCommunities() {
+				if e := c.GetEncap(); e != nil {
 					encaps = append(encaps, e.GetTunnelType())
 				}
 			}
