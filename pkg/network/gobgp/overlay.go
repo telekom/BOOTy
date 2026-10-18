@@ -887,17 +887,21 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 		}
 	case nlri.GetEvpnMulticast() != nil:
 		if o.cfg.EnableL2 {
-			route := nlri.GetEvpnMulticast()
-			if !withdraw && !ingressReplication(p) {
-				// Like FRR: flooding only for ingress replication.
-				o.log.Debug("type-3 route without ingress replication, no BUM entry", "vtep", route.GetIpAddress())
-				withdraw = true
-			}
-			o.handleType3Route(route, vtep, withdraw)
+			o.handleType3Path(p, nlri.GetEvpnMulticast(), vtep, withdraw)
 		}
 	default:
 		o.log.Debug("route update", "action", action, "type", fmt.Sprintf("%T", nlri.GetNlri()))
 	}
+}
+
+// handleType3Path handles a Type-3 path: like FRR, flooding only for
+// ingress replication, so another tunnel type is a withdraw of the entry.
+func (o *OverlayTier) handleType3Path(p *apipb.Path, route *apipb.EVPNInclusiveMulticastEthernetTagRoute, vtep string, withdraw bool) {
+	if !withdraw && !ingressReplication(p) {
+		o.log.Debug("type-3 route without ingress replication, no BUM entry", "vtep", route.GetIpAddress())
+		withdraw = true
+	}
+	o.handleType3Route(route, vtep, withdraw)
 }
 
 // handleType5Route installs or removes a kernel route for an IP prefix
