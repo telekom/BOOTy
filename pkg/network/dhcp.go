@@ -287,6 +287,9 @@ func replaceLeaseAddr(link netlink.Link, addr *netlink.Addr) error {
 func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- string) func(*dhclient.Lease) {
 	return func(lease *dhclient.Lease) {
 		addr, err := leaseAddr(lease)
+		if err == nil {
+			err = leaseUsable(lease)
+		}
 		if err != nil {
 			d.log.Warn("ignoring DHCP lease", "iface", ifName, "error", err)
 			return
@@ -492,6 +495,19 @@ func (d *DHCPMode) publishNTP() {
 		}
 	}
 	setDHCPNTPList(servers)
+}
+
+// leaseUsable rejects a lease without a lifetime or a server identifier,
+// like networkd (sd-dhcp-client.c client_parse_message): applying it would
+// end it at once, and the client would apply it again in a loop.
+func leaseUsable(lease *dhclient.Lease) error {
+	if !lease.Expire.After(lease.Bound) {
+		return fmt.Errorf("lease has no lifetime")
+	}
+	if ip := lease.ServerID.To4(); ip == nil || ip.IsUnspecified() {
+		return fmt.Errorf("lease has no server identifier")
+	}
+	return nil
 }
 
 // leaseAddr builds the interface address from a lease. A lease without a
