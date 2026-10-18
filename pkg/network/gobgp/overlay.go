@@ -11,9 +11,7 @@ import (
 	"log/slog"
 	"maps"
 	"net"
-	"net/netip"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -24,7 +22,6 @@ import (
 	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -2194,54 +2191,6 @@ func extractNextHop(p *apipb.Path) string {
 // "router bgp" instance.
 func (o *OverlayTier) routeDistinguisher(rd string) (*anypb.Any, error) {
 	return parseRouteDistinguisher(cmp.Or(rd, o.cfg.RouterID+":1"))
-}
-
-// parseRouteDistinguisher marshals an RD "IPv4:NN" (type 1, 16-bit NN),
-// "ASN:NN" with a 2-byte ASN (type 0, 32-bit NN) or with a 4-byte ASN
-// (type 2, 16-bit NN), like FRR. A value out of range is an error;
-// bgp.ParseRouteDistinguisher truncates it instead (4210000017:9 became
-// 65535:9).
-func parseRouteDistinguisher(rd string) (*anypb.Any, error) {
-	msg, err := routeDistinguisherMessage(rd)
-	if err != nil {
-		return nil, fmt.Errorf("route distinguisher %q: %w", rd, err)
-	}
-	a, err := anypb.New(msg)
-	if err != nil {
-		return nil, fmt.Errorf("marshal route distinguisher %q: %w", rd, err)
-	}
-	return a, nil
-}
-
-func routeDistinguisherMessage(rd string) (proto.Message, error) {
-	admin, nn, ok := strings.Cut(rd, ":")
-	if !ok {
-		return nil, errors.New("want ASN:NN or IPv4:NN")
-	}
-	// admin has no colon, so it parses only as an IPv4 address.
-	if _, err := netip.ParseAddr(admin); err == nil {
-		n, err := strconv.ParseUint(nn, 10, 16)
-		if err != nil {
-			return nil, errors.New("want IPv4:NN with a 16-bit NN")
-		}
-		return &apipb.RouteDistinguisherIPAddress{Admin: admin, Assigned: uint32(n)}, nil
-	}
-	asn, err := strconv.ParseUint(admin, 10, 32)
-	if err != nil {
-		return nil, errors.New("want ASN:NN or IPv4:NN")
-	}
-	if asn > asnMax2Byte {
-		n, err := strconv.ParseUint(nn, 10, 16)
-		if err != nil {
-			return nil, errors.New("want ASN:NN with a 16-bit NN for a 4-byte ASN")
-		}
-		return &apipb.RouteDistinguisherFourOctetASN{Admin: uint32(asn), Assigned: uint32(n)}, nil
-	}
-	n, err := strconv.ParseUint(nn, 10, 32)
-	if err != nil {
-		return nil, errors.New("want ASN:NN with a 32-bit NN for a 2-byte ASN")
-	}
-	return &apipb.RouteDistinguisherTwoOctetASN{Admin: uint32(asn), Assigned: uint32(n)}, nil
 }
 
 // buildEVPNType5NLRI builds an EVPN IP Prefix (Type-5) NLRI for the given
