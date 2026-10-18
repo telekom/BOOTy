@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"sync"
 	"time"
 
 	apipb "github.com/osrg/gobgp/v3/api"
@@ -45,7 +46,8 @@ type fibWriter struct {
 	log  *slog.Logger
 
 	// installed holds the routes this writer installed, by table and
-	// prefix.
+	// prefix. mu guards it against owns, which the overlay calls.
+	mu         sync.Mutex
 	installed  map[string]*netlink.Route
 	unresolved map[netip.Addr]time.Time
 	resync     time.Duration
@@ -206,6 +208,8 @@ func (w *fibWriter) wanted(ctx context.Context) (map[string]*netlink.Route, erro
 // apply installs the wanted routes that changed (all with force) and
 // removes the installed routes that are no longer wanted.
 func (w *fibWriter) apply(want map[string]*netlink.Route, force bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	for key, r := range want {
 		if old, ok := w.installed[key]; ok && !force && sameRoute(old, r) {
 			continue
@@ -233,7 +237,17 @@ func (w *fibWriter) apply(want map[string]*netlink.Route, force bool) {
 
 func routeKey(table int, p netip.Prefix) string { return fmt.Sprintf("%d/%s", table, p) }
 
+// owns reports whether the writer installed a route for prefix p in table.
+func (w *fibWriter) owns(table int, p netip.Prefix) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, ok := w.installed[routeKey(table, p)]
+	return ok
+}
+
 func (w *fibWriter) removeAll() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	for key, r := range w.installed {
 		if err := w.nl.RouteDel(r); err != nil {
 			w.log.Debug("remove route", "route", key, "error", err)

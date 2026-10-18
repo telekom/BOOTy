@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"maps"
 	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
@@ -118,6 +119,9 @@ type OverlayTier struct {
 	netlinkOps      overlayNetlinkOps
 	hooks           *overlaySetupHooks
 	ensureVTEPRoute func(net.IP) error
+	// fibOwns reports whether the underlay FIB writer installed a route
+	// for a prefix in a table (UnderlayTier.FIBOwns); nil = never.
+	fibOwns func(table int, p netip.Prefix) bool
 
 	// Track resources created by us for clean teardown.
 	createdVRFs     map[string]bool
@@ -389,6 +393,14 @@ func (o *OverlayTier) createVRF(name string, tableID uint32) error {
 
 	o.log.Info("vrf ready", "name", name, "table", tableID)
 	return nil
+}
+
+// fibTable is the overlay route table as the FIB writer keys it.
+func (o *OverlayTier) fibTable() int {
+	if t := o.overlayRouteTable(); t != 0 {
+		return t
+	}
+	return unix.RT_TABLE_MAIN
 }
 
 func (o *OverlayTier) overlayRouteTable() int {
@@ -916,6 +928,16 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 	}
 	if o.isBlackhole(prefix) {
 		o.log.Debug("type-5 route for a static blackhole prefix, static route wins", "prefix", prefix)
+		return
+	}
+	// Without an overlay VRF both writers use the main table with the same
+	// protocol and metric, so one would replace the other's route. The
+	// underlay route stays, like the first writer owning the prefix.
+	// ponytail: the skipped path is not remembered; it is installed only
+	// when it is advertised again after the underlay route went away.
+	if table := o.fibTable(); o.fibOwns != nil && o.fibOwns(table, netip.MustParsePrefix(prefix)) {
+		o.log.Warn("type-5 route for a prefix the underlay installed in the same table, underlay route stays",
+			"prefix", prefix, "table", table, "vtep", vtep)
 		return
 	}
 	// Remember the path before any kernel change, so a later withdraw of

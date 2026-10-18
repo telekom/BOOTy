@@ -115,6 +115,7 @@ func (s *Stack) Setup(ctx context.Context, _ *network.Config) error {
 
 	// Share the BGP server with the overlay tier.
 	s.overlay.SetBgpServer(s.underlay.BgpServer())
+	s.overlay.fibOwns = s.underlay.FIBOwns
 	s.wireVTEPRoutes()
 
 	if err := s.overlay.Setup(ctx); err != nil {
