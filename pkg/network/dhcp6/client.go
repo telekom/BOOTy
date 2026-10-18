@@ -307,11 +307,26 @@ func (c *Client) release() {
 		return
 	}
 	defer func() { _ = tr.close() }()
-	msg := encode(msgRelease, rand.Uint32()&0xffffff, []option{ //nolint:gosec // a transaction ID
+	xid := rand.Uint32() & 0xffffff //nolint:gosec // a transaction ID
+	msg := encode(msgRelease, xid, []option{
 		{optServerID, l.ServerID}, iaOption(optIANA, c.IAID, l), {optClientID, c.DUID}, elapsed(0),
 	})
 	if err := tr.send(msg); err != nil {
 		c.Log.Debug("DHCPv6 RELEASE", "error", err)
+		return
+	}
+	// Wait for the server's REPLY (REL_TIMEOUT, RFC 8415 section 7.6), so
+	// it finds the socket open: networkd keeps its socket, and a closed one
+	// makes the kernel answer with ICMPv6 port unreachable.
+	deadline := c.now().Add(time.Second)
+	for left := time.Second; left > 0; left = deadline.Sub(c.now()) {
+		b, err := tr.receive(left)
+		if err != nil {
+			return
+		}
+		if r, err := decode(b, c.IAID, c.now()); err == nil && r.typ == msgReply && r.xid == xid {
+			return
+		}
 	}
 }
 
