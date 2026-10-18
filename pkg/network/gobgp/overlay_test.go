@@ -4933,8 +4933,8 @@ func TestEVPNRoutesCarryVXLANEncapsulation(t *testing.T) {
 // removes the route that an earlier valid update of the same key
 // installed.
 func TestProcessRouteUpdateType5TreatAsWithdraw(t *testing.T) {
-	nextHop := func(nh string) *anypb.Any {
-		mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+	nextHop := func(nh string) *apipb.Attribute {
+		mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 			Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 			NextHops: []string{nh},
 		})
@@ -4943,12 +4943,12 @@ func TestProcessRouteUpdateType5TreatAsWithdraw(t *testing.T) {
 		}
 		return mp
 	}
-	communities := func(mac string) *anypb.Any {
-		c := []*anypb.Any{mustRT2(t, 65000, 4000)}
+	communities := func(mac string) *apipb.Attribute {
+		c := []*apipb.ExtendedCommunity{mustRT2(t, 65000, 4000)}
 		if mac != "" {
 			c = append(c, mustRouterMAC(t, mac))
 		}
-		a, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{Communities: c})
+		a, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: c})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4956,11 +4956,11 @@ func TestProcessRouteUpdateType5TreatAsWithdraw(t *testing.T) {
 	}
 	pathVia := func(nh string, r *apipb.EVPNIPPrefixRoute, mac string) *apipb.Path {
 		r.IpPrefix, r.IpPrefixLen = "10.100.0.0", 24
-		n, err := anypb.New(r)
+		n, err := wrapNLRI(r)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return &apipb.Path{Nlri: n, Pattrs: []*anypb.Any{nextHop(nh), communities(mac)}}
+		return &apipb.Path{Nlri: n, Pattrs: []*apipb.Attribute{nextHop(nh), communities(mac)}}
 	}
 	path := func(r *apipb.EVPNIPPrefixRoute, mac string) *apipb.Path { return pathVia("192.168.4.1", r, mac) }
 	fdbDels := func(m *mockOverlayNetlinkOps) []string {
