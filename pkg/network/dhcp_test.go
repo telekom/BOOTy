@@ -583,6 +583,9 @@ func stubDHCPSetup(t *testing.T, onBound func(name string, cb dhcp4.Callback)) m
 	origRA := dhcp6WatchRA
 	t.Cleanup(func() { dhcp6WatchRA = origRA })
 	dhcp6WatchRA = func(context.Context, *net.Interface, func(bool, bool)) error { return nil }
+	origRS := dhcp6SendRS
+	t.Cleanup(func() { dhcp6SendRS = origRS })
+	dhcp6SendRS = func(string, net.HardwareAddr) error { return nil }
 	dhcpSubscribe = func(chan<- netlink.LinkUpdate, <-chan struct{}, netlink.LinkSubscribeOptions) error { return nil }
 	dhcpInterfaces = func(context.Context) ([]net.Interface, error) {
 		return []net.Interface{{Name: "eth0", Index: 1}, {Name: "eth1", Index: 2}}, nil

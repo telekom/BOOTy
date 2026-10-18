@@ -15,6 +15,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/network/dhcp4"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
+	"golang.org/x/net/ipv6"
 	"golang.org/x/sys/unix"
 )
 
@@ -312,5 +313,61 @@ func TestWatchRAOnVeth(t *testing.T) {
 	}
 	if got != [2]bool{true, false} {
 		t.Fatalf("flags = %v, want M only", got)
+	}
+}
+
+// TestSendRSOnVeth: sendRS sends a router solicitation with hop limit 255
+// and the source link-layer address option to ff02::2.
+func TestSendRSOnVeth(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("test requires root (run with sudo)")
+	}
+	enterTestNetns(t)
+	for _, k := range []string{"all", "default"} {
+		_ = os.WriteFile("/proc/sys/net/ipv6/conf/"+k+"/accept_dad", []byte("0"), 0o644) //nolint:gosec // test sysctl
+	}
+	veth := &netlink.Veth{LinkAttrs: netlink.LinkAttrs{Name: "rs-c0"}, PeerName: "rs-r0"}
+	if err := netlink.LinkAdd(veth); err != nil {
+		t.Fatalf("add veth: %v", err)
+	}
+	for _, n := range []string{"rs-c0", "rs-r0"} {
+		l, _ := netlink.LinkByName(n)
+		if err := netlink.LinkSetUp(l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conn, err := listenICMPv6(context.Background(), "rs-r0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	pc := ipv6.NewPacketConn(conn)
+	if err := pc.SetControlMessage(ipv6.FlagHopLimit, true); err != nil {
+		t.Fatal(err)
+	}
+	var f ipv6.ICMPFilter
+	f.SetAll(true)
+	f.Accept(ipv6.ICMPTypeRouterSolicitation)
+	if err := pc.SetICMPFilter(&f); err != nil {
+		t.Fatal(err)
+	}
+	peer, _ := net.InterfaceByName("rs-r0")
+	if err := pc.JoinGroup(peer, &net.IPAddr{IP: net.IPv6linklocalallrouters}); err != nil {
+		t.Fatal(err)
+	}
+	ifi, _ := net.InterfaceByName("rs-c0")
+	time.Sleep(500 * time.Millisecond) // link-local addresses
+	if err := sendRS("rs-c0", ifi.HardwareAddr); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 1500)
+	n, cm, _, err := pc.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("no router solicitation: %v", err)
+	}
+	want := append([]byte{1, 1}, ifi.HardwareAddr...)
+	if n != 16 || buf[0] != 133 || !slices.Equal(buf[8:16], want) || cm == nil || cm.HopLimit != 255 {
+		t.Fatalf("RS = % x (hop limit %v), want type 133 with option 1 %x and hop limit 255", buf[:n], cm, want)
 	}
 }

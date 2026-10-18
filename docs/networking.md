@@ -1269,6 +1269,10 @@ The leased address goes on the NIC as /128 with its preferred and valid
 lifetimes; the DNS servers (option 23) go to `/etc/resolv.conf` after
 those of DHCPv4. When the lease ends, or the NIC loses carrier, the client
 stops and the address and DNS servers go; the next RA starts it again.
+When the carrier returns, BOOTy sends router solicitations (up to three,
+4 s apart, with the source link-layer address) until a client runs, like
+networkd's NDisc client; the kernel sends them only when the link comes
+up.
 
 Because `bond*` names are not physical NICs, DHCP does not run on `bond0`.
 
