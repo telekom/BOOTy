@@ -1105,8 +1105,12 @@ The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
   address to the server, with the client identifier only, like networkd
   (`SendRelease=yes`; the legacy ramdisk sends it, captured in kindmetal).
 - The UDP socket on lease-address:68 of an exchange with `ciaddr`
-  (RENEWING and REBINDING) stays open until the reply, so the kernel does
-  not answer the server's unicast ACK with ICMP port unreachable.
+  (RENEWING and REBINDING) stays open until the reply, and a socket on
+  0.0.0.0:68 of the NIC is open for every exchange (a server answers an
+  INIT-REBOOT unicast to the address the NIC still has), so the kernel
+  does not answer a unicast reply with ICMP port unreachable.
+- A DISCOVER after a lease asks for its address again (option 50, after
+  57), like networkd.
 - T2 defaults to 7/8 and T1 to 1/2 of the lease time; a T2 at or past the
   lease time and a T1 at or past T2 get the defaults, like networkd.
 - Replies, like networkd: only Ethernet BOOTP (htype 1, hlen 6, at least

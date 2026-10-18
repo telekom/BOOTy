@@ -43,13 +43,15 @@ type Client struct {
 	jitter       func() time.Duration
 	after        func(time.Duration) <-chan time.Time
 
-	mu      sync.Mutex
-	stop    chan struct{}
-	done    chan struct{}
-	reboot  chan struct{}
-	tr      transport // the open transport of the running exchange
-	lease   *Lease
-	started time.Time
+	mu     sync.Mutex
+	stop   chan struct{}
+	done   chan struct{}
+	reboot chan struct{}
+	tr     transport // the open transport of the running exchange
+	lease  *Lease
+	// lastAddr is the address of the lease that ended last.
+	lastAddr net.IP
+	started  time.Time
 }
 
 // errStopped ends a wait because Stop was called.
@@ -318,6 +320,9 @@ func (c *Client) expire() state {
 	c.mu.Lock()
 	l := c.lease
 	c.lease = nil
+	if l != nil {
+		c.lastAddr = l.FixedAddress
+	}
 	c.mu.Unlock()
 	if l != nil && c.OnExpire != nil {
 		c.OnExpire(l)
@@ -437,6 +442,17 @@ func (c *Client) release() {
 // discover is a DHCPDISCOVER with networkd's options: 61, 55, 57, 80, 12.
 func (c *Client) discover(xid uint32) *message {
 	opts := c.common()
+	// Like networkd (sd-dhcp-client last_addr), a DISCOVER after a lease
+	// asks for its address again (option 50).
+	c.mu.Lock()
+	last := c.lastAddr
+	if c.lease != nil {
+		last = c.lease.FixedAddress
+	}
+	c.mu.Unlock()
+	if ip := last.To4(); ip != nil {
+		opts = append(opts, layers.NewDHCPOption(layers.DHCPOptRequestIP, ip))
+	}
 	opts = append(opts, layers.NewDHCPOption(optRapidCommit, nil))
 	return &message{typ: layers.DHCPMsgTypeDiscover, xid: xid, mac: c.Iface.HardwareAddr, options: c.withHostname(opts)}
 }
