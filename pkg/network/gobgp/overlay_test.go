@@ -4405,7 +4405,8 @@ func TestHandleType2RouteInstallsNeighbor(t *testing.T) {
 		netlinkOps: mock,
 	}
 	route := func(rd uint32, mac, ip string) *apipb.EVPNMACIPAdvertisementRoute {
-		return &apipb.EVPNMACIPAdvertisementRoute{Rd: buildRouteDistinguisher(65000, rd), MacAddress: mac, IpAddress: ip}
+		a := mustRD(t, fmt.Sprintf("65000:%d", rd))
+		return &apipb.EVPNMACIPAdvertisementRoute{Rd: a, MacAddress: mac, IpAddress: ip}
 	}
 	neighbors := func(list []*netlink.Neigh) []*netlink.Neigh {
 		var out []*netlink.Neigh
@@ -4572,7 +4573,8 @@ func TestType5GatewayIPResolutionKeepsTheActivePath(t *testing.T) {
 	o, m := type2TestOverlay()
 	o.cfg.ResolveOverlayIndex = true
 	route := func(rd uint32, gw string) *apipb.EVPNIPPrefixRoute {
-		return &apipb.EVPNIPPrefixRoute{Rd: buildRouteDistinguisher(65000, rd), IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: gw}
+		r := mustRD(t, fmt.Sprintf("65000:%d", rd))
+		return &apipb.EVPNIPPrefixRoute{Rd: r, IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: gw}
 	}
 	o.handleType5Route(route(2, "0.0.0.0"), "10.0.0.2", nil, false) // "b", installed
 	o.handleType5Route(route(1, "0.0.0.0"), "10.0.0.1", nil, false) // "a", sorts first
