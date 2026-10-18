@@ -1051,9 +1051,12 @@ routes whose next hop is its own router ID.
 | `/32` route to each remote VTEP from a Type-5 next hop | No | Yes, except with `frr.conf` sessions: then the routes learned from the fabric reach the VTEP | No |
 
 Without an overlay VRF, the underlay routes and the Type-5 routes share
-the main table with protocol `bgp` and metric 20. When the underlay and a
-Type-5 route carry the same prefix, the last route written replaces the
-other one. zebra instead selects one route by administrative distance.
+the main table with protocol `bgp` and metric 20, so one would replace the
+other. One writer owns a prefix: BOOTy does not install a Type-5 route for
+a prefix that the underlay FIB writer has installed in the same table, and
+logs a warning. Known limit: when the underlay route goes away later, the
+Type-5 route is installed only after the prefix is advertised again. zebra
+instead selects one route by administrative distance.
 
 The underlay `/32` routes use a fabric NIC with link scope. With
 `VRF_NAME`, BOOTy uses the first NIC in the VRF and the VRF table. Without

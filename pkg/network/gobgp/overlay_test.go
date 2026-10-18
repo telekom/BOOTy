@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
@@ -5178,5 +5179,38 @@ func TestType5GatewayIPRouteConvertedWithdraw(t *testing.T) {
 	}
 	if _, ok := o.type2Neigh[gw.String()]; !ok {
 		t.Fatal("the Type-2 neighbor of the gateway is forgotten")
+	}
+}
+
+// One writer owns a prefix: without an overlay VRF the overlay does not
+// install a Type-5 route for a prefix that the underlay FIB writer has
+// installed in the main table, and installs the others.
+func TestHandleType5RouteSkipsFIBOwnedPrefix(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	w := &fibWriter{installed: map[string]*netlink.Route{
+		routeKey(unix.RT_TABLE_MAIN, netip.MustParsePrefix("10.200.0.0/24")): {},
+	}}
+	overlay := &OverlayTier{
+		cfg:        &Config{RouterID: "192.168.4.10", ProvisionVNI: 1000, BridgeName: "br.provision"},
+		log:        slog.Default(),
+		netlinkOps: mock,
+		fibOwns:    w.owns,
+	}
+	mac := mustParseMAC(t, "62:db:b8:c1:80:52")
+	owned := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.200.0.0", IpPrefixLen: 24, GwAddress: "192.168.4.1"}
+	overlay.handleType5Route(owned, "192.168.4.1", mac, false)
+	if len(mock.routeReplaces) != 0 {
+		t.Fatalf("installed a Type-5 route for a prefix of the FIB writer: %v", mock.routeReplaces)
+	}
+	other := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.201.0.0", IpPrefixLen: 24, GwAddress: "192.168.4.1"}
+	overlay.handleType5Route(other, "192.168.4.1", mac, false)
+	if len(mock.routeReplaces) != 1 || mock.routeReplaces[0].Dst.String() != "10.201.0.0/24" {
+		t.Fatalf("route replaces = %v, want only 10.201.0.0/24", mock.routeReplaces)
+	}
+	// With an overlay VRF the tables differ, so the overlay installs it.
+	overlay.cfg.OverlayVRFName, overlay.cfg.OverlayVRFTableID = "provision", 100
+	overlay.handleType5Route(owned, "192.168.4.1", mac, false)
+	if len(mock.routeReplaces) != 2 || mock.routeReplaces[1].Table != 100 {
+		t.Fatalf("route replaces = %v, want 10.200.0.0/24 in table 100", mock.routeReplaces)
 	}
 }
