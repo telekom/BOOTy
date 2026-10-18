@@ -1560,6 +1560,7 @@ vrnetlab topologies and the test levels.
 | [docs/ab-partitioning.md](docs/ab-partitioning.md) | Optional A/B partitioning and inactive-slot provisioning |
 | [docs/sysext-provisioning.md](docs/sysext-provisioning.md) | Optional systemd-sysext loading while provisioning |
 | [docs/gobgp-evpn-guide.md](docs/gobgp-evpn-guide.md) | GoBGP EVPN guide |
+| [docs/rfc-compliance.md](docs/rfc-compliance.md) | RFC compliance audit of the networking stack |
 | [docs/serial-console-resolution.md](docs/serial-console-resolution.md) | Serial console resolution for the installed OS |
 | [docs/e2e-test-matrix.md](docs/e2e-test-matrix.md) | End-to-end test matrix |
 | [docs/size-optimization.md](docs/size-optimization.md) | Initramfs size optimization |
