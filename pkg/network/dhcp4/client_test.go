@@ -443,8 +443,8 @@ func TestSelectingIgnoresOtherTypesAndRetriesFiveTimes(t *testing.T) {
 	}
 }
 
-// INIT-REBOOT tries twice, then INIT.
-func TestRebootTriesTwice(t *testing.T) {
+// INIT-REBOOT is sent once, then INIT on the timeout, like networkd.
+func TestRebootTriesOnce(t *testing.T) {
 	f := newFakeNet()
 	f.answer = func(s sent) []byte {
 		if s.m.typ == layers.DHCPMsgTypeDiscover {
@@ -461,8 +461,8 @@ func TestRebootTriesTwice(t *testing.T) {
 	<-bound // the DISCOVER after two INIT-REBOOTs
 	close(f.stopped)
 	c.Stop()
-	if n := count(f.messages(), func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeRequest }); n != 2 {
-		t.Errorf("%d INIT-REBOOT REQUESTs, want 2", n)
+	if n := count(f.messages(), func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeRequest }); n != 1 {
+		t.Errorf("%d INIT-REBOOT REQUESTs, want 1", n)
 	}
 }
 
@@ -493,5 +493,36 @@ func TestRenewWait(t *testing.T) {
 	// 225 s to T2: wait 112.5 s; then 112.5 s left: wait 60 s.
 	if want := []time.Duration{300 * time.Second, 112500 * time.Millisecond, 60 * time.Second}; !slices.Equal(waits[:3], want) {
 		t.Errorf("waits = %v, want %v first", waits, want)
+	}
+}
+
+// A DHCPNAK from another server than the lease's is ignored in RENEWING,
+// like networkd: the client goes on to REBINDING instead of starting over.
+func TestNakFromOtherServerIgnored(t *testing.T) {
+	f := newFakeNet()
+	other := net.IPv4(192, 168, 10, 99).To4()
+	f.answer = func(s sent) []byte {
+		switch {
+		case s.m.typ == layers.DHCPMsgTypeDiscover:
+			return serverReply(s.m, layers.DHCPMsgTypeAck, layers.NewDHCPOption(optRapidCommit, nil))
+		case s.kind == "unicast":
+			return serverReply(s.m, layers.DHCPMsgTypeNak, layers.NewDHCPOption(layers.DHCPOptServerID, other))
+		}
+		return nil
+	}
+	bound := make(chan *Lease, 4)
+	c := f.client()
+	c.OnBound = func(l *Lease) { bound <- l }
+	c.Start()
+	<-bound
+	f.tick(t)
+	isRebind := func(s sent) bool { return s.kind == "broadcast" && s.m.ciaddr != nil }
+	f.waitFor(t, "a REBIND", func(m []sent) bool { return count(m, isRebind) >= 1 })
+	close(f.stopped)
+	c.Stop()
+	msgs := f.messages()
+	first := slices.IndexFunc(msgs, isRebind)
+	if n := count(msgs[:first], func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeDiscover }); n != 1 {
+		t.Fatalf("%d DISCOVERs: a NAK from another server ended the lease", n)
 	}
 }

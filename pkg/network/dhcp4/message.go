@@ -36,8 +36,11 @@ type Lease struct {
 	Expire time.Time
 }
 
-// optRapidCommit is option 80 (RFC 4039).
-const optRapidCommit layers.DHCPOpt = 80
+// optRapidCommit is option 80 (RFC 4039), optOverload option 52.
+const (
+	optRapidCommit layers.DHCPOpt = 80
+	optOverload    layers.DHCPOpt = 52
+)
 
 // minMessageSize is the smallest BOOTP message (RFC 1542 section 2.1);
 // shorter messages are padded, as relays may drop them.
@@ -93,6 +96,9 @@ type reply struct {
 	lease Lease
 	// rapidCommit is set when an ACK answers a DISCOVER (RFC 4039).
 	rapidCommit bool
+	// overload is set with option 52: options in sname or file, which the
+	// client does not read, so an OFFER or ACK with it is dropped.
+	overload bool
 }
 
 // bootpLen is the fixed BOOTP header and the magic cookie (RFC 2131).
@@ -123,7 +129,7 @@ func decodeReply(payload []byte, now time.Time) (reply, bool) {
 		r.apply(o, &t)
 	}
 	t.set(&r.lease, now)
-	ok := r.usable(t.has)
+	ok := r.usable(t.has && t.lease > 0) // networkd drops a lease time of 0
 	return r, ok
 }
 
@@ -134,7 +140,7 @@ func (r *reply) usable(hasLease bool) bool {
 	switch r.typ {
 	case layers.DHCPMsgTypeOffer, layers.DHCPMsgTypeAck:
 		yi := r.lease.FixedAddress
-		return yi != nil && !yi.IsUnspecified() && r.lease.ServerID != nil && hasLease
+		return yi != nil && !yi.IsUnspecified() && r.lease.ServerID != nil && hasLease && !r.overload
 	case layers.DHCPMsgTypeNak:
 		return r.lease.ServerID != nil
 	default:
@@ -179,6 +185,8 @@ func (r *reply) apply(o layers.DHCPOption, t *leaseTimes) {
 		}
 	case optRapidCommit:
 		r.rapidCommit = true
+	case optOverload:
+		r.overload = true
 	case layers.DHCPOptLeaseTime:
 		t.lease, t.has = u32(o.Data), len(o.Data) == 4
 	case layers.DHCPOptT1:

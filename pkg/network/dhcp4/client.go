@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -166,7 +167,7 @@ func (c *Client) initState() state {
 	xid := rand.Uint32() //nolint:gosec // a transaction ID
 	for n := 0; ; n++ {
 		r, err := c.exchange(func(tr transport, m *message) error { return tr.broadcast(nil, m) },
-			c.discover(xid), c.timeout(n), layers.DHCPMsgTypeOffer, layers.DHCPMsgTypeAck)
+			c.discover(xid), c.timeout(n), nil, layers.DHCPMsgTypeOffer, layers.DHCPMsgTypeAck)
 		switch {
 		case errors.Is(err, errStopped):
 			return stateInit
@@ -185,7 +186,7 @@ func (c *Client) initState() state {
 func (c *Client) selecting(xid uint32, offer *Lease) state {
 	for n := 0; n < 5; n++ {
 		r, err := c.exchange(func(tr transport, m *message) error { return tr.broadcast(nil, m) },
-			c.request(xid, nil, offer.ServerID, offer.FixedAddress), c.timeout(n), layers.DHCPMsgTypeAck, layers.DHCPMsgTypeNak)
+			c.request(xid, nil, offer.ServerID, offer.FixedAddress), c.timeout(n), offer.ServerID, layers.DHCPMsgTypeAck, layers.DHCPMsgTypeNak)
 		switch {
 		case errors.Is(err, errStopped):
 			return stateInit
@@ -201,7 +202,9 @@ func (c *Client) selecting(xid uint32, offer *Lease) state {
 	return stateInit
 }
 
-// rebootState confirms the address of the last lease (INIT-REBOOT).
+// rebootState confirms the address of the last lease (INIT-REBOOT). Like
+// networkd it sends once and goes to INIT on the first timeout. DHCPMode
+// calls Reboot when the carrier returns (wired in #793).
 func (c *Client) rebootState() state {
 	c.mu.Lock()
 	last := c.lease
@@ -211,9 +214,9 @@ func (c *Client) rebootState() state {
 	}
 	c.started = c.now()
 	xid := rand.Uint32() //nolint:gosec // a transaction ID
-	for n := 0; n < 2; n++ {
+	for n := 0; n < 1; n++ {
 		r, err := c.exchange(func(tr transport, m *message) error { return tr.broadcast(nil, m) },
-			c.request(xid, nil, nil, last.FixedAddress), c.timeout(n), layers.DHCPMsgTypeAck, layers.DHCPMsgTypeNak)
+			c.request(xid, nil, nil, last.FixedAddress), c.timeout(n), last.ServerID, layers.DHCPMsgTypeAck, layers.DHCPMsgTypeNak)
 		switch {
 		case errors.Is(err, errStopped):
 			return stateInit
@@ -288,7 +291,7 @@ func (c *Client) extend(next state, until func(*Lease) time.Time, send func(tran
 		wait := max(left/2, 60*time.Second)
 		wait = min(wait, left)
 		r, err := c.exchange(func(tr transport, m *message) error { return send(tr, m, l) },
-			c.request(xid, l.FixedAddress, nil, nil), wait, layers.DHCPMsgTypeAck, layers.DHCPMsgTypeNak)
+			c.request(xid, l.FixedAddress, nil, nil), wait, l.ServerID, layers.DHCPMsgTypeAck, layers.DHCPMsgTypeNak)
 		switch {
 		case errors.Is(err, errStopped):
 			return stateBound
@@ -332,7 +335,9 @@ func (c *Client) expire() state {
 
 // exchange sends m with send and waits up to timeout for a reply of one of
 // the types with the same transaction ID and our MAC.
-func (c *Client) exchange(send func(transport, *message) error, m *message, timeout time.Duration, types ...layers.DHCPMsgType) (reply, error) {
+// A DHCPNAK counts only from server (the server of the offer or lease),
+// like networkd ("NAK from unexpected server, ignoring").
+func (c *Client) exchange(send func(transport, *message) error, m *message, timeout time.Duration, server net.IP, types ...layers.DHCPMsgType) (reply, error) {
 	tr, err := c.open()
 	if err != nil {
 		c.Log.Debug("DHCP transport", "error", err)
@@ -363,15 +368,23 @@ func (c *Client) exchange(send func(transport, *message) error, m *message, time
 			return reply{}, c.pause(left)
 		}
 		r, ok := decodeReply(payload, c.now())
-		if !ok || r.xid != m.xid || r.mac.String() != c.Iface.HardwareAddr.String() {
-			continue
-		}
-		for _, t := range types {
-			if r.typ == t {
-				return r, nil
-			}
+		if ok && c.wanted(&r, m, server, types) {
+			return r, nil
 		}
 	}
+}
+
+// wanted tells whether r answers m with one of the types; a NAK counts only
+// from server.
+func (c *Client) wanted(r *reply, m *message, server net.IP, types []layers.DHCPMsgType) bool {
+	if r.xid != m.xid || r.mac.String() != c.Iface.HardwareAddr.String() || !slices.Contains(types, r.typ) {
+		return false
+	}
+	if r.typ == layers.DHCPMsgTypeNak && server != nil && !r.lease.ServerID.Equal(server) {
+		c.Log.Debug("DHCPNAK from an unexpected server, ignoring", "server", r.lease.ServerID)
+		return false
+	}
+	return true
 }
 
 // pause waits d after a transport error, so a failing socket does not spin.
