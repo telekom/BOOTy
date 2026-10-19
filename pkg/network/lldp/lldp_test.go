@@ -122,6 +122,8 @@ func TestParseLLDPMandatoryTLVs(t *testing.T) {
 	}{
 		{"in order with End", join(chassis, port, ttl, end), true},
 		{"in order without End", join(chassis, port, ttl), true},
+		// One byte of Ethernet padding after an LLDPDU without End TLV.
+		{"in order without End, one padding byte", join(chassis, port, ttl, []byte{0}), true},
 		{"port before chassis", join(port, chassis, ttl, end), false},
 		{"no TTL", join(chassis, port, end), false},
 		{"TTL after an optional TLV", join(chassis, port, rawTLV(layers.LLDPTLVSysName, 'x'), ttl, end), false},

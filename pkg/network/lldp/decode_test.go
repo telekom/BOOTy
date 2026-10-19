@@ -192,9 +192,12 @@ func TestParseLLDPShortOrgTLVs(t *testing.T) {
 	}
 	base := nxosFrame[: len(nxosFrame)-2 : len(nxosFrame)-2] // without the end TLV; appends copy
 	for name, bad := range map[string][]byte{
-		"802.1 VLAN name, 2 bytes":          org(oui8021, 3, 0x00, 0x0a),
-		"802.1 protocol identity, short":    org(oui8021, 4, 0x05, 0x01),
-		"802.1 protocol identity, empty":    org(oui8021, 4),
+		"802.1 VLAN name, 2 bytes":       org(oui8021, 3, 0x00, 0x0a),
+		"802.1 protocol identity, short": org(oui8021, 4, 0x05, 0x01),
+		"802.1 protocol identity, empty": org(oui8021, 4),
+		// gopacket v1.7.4 reads 8 bytes here: one past the TLV, within the
+		// slice capacity, so it does not panic and the case passes there
+		// too. It stays to pin that the 802.3 fields after it still decode.
 		"802.3 MDI power, 7 bytes":          org(oui8023, 2, 0x0f, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00),
 		"MED civic location, 3 bytes after": org(ouiMED, 3, 0x02, 0x00, 0x55, 0x53),
 	} {

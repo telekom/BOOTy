@@ -66,6 +66,6 @@ replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.10
 
 // gopacket 1.7.4 and netlink 1.3.1 plus the BOOTy fixes; why, and when to
 // drop them: docs/dependency-forks.md
-replace github.com/gopacket/gopacket => github.com/MaxRink/gopacket v1.7.4-booty.1
+replace github.com/gopacket/gopacket => github.com/MaxRink/gopacket v1.7.4-booty.2
 
 replace github.com/vishvananda/netlink => github.com/MaxRink/netlink v1.3.1-booty.1
