@@ -178,8 +178,8 @@ func TestLeaseMTUMinimum(t *testing.T) {
 }
 
 // Options are read like networkd (parse_options): without End, a later
-// copy of an option replaces an earlier one, the routes of copies of 33
-// and 121 add up.
+// valid copy of an option replaces an earlier one, a copy with the wrong
+// length is ignored, the routes of valid copies of 33 and 121 add up.
 func TestDecodeReplyRepeatedOptions(t *testing.T) {
 	// raw is a reply whose options are opts, without End.
 	raw := func(opts ...byte) []byte {
@@ -206,6 +206,16 @@ func TestDecodeReplyRepeatedOptions(t *testing.T) {
 			func(r reply) bool { return r.typ == dhcpv4.MessageTypeAck }},
 		{"121 twice", raw(append(append(ack, 121, 5, 0, 10, 0, 0, 1, 121, 8, 24, 10, 1, 0, 10, 0, 0, 2), 0xff)...), true,
 			func(r reply) bool { return len(r.lease.Options.Get(dhcpv4.OptionClasslessStaticRoute)) == 13 }},
+		{"54, then 54 of 3 bytes", raw(append(append(ack, 54, 3, 192, 168, 10), 0xff)...), true,
+			func(r reply) bool { return r.lease.ServerID.Equal(testServer) }},
+		{"3, then 3 of 5 bytes", raw(append(append(ack, 3, 4, 10, 0, 0, 1, 3, 5, 10, 0, 0, 2, 9), 0xff)...), true,
+			func(r reply) bool { return len(r.lease.Router) == 1 && r.lease.Router[0].Equal(net.IPv4(10, 0, 0, 1)) }},
+		{"51 of 2 bytes, then 51", raw(append([]byte{53, 1, 5, 54, 4, 192, 168, 10, 1, 51, 2, 0, 9, 51, 4, 0, 0, 0, 60}, 0xff)...), true,
+			func(r reply) bool { return r.lease.Expire.Sub(r.lease.Bound) == time.Minute }},
+		{"121, then a malformed 121", raw(append(append(ack, 121, 5, 0, 10, 0, 0, 1, 121, 2, 33, 1), 0xff)...), true,
+			func(r reply) bool { return len(r.lease.Options.Get(dhcpv4.OptionClasslessStaticRoute)) == 5 }},
+		{"a malformed 121 alone stays present", raw(append(append(ack, 121, 2, 33, 1), 0xff)...), true,
+			func(r reply) bool { return len(r.lease.Options.Get(dhcpv4.OptionClasslessStaticRoute)) == 2 }},
 		{"no End", raw(ack...), true, func(reply) bool { return true }},
 		{"truncated", raw(append(ack, 6, 4, 10, 0)...), false, nil},
 	} {

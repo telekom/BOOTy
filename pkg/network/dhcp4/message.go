@@ -127,12 +127,36 @@ func decodeReply(payload []byte, now time.Time) (reply, bool) {
 	return r, ok
 }
 
+// valid checks the length of the options that networkd checks per copy
+// (sd-dhcp-lease.c); a copy that fails is ignored, an earlier one stays.
+var valid = map[uint8]func([]byte) bool{
+	dhcpv4.OptionSubnetMask.Code():           length(4),
+	dhcpv4.OptionBroadcastAddress.Code():     length(4),
+	dhcpv4.OptionServerIdentifier.Code():     length(4),
+	dhcpv4.OptionIPAddressLeaseTime.Code():   length(4),
+	dhcpv4.OptionRenewTimeValue.Code():       length(4),
+	dhcpv4.OptionRebindingTimeValue.Code():   length(4),
+	dhcpv4.OptionInterfaceMTU.Code():         length(2),
+	dhcpv4.OptionDHCPMessageType.Code():      length(1),
+	dhcpv4.OptionOptionOverload.Code():       length(1),
+	dhcpv4.OptionRouter.Code():               multiple(4),
+	dhcpv4.OptionTimeServer.Code():           multiple(4),
+	dhcpv4.OptionDomainNameServer.Code():     multiple(4),
+	dhcpv4.OptionNTPServers.Code():           multiple(4),
+	dhcpv4.OptionStaticRoutingTable.Code():   multiple(8),
+	dhcpv4.OptionClasslessStaticRoute.Code(): func(b []byte) bool { var r dhcpv4.Routes; return r.FromBytes(b) == nil },
+}
+
+func length(n int) func([]byte) bool   { return func(b []byte) bool { return len(b) == n } }
+func multiple(n int) func([]byte) bool { return func(b []byte) bool { return len(b)%n == 0 } }
+
 // options reads the options like networkd (parse_options): up to End or
-// the end of the message, a later copy of an option replaces an earlier
-// one, the routes of copies of 33 and 121 add up, and a truncated option
-// fails the message. The library concatenates all copies (RFC 3396).
+// the end of the message, a later valid copy of an option replaces an
+// earlier one, the routes of valid copies of 33 and 121 add up, and a
+// truncated option fails the message. The library concatenates all
+// copies (RFC 3396).
 func options(b []byte) (dhcpv4.Options, bool) {
-	opts := dhcpv4.Options{}
+	opts, malformed := dhcpv4.Options{}, map[uint8]bool{}
 	for len(b) > 0 {
 		code := b[0]
 		switch {
@@ -145,12 +169,24 @@ func options(b []byte) (dhcpv4.Options, bool) {
 			return nil, false
 		}
 		data := b[2 : 2+int(b[1])]
+		b = b[2+int(b[1]):]
+		if ok, checked := valid[code]; checked && !ok(data) {
+			if _, seen := opts[code]; !seen {
+				// Kept so that the option counts as present; its decoder
+				// rejects it, as before. A valid copy replaces it.
+				opts[code], malformed[code] = append([]byte(nil), data...), true
+			}
+			continue
+		}
+		if malformed[code] {
+			delete(opts, code)
+			delete(malformed, code)
+		}
 		if code == dhcpv4.OptionStaticRoutingTable.Code() || code == dhcpv4.OptionClasslessStaticRoute.Code() {
 			opts[code] = append(opts[code], data...)
 		} else {
 			opts[code] = append([]byte(nil), data...)
 		}
-		b = b[2+int(b[1]):]
 	}
 	return opts, true
 }

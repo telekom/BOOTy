@@ -1363,12 +1363,13 @@ BOOTy checks the decoded messages like networkd, on top of the library:
 
 - DHCPv4: Ethernet only (htype 1, hlen 6). The options are read like
   networkd (`parse_options`): to the end of the message also without End,
-  a later copy of an option replaces an earlier one, and the routes of
-  copies of 33 and 121 add up. The library would concatenate all copies
-  (RFC 3396), so BOOTy reads the options itself. An OFFER or ACK needs an
-  address, a server identifier other than 0.0.0.0, a lease time over 0
-  and no option overload; a NAK needs a server identifier. A malformed
-  option 33, 119 or 121 is ignored as a whole.
+  a later copy of an option replaces an earlier one unless its length is
+  wrong for the option, and the routes of valid copies of 33 and 121 add
+  up. The library would concatenate all copies (RFC 3396), so BOOTy reads
+  the options itself. An OFFER or ACK needs an address, a server
+  identifier other than 0.0.0.0, a lease time over 0 and no option
+  overload; a NAK needs a server identifier. A malformed option 33, 119
+  or 121 is ignored as a whole.
 - DHCPv6: a malformed option is ignored, not the message, and in an IA_NA
   a malformed address or status is ignored, not the IA. A truncated option
   drops the message (in an IA: the IA, in an address: the address).
