@@ -623,8 +623,7 @@ func TestSetupKeepsClientsUntilTeardown(t *testing.T) {
 	stoppedAll(t, clients, 1)
 }
 
-// A lease applied while the setup timer fires counts as success; a lease
-// after the stop is not applied.
+// A lease applied while the setup timer fires counts as success.
 // At the timeout Setup checks the applied leases, not only the channel: a
 // lease that was applied but not reported (as when it lands while the
 // timer fires) makes Setup succeed.
