@@ -1288,8 +1288,18 @@ captured in the CAPRF L2 parity fixture:
 
 - SOLICIT with rapid commit, IA_NA, IA_PD, client FQDN (39, flag S and the
   hostname), ORO 23, 31, 56, 82, 103, client identifier and elapsed time;
-  REQUEST after an ADVERTISE without rapid commit.
-- RENEW at T1 and REBIND at T2 with the IA address; RELEASE at stop.
+  REQUEST after an ADVERTISE without rapid commit. During the first
+  retransmission timeout the client collects the ADVERTISEs and requests
+  from the server with the highest preference (option 7); preference 255,
+  or an ADVERTISE after the first timeout, is taken at once (RFC 8415
+  18.2.9, like networkd).
+- One socket per transaction: a reply to an earlier transmission that
+  comes after its timeout is still read.
+- RENEW at T1 and REBIND at T2 with the IA address; RELEASE at stop. A
+  REPLY with NoBinding for the IA leads to a REQUEST for the address to
+  that server (RFC 8415 18.2.10.1); when the server has no binding for
+  that either, the lease ends and the client solicits again (networkd
+  goes straight to SOLICIT).
 - Retransmission as in RFC 8415 section 15 (SOLICIT 1 s, up to 1 h; the
   first SOLICIT timeout is above 1 s); REQUEST up to ten times, then a new
   SOLICIT. When the valid lifetime ends without a REPLY, the client
