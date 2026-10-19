@@ -892,6 +892,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	// changes, which would drop BGP sessions set up before.
 	if cfg.DisableNICFirmwareLLDP() {
 		disableNICFirmwareLLDP(ctx, &cfg.Provision.SRIOV)
+		lldpPrepareNICs = func(nics []string) { disableNICFirmwareLLDPOn(nics, &cfg.Provision.SRIOV) }
 	}
 
 	// Set up networking with retry — if connectivity fails, teardown and
@@ -1204,6 +1205,15 @@ func disableNICFirmwareLLDP(ctx context.Context, sriovCfg *sriov.Config) {
 	nics, err := detectNICs(ctx)
 	if err != nil {
 		slog.Warn("firmware LLDP agent not disabled: no physical NICs", "error", err)
+		return
+	}
+	disableNICFirmwareLLDPOn(nics, sriovCfg)
+}
+
+// disableNICFirmwareLLDPOn is disableNICFirmwareLLDP for the given NICs,
+// also for a NIC that appears later.
+func disableNICFirmwareLLDPOn(nics []string, sriovCfg *sriov.Config) {
+	if len(nics) == 0 {
 		return
 	}
 	owned, err := sriovCfg.FWLLDPAgentOwners(discoverPFs)
@@ -1708,25 +1718,42 @@ var (
 	resolveLinkMatch   = network.ResolveLinkMatch
 	resolveLinkMatches = network.ResolveLinkMatches
 	startLLDPEmit      = emitLLDPOnNetplanNICs
-	lldpLinkSubscribe  = netlink.LinkSubscribe
-	lldpEmit           = lldp.Emit
+	lldpLinkSubscribe  = netlink.LinkSubscribeWithOptions
+	// lldpPrepareNICs runs for a NIC that appears later before LLDP is sent
+	// on it; the network setup sets it from the config.
+	lldpPrepareNICs = func([]string) {}
+	lldpEmit        = lldp.Emit
 )
 
 // followLLDPMatches calls start with the NICs the matches select when a
 // NIC that is not known yet appears, until ctx ends.
 func followLLDPMatches(ctx context.Context, matches []network.LinkMatch, known func(string) bool, start func([]string), log *slog.Logger) {
-	updates := make(chan netlink.LinkUpdate, 16)
-	if err := lldpLinkSubscribe(updates, ctx.Done()); err != nil {
-		log.Warn("NICs that appear later send no LLDP", "error", err)
-		return
-	}
 	go func() {
-		for u := range updates {
-			if u.Header.Type != unix.RTM_NEWLINK || u.Link == nil || known(u.Attrs().Name) {
-				continue
+		// The subscription ends on a netlink error: subscribe again.
+		for ctx.Err() == nil {
+			updates := make(chan netlink.LinkUpdate, 16)
+			opts := netlink.LinkSubscribeOptions{ErrorCallback: func(err error) {
+				log.Warn("link watch for LLDP failed, subscribing again", "error", err)
+			}}
+			if err := lldpLinkSubscribe(updates, ctx.Done(), opts); err != nil {
+				log.Warn("NICs that appear later send no LLDP", "error", err)
+				return
 			}
-			if names, err := resolveLinkMatches(ctx, matches); err == nil {
-				start(names)
+			for u := range updates {
+				if u.Header.Type != unix.RTM_NEWLINK || u.Link == nil || known(u.Attrs().Name) {
+					continue
+				}
+				names, err := resolveLinkMatches(ctx, matches)
+				if err != nil {
+					continue
+				}
+				fresh := slices.DeleteFunc(names, known)
+				lldpPrepareNICs(fresh) // the firmware LLDP agent off, like at the start
+				start(fresh)
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Second):
 			}
 		}
 	}()
@@ -1854,10 +1881,7 @@ func (c *linkLayerCleanup) Teardown(ctx context.Context) error {
 	if c.empty() {
 		return nil
 	}
-	if c.stopLLDP != nil {
-		c.stopLLDP()
-		c.stopLLDP = nil
-	}
+	c.stopLLDPNow()
 	var errs []error
 	for i := len(c.vlans) - 1; i >= 0; i-- {
 		v := c.vlans[i]
@@ -1885,8 +1909,19 @@ func wrapLinkLayerMode(mode network.Mode, cleanup *linkLayerCleanup) network.Mod
 	return &linkLayerNetworkMode{Mode: mode, cleanup: cleanup}
 }
 
+// Teardown stops the LLDP sender first, so its shutdown frames go out
+// before the network mode stops (FRR, within the network stop timeout).
 func (m *linkLayerNetworkMode) Teardown(ctx context.Context) error {
+	m.cleanup.stopLLDPNow()
 	return errors.Join(m.Mode.Teardown(ctx), m.cleanup.Teardown(ctx))
+}
+
+// stopLLDPNow stops the LLDP sender of the cleanup, once.
+func (c *linkLayerCleanup) stopLLDPNow() {
+	if c != nil && c.stopLLDP != nil {
+		c.stopLLDP()
+		c.stopLLDP = nil
+	}
 }
 
 // dhcpFallback creates a DHCP mode and attempts setup.

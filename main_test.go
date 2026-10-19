@@ -2771,11 +2771,15 @@ func TestEmitLLDPOnNetplanNICsHotplug(t *testing.T) {
 		return slices.Clone(nics), nil
 	}
 	subscribed := make(chan chan<- netlink.LinkUpdate, 1)
-	lldpLinkSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}) error {
+	lldpLinkSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}, _ netlink.LinkSubscribeOptions) error {
 		subscribed <- ch
 		go func() { <-done; close(ch) }()
 		return nil
 	}
+	origPrep := lldpPrepareNICs
+	t.Cleanup(func() { lldpPrepareNICs = origPrep })
+	var prepared []string
+	lldpPrepareNICs = func(nics []string) { mu.Lock(); prepared = append(prepared, nics...); mu.Unlock() }
 	stop := emitLLDPOnNetplanNICs(&network.Config{EmitLLDP: []string{"enp1s0"}, EmitLLDPMatches: []network.LinkMatch{{Name: "en*"}}, LLDPProfile: "bm4x-cablecheck"})
 	ch := <-subscribed
 	mu.Lock()
@@ -2800,6 +2804,9 @@ func TestEmitLLDPOnNetplanNICsHotplug(t *testing.T) {
 	if len(sent) != 2 || strings.Join(sent[0], ",") != "enp1s0" || strings.Join(sent[1], ",") != "enp2s0" || profiles[0] != "bm4x-cablecheck" {
 		t.Fatalf("sent on %v with profiles %v, want enp1s0 then the new enp2s0 once, with the profile", sent, profiles)
 	}
+	if strings.Join(prepared, ",") != "enp2s0" {
+		t.Fatalf("firmware LLDP prepared on %v, want the new enp2s0 only", prepared)
+	}
 }
 
 // A native EMIT_LLDP list replaces the netplan values, also match blocks.
@@ -2814,5 +2821,39 @@ func TestMergeNetplanConfigEmitLLDPMatches(t *testing.T) {
 	mergeNetplanConfig(dst, src)
 	if len(dst.EmitLLDPMatches) != 0 {
 		t.Fatalf("EmitLLDPMatches = %v, want none with a native list", dst.EmitLLDPMatches)
+	}
+}
+
+// prepareLinkLayers adds the NICs that the netplan match blocks with
+// emit-lldp select to EmitLLDP, once.
+func TestPrepareLinkLayersResolvesLLDPMatches(t *testing.T) {
+	orig := resolveLinkMatches
+	t.Cleanup(func() { resolveLinkMatches = orig })
+	resolveLinkMatches = func(_ context.Context, m []network.LinkMatch) ([]string, error) {
+		if len(m) == 0 {
+			return nil, nil
+		}
+		return []string{"enp1s0", "enp2s0"}, nil
+	}
+	netCfg := &network.Config{EmitLLDP: []string{"enp1s0"}, EmitLLDPMatches: []network.LinkMatch{{Name: "en*"}}}
+	if _, err := prepareLinkLayers(context.Background(), netCfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(netCfg.EmitLLDP, ","); got != "enp1s0,enp2s0" {
+		t.Fatalf("EmitLLDP = %s, want enp1s0,enp2s0", got)
+	}
+}
+
+// The link-layer mode stops LLDP before the network mode, so the shutdown
+// frames go out before FRR stops.
+func TestLinkLayerTeardownStopsLLDPFirst(t *testing.T) {
+	var order []string
+	mode := teardownRecorderMode{teardown: func() error { order = append(order, "mode"); return nil }}
+	m := &linkLayerNetworkMode{Mode: mode, cleanup: &linkLayerCleanup{stopLLDP: func() { order = append(order, "lldp") }}}
+	if err := m.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(order, ",") != "lldp,mode" {
+		t.Fatalf("teardown order %v, want lldp before the mode", order)
 	}
 }
