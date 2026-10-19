@@ -1,5 +1,5 @@
-github.com/MaxRink/dhcp v0.0.0-20260901064844-234b97448fae-booty.1 h1:HWGofpVyI8I3iSVRA0qzdEuSXx9T7PKWKkEMZP++VJQ=
-github.com/MaxRink/dhcp v0.0.0-20260901064844-234b97448fae-booty.1/go.mod h1:tGfUTcnFYGYvVNCaZZhwlJySU/fQQxh9TmpsFzWXnnY=
+github.com/MaxRink/dhcp v0.0.0-20260901064844-234b97448fae-booty.2 h1:izpsZ0TkT/xxKyaiY/qift0rU+itH+uvRcjaXfmZMno=
+github.com/MaxRink/dhcp v0.0.0-20260901064844-234b97448fae-booty.2/go.mod h1:tGfUTcnFYGYvVNCaZZhwlJySU/fQQxh9TmpsFzWXnnY=
 github.com/MaxRink/gobgp/v4 v4.10.0-booty.10 h1:lzT4u+ct3TfGyuH0jANlNYnyMdoLsDbUHOQrGAbZ3S0=
 github.com/MaxRink/gobgp/v4 v4.10.0-booty.10/go.mod h1:cVD5Q5BXFPLQ1EKROFeXexGJi3XYca4pbs/drBwzUig=
 github.com/MaxRink/gopacket v1.7.4-booty.2 h1:f3nwO/gu5wwVjNx/EPrvSUaMfqq2reWYmQ6A54I2CnM=

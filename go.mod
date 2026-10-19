@@ -72,4 +72,4 @@ replace github.com/vishvananda/netlink => github.com/MaxRink/netlink v1.3.1-boot
 
 // insomniacslk/dhcp 234b97448fae plus the BOOTy fixes; why, and when to
 // drop it: docs/dependency-forks.md
-replace github.com/insomniacslk/dhcp => github.com/MaxRink/dhcp v0.0.0-20260901064844-234b97448fae-booty.1
+replace github.com/insomniacslk/dhcp => github.com/MaxRink/dhcp v0.0.0-20260901064844-234b97448fae-booty.2

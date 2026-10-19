@@ -1361,25 +1361,26 @@ The bytes on the wire did not change; `testdata/golden.txt` in
 
 BOOTy checks the decoded messages like networkd, on top of the library:
 
-- DHCPv4: Ethernet only (htype 1, hlen 6). The options are read to the end
-  of the message also without End. An OFFER or ACK needs an address, a
-  server identifier other than 0.0.0.0, a lease time over 0 and no option
-  overload; a NAK needs a server identifier. A malformed option 33, 119
-  or 121 is ignored as a whole.
+- DHCPv4: Ethernet only (htype 1, hlen 6). The options are read like
+  networkd (`parse_options`): to the end of the message also without End,
+  a later copy of an option replaces an earlier one, and the routes of
+  copies of 33 and 121 add up. The library would concatenate all copies
+  (RFC 3396), so BOOTy reads the options itself. An OFFER or ACK needs an
+  address, a server identifier other than 0.0.0.0, a lease time over 0
+  and no option overload; a NAK needs a server identifier. A malformed
+  option 33, 119 or 121 is ignored as a whole.
 - DHCPv6: a malformed option is ignored, not the message, and in an IA_NA
   a malformed address or status is ignored, not the IA. A truncated option
   drops the message (in an IA: the IA, in an address: the address).
-  Option 24 is plain names, each with the root label (no compression,
-  RFC 8415 section 10); otherwise it is ignored as a whole.
+  1 to 3 bytes after the last option are ignored. Option 24 is read
+  like networkd's `dhcp6_option_parse_domainname_list` (the last byte is
+  0, labels of at most 63 bytes inside the option); otherwise it is
+  ignored as a whole.
 
 Changes against the decoders before:
 
-- DHCPv4: an option that comes twice is concatenated (RFC 3396, RFC 2131
-  section 4.1); before, the last one counted. networkd 255 also keeps the
-  last address list (router, DNS, NTP) but appends the routes of a
-  repeated option 33 or 121. Servers repeat an option to carry more than
-  255 bytes; the concatenation reads such an option wherever the server
-  splits it.
+- DHCPv4: a repeated option 119 counts with its last copy, like networkd;
+  before, the first copy counted.
 - DHCPv4: an option whose length does not fit its type (a subnet mask
   other than 4 bytes, a router, DNS, time or NTP server list that is not a
   multiple of 4 bytes) is ignored, like networkd; before, the client used
@@ -1389,8 +1390,9 @@ Changes against the decoders before:
   to point before the pointer itself.
 - DHCPv6: a DNS server option whose length is not a multiple of 16 is
   ignored, and a truncated option or IA option drops the message or the
-  IA, like networkd; before, the client used what fit. 1 to 3 bytes after
-  the last option also drop the message (networkd ignores them).
+  IA, like networkd; before, the client used what fit. A malformed
+  option 24 is ignored as a whole, like networkd; before, the client kept
+  the names before the error.
 
 Planned (#608): handle DHCP leases without a subnet mask and leases on
 retry.
