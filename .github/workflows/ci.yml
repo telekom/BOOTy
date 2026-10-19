@@ -1,9 +1,7 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # debug branch: only by hand
   workflow_dispatch:
 
 concurrency:

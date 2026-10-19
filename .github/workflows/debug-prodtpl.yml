@@ -1,0 +1,173 @@
+# DEBUG ONLY, DO NOT MERGE: the production template lab with a BGP packet
+# capture of the booty node and FRR neighbor-events on the leaf, with
+# GoBGP ConnectAtOnce on and off (PR #811 collision analysis).
+name: Prodtpl debug
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CONTAINERLAB_VERSION: "0.76.1"
+
+jobs:
+  e2e-prodtpl-debug:
+    name: Prodtpl debug (ConnectAtOnce ${{ matrix.connect }}, run ${{ matrix.run }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        connect: ["on", "off"]
+        run: [1, 2]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.2"
+
+      - name: ConnectAtOnce ${{ matrix.connect }}
+        if: matrix.connect == 'off'
+        run: |
+          sed -i 's/ConnectAtOnce:          true,/ConnectAtOnce:          false,/' pkg/network/gobgp/families.go
+          grep -n 'ConnectAtOnce' pkg/network/gobgp/families.go
+
+      - name: Build GoBGP test image
+        run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
+
+      - name: Build networkd test image
+        run: test/e2e/clab/docker-build-retry.sh -t booty-networkd-test:latest -f test/e2e/clab/networkd-test.Dockerfile test/e2e/clab
+
+      - name: Install ContainerLab
+        run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
+
+      - name: Load VRF and VXLAN kernel modules
+        run: |
+          # The template puts the uplinks into Vrf_underlay; a container can
+          # not load modules itself ("Unknown device type").
+          if ! sudo modprobe vrf; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
+            sudo modprobe vrf
+          fi
+          sudo modprobe vxlan
+
+      - name: Deploy production template topology
+        run: sudo containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
+
+      - name: Start tcpdump of BGP on the booty node
+        run: |
+          mkdir -p prodtpl-logs
+          sudo docker run -d --name bgp-tcpdump --net container:clab-booty-prodtpl-lab-booty \
+            -v "$PWD/prodtpl-logs:/cap" nicolaka/netshoot:v0.13 \
+            tcpdump -i any -nn -U -s 256 -w /cap/booty-bgp.pcap 'tcp port 179'
+          sleep 2
+          sudo docker logs bgp-tcpdump || true
+
+      - name: Run production template E2E tests
+        env:
+          GOMAXPROCS: "2"
+        run: |
+          set -o pipefail
+          go test -tags e2e_prodtpl -v -race -count=1 -timeout 20m ./test/e2e/integration/... 2>&1 | tee e2e-prodtpl.log
+          for expected in \
+            TestProdTplLeafSessions \
+            TestProdTplLocalASReplaceASPath \
+            TestProdTplRRSessions \
+            TestProdTplRRSessionVRFOutbound \
+            TestProdTplFIBRoutes \
+            TestProdTplFIBWithdraw \
+            TestProdTplUplinkCarrierLoss \
+            TestProdTplNativeVRFNameFIB \
+            TestProdTplLeafSessionVRFInbound \
+            TestProdTplCarrierLossPastBFD \
+            TestProdTplRRSessionVRFInbound \
+            TestProdTplType5IPv6Install \
+            TestProdTplType5Origination \
+            TestProdTplType5CAPRFOverIPv6 \
+            TestProdTplBFDSessions \
+            TestProdTplBFDFailover \
+            TestProdTplLeafClear \
+            TestProdTplLocalASLoopCheck \
+            TestProdTplRouteMapDenyTaggedOut \
+            TestProdTplRouteMapTagIn \
+            TestProdTplEBGPRequiresPolicy \
+            TestProdTplKernelDevices \
+            TestProdTplRRRestart \
+            TestProdTplLLDP \
+            TestProdTplOpenCapabilities \
+            TestProdTplLLDPLikeNetworkd \
+            TestProdTplLLDPReceive \
+            TestProdTplRFC5549Routes \
+            TestProdTplEBGPWithoutPolicy \
+            TestProdTplLongOutageNewLinkLocal \
+            TestProdTplOneDropPerFault \
+            TestProdTplRRSessionsNotResetAtStart \
+            TestProdTplType5ConnectedPrefixKept; do
+            if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
+              echo "::error::${expected} did not pass"
+              exit 1
+            fi
+          done
+          if grep -E '^[[:space:]]*--- SKIP:' e2e-prodtpl.log; then
+            echo "::error::production template e2e tests skipped in CI"
+            exit 1
+          fi
+
+      - name: Collect production template logs
+        if: always()
+        timeout-minutes: 5
+        run: |
+          sudo docker stop bgp-tcpdump || true
+          sudo chmod -R a+r prodtpl-logs || true
+          mkdir -p prodtpl-logs
+          for node in leaf01 dcgw01 dcgw02 shadow booty native native-vrf tester networkd caprf-mock caprf6; do
+            name="clab-booty-prodtpl-lab-${node}"
+            timeout 30 sudo docker logs "${name}" > "prodtpl-logs/${node}.log" 2>&1 || true
+            {
+              echo "=== ip -d addr ==="
+              timeout 5 sudo docker exec "${name}" ip -d addr show 2>&1 || true
+              echo "=== ip route show table all ==="
+              timeout 5 sudo docker exec "${name}" ip route show table all 2>&1 || true
+              echo "=== ip -6 route show table all ==="
+              timeout 5 sudo docker exec "${name}" ip -6 route show table all 2>&1 || true
+              echo "=== ip neigh ==="
+              timeout 5 sudo docker exec "${name}" ip neigh show 2>&1 || true
+              echo "=== bridge fdb ==="
+              timeout 5 sudo docker exec "${name}" bridge fdb show 2>&1 || true
+              echo "=== ss -tn ==="
+              timeout 5 sudo docker exec "${name}" ss -tn 2>&1 || true
+            } > "prodtpl-logs/${node}-network.txt" 2>&1
+          done
+          for node in leaf01 dcgw01 dcgw02 shadow tester; do
+            for cmd in "show bgp vrf all summary json" "show bgp vrf all neighbors json" "show bgp ipv4 unicast" "show bgp l2vpn evpn" "show bfd peers json"; do
+              slug=$(echo "$cmd" | tr ' ' '-')
+              timeout 15 sudo docker exec "clab-booty-prodtpl-lab-${node}" vtysh -c "$cmd" > "prodtpl-logs/${node}-${slug}.txt" 2>&1 || true
+            done
+          done
+
+      - name: Upload production template logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: prodtpl-debug-${{ matrix.connect }}-${{ matrix.run }}
+          path: |
+            e2e-prodtpl.log
+            prodtpl-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if command -v containerlab >/dev/null 2>&1; then
+            sudo containerlab destroy --topo test/e2e/clab/topology-production-templates.clab.yml --cleanup || true
+          fi
+
