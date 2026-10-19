@@ -1344,9 +1344,11 @@ BOOTy checks the decoded messages like networkd, on top of the library:
 Changes against the decoders before:
 
 - DHCPv4: an option that comes twice is concatenated (RFC 3396, RFC 2131
-  section 4.1); before, the last one counted, as in networkd 255. Servers
-  repeat an option only to carry more than 255 bytes, which networkd 255
-  cannot read either.
+  section 4.1); before, the last one counted. networkd 255 also keeps the
+  last address list (router, DNS, NTP) but appends the routes of a
+  repeated option 33 or 121. Servers repeat an option to carry more than
+  255 bytes; the concatenation reads such an option wherever the server
+  splits it.
 - DHCPv4: an option whose length does not fit its type (a subnet mask
   other than 4 bytes, a router, DNS, time or NTP server list that is not a
   multiple of 4 bytes) is ignored, like networkd; before, the client used
