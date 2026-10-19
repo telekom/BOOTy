@@ -1453,6 +1453,11 @@ func TestMalformedRouteAndSearchOptions(t *testing.T) {
 		"label type 01":   append(append([]byte(nil), ok...), 0x41, 'b', 0),
 		"label type 10":   append(append([]byte(nil), ok...), 0x81, 'b', 0),
 		"truncated":       append(append([]byte(nil), ok...), 5, 'b'),
+		// A forward pointer onto a valid name in the data, and reserved
+		// label types with enough bytes after them for a label.
+		"forward pointer onto a name": {1, 'a', 0xc0, 4, 1, 'b', 0},
+		"label type 01, long":         append(append([]byte{0x41}, bytes.Repeat([]byte{'x'}, 0x41)...), 0),
+		"label type 10, long":         append(append([]byte{0x81}, bytes.Repeat([]byte{'x'}, 0x81)...), 0),
 	} {
 		if got := domainSearch(data); got != nil {
 			t.Errorf("%s: domainSearch = %q, want the option ignored", name, got)
@@ -1467,7 +1472,8 @@ func TestMalformedRouteAndSearchOptions(t *testing.T) {
 // stable within the run.
 func TestClientIDWithoutMachineID(t *testing.T) {
 	a, b := dhcpClientID("eth0", ""), dhcpClientID("eth0", "")
-	if !bytes.Equal(a, b) || bytes.Equal(a, dhcpClientID("eth0", "x")) || fallbackMachineID() == "" {
+	if !bytes.Equal(a, b) || !bytes.Equal(a, dhcpClientID("eth0", fallbackMachineID())) ||
+		bytes.Equal(a, dhcpClientID("eth0", "x")) || fallbackMachineID() == "" {
 		t.Fatalf("client IDs %x %x", a, b)
 	}
 }
