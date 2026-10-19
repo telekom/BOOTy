@@ -135,3 +135,23 @@ func FuzzUDPPayload(f *testing.F) {
 	f.Add(frame4([]byte("hello")))
 	f.Fuzz(func(_ *testing.T, b []byte) { _, _ = udpPayload(b, true) })
 }
+
+// Option 26 below 576, also 0, becomes 576 like networkd; without the
+// option MTU stays 0.
+func TestLeaseMTUMinimum(t *testing.T) {
+	sid := layers.NewDHCPOption(layers.DHCPOptServerID, testServer)
+	lt := layers.NewDHCPOption(layers.DHCPOptLeaseTime, []byte{0, 0, 0, 120})
+	for _, tt := range []struct {
+		opts []layers.DHCPOption
+		want uint16
+	}{
+		{nil, 0},
+		{[]layers.DHCPOption{layers.NewDHCPOption(layers.DHCPOptInterfaceMTU, []byte{0, 0})}, 576},
+		{[]layers.DHCPOption{layers.NewDHCPOption(layers.DHCPOptInterfaceMTU, []byte{0x23, 0x28})}, 9000},
+	} {
+		r, ok := decodeReply(reply4(layers.DHCPMsgTypeAck, testAddr, append([]layers.DHCPOption{sid, lt}, tt.opts...)...), time.Now())
+		if !ok || r.lease.MTU != tt.want {
+			t.Errorf("MTU = %d (ok %v), want %d", r.lease.MTU, ok, tt.want)
+		}
+	}
+}

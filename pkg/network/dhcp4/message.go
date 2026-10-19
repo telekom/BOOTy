@@ -219,7 +219,9 @@ func (l *Lease) apply(o layers.DHCPOption) bool {
 		l.DomainName = string(o.Data)
 	case layers.DHCPOptInterfaceMTU:
 		if len(o.Data) == 2 {
-			l.MTU = binary.BigEndian.Uint16(o.Data)
+			// networkd raises a value below 576 (also 0) to 576; 0 in MTU
+			// means no option 26.
+			l.MTU = max(binary.BigEndian.Uint16(o.Data), 576)
 		}
 	default:
 		return false
