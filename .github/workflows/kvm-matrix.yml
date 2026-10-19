@@ -334,8 +334,8 @@ jobs:
             # target OS kernel (<= 6.18) refuses, so provision with a pinned 6.8
             # kernel instead of the runner kernel (7.x since runner image 20261018).
             kernel_debs: |
-              b1f19b3c6ce0684e6884fec1abb9b88bc55362b37147d03a75d8ef0244a820f1  http://archive.ubuntu.com/ubuntu/pool/main/l/linux-signed-azure/linux-image-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
-              d27fd905b01bf76b8a14c9ac88eb55c76a79f8025a7c2c15b8481ac786153ce0  http://archive.ubuntu.com/ubuntu/pool/main/l/linux-azure/linux-modules-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
+              b1f19b3c6ce0684e6884fec1abb9b88bc55362b37147d03a75d8ef0244a820f1  https://launchpad.net/ubuntu/+archive/primary/+files/linux-image-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
+              d27fd905b01bf76b8a14c9ac88eb55c76a79f8025a7c2c15b8481ac786153ce0  https://launchpad.net/ubuntu/+archive/primary/+files/linux-modules-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
             test_tag: e2e
             test_regex: "^TestMirroredRootBootFailoverVM$"
             # Two subtests of at most 8 + 6 + 6 minutes plus image preparation.
@@ -357,8 +357,8 @@ jobs:
             # target OS kernel (<= 6.18) refuses, so provision with a pinned 6.8
             # kernel instead of the runner kernel (7.x since runner image 20261018).
             kernel_debs: |
-              b1f19b3c6ce0684e6884fec1abb9b88bc55362b37147d03a75d8ef0244a820f1  http://archive.ubuntu.com/ubuntu/pool/main/l/linux-signed-azure/linux-image-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
-              d27fd905b01bf76b8a14c9ac88eb55c76a79f8025a7c2c15b8481ac786153ce0  http://archive.ubuntu.com/ubuntu/pool/main/l/linux-azure/linux-modules-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
+              b1f19b3c6ce0684e6884fec1abb9b88bc55362b37147d03a75d8ef0244a820f1  https://launchpad.net/ubuntu/+archive/primary/+files/linux-image-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
+              d27fd905b01bf76b8a14c9ac88eb55c76a79f8025a7c2c15b8481ac786153ce0  https://launchpad.net/ubuntu/+archive/primary/+files/linux-modules-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
             test_tag: e2e
             test_regex: "^TestMirroredRootBootFailoverVM$"
             # Two subtests of at most 8 + 6 + 6 minutes plus image preparation.
@@ -527,7 +527,8 @@ jobs:
         env:
           KERNEL_DEBS: ${{ matrix.kernel_debs || '' }}
         run: |
-          KERNEL=$(ls /boot/vmlinuz-* 2>/dev/null | head -1)
+          set -euo pipefail
+          KERNEL=$(ls /boot/vmlinuz-* 2>/dev/null | head -1 || true)
           if [ -n "$KERNEL_DEBS" ]; then
             # Unpack the pinned kernel image and modules packages. The modules go
             # to /lib/modules so the e2e helpers copy them into the guest
