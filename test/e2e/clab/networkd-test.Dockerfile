@@ -2,7 +2,7 @@
 # the production template lab: what the legacy ramdisk sends with netplan
 # "emit-lldp: true". It sends and receives LLDP on its lldp* links and
 # does nothing else (no addresses, no RA).
-FROM ubuntu:22.04
+FROM ubuntu:25.10
 RUN set -eu; \
     n=0; \
     until apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends systemd; do \
