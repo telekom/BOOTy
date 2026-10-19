@@ -96,8 +96,9 @@ func (l *collisionLeaf) open() *bgp.BGPMessage {
 	return m
 }
 
-// startCollision starts a GoBGP server with a peer as BOOTy builds it
-// (ConnectAtOnce, graceful restart helper) to a leaf on a local port and
+// startCollision starts a GoBGP server with a peer as BOOTy builds it with
+// BGP_CONNECT_AT_ONCE (ConnectAtOnce, graceful restart helper) to a leaf on
+// a local port and
 // brings both connections to the point where GoBGP sent its OPEN on each.
 func startCollision(t *testing.T) (*server.BgpServer, *collisionLeaf) {
 	t.Helper()
@@ -110,7 +111,7 @@ func startCollision(t *testing.T) (*server.BgpServer, *collisionLeaf) {
 	t.Cleanup(func() { _ = leafL.Close() })
 	port := freePort(t)
 	s := startServerAt(t, 65000, "192.0.2.17", "127.0.0.1", port)
-	cfg := &Config{ASN: 65000, Capabilities: network.BGPCapabilities{GracefulRestart: true, GracefulRestartTime: 120}}
+	cfg := &Config{ASN: 65000, ConnectAtOnce: true, Capabilities: network.BGPCapabilities{GracefulRestart: true, GracefulRestartTime: 120}}
 	p := buildSessionPeer(cfg, &network.BGPSession{Name: "127.0.0.1", RemoteASN: 65500, IPv4Unicast: true}, "127.0.0.1")
 	p.Transport.RemotePort = uint32(leafL.Addr().(*net.TCPAddr).Port) //nolint:gosec // test port
 	if err := s.AddPeer(ctx, &apipb.AddPeerRequest{Peer: p}); err != nil {

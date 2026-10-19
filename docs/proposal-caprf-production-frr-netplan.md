@@ -204,9 +204,10 @@ BFD). BOOTy implements a minimal BFD in its own package
   the fork tag v4.10.0-booty.6 GoBGP sends Cease subcode 10 (BFD Down),
   like FRR, and a reset also shortens an Idle hold that already runs.
   FRR also sends `BGP_Start` on BFD Up for a peer that is not
-  established; GoBGP has no API for it, but with `ConnectAtOnce` it
-  connects at once when the peer leaves Idle. Every state change is
-  logged.
+  established; GoBGP has no API for it. With `BGP_CONNECT_AT_ONCE`
+  (`ConnectAtOnce`, off by default because of connection collisions after
+  a carrier loss, #811) it connects at once when the peer leaves Idle,
+  else after 1.5 to 2 s. Every state change is logged.
 - Unit tests:
   - the state machine (RFC 5880 6.8.6 transitions)
   - detection time math (6.8.4)

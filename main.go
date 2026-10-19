@@ -1581,6 +1581,7 @@ func frrVersionBelow(v string, major, minor int) bool {
 func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 	withSessions := len(n.BGPSessions) > 0
 	n.BGPInstallRoutes = boolOr(o.InstallRoutes, withSessions)
+	n.BGPConnectAtOnce = boolOr(o.ConnectAtOnce, false)
 	if o.MultipathRelax != nil {
 		n.BGPMultipathRelax = *o.MultipathRelax
 	}

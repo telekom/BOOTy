@@ -201,20 +201,23 @@ func TestSessionState(t *testing.T) {
 }
 
 // Every peer waits idleHoldAfterReset (1 s, FRR BGP_INIT_START_TIMER)
-// after a reset, not the GoBGP default of 30 s, and connects at once
-// when it leaves Idle.
+// after a reset, not the GoBGP default of 30 s. ConnectAtOnce is off unless
+// BGP_CONNECT_AT_ONCE sets it (#811: connection collisions after a carrier
+// loss).
 func TestPeersIdleHoldAfterReset(t *testing.T) {
-	cfg := &Config{ASN: 65000}
-	for name, p := range map[string]*apipb.Peer{
-		"numbered":  buildNumberedPeer(cfg, "10.0.0.1", ipv4Families()),
-		"interface": buildInterfacePeer(cfg, "eth1", "fe80::2%eth1", ipv4Families()),
-		"session":   buildSessionPeer(cfg, &network.BGPSession{Name: "10.0.0.1", Internal: true}, "10.0.0.1"),
-	} {
-		if got := p.GetTimers().GetConfig().GetIdleHoldTimeAfterReset(); got != idleHoldAfterReset {
-			t.Errorf("%s peer: IdleHoldTimeAfterReset = %d, want %d", name, got, idleHoldAfterReset)
-		}
-		if !p.GetTimers().GetConfig().GetConnectAtOnce() {
-			t.Errorf("%s peer: ConnectAtOnce is off; FRR connects when BGP_Start runs", name)
+	for _, atOnce := range []bool{false, true} {
+		cfg := &Config{ASN: 65000, ConnectAtOnce: atOnce}
+		for name, p := range map[string]*apipb.Peer{
+			"numbered":  buildNumberedPeer(cfg, "10.0.0.1", ipv4Families()),
+			"interface": buildInterfacePeer(cfg, "eth1", "fe80::2%eth1", ipv4Families()),
+			"session":   buildSessionPeer(cfg, &network.BGPSession{Name: "10.0.0.1", Internal: true}, "10.0.0.1"),
+		} {
+			if got := p.GetTimers().GetConfig().GetIdleHoldTimeAfterReset(); got != idleHoldAfterReset {
+				t.Errorf("%s peer: IdleHoldTimeAfterReset = %d, want %d", name, got, idleHoldAfterReset)
+			}
+			if got := p.GetTimers().GetConfig().GetConnectAtOnce(); got != atOnce {
+				t.Errorf("%s peer: ConnectAtOnce = %v, want %v", name, got, atOnce)
+			}
 		}
 	}
 }

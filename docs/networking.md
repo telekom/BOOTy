@@ -223,7 +223,7 @@ same resolution:
     the peer (carrier loss) and GoBGP keeps no graceful restart routes of
     it, BOOTy deletes the GoBGP peer and adds it again at once. A new
     peer accepts the leaf's connection at once, like FRR in Idle, and
-    connects itself at once (`ConnectAtOnce`, below). This also covers the BFD reset, where
+    connects itself (at once with `BGP_CONNECT_AT_ONCE`, below). This also covers the BFD reset, where
     GoBGP refused connections for the 1 s idle hold time.
     `TestProdTplLeafClear` checks that the leaf session is up again within
     5 s. CI (three lab variants): Established again 1.1 to 1.8 s after
@@ -234,12 +234,19 @@ same resolution:
     ([osrg/gobgp#3736](https://github.com/osrg/gobgp/issues/3736)), where
     FRR connects when `BGP_Start` runs: at the end of its start timer (1 s,
     or 2 s after a NOTIFICATION), when the next hop becomes valid, and at
-    BFD Up (`bgp_fsm.c`, `bgp_bfd.c`). Status: closed in BOOTy with
-    `TimersConfig.ConnectAtOnce` of the GoBGP fork on every peer: the first
-    connect after Idle starts at once, and only the retries wait the
-    connect timer. The peer restart above stays: GoBGP still holds a peer
-    5 s in Idle after the peer ended the session and refuses the leaf
-    meanwhile, which `ConnectAtOnce` does not change.
+    BFD Up (`bgp_fsm.c`, `bgp_bfd.c`). Status: available in BOOTy as
+    `BGP_CONNECT_AT_ONCE` (`TimersConfig.ConnectAtOnce` of the GoBGP fork),
+    off by default: the first connect after Idle starts at once, and only
+    the retries wait the connect timer. It is off because after a carrier
+    loss both sides then have a connect pending until the link works
+    again, and both connections complete within 100 microseconds (FRR
+    debug trace of the production template lab, #811). FRR and GoBGP
+    both resolve that collision per RFC 4271 section 6.8 and keep BOOTy's
+    connection, but in about one fault in ten the kept connection was
+    lost as well and the session came up twice. Without the option the
+    leaf's connection usually arrives first. The peer restart above stays:
+    GoBGP still holds a peer 5 s in Idle after the peer ended the session
+    and refuses the leaf meanwhile, which `ConnectAtOnce` does not change.
   Two more regressions of GoBGP 4.10.0 are fixed in the GoBGP fork that
   BOOTy uses ([GoBGP version and fork](#gobgp-version-and-fork)):
   `ResetPeer` on a peer without a session (a BFD reset of a peer that
@@ -389,6 +396,7 @@ rule of every key:
 | `ACCEPT_RA_OFF`, `LLDP_EMIT` | netplan ethernet `accept-ra: false`, `emit-lldp: true` | `network.noAcceptRA`, `network.emitLLDP` | list replaces |
 | `BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`, `BGP_GRACEFUL_NOTIFICATION`, `BGP_ADDPATH_RX`, `BGP_SOFTWARE_VERSION` | none: `frr.conf` graceful restart and capability statements are rejected | `network.bgp.gracefulRestart`, `gracefulRestartTime`, `gracefulNotification`, `addPathReceive`, `softwareVersion` | native only; unset is the FRR default (for `BGP_SOFTWARE_VERSION`, of the `frr defaults` profile; for `BGP_GRACEFUL_NOTIFICATION`, of the `frr version`) |
 | `BGP_HOSTNAME` | none: FRR ignores the `frr.conf` `hostname` line and sends the system host name | `network.bgp.hostname` | native only; unset keeps the system host name |
+| `BGP_CONNECT_AT_ONCE` | none: FRR always connects when `BGP_Start` runs | `network.bgp.connectAtOnce` | native only; unset is off |
 | `LLDP_RECEIVE` | none: the legacy ramdisk does not receive LLDP | `network.lldpReceive` | native only; unset is on |
 | `LLDP_DISABLE_FW_AGENT` | none: the legacy ramdisk never touches the flag | `network.lldp.disableFirmwareAgent` | native only; unset is on (a deliberate deviation, see below); `false` leaves the flag alone |
 | `LLDP_PROFILE`, `LLDP_PORT_ID_FORMAT`, `LLDP_EMIT_ALL`, `LLDP_ANNOUNCE` | none | `network.lldp.profile`, `network.lldp.portIDFormat`, `network.lldp.emitAll`, `network.lldp.announce` | native only; unset is the networkd identity and TLVs on the `LLDP_EMIT` NICs |
@@ -547,7 +555,7 @@ answer it again).
 | Keep unknown EVPN extended community sub-types (RFC 7606 section 7.14) | A route with an EVPN extended community sub-type that GoBGP does not know is treated as withdrawn: FRR's MAC/IP routes with the ARP/ND community (sub-type 0x08) are withdrawn. |
 | Decode the EVPN ARP/ND extended community (RFC 9047) | The router (R), override (O) and immutable (I) flags of a MAC/IP route, and the proxy flag that FRR sends, are not available to BOOTy. |
 | Feature: `ResetPeerRequest.BfdDown` sends Cease/BFD Down (RFC 9384), opt-in, with the idle hold time after reset also for a peer without a session (booty.4); BOOTy sets it for its BFD resets | The peer of a BFD reset gets Cease/Administrative Reset (subcode 4), not BFD Down (subcode 10) like from FRR. |
-| Feature: `TimersConfig.ConnectAtOnce` starts the first connect after Idle at once, opt-in; BOOTy sets it on every peer | GoBGP waits a random 1.5 to 2 s before it connects ([osrg/gobgp#3736](https://github.com/osrg/gobgp/issues/3736)); FRR connects when `BGP_Start` runs. |
+| Feature: `TimersConfig.ConnectAtOnce` starts the first connect after Idle at once, opt-in; BOOTy sets it with `BGP_CONNECT_AT_ONCE` (off by default) | GoBGP waits a random 1.5 to 2 s before it connects ([osrg/gobgp#3736](https://github.com/osrg/gobgp/issues/3736)); FRR connects when `BGP_Start` runs. |
 | Feature: Enhanced Route Refresh (RFC 7313), always on, with a bound (the graceful restart stale routes time, else 360 s) on the routes that a BoRR without EoRR leaves stale | The OPEN lacks the capability that FRR sends; a refresh from the peer has no begin and end markers, so stale routes are not swept. |
 | Feature: Paths-Limit capability (limit 0, no limit), always sent for the families that receive with ADD-PATH | The OPEN lacks the capability that FRR sends with ADD-PATH. |
 

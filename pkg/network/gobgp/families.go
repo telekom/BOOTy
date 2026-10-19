@@ -17,11 +17,15 @@ import (
 // close and 2 s after a NOTIFICATION, where v_start doubles (bgp_fsm.c,
 // bgp_packet.c).
 //
-// Every peer also sets ConnectAtOnce (GoBGP fork): FRR connects as soon as
-// BGP_Start runs (bgp_fsm.c, bgp_start), and BGP_Start comes from the
-// start timer, from a valid next hop (bgp_fsm_nht_update) and from BFD Up.
-// Without it GoBGP waits a random 1.5 to 2 s before the first connect
-// after Idle (osrg/gobgp#3736); retries still wait the connect timer.
+// BGP_CONNECT_AT_ONCE sets ConnectAtOnce (GoBGP fork) on every peer: FRR
+// connects as soon as BGP_Start runs (bgp_fsm.c, bgp_start), and BGP_Start
+// comes from the start timer, from a valid next hop (bgp_fsm_nht_update)
+// and from BFD Up. Without it GoBGP waits a random 1.5 to 2 s before the
+// first connect after Idle (osrg/gobgp#3736); retries wait the connect
+// timer either way. It is off by default: after a carrier loss GoBGP and
+// the leaf then both have a connect pending until the link works again,
+// and the connection collision is not always resolved to one session
+// (#811).
 const idleHoldAfterReset = 1
 
 // bgpTimers returns the configured BGP keepalive/hold timers.
@@ -32,7 +36,7 @@ func bgpTimers(cfg *Config) *apipb.Timers {
 			KeepaliveInterval:      cfg.KeepaliveInterval,
 			HoldTime:               cfg.HoldTime,
 			IdleHoldTimeAfterReset: idleHoldAfterReset,
-			ConnectAtOnce:          true,
+			ConnectAtOnce:          cfg.ConnectAtOnce,
 		},
 	}
 }
@@ -165,7 +169,7 @@ func buildSessionPeer(cfg *Config, s *network.BGPSession, addr string) *apipb.Pe
 			KeepaliveInterval:      uint64(s.KeepaliveTime),
 			HoldTime:               uint64(s.HoldTime),
 			IdleHoldTimeAfterReset: idleHoldAfterReset,
-			ConnectAtOnce:          true,
+			ConnectAtOnce:          cfg.ConnectAtOnce,
 		}},
 		AfiSafis:  sessionFamilies(s),
 		Transport: &apipb.Transport{MtuDiscovery: true},
