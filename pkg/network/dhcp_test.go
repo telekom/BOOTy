@@ -1001,7 +1001,8 @@ func TestOnExpireStopsLeaseExpiryTimer(t *testing.T) {
 func TestTeardownWaitsForRestart(t *testing.T) {
 	stubDHCPNetlink(t)
 	d := NewDHCPMode()
-	old := &fakeRestartClient{onStop: func() { time.Sleep(300 * time.Millisecond) }}
+	stopped := make(chan struct{})
+	old := &fakeRestartClient{onStop: func() { time.Sleep(300 * time.Millisecond); close(stopped) }}
 	var mu sync.Mutex
 	var fresh []*fakeRestartClient
 	start := func() dhcpClient {
@@ -1017,6 +1018,11 @@ func TestTeardownWaitsForRestart(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // the old client is stopping
 	if err := d.Teardown(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("Teardown returned while the restart still stopped the old client")
 	}
 	mu.Lock()
 	defer mu.Unlock()
