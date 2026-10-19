@@ -3,10 +3,12 @@ package dhcp4
 import (
 	"encoding/binary"
 	"net"
+	"slices"
 	"time"
 
 	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/insomniacslk/dhcp/iana"
+	"github.com/insomniacslk/dhcp/rfc1035label"
 )
 
 // Lease is what a DHCPACK assigns.
@@ -127,8 +129,11 @@ func decodeReply(payload []byte, now time.Time) (reply, bool) {
 	return r, ok
 }
 
-// valid checks the length of the options that networkd checks per copy
+// valid checks the options that networkd checks per copy
 // (sd-dhcp-lease.c); a copy that fails is ignored, an earlier one stays.
+// networkd also ignores a copy of 12 or 15 that is no valid DNS name;
+// BOOTy keeps the last copy of these and checks the domain name when it
+// uses it (validSearchDomain).
 var valid = map[uint8]func([]byte) bool{
 	dhcpv4.OptionSubnetMask.Code():           length(4),
 	dhcpv4.OptionBroadcastAddress.Code():     length(4),
@@ -137,14 +142,28 @@ var valid = map[uint8]func([]byte) bool{
 	dhcpv4.OptionRenewTimeValue.Code():       length(4),
 	dhcpv4.OptionRebindingTimeValue.Code():   length(4),
 	dhcpv4.OptionInterfaceMTU.Code():         length(2),
-	dhcpv4.OptionDHCPMessageType.Code():      length(1),
-	dhcpv4.OptionOptionOverload.Code():       length(1),
 	dhcpv4.OptionRouter.Code():               multiple(4),
 	dhcpv4.OptionTimeServer.Code():           multiple(4),
 	dhcpv4.OptionDomainNameServer.Code():     multiple(4),
 	dhcpv4.OptionNTPServers.Code():           multiple(4),
 	dhcpv4.OptionStaticRoutingTable.Code():   multiple(8),
-	dhcpv4.OptionClasslessStaticRoute.Code(): func(b []byte) bool { var r dhcpv4.Routes; return r.FromBytes(b) == nil },
+	dhcpv4.OptionClasslessStaticRoute.Code(): func(b []byte) bool { return len(b) > 0 }, // cut by classless
+	dhcpv4.OptionDNSDomainSearchList.Code():  func(b []byte) bool { return len(b) > 0 && SearchDomains(b) != nil },
+}
+
+// classless cuts option 121 after its last whole route, like networkd
+// (lease_parse_classless_routes keeps the routes before an error).
+func classless(b []byte) []byte {
+	n := 0
+	for n < len(b) {
+		width := int(b[n])
+		next := n + 1 + (width+7)/8 + 4
+		if width > 32 || next > len(b) {
+			break
+		}
+		n = next
+	}
+	return b[:n]
 }
 
 func length(n int) func([]byte) bool   { return func(b []byte) bool { return len(b) == n } }
@@ -153,7 +172,8 @@ func multiple(n int) func([]byte) bool { return func(b []byte) bool { return len
 // options reads the options like networkd (parse_options): up to End or
 // the end of the message, a later valid copy of an option replaces an
 // earlier one, the routes of valid copies of 33 and 121 add up, and a
-// truncated option fails the message. The library concatenates all
+// truncated option or a message type or overload option of another
+// length than 1 fails the message. The library concatenates all
 // copies (RFC 3396).
 func options(b []byte) (dhcpv4.Options, bool) {
 	opts, malformed := dhcpv4.Options{}, map[uint8]bool{}
@@ -170,6 +190,14 @@ func options(b []byte) (dhcpv4.Options, bool) {
 		}
 		data := b[2 : 2+int(b[1])]
 		b = b[2+int(b[1]):]
+		switch code {
+		case dhcpv4.OptionDHCPMessageType.Code(), dhcpv4.OptionOptionOverload.Code():
+			if len(data) != 1 {
+				return nil, false // networkd: -EINVAL for the message
+			}
+		case dhcpv4.OptionClasslessStaticRoute.Code():
+			data = classless(data)
+		}
 		if ok, checked := valid[code]; checked && !ok(data) {
 			if _, seen := opts[code]; !seen {
 				// Kept so that the option counts as present; its decoder
@@ -189,6 +217,39 @@ func options(b []byte) (dhcpv4.Options, bool) {
 		}
 	}
 	return opts, true
+}
+
+// SearchDomains decodes option 119 (RFC 3397): DNS names in wire format,
+// with compression pointers into the option. A malformed option is
+// ignored as a whole, like networkd (-EBADMSG): rfc1035label rejects a
+// truncated name, a pointer that does not point back and a reserved label
+// type; a last name without its root label, which rfc1035label takes as a
+// partial name (RFC 4704), is checked here.
+func SearchDomains(data []byte) []string {
+	l, err := rfc1035label.FromBytes(data)
+	if err != nil || !terminated(data) {
+		return nil
+	}
+	return slices.DeleteFunc(l.Labels, func(s string) bool { return s == "" })
+}
+
+// terminated tells whether every name in data ends with the root label or
+// a compression pointer.
+func terminated(b []byte) bool {
+	inName := false
+	for len(b) > 0 {
+		switch n := int(b[0]); {
+		case n == 0:
+			b, inName = b[1:], false
+		case n&0xc0 == 0xc0 && len(b) >= 2:
+			b, inName = b[2:], false
+		case len(b) > n:
+			b, inName = b[1+n:], true
+		default:
+			return false
+		}
+	}
+	return !inName
 }
 
 func seconds(d time.Duration) uint32 { return uint32(d / time.Second) } //nolint:gosec // from 32 bits

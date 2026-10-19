@@ -13,7 +13,6 @@ import (
 	"sync"
 
 	"github.com/insomniacslk/dhcp/dhcpv4"
-	"github.com/insomniacslk/dhcp/rfc1035label"
 	"github.com/telekom/BOOTy/pkg/network/dhcp4"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
@@ -105,38 +104,8 @@ func classlessRoutes(data []byte) ([]dhcpRoute, bool) {
 	return out, len(out) > 0
 }
 
-// domainSearch decodes option 119 (RFC 3397): DNS names in wire format,
-// with compression pointers into the option. A malformed option is
-// ignored as a whole, like networkd (-EBADMSG): rfc1035label rejects a
-// truncated name, a pointer that does not point back and a reserved label
-// type; a last name without its root label, which rfc1035label takes as a
-// partial name (RFC 4704), is checked here.
-func domainSearch(data []byte) []string {
-	l, err := rfc1035label.FromBytes(data)
-	if err != nil || !terminated(data) {
-		return nil
-	}
-	return slices.DeleteFunc(l.Labels, func(s string) bool { return s == "" })
-}
-
-// terminated tells whether every name in data ends with the root label or
-// a compression pointer.
-func terminated(b []byte) bool {
-	inName := false
-	for len(b) > 0 {
-		switch n := int(b[0]); {
-		case n == 0:
-			b, inName = b[1:], false
-		case n&0xc0 == 0xc0 && len(b) >= 2:
-			b, inName = b[2:], false
-		case len(b) > n:
-			b, inName = b[1+n:], true
-		default:
-			return false
-		}
-	}
-	return !inName
-}
+// domainSearch decodes option 119 (dhcp4.SearchDomains).
+var domainSearch = dhcp4.SearchDomains
 
 // leaseRouteSet returns the routes of a lease: option 121, or without it
 // option 33 and a default route through the first router that is not

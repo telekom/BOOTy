@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -214,14 +215,64 @@ func TestDecodeReplyRepeatedOptions(t *testing.T) {
 			func(r reply) bool { return r.lease.Expire.Sub(r.lease.Bound) == time.Minute }},
 		{"121, then a malformed 121", raw(append(append(ack, 121, 5, 0, 10, 0, 0, 1, 121, 2, 33, 1), 0xff)...), true,
 			func(r reply) bool { return len(r.lease.Options.Get(dhcpv4.OptionClasslessStaticRoute)) == 5 }},
-		{"a malformed 121 alone stays present", raw(append(append(ack, 121, 2, 33, 1), 0xff)...), true,
-			func(r reply) bool { return len(r.lease.Options.Get(dhcpv4.OptionClasslessStaticRoute)) == 2 }},
+		{"a 121 without a whole route stays present, empty", raw(append(append(ack, 121, 2, 33, 1), 0xff)...), true,
+			func(r reply) bool {
+				return r.lease.Options.Has(dhcpv4.OptionClasslessStaticRoute) && len(r.lease.Options.Get(dhcpv4.OptionClasslessStaticRoute)) == 0
+			}},
 		{"no End", raw(ack...), true, func(reply) bool { return true }},
 		{"truncated", raw(append(ack, 6, 4, 10, 0)...), false, nil},
 	} {
 		r, ok := decodeReply(tt.b, time.Now())
 		if ok != tt.ok || ok && !tt.check(r) {
 			t.Errorf("%s: ok %v, lease %+v", tt.name, ok, r.lease)
+		}
+	}
+}
+
+// Per code: a valid copy, then a copy that networkd rejects (wrong length,
+// a malformed search list, a 121 without a whole route): the valid copy
+// stays. A malformed copy first is replaced by a valid one.
+func TestOptionsKeepLastValidCopy(t *testing.T) {
+	tlv := func(code byte, data ...byte) []byte { return append([]byte{code, byte(len(data))}, data...) }
+	for _, tt := range []struct {
+		code      byte
+		good, bad []byte
+	}{
+		{1, []byte{255, 255, 255, 0}, []byte{255, 255, 255}},
+		{28, []byte{10, 0, 0, 255}, []byte{10, 0, 0, 255, 0}},
+		{51, []byte{0, 0, 0, 120}, []byte{0, 120}},
+		{54, []byte{10, 0, 0, 1}, []byte{10, 0, 1}},
+		{58, []byte{0, 0, 0, 60}, []byte{0, 0, 60}},
+		{59, []byte{0, 0, 0, 90}, []byte{0, 0, 0, 0, 90}},
+		{26, []byte{5, 220}, []byte{5}},
+		{3, []byte{10, 0, 0, 1}, []byte{10, 0, 0, 2, 9}},
+		{4, []byte{10, 0, 0, 3}, []byte{10, 0, 3}},
+		{6, []byte{10, 0, 0, 53}, []byte{10, 0, 0, 53, 10}},
+		{42, []byte{10, 0, 0, 123}, []byte{10, 0, 123}},
+		{33, []byte{10, 1, 0, 0, 10, 0, 0, 1}, []byte{10, 2, 0, 0, 10, 0, 0}},
+		{121, []byte{8, 10, 10, 0, 0, 1}, []byte{33, 1, 2, 3, 4, 5}},
+		{119, []byte{1, 'a', 0}, []byte{1, 'b'}},
+	} {
+		if opts, ok := options(append(tlv(tt.code, tt.good...), tlv(tt.code, tt.bad...)...)); !ok || !slices.Equal(opts[tt.code], tt.good) {
+			t.Errorf("option %d, valid then malformed: %x (ok %v), want %x", tt.code, opts[tt.code], ok, tt.good)
+		}
+		if opts, ok := options(append(tlv(tt.code, tt.bad...), tlv(tt.code, tt.good...)...)); !ok || !slices.Equal(opts[tt.code], tt.good) {
+			t.Errorf("option %d, malformed then valid: %x (ok %v), want %x", tt.code, opts[tt.code], ok, tt.good)
+		}
+	}
+	// 121: the routes before an error stay, like networkd.
+	if opts, _ := options(tlv(121, 8, 10, 10, 0, 0, 1, 40, 1)); !slices.Equal(opts[121], []byte{8, 10, 10, 0, 0, 1}) {
+		t.Errorf("121 with a bad second route: %x", opts[121])
+	}
+	// A message type or overload option of another length drops the
+	// message, whichever copy it is (networkd parse_options -EINVAL).
+	for _, b := range [][]byte{
+		append(tlv(53, 5), tlv(53, 5, 5)...),
+		append(tlv(53, 5, 5), tlv(53, 5)...),
+		tlv(52, 1, 1),
+	} {
+		if _, ok := options(b); ok {
+			t.Errorf("options(%x) accepted", b)
 		}
 	}
 }
