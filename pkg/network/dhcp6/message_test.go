@@ -229,3 +229,30 @@ func FuzzDecode(f *testing.F) {
 	f.Add(serverReply(encode(msgSolicit, 1, nil), msgReply, true))
 	f.Fuzz(func(_ *testing.T, b []byte) { _, _ = decode(b, 7, time.Now()) })
 }
+
+// What drops the message in networkd 255 (dhcp6_lease_parse_message): a
+// second client or server ID, a preference other than 1 byte, a status
+// code under 2 bytes, an information refresh time other than 4 bytes.
+func TestDecodeStrictLikeNetworkd(t *testing.T) {
+	base := []dhcpv6.Option{raw(optServerID, testServer), raw(optClientID, testDUID)}
+	for _, tt := range []struct {
+		name string
+		opt  dhcpv6.Option
+		ok   bool
+	}{
+		{"valid", raw(optPreference, []byte{7}), true},
+		{"second server ID", raw(optServerID, testServer), false},
+		{"second client ID", raw(optClientID, testDUID), false},
+		{"preference of 2 bytes", raw(optPreference, []byte{0, 7}), false},
+		{"preference of 0 bytes", raw(optPreference, nil), false},
+		{"status of 1 byte", raw(optStatusCode, []byte{0}), false},
+		{"status of 2 bytes", raw(optStatusCode, []byte{0, 0}), true},
+		{"information refresh time of 3 bytes", raw(optInfoRefresh, []byte{0, 0, 9}), false},
+		{"information refresh time of 4 bytes", raw(optInfoRefresh, []byte{0, 0, 0, 9}), true},
+	} {
+		_, err := decode(encode(msgReply, 1, append(slices.Clone(base), tt.opt)), 7, time.Now())
+		if (err == nil) != tt.ok {
+			t.Errorf("%s: err %v, want ok %v", tt.name, err, tt.ok)
+		}
+	}
+}

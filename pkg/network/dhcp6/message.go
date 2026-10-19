@@ -97,6 +97,37 @@ func lenient(code dhcpv6.OptionCode, data []byte) (dhcpv6.Option, error) {
 	return raw(code, append([]byte(nil), data...)), nil
 }
 
+// strict checks what drops the whole message in networkd 255
+// (dhcp6_lease_parse_message): a second client or server identifier, a
+// preference other than 1 byte, a status code under 2 bytes and an
+// information refresh time other than 4 bytes.
+func strict(opts dhcpv6.Options) bool {
+	ids := map[dhcpv6.OptionCode]int{}
+	for _, o := range opts {
+		n := len(o.ToBytes())
+		switch o.Code() {
+		case optClientID, optServerID:
+			ids[o.Code()]++
+			if ids[o.Code()] > 1 {
+				return false
+			}
+		case optPreference:
+			if n != 1 {
+				return false
+			}
+		case optStatusCode:
+			if n < 2 {
+				return false
+			}
+		case optInfoRefresh:
+			if n != 4 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // optionData returns the payload of the first option with code.
 func optionData(opts dhcpv6.Options, code dhcpv6.OptionCode) []byte {
 	if o := opts.GetOne(code); o != nil {
@@ -121,6 +152,7 @@ type reply struct {
 var (
 	errShort    = errors.New("short DHCPv6 message")
 	errNoServer = errors.New("DHCPv6 reply without server identifier")
+	errInvalid  = errors.New("DHCPv6 reply that networkd drops")
 )
 
 // decode parses a server message for the IA with iaid.
@@ -131,6 +163,9 @@ func decode(b []byte, iaid uint32, now time.Time) (reply, error) {
 	var opts dhcpv6.Options
 	if err := opts.FromBytesWithParser(withoutTail(b[dhcpv6.MessageHeaderSize:]), lenient); err != nil {
 		return reply{}, err //nolint:wrapcheck // the caller drops it
+	}
+	if !strict(opts) {
+		return reply{}, errInvalid
 	}
 	r := reply{typ: dhcpv6.MessageType(b[0]), xid: uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])}
 	r.clientID = optionData(opts, optClientID)
