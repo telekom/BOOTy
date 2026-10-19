@@ -525,8 +525,11 @@ on purpose although they are not in the templates:
 ## GoBGP version and fork
 
 GoBGP mode embeds GoBGP 4.10.0 through a fork tag:
-`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.6`
-in `go.mod`. The tag is v4.10.0 with ten fixes and four features:
+`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.10`
+in `go.mod`. The tag is v4.10.0 with thirteen fixes and four features. Do
+not use the tag v4.10.0-booty.7: it stops answering a NOTIFICATION in
+OpenSent, which RFC 4271 section 8.2.2 does not allow (booty.8 and later
+answer it again).
 
 | Fix | Effect without it |
 |---|---|
@@ -534,6 +537,9 @@ in `go.mod`. The tag is v4.10.0 with ten fixes and four features:
 | Resolve a connection collision in OpenConfirm without Idle ([osrg/gobgp#3741](https://github.com/osrg/gobgp/issues/3741)) | When BOOTy and the leaf connect at the same time, the session waits 5 s in Idle. |
 | Keep the surviving connection when GoBGP resolves a collision itself, in OpenSent or OpenConfirm; when both connections are gone, wait the idle hold time after reset, at most 5 s (booty.5) | With connect-at-once, BOOTy and the leaf often connect within milliseconds after a link flap; GoBGP closes one connection and then waits 5 s in Idle, while the leaf keeps the other one. |
 | A reset while the idle hold timer already runs shortens it to the idle hold time after reset, at most 5 s (booty.6) | After a short carrier flap, BFD goes down after the carrier came back: the peer waits the rest of the 5 s Idle hold and refuses the leaf's connection meanwhile. |
+| A NOTIFICATION as the first message on the leaf's connection in OpenSent: answer it with the FSM Error (RFC 4271 section 8.2.2) and go on with BOOTy's own connection (booty.8) | The session waits 5 s in Idle although BOOTy's own connection is about to come up (`TestProdTplCarrierLossPastBFD`). |
+| Close the leaf's connection that loses a collision only when the leaf's OPEN arrives on it, with Cease/Connection Collision Resolution (RFC 4271 section 6.8) (booty.9) | GoBGP closed it at once, FRR connected again, and with graceful restart the new connection ended the session a second time (`TestProdTplOneDropPerFault`: two drops per fault). |
+| Review follow-ups of the booty.9 change: a split OPEN on the losing connection is read whole, its header is checked, a NOTIFICATION with a version error gets no answer, and NOTIFICATIONs on the losing connection do not count for the session (booty.10) | A split OPEN got FSM Error 5/1 instead of the collision Cease; the version error got an answer against RFC 4271 section 8.2.2 (Event 24). |
 | Take a new connection from a restarting peer (RFC 4724) | A peer that restarts with graceful restart cannot open a new session while the old one is still up. |
 | Discard EVPN NLRIs of unknown route types | An EVPN route type that GoBGP does not know resets the session instead of being ignored (RFC 7606). |
 | Send IPv4 routes with an IPv6 next hop only with the extended next hop capability | A peer without RFC 8950 support gets routes with a next hop it cannot use. |
@@ -549,7 +555,7 @@ GoBGP 4 is required: GoBGP 3.37 panics on a truncated EVPN NLRI from any
 peer, also on an IPv4-only session, which ends BOOTy (PID 1);
 `TestEVPNDecodeTruncatedNLRIReturnsError` pins that 4.10 returns an error.
 
-Drop the replace when an osrg/gobgp release contains all fourteen changes
+Drop the replace when an osrg/gobgp release contains all seventeen changes
 (for the two opt-in features, with the same API). Then
 check the GO-2026-4736 exception in `hack/check-govulncheck.py`: it names
 `github.com/osrg/gobgp/v4` 4.10.0, which govulncheck does not report while
