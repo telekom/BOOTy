@@ -44,6 +44,9 @@ type fakeNet struct {
 	// without a reply wait until the transport closes.
 	onOpen func()
 	block  bool
+	// afters counts the waits of the client (c.after): bound waits and
+	// pauses; boundAt is afters when OnBound of f.bound last ran.
+	afters, boundAt int
 }
 
 func newFakeNet() *fakeNet {
@@ -71,6 +74,7 @@ func (f *fakeNet) client() *Client {
 	c.after = func(d time.Duration) <-chan time.Time {
 		f.mu.Lock()
 		f.waits = append(f.waits, d)
+		f.afters++
 		f.mu.Unlock()
 		ch := make(chan time.Time, 1)
 		go func() {
@@ -86,6 +90,37 @@ func (f *fakeNet) client() *Client {
 		return ch
 	}
 	return c
+}
+
+// boundWait returns once the client waits in BOUND after the lease that
+// <-bound just returned: OnBound runs inside bind, and a Reboot before bind
+// returns belongs to that lease (bind drops it).
+func (f *fakeNet) boundWait(t *testing.T) {
+	t.Helper()
+	f.mu.Lock()
+	n := f.boundAt
+	f.mu.Unlock()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		f.mu.Lock()
+		got := f.afters
+		f.mu.Unlock()
+		if got > n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the client does not wait in BOUND")
+		}
+	}
+}
+
+// bound is an OnBound that sends the lease to ch, for boundWait.
+func (f *fakeNet) bound(ch chan<- *Lease) Callback {
+	return func(l *Lease) {
+		f.mu.Lock()
+		f.boundAt = f.afters
+		f.mu.Unlock()
+		ch <- l
+	}
 }
 
 // tick ends the current bound wait.
@@ -372,9 +407,10 @@ func TestRebootAndRelease(t *testing.T) {
 	bound := make(chan *Lease, 4)
 	c := f.client()
 	c.SendRelease = true
-	c.OnBound = func(l *Lease) { bound <- l }
+	c.OnBound = f.bound(bound)
 	c.Start()
 	<-bound
+	f.boundWait(t)
 	c.Reboot()
 	<-bound
 	close(f.stopped)
@@ -531,9 +567,10 @@ func TestRebootTriesOnce(t *testing.T) {
 	}
 	bound := make(chan *Lease, 4)
 	c := f.client()
-	c.OnBound = func(l *Lease) { bound <- l }
+	c.OnBound = f.bound(bound)
 	c.Start()
 	<-bound
+	f.boundWait(t)
 	c.Reboot()
 	<-bound // the DISCOVER after two INIT-REBOOTs
 	close(f.stopped)
@@ -618,10 +655,11 @@ func TestLeaseExpiresInInitAfterFailedReboot(t *testing.T) {
 	}
 	bound, expired := make(chan *Lease, 1), make(chan time.Time, 1)
 	c := f.client()
-	c.OnBound = func(l *Lease) { bound <- l }
+	c.OnBound = f.bound(bound)
 	c.OnExpire = func(*Lease) { expired <- c.now() }
 	c.Start()
 	l := <-bound
+	f.boundWait(t)
 	c.Reboot()
 	var at time.Time
 	select {

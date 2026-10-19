@@ -358,7 +358,9 @@ func (c *Client) bind(l *Lease) state {
 	}
 	// A fresh lease answers a reboot request that came before it was
 	// applied (the carrier came up around the ACK, DHCP mode had no lease
-	// to confirm yet): no INIT-REBOOT for the lease just bound.
+	// to confirm yet): no INIT-REBOOT for the lease just bound. A request
+	// that comes while OnBound returns is dropped too; the ACK has just
+	// confirmed the lease.
 	c.rebootReq.Store(false)
 	select {
 	case <-c.reboot:
