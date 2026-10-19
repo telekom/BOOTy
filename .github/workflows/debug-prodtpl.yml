@@ -20,8 +20,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        connect: ["on", "off"]
-        run: [1, 2]
+        connect: ["on"]
+        run: [1, 2, 3]
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -64,11 +64,13 @@ jobs:
       - name: Start tcpdump of BGP on the booty node
         run: |
           mkdir -p prodtpl-logs
-          sudo docker run -d --name bgp-tcpdump --net container:clab-booty-prodtpl-lab-booty \
-            -v "$PWD/prodtpl-logs:/cap" nicolaka/netshoot:v0.13 \
-            tcpdump -i any -nn -U -s 256 -w /cap/booty-bgp.pcap 'tcp port 179'
+          for node in booty native; do
+            sudo docker run -d --name "bgp-tcpdump-${node}" --net "container:clab-booty-prodtpl-lab-${node}" \
+              -v "$PWD/prodtpl-logs:/cap" nicolaka/netshoot:v0.13 \
+              tcpdump -i any -nn -U -s 256 -w "/cap/${node}-bgp.pcap" 'tcp port 179'
+          done
           sleep 2
-          sudo docker logs bgp-tcpdump || true
+          sudo docker logs bgp-tcpdump-booty || true
 
       - name: Run production template E2E tests
         env:
@@ -124,7 +126,8 @@ jobs:
         if: always()
         timeout-minutes: 5
         run: |
-          sudo docker stop bgp-tcpdump || true
+          sudo docker stop bgp-tcpdump-booty bgp-tcpdump-native || true
+          sudo docker cp clab-booty-prodtpl-lab-leaf01:/tmp/frr-debug.log prodtpl-logs/leaf01-frr-debug.log || true
           sudo chmod -R a+r prodtpl-logs || true
           mkdir -p prodtpl-logs
           for node in leaf01 dcgw01 dcgw02 shadow booty native native-vrf tester networkd caprf-mock caprf6; do
