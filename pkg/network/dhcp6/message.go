@@ -32,6 +32,7 @@ const (
 	optRapidCommit   uint16 = 14
 	optDNSServers    uint16 = 23
 	optDomainList    uint16 = 24
+	optInfoRefresh   uint16 = 32
 	optIAPD          uint16 = 25
 	optSNTPServers   uint16 = 31
 	optClientFQDN    uint16 = 39
@@ -48,6 +49,9 @@ type Lease struct {
 	ServerID  []byte
 	DNS       []net.IP
 	Domains   []string
+	// InfoRefresh is the information refresh time (option 32) of a
+	// stateless REPLY, 0 when absent.
+	InfoRefresh time.Duration
 
 	Bound  time.Time
 	Renew  time.Time // T1
@@ -132,15 +136,24 @@ func decode(b []byte, iaid uint32, now time.Time) (reply, error) {
 			r.lease.DNS = append(r.lease.DNS, net.IP(append([]byte(nil), dns[i:i+16]...)))
 		}
 	}
-	if dl, ok := find(opts, optDomainList); ok {
-		r.lease.Domains = domainList(dl)
-	}
+	r.lease.otherOptions(opts)
 	for _, o := range opts {
 		if o.code == optIANA && len(o.data) >= 12 && binary.BigEndian.Uint32(o.data) == iaid {
 			r.hasAddr = r.lease.ia(o.data, now)
 		}
 	}
 	return r, nil
+}
+
+// otherOptions reads the domain search list (24) and the information
+// refresh time (32).
+func (l *Lease) otherOptions(opts []option) {
+	if dl, ok := find(opts, optDomainList); ok {
+		l.Domains = domainList(dl)
+	}
+	if v, ok := find(opts, optInfoRefresh); ok && len(v) == 4 {
+		l.InfoRefresh = time.Duration(binary.BigEndian.Uint32(v)) * time.Second
+	}
 }
 
 // ia reads an IA_NA: T1, T2 and its first usable IA address with

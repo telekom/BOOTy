@@ -165,3 +165,18 @@ func TestRenewNeedsAddress(t *testing.T) {
 		t.Fatal("a REPLY without an address bound")
 	}
 }
+
+// Option 32 sets the wait before the next INFORMATION-REQUEST, at least
+// 600 s; without it the wait is a day.
+func TestInfoRefresh(t *testing.T) {
+	client := option{optClientID, testDUID}
+	r, err := decode(encode(msgReply, 1, []option{{optServerID, testServer}, client, {optInfoRefresh, []byte{0, 0, 0x0e, 0x10}}}), 7, time.Now())
+	if err != nil || r.lease.InfoRefresh != time.Hour {
+		t.Fatalf("InfoRefresh = %s, %v", r.lease.InfoRefresh, err)
+	}
+	for in, want := range map[time.Duration]time.Duration{0: 24 * time.Hour, time.Minute: 600 * time.Second, time.Hour: time.Hour} {
+		if got := infoRefresh(in); got != want {
+			t.Errorf("infoRefresh(%s) = %s, want %s", in, got, want)
+		}
+	}
+}

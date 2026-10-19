@@ -199,6 +199,7 @@ func TestValidRA(t *testing.T) {
 		{"global source", ra, 255, &net.IPAddr{IP: net.ParseIP("fd00::1")}, false},
 		{"short", ra[:8], 255, ll, false},
 		{"not an RA", append([]byte{133}, ra[1:]...), 255, ll, false},
+		{"code 1", append([]byte{134, 1}, ra[2:]...), 255, ll, false},
 	} {
 		if got := validRA(tt.b, &ipv6.ControlMessage{HopLimit: tt.hop}, tt.src); got != tt.want {
 			t.Errorf("%s: validRA = %v, want %v", tt.name, got, tt.want)
@@ -225,5 +226,22 @@ func TestDHCPv6UpgradesToStateful(t *testing.T) {
 	if len(s.clients) != 2 || s.clients[0].Stateful || !s.clients[1].Stateful || s.fakes[0].stopped != 1 || s.fakes[1].stopped != 0 {
 		t.Fatalf("clients %d, stateful %v %v, stops %d %d: want the stateless one stopped and one stateful",
 			len(s.clients), s.clients[0].Stateful, len(s.clients) > 1 && s.clients[1].Stateful, s.fakes[0].stopped, s.fakes[len(s.fakes)-1].stopped)
+	}
+}
+
+// A link-local DHCPv6 DNS server goes to resolv.conf with its zone; the
+// domain search list (option 24) joins the search line.
+func TestDHCPv6LinkLocalDNSAndDomains(t *testing.T) {
+	s := stubDHCPv6(t)
+	d := NewDHCPMode()
+	d.manageDNS = true
+	link := dummyLink("eth0", 1)
+	d.mu.Lock()
+	d.startRA(link, &net.Interface{Name: "eth0", Index: 1}, "")
+	d.mu.Unlock()
+	s.watching()(false, true)
+	s.clients[0].OnBound(&dhcp6.Lease{DNS: []net.IP{net.ParseIP("fe80::1")}, Domains: []string{"v6.example"}})
+	if want := []string{"fe80::1%eth0 search v6.example"}; !slices.Equal(s.written, want) {
+		t.Fatalf("resolv.conf = %q, want %q", s.written, want)
 	}
 }
