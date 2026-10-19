@@ -95,13 +95,16 @@ func decodeReply(payload []byte, now time.Time) (reply, bool) {
 	if len(payload) < bootpLen || payload[1] != 1 || payload[2] != 6 {
 		return reply{}, false
 	}
-	// networkd reads the options to the end of the message when End is
-	// missing (parse_options); the library wants End, so one is appended.
-	// After an End it is not read.
-	d, err := dhcpv4.FromBytes(append(payload[:len(payload):len(payload)], byte(dhcpv4.OptionEnd)))
+	// The library reads the header; the options are read like networkd.
+	d, err := dhcpv4.FromBytes(append(payload[:bootpLen:bootpLen], byte(dhcpv4.OptionEnd)))
 	if err != nil || d.OpCode != dhcpv4.OpcodeBootReply {
 		return reply{}, false
 	}
+	opts, ok := options(payload[bootpLen:])
+	if !ok {
+		return reply{}, false
+	}
+	d.Options = opts
 	r := reply{
 		typ: d.MessageType(), xid: binary.BigEndian.Uint32(d.TransactionID[:]), mac: d.ClientHWAddr,
 		rapidCommit: d.Options.Has(dhcpv4.OptionRapidCommit), overload: d.Options.Has(dhcpv4.OptionOptionOverload),
@@ -120,8 +123,36 @@ func decodeReply(payload []byte, now time.Time) (reply, bool) {
 	}
 	t := leaseTimes{lease: seconds(d.IPAddressLeaseTime(0)), t1: seconds(d.IPAddressRenewalTime(0)), t2: seconds(d.IPAddressRebindingTime(0))}
 	t.set(l, now)
-	ok := r.usable(t.lease > 0) // networkd drops a lease time of 0
+	ok = r.usable(t.lease > 0) // networkd drops a lease time of 0
 	return r, ok
+}
+
+// options reads the options like networkd (parse_options): up to End or
+// the end of the message, a later copy of an option replaces an earlier
+// one, the routes of copies of 33 and 121 add up, and a truncated option
+// fails the message. The library concatenates all copies (RFC 3396).
+func options(b []byte) (dhcpv4.Options, bool) {
+	opts := dhcpv4.Options{}
+	for len(b) > 0 {
+		code := b[0]
+		switch {
+		case code == dhcpv4.OptionPad.Code():
+			b = b[1:]
+			continue
+		case code == dhcpv4.OptionEnd.Code():
+			return opts, true
+		case len(b) < 2 || len(b) < 2+int(b[1]):
+			return nil, false
+		}
+		data := b[2 : 2+int(b[1])]
+		if code == dhcpv4.OptionStaticRoutingTable.Code() || code == dhcpv4.OptionClasslessStaticRoute.Code() {
+			opts[code] = append(opts[code], data...)
+		} else {
+			opts[code] = append([]byte(nil), data...)
+		}
+		b = b[2+int(b[1]):]
+	}
+	return opts, true
 }
 
 func seconds(d time.Duration) uint32 { return uint32(d / time.Second) } //nolint:gosec // from 32 bits

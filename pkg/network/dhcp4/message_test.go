@@ -1,7 +1,6 @@
 package dhcp4
 
 import (
-	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"net"
@@ -178,13 +177,41 @@ func TestLeaseMTUMinimum(t *testing.T) {
 	}
 }
 
-// Options are read without End, like networkd; options that come twice are
-// concatenated (RFC 3396), the library's reading.
-func TestDecodeReplyOptions(t *testing.T) {
-	b := reply4(dhcpv4.MessageTypeAck, testAddr, dhcpv4.OptServerIdentifier(testServer), dhcpv4.OptIPAddressLeaseTime(time.Minute))
-	b = append(b[:bytes.LastIndexByte(b, 0xff)], 6, 4, 10, 0, 0, 1, 6, 4, 10, 0, 0, 2) // End and padding replaced by two option 6
-	r, ok := decodeReply(b, time.Now())
-	if !ok || len(r.lease.DNS) != 2 || !r.lease.DNS[1].Equal(net.IPv4(10, 0, 0, 2)) {
-		t.Fatalf("ok %v, DNS %v", ok, r.lease.DNS)
+// Options are read like networkd (parse_options): without End, a later
+// copy of an option replaces an earlier one, the routes of copies of 33
+// and 121 add up.
+func TestDecodeReplyRepeatedOptions(t *testing.T) {
+	// raw is a reply whose options are opts, without End.
+	raw := func(opts ...byte) []byte {
+		b := reply4(dhcpv4.MessageTypeAck, testAddr)
+		return append(b[:bootpLen:bootpLen], opts...)
+	}
+	// ACK, server ID 192.168.10.1, lease time 120 s.
+	ack := []byte{53, 1, 5, 54, 4, 192, 168, 10, 1, 51, 4, 0, 0, 0, 120}
+	for _, tt := range []struct {
+		name  string
+		b     []byte
+		ok    bool
+		check func(reply) bool
+	}{
+		{"54 twice", raw(append(append(ack, 54, 4, 192, 168, 10, 2), 0xff)...), true,
+			func(r reply) bool { return r.lease.ServerID.Equal(net.IPv4(192, 168, 10, 2)) }},
+		{"51 twice", raw(append(append(ack, 51, 4, 0, 0, 1, 44), 0xff)...), true,
+			func(r reply) bool { return r.lease.Expire.Sub(r.lease.Bound) == 300*time.Second }},
+		{"3 twice", raw(append(append(ack, 3, 4, 10, 0, 0, 1, 3, 4, 10, 0, 0, 254), 0xff)...), true,
+			func(r reply) bool {
+				return len(r.lease.Router) == 1 && r.lease.Router[0].Equal(net.IPv4(10, 0, 0, 254))
+			}},
+		{"53 twice, OFFER then ACK", raw(append(append([]byte{53, 1, 2}, ack...), 0xff)...), true,
+			func(r reply) bool { return r.typ == dhcpv4.MessageTypeAck }},
+		{"121 twice", raw(append(append(ack, 121, 5, 0, 10, 0, 0, 1, 121, 8, 24, 10, 1, 0, 10, 0, 0, 2), 0xff)...), true,
+			func(r reply) bool { return len(r.lease.Options.Get(dhcpv4.OptionClasslessStaticRoute)) == 13 }},
+		{"no End", raw(ack...), true, func(reply) bool { return true }},
+		{"truncated", raw(append(ack, 6, 4, 10, 0)...), false, nil},
+	} {
+		r, ok := decodeReply(tt.b, time.Now())
+		if ok != tt.ok || ok && !tt.check(r) {
+			t.Errorf("%s: ok %v, lease %+v", tt.name, ok, r.lease)
+		}
 	}
 }
