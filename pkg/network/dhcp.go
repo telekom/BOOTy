@@ -56,6 +56,9 @@ type nicClient struct {
 	link   netlink.Link
 	// down is set while the NIC has no carrier.
 	down bool
+	// lost is set when the NIC lost carrier after its current lease was
+	// bound: only then does the carrier's return confirm the lease.
+	lost bool
 }
 
 // dhcpStart starts a client; tests replace it.
@@ -331,12 +334,26 @@ func (d *DHCPMode) carrierChange(u netlink.LinkUpdate) bool {
 	switch {
 	case !carrier && !nc.down:
 		nc.down = true
+		_, nc.lost = d.nics[u.Attrs().Index]
 		d.log.Info("NIC lost carrier, keeping its DHCP lease until the carrier returns", "interface", nc.link.Attrs().Name)
 	case carrier && nc.down:
 		nc.down = false
+		_, leased := d.nics[u.Attrs().Index]
+		lost := nc.lost
+		nc.lost = false
 		d.mu.Unlock()
-		d.log.Info("NIC has carrier again, confirming its DHCP lease", "interface", nc.link.Attrs().Name)
-		nc.client.Reboot()
+		switch {
+		case lost:
+			d.log.Info("NIC has carrier again, confirming its DHCP lease", "interface", nc.link.Attrs().Name)
+			nc.client.Reboot()
+		case !leased:
+			// No lease yet (the NIC came up after its client started):
+			// restart the DISCOVER without the backoff, like networkd
+			// starts its client with the carrier. A lease bound
+			// meanwhile drops the request (dhcp4 bind).
+			d.log.Info("NIC has carrier, starting DHCP at once", "interface", nc.link.Attrs().Name)
+			nc.client.Reboot()
+		}
 		return true
 	}
 	d.mu.Unlock()
@@ -445,6 +462,9 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- strin
 			return
 		}
 		d.publishNTP()
+		if nc := d.clients[link.Attrs().Index]; nc != nil {
+			nc.down, nc.lost = false, false // a bound lease proves the carrier
+		}
 		d.log.Info("DHCP lease applied", "iface", ifName, "addr", addr.IPNet.String())
 		select {
 		case leased <- ifName:

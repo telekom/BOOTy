@@ -1116,9 +1116,14 @@ A NIC that loses carrier keeps its lease state (address, routes, DNS and
 NTP servers). When the carrier is back, the client confirms its address
 with an INIT-REBOOT DHCPREQUEST (requested address only) at once, and the
 ACK applies the lease again, as the legacy ramdisk does (captured in the
-CAPRF L2 fault windows). Without an answer to two INIT-REBOOT requests the
+CAPRF L2 fault windows). Without an answer to the INIT-REBOOT request the
 client goes on in INIT, and the kept lease still ends at its expiry
-(address, routes, DNS and NTP servers go).
+(address, routes, DNS and NTP servers go). Only a carrier loss after the
+lease was bound leads to an INIT-REBOOT: when a NIC gets its carrier only
+after its client started, the carrier restarts the DISCOVER without the
+backoff, and if the first lease binds meanwhile, the client sends no
+INIT-REBOOT for it (seen in the kindmetal boot window, where networkd sends
+none either).
 
 networkd (the legacy ramdisk) drops the lease with the carrier; BOOTy
 keeps it, so nothing has to be restored. Both ways recover the same in the
