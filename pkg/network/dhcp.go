@@ -91,8 +91,14 @@ type dhcpClient interface {
 
 // Seams for Setup tests.
 var (
-	dhcpInterfaces  = physicalInterfaces
-	dhcpLinkByName  = netlink.LinkByName
+	dhcpInterfaces = physicalInterfaces
+	dhcpLinkByName = netlink.LinkByName
+	// dhcpCarrier tells whether the NIC has carrier now (IFF_LOWER_UP); an
+	// error counts as carrier.
+	dhcpCarrier = func(index int) bool {
+		l, err := netlink.LinkByIndex(index)
+		return err != nil || l.Attrs().RawFlags&unix.IFF_LOWER_UP != 0
+	}
 	dhcpLinkSetUp   = netlink.LinkSetUp
 	dhcpPrepareLink = promoteSecondaries
 	dhcpSubscribe   = netlink.LinkSubscribeWithOptions
@@ -463,7 +469,11 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- strin
 		}
 		d.publishNTP()
 		if nc := d.clients[link.Attrs().Index]; nc != nil {
-			nc.down, nc.lost = false, false // a bound lease proves the carrier
+			// The carrier now decides: up clears the down state of the
+			// start; down (the ACK was read after the carrier went) makes
+			// its return confirm this lease.
+			up := dhcpCarrier(link.Attrs().Index)
+			nc.down, nc.lost = !up, !up
 		}
 		d.log.Info("DHCP lease applied", "iface", ifName, "addr", addr.IPNet.String())
 		select {
