@@ -176,11 +176,12 @@ func (d *DHCPMode) Setup(ctx context.Context, cfg *Config) error {
 	// listed is not missed; a NIC that both see gets one client.
 	d.watchNewNICs(hostname, leased)
 	ifaces, err := dhcpInterfaces(ctx)
-	if err != nil {
-		return fmt.Errorf("listing interfaces: %w", err)
+	if err == nil && len(ifaces) == 0 {
+		err = errors.New("no physical interfaces found for DHCP")
 	}
-	if len(ifaces) == 0 {
-		return fmt.Errorf("no physical interfaces found for DHCP")
+	if err != nil {
+		d.stopClients() // the link watch
+		return fmt.Errorf("listing interfaces: %w", err)
 	}
 	d.log.Info("Starting DHCP on all interfaces", "count", len(ifaces))
 	for i := range ifaces {
@@ -269,15 +270,13 @@ func (d *DHCPMode) watchNewNICs(hostname string, leased chan<- string) {
 		notNIC := map[linkKey]bool{}
 		for again := false; ; again = true {
 			updates := make(chan netlink.LinkUpdate, 16)
-			// A subscription again lists the links, so a NIC or carrier
-			// whose event was lost (ENOBUFS) is seen.
-			opts := netlink.LinkSubscribeOptions{ListExisting: again, ErrorCallback: func(err error) {
-				d.log.Warn("link watch for DHCP failed, subscribing again", "error", err)
-			}}
 			// netlink keeps the socket of a failed subscription until its
 			// done channel closes: one per subscription.
 			sub := make(chan struct{})
 			end := sync.OnceFunc(func() { close(sub) })
+			// A subscription again lists the links, so a NIC or carrier
+			// whose event was lost (ENOBUFS) is seen.
+			opts := netlink.LinkSubscribeOptions{ListExisting: again, ErrorCallback: d.linkWatchError(sub)}
 			go func() {
 				select {
 				case <-done:
@@ -301,6 +300,25 @@ func (d *DHCPMode) watchNewNICs(hostname string, leased chan<- string) {
 			}
 		}
 	}()
+}
+
+// linkWatchError logs a netlink error of the link watch: a failed receive
+// ends the subscription (the watch subscribes again), a message of another
+// sender is skipped (the subscription goes on), and the close of the
+// subscription (Teardown) is no error.
+func (d *DHCPMode) linkWatchError(sub <-chan struct{}) func(error) {
+	return func(err error) {
+		select {
+		case <-sub:
+			return
+		default:
+		}
+		if strings.Contains(err.Error(), "Wrong sender portid") {
+			d.log.Debug("link watch for DHCP skipped a message", "error", err)
+			return
+		}
+		d.log.Warn("link watch for DHCP failed, subscribing again", "error", err)
+	}
 }
 
 // linkKey is a link by index and name.
