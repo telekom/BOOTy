@@ -2,66 +2,112 @@ package network
 
 import (
 	"context"
-	"errors"
+	"encoding/binary"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
 )
 
-// dnsFanout makes the DNS lookups of the process send every UDP query to
-// one DNS server per link at once and take the first answer, like
-// systemd-resolved in the legacy ramdisk queries the current server of
-// every link. The Go
-// resolver alone asks the first resolv.conf server and the next only when
-// it fails. DHCP mode sets the servers whenever it writes resolv.conf.
+// dnsFanout makes the DNS lookups of the process ask the current DNS
+// server of every link at once, like systemd-resolved in the legacy
+// ramdisk: the first positive answer counts, a negative one (NXDOMAIN,
+// SERVFAIL, REFUSED) only when no link answers better. The Go resolver
+// alone asks the first resolv.conf server and the next only after a
+// timeout. DHCP mode sets the links whenever it writes resolv.conf.
+//
+// It is the process resolver from the start (set before any lookup, no
+// data race); without at least two links it dials like the Go resolver.
 var dnsFanout fanout
+
+func init() {
+	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: dnsFanout.dial}
+}
 
 // dnsPort is the server port; tests change it.
 var dnsPort = "53"
 
-// fanoutLinger keeps the sockets of a lookup open after the first answer,
-// so the answers of the other servers find a socket (no ICMP port
-// unreachable); systemd-resolved keeps its transactions open as well.
+// fanoutLinger keeps the sockets of a lookup open after the answer, so the
+// answers of the other servers find a socket (no ICMP port unreachable);
+// systemd-resolved keeps its transactions open as well.
 var fanoutLinger = 2 * time.Second
 
 type fanout struct {
-	mu      sync.Mutex
-	servers []string
-	once    sync.Once
+	mu    sync.Mutex
+	links [][]string // per link its servers in order
+	cur   []int      // per link the server asked now; a failure moves on
+	tcp   string     // the server that truncated the last answer
+	port  string     // dnsPort at set
+	// linger is fanoutLinger at set.
+	linger time.Duration
 }
 
-// set replaces the servers and puts the fan-out resolver in place.
-func (f *fanout) set(servers []string) {
-	f.mu.Lock()
-	f.servers = servers
-	f.mu.Unlock()
-	f.once.Do(func() {
-		net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: f.dial}
-	})
-}
-
-func (f *fanout) list() []string {
+// set replaces the links (each a list of servers). Nil goes back to the
+// plain Go resolver (Teardown).
+func (f *fanout) set(links [][]string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.servers
+	f.links, f.cur, f.tcp, f.port, f.linger = links, make([]int, len(links)), "", dnsPort, fanoutLinger
+}
+
+// current returns the server asked now on every link.
+func (f *fanout) current() (servers []string, links []int, port string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	port = f.port
+	for i, l := range f.links {
+		if len(l) > 0 {
+			servers = append(servers, l[f.cur[i]%len(l)])
+			links = append(links, i)
+		}
+	}
+	return servers, links, port
+}
+
+// failed moves a link to its next server for the next lookup.
+func (f *fanout) failed(link int, server string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if link < len(f.links) && len(f.links[link]) > 0 && f.links[link][f.cur[link]%len(f.links[link])] == server {
+		f.cur[link]++
+	}
+}
+
+func (f *fanout) truncated(server string) {
+	f.mu.Lock()
+	f.tcp = server
+	f.mu.Unlock()
 }
 
 // dial gives the Go resolver one connection for a query to address. Over
-// UDP with more than one server it is a fan-out to all of them; TCP (a
-// truncated answer) goes to address only.
+// UDP with two links or more it is a fan-out to the current server of each;
+// TCP (after a truncated answer) goes to the server that truncated.
 func (f *fanout) dial(ctx context.Context, network, address string) (net.Conn, error) {
-	servers := f.list()
 	var d net.Dialer
-	if len(servers) < 2 || !strings.HasPrefix(network, "udp") {
+	if !strings.HasPrefix(network, "udp") {
+		f.mu.Lock()
+		if f.tcp != "" {
+			address, f.tcp = net.JoinHostPort(f.tcp, f.port), ""
+		}
+		f.mu.Unlock()
 		return d.DialContext(ctx, network, address) //nolint:wrapcheck // the resolver reports it
 	}
-	c := &fanoutConn{replies: make(chan []byte, 4*len(servers)), errs: make(chan error, len(servers))}
-	for _, s := range servers {
-		conn, err := d.DialContext(ctx, "udp", net.JoinHostPort(s, dnsPort))
-		if err == nil {
-			c.conns = append(c.conns, conn)
+	servers, links, port := f.current()
+	if len(servers) < 2 {
+		return d.DialContext(ctx, network, address) //nolint:wrapcheck // the resolver reports it
+	}
+	f.mu.Lock()
+	linger := f.linger
+	f.mu.Unlock()
+	c := &fanoutConn{f: f, linger: linger, replies: make(chan fanoutReply, 4*len(servers)), done: make(chan struct{})}
+	for i, s := range servers {
+		conn, err := d.DialContext(ctx, "udp", net.JoinHostPort(s, port))
+		if err != nil {
+			f.failed(links[i], s)
+			continue
 		}
+		c.conns = append(c.conns, fanoutLink{conn: conn, link: links[i], server: s})
 	}
 	if len(c.conns) == 0 {
 		return d.DialContext(ctx, network, address) //nolint:wrapcheck // the resolver reports it
@@ -69,58 +115,152 @@ func (f *fanout) dial(ctx context.Context, network, address string) (net.Conn, e
 	return c, nil
 }
 
-// fanoutConn writes a query to every server and reads the first answer. It
-// is a net.PacketConn, so the resolver uses UDP framing.
-type fanoutConn struct {
-	conns   []net.Conn
-	start   sync.Once
-	replies chan []byte
-	errs    chan error
+type fanoutLink struct {
+	conn   net.Conn
+	link   int
+	server string
 }
 
+type fanoutReply struct {
+	b   []byte
+	err error
+	i   int // the index in conns
+}
+
+// fanoutConn writes a query to the server of every link and reads the
+// best answer. It is a net.PacketConn, so the resolver frames it as UDP.
+// The state of the answers lives on the conn: a resolver that reads again
+// (an answer of another query ID) keeps the count of what came already.
+type fanoutConn struct {
+	f       *fanout
+	linger  time.Duration
+	conns   []fanoutLink
+	start   sync.Once
+	replies chan fanoutReply
+	done    chan struct{}
+
+	mu       sync.Mutex
+	id       uint16 // the query ID
+	deadline time.Time
+	answered []bool // per conn: answered or failed
+	negative []byte // the first negative answer, held back
+}
+
+// rcodeOK tells a response that counts as an answer: NOERROR. NXDOMAIN,
+// SERVFAIL and REFUSED wait for the other links (resolved dns_query_ready).
+func rcodeOK(b []byte) bool { return len(b) >= 4 && b[3]&0x0f == 0 }
+
 func (c *fanoutConn) Write(b []byte) (int, error) {
-	errs := make([]error, 0, len(c.conns))
-	for _, conn := range c.conns {
-		if _, err := conn.Write(b); err != nil {
-			errs = append(errs, err)
-		}
+	c.mu.Lock()
+	if len(b) >= 2 {
+		c.id = binary.BigEndian.Uint16(b)
 	}
-	if len(errs) == len(c.conns) {
-		return 0, errors.Join(errs...)
+	c.answered = make([]bool, len(c.conns))
+	c.negative = nil
+	c.mu.Unlock()
+	var sent bool
+	var last error
+	for _, l := range c.conns {
+		if _, err := l.conn.Write(b); err != nil {
+			last = err
+			continue
+		}
+		sent = true
+	}
+	if !sent {
+		return 0, last
 	}
 	return len(b), nil
 }
 
-func (c *fanoutConn) Read(b []byte) (int, error) {
-	c.start.Do(func() {
-		for _, conn := range c.conns {
-			go func() {
-				buf := make([]byte, 65535)
-				for {
-					n, err := conn.Read(buf)
-					if err != nil {
-						c.errs <- err
-						return
-					}
-					select {
-					case c.replies <- append([]byte(nil), buf[:n]...):
-					default: // nobody reads any more answers
-					}
+func (c *fanoutConn) readers() {
+	for i, l := range c.conns {
+		go func() {
+			buf := make([]byte, 65535)
+			for {
+				n, err := l.conn.Read(buf)
+				r := fanoutReply{i: i, err: err}
+				if err == nil {
+					r.b = append([]byte(nil), buf[:n]...)
 				}
-			}()
-		}
-	})
-	var failed []error
+				select {
+				case c.replies <- r:
+				case <-c.done:
+					return
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+	}
+}
+
+func (c *fanoutConn) Read(b []byte) (int, error) {
+	c.start.Do(c.readers)
 	for {
+		c.mu.Lock()
+		deadline := c.deadline
+		c.mu.Unlock()
+		var timeout <-chan time.Time
+		var timer *time.Timer
+		if !deadline.IsZero() {
+			timer = time.NewTimer(time.Until(deadline))
+			timeout = timer.C
+		}
 		select {
 		case r := <-c.replies:
-			return copy(b, r), nil
-		case err := <-c.errs:
-			if failed = append(failed, err); len(failed) == len(c.conns) {
-				return 0, failed[0] // all timed out or failed
+			if timer != nil {
+				timer.Stop()
 			}
+			if n, ok, err := c.take(r, b); ok {
+				return n, err
+			}
+		case <-timeout:
+			c.mu.Lock()
+			held := c.negative
+			for i, done := range c.answered {
+				if !done {
+					c.f.failed(c.conns[i].link, c.conns[i].server)
+				}
+			}
+			c.mu.Unlock()
+			if held != nil {
+				return copy(b, held), nil
+			}
+			return 0, os.ErrDeadlineExceeded
 		}
 	}
+}
+
+// take handles one reply; ok tells Read to return n and err.
+func (c *fanoutConn) take(r fanoutReply, b []byte) (n int, ok bool, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if r.err == nil && (len(r.b) < 2 || binary.BigEndian.Uint16(r.b) != c.id) {
+		return 0, false, nil // another query ID: not counted
+	}
+	c.answered[r.i] = true
+	switch {
+	case r.err != nil:
+		c.f.failed(c.conns[r.i].link, c.conns[r.i].server)
+	case rcodeOK(r.b):
+		if len(r.b) >= 3 && r.b[2]&0x02 != 0 {
+			c.f.truncated(c.conns[r.i].server) // TC: the resolver asks this server over TCP
+		}
+		return copy(b, r.b), true, nil
+	case c.negative == nil:
+		c.negative = r.b
+	}
+	for _, done := range c.answered {
+		if !done {
+			return 0, false, nil
+		}
+	}
+	if c.negative != nil {
+		return copy(b, c.negative), true, nil // every link answered, none better
+	}
+	return 0, true, r.err // every link failed
 }
 
 func (c *fanoutConn) ReadFrom(b []byte) (int, net.Addr, error) {
@@ -130,39 +270,29 @@ func (c *fanoutConn) ReadFrom(b []byte) (int, net.Addr, error) {
 
 func (c *fanoutConn) WriteTo(b []byte, _ net.Addr) (int, error) { return c.Write(b) }
 
+// Close keeps the sockets fanoutLinger longer for late answers.
 func (c *fanoutConn) Close() error {
-	_ = c.SetReadDeadline(time.Now().Add(fanoutLinger))
-	time.AfterFunc(fanoutLinger, func() {
-		for _, conn := range c.conns {
-			_ = conn.Close()
+	time.AfterFunc(c.linger, func() {
+		close(c.done)
+		for _, l := range c.conns {
+			_ = l.conn.Close()
 		}
 	})
 	return nil
 }
 
-func (c *fanoutConn) LocalAddr() net.Addr  { return c.conns[0].LocalAddr() }
-func (c *fanoutConn) RemoteAddr() net.Addr { return c.conns[0].RemoteAddr() }
+func (c *fanoutConn) LocalAddr() net.Addr  { return c.conns[0].conn.LocalAddr() }
+func (c *fanoutConn) RemoteAddr() net.Addr { return c.conns[0].conn.RemoteAddr() }
 
-func (c *fanoutConn) SetDeadline(t time.Time) error {
-	errs := make([]error, 0, len(c.conns))
-	for _, conn := range c.conns {
-		errs = append(errs, conn.SetDeadline(t))
-	}
-	return errors.Join(errs...)
-}
+// SetDeadline and SetReadDeadline bound Read; the sockets get no deadline,
+// so they stay open for late answers until Close.
+func (c *fanoutConn) SetDeadline(t time.Time) error { return c.SetReadDeadline(t) }
 
 func (c *fanoutConn) SetReadDeadline(t time.Time) error {
-	errs := make([]error, 0, len(c.conns))
-	for _, conn := range c.conns {
-		errs = append(errs, conn.SetReadDeadline(t))
-	}
-	return errors.Join(errs...)
+	c.mu.Lock()
+	c.deadline = t
+	c.mu.Unlock()
+	return nil
 }
 
-func (c *fanoutConn) SetWriteDeadline(t time.Time) error {
-	errs := make([]error, 0, len(c.conns))
-	for _, conn := range c.conns {
-		errs = append(errs, conn.SetWriteDeadline(t))
-	}
-	return errors.Join(errs...)
-}
+func (c *fanoutConn) SetWriteDeadline(time.Time) error { return nil }
