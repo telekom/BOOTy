@@ -847,6 +847,14 @@ func TestConfigureMdadmAtWritesTargetFiles(t *testing.T) {
 			t.Fatalf("%s =\n%s\nwant\n%s", rel, got, wantConf)
 		}
 	}
+	dracut, err := os.ReadFile(filepath.Join(root, "etc", "dracut.conf.d", "90-booty-mirror.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "# Written by BOOTy: assemble the mirror arrays in the initramfs.\n" +
+		"add_dracutmodules+=\" mdraid \"\nmdadmconf=\"yes\"\nkernel_cmdline+=\" rd.md.uuid=aaaa:bbbb:cccc:dddd \"\n"; string(dracut) != want {
+		t.Fatalf("90-booty-mirror.conf =\n%s\nwant\n%s", dracut, want)
+	}
 	gotFstab, err := os.ReadFile(filepath.Join(root, "etc", "fstab"))
 	if err != nil {
 		t.Fatal(err)
