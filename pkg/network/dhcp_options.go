@@ -3,11 +3,14 @@
 package network
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"net"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/digineo/go-dhclient"
 	"github.com/google/gopacket/layers"
@@ -39,6 +42,9 @@ const (
 // ramdisk, so the identifier is too; the hash differs from networkd's
 // siphash, its form does not.
 func dhcpClientID(ifname, machineID string) []byte {
+	if machineID == "" {
+		machineID = fallbackMachineID()
+	}
 	iaid := sha256.Sum256([]byte(ifname))
 	id := sha256.Sum256([]byte(machineID))
 	b := make([]byte, 0, 19)
@@ -48,6 +54,14 @@ func dhcpClientID(ifname, machineID string) []byte {
 	b = binary.BigEndian.AppendUint32(b, systemdEnterprise)
 	return append(b, id[:8]...)
 }
+
+// fallbackMachineID is a random ID for the run when the ramdisk has no
+// machine ID, so two hosts do not send the same client identifier.
+var fallbackMachineID = sync.OnceValue(func() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+})
 
 // dhcpMaxMessageSize is option 57 of networkd: the MTU less the IP and UDP
 // headers.
@@ -76,12 +90,14 @@ type dhcpRoute struct {
 	gw  net.IP
 }
 
-// classlessRoutes decodes option 121 (RFC 3442). A malformed option is
-// ignored as a whole, like networkd does.
 // staticRoutes parses option 33 (RFC 2132 5.8): pairs of a destination,
-// with its classful mask, and a router. 0.0.0.0 is not a valid
-// destination; a truncated pair ends the list.
+// with its classful mask, and a router. 0.0.0.0 and class D and E are no
+// valid destinations; an option whose length is not a multiple of 8 is
+// ignored as a whole, like networkd.
 func staticRoutes(data []byte) []dhcpRoute {
+	if len(data)%8 != 0 {
+		return nil
+	}
 	var out []dhcpRoute
 	for b := data; len(b) >= 8; b = b[8:] {
 		dst := net.IP(append([]byte(nil), b[:4]...))
@@ -94,6 +110,8 @@ func staticRoutes(data []byte) []dhcpRoute {
 	return out
 }
 
+// classlessRoutes decodes option 121 (RFC 3442). A malformed option is
+// ignored as a whole, like networkd does.
 func classlessRoutes(data []byte) ([]dhcpRoute, bool) {
 	var out []dhcpRoute
 	for b := data; len(b) > 0; {
@@ -113,13 +131,15 @@ func classlessRoutes(data []byte) ([]dhcpRoute, bool) {
 }
 
 // domainSearch decodes option 119 (RFC 3397): DNS names in wire format,
-// with compression pointers into the option.
+// with compression pointers into the option. A malformed option (a
+// truncated name, a pointer that does not point back, a reserved label
+// type) is ignored as a whole, like networkd (-EBADMSG).
 func domainSearch(data []byte) []string {
 	var out []string
 	for off := 0; off < len(data); {
 		name, next, ok := dnsName(data, off)
 		if !ok {
-			return out
+			return nil
 		}
 		if name != "" {
 			out = append(out, name)
@@ -148,8 +168,14 @@ func dnsName(data []byte, off int) (name string, next int, ok bool) {
 			if next < 0 {
 				next = off + 2
 			}
-			off = (l&0x3f)<<8 | int(data[off+1])
+			ptr := (l&0x3f)<<8 | int(data[off+1])
+			if ptr >= off {
+				return "", 0, false // a pointer must point back
+			}
+			off = ptr
 			jumps++
+		case l&0xc0 != 0:
+			return "", 0, false // label types 01 and 10 are reserved
 		case off+1+l <= len(data):
 			labels = append(labels, string(data[off+1:off+1+l]))
 			if wire += 1 + l; wire > 254 {
@@ -163,10 +189,6 @@ func dnsName(data []byte, off int) (name string, next int, ok bool) {
 	return "", 0, false
 }
 
-// leaseRoutes returns the routes of a lease like networkd: the classless
-// routes of option 121, which replace the router of option 3 (RFC 3442), or
-// a default route through the first router; first a host route to every
-// gateway. All have the lease address as source, metric 100 and proto dhcp.
 // leaseRouteSet returns the routes of a lease: option 121, or without it
 // option 33 and a default route through the first router that is not
 // 0.0.0.0 (none when all are), like networkd-dhcp4.c.
@@ -186,6 +208,9 @@ func leaseRouteSet(lease *dhclient.Lease) []dhcpRoute {
 	return routes
 }
 
+// leaseRoutes returns the routes of a lease like networkd (leaseRouteSet),
+// with first a host route to every gateway. They have metric 100, proto
+// dhcp and the lease address as source, except a route to localhost.
 func leaseRoutes(link netlink.Link, addr *netlink.Addr, lease *dhclient.Lease) []*netlink.Route {
 	routes := leaseRouteSet(lease)
 	route := func(dst *net.IPNet, gw net.IP) *netlink.Route {
@@ -194,9 +219,11 @@ func leaseRoutes(link netlink.Link, addr *netlink.Addr, lease *dhclient.Lease) [
 			r.Dst = dst
 		}
 		switch {
-		case dst.IP.IsLoopback() || dst.IP.Equal(addr.IP):
-			// localhost or the lease address: a host route, like networkd.
+		case dst.IP.IsLoopback():
+			// localhost: a host route without source, like networkd.
 			r.Scope, r.Src = netlink.SCOPE_HOST, nil
+		case dst.IP.Equal(addr.IP):
+			r.Scope = netlink.SCOPE_HOST // the lease address: a host route
 		case gw == nil || gw.IsUnspecified():
 			r.Scope = netlink.SCOPE_LINK
 		default:
