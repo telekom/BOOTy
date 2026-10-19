@@ -1310,6 +1310,55 @@ legacy ramdisk.
 
 Because `bond*` names are not physical NICs, DHCP does not run on `bond0`.
 
+### Message encoding
+
+Both clients encode and decode their messages with
+`github.com/insomniacslk/dhcp` (packages `dhcpv4`, `dhcpv6` and
+`rfc1035label`, BSD-3-Clause), through a fork with two fixes
+([dependency forks](dependency-forks.md)). The state machines are BOOTy's
+own; the clients of the library (`nclient4`, `nclient6`) are not used.
+The bytes on the wire did not change; `testdata/golden.txt` in
+`pkg/network/dhcp4` and `pkg/network/dhcp6` pins every message:
+
+- DHCPv4: the header comes from the library. BOOTy writes the options in
+  networkd's order and pads before End, because the library sorts the
+  options by code and pads after End.
+- DHCPv6: the client and server identifiers go out as received (a DUID is
+  opaque to the client), the client FQDN as a partial name without the
+  root label (the library always adds it), and the elapsed time is cut to
+  10 ms, not rounded.
+
+BOOTy checks the decoded messages like networkd, on top of the library:
+
+- DHCPv4: Ethernet only (htype 1, hlen 6). The options are read to the end
+  of the message also without End. An OFFER or ACK needs an address, a
+  server identifier other than 0.0.0.0, a lease time over 0 and no option
+  overload; a NAK needs a server identifier. A malformed option 33, 119
+  or 121 is ignored as a whole.
+- DHCPv6: a malformed option is ignored, not the message, and in an IA_NA
+  a malformed address or status is ignored, not the IA. A truncated option
+  drops the message (in an IA: the IA, in an address: the address).
+  Option 24 is plain names, each with the root label (no compression,
+  RFC 8415 section 10); otherwise it is ignored as a whole.
+
+Changes against the decoders before:
+
+- DHCPv4: an option that comes twice is concatenated (RFC 3396, RFC 2131
+  section 4.1); before, the last one counted, as in networkd 255. Servers
+  repeat an option only to carry more than 255 bytes, which networkd 255
+  cannot read either.
+- DHCPv4: an option whose length does not fit its type (a subnet mask
+  other than 4 bytes, a router, DNS, time or NTP server list that is not a
+  multiple of 4 bytes) is ignored, like networkd; before, the client used
+  what fit.
+- Option 119: a pointer must point before the start of its name and
+  before the previous pointer of the name, as in networkd. Before, it had
+  to point before the pointer itself.
+- DHCPv6: a DNS server option whose length is not a multiple of 16 is
+  ignored, and a truncated option or IA option drops the message or the
+  IA, like networkd; before, the client used what fit. 1 to 3 bytes after
+  the last option also drop the message (networkd ignores them).
+
 Planned (#608): handle DHCP leases without a subnet mask and leases on
 retry.
 

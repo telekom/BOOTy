@@ -12,6 +12,9 @@ updates:
       # upstream bump would not change the build. Move the fork tag by hand:
       # docs/networking.md#gobgp-version-and-fork
       - dependency-name: github.com/osrg/gobgp/v4
+      # go.mod replaces insomniacslk/dhcp with the fork tag
+      # v0.0.0-20260901064844-234b97448fae-booty.1: docs/dependency-forks.md
+      - dependency-name: github.com/insomniacslk/dhcp
 
   - package-ecosystem: docker
     # Dockerfile discovery is not recursive. List each independent context so
