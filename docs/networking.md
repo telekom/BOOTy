@@ -708,8 +708,9 @@ routes at once, the same as for the legacy FRR.
 
 LLDP: like systemd-networkd with netplan `emit-lldp: true` (systemd 249,
 `TestProdTplLLDPLikeNetworkd` compares the frames on the same leaf; CI
-also compares with the networkd of Ubuntu 24.04 (systemd 255) and 26.04
-(systemd 259), which send the same frame),
+also compares with the networkd of Ubuntu 24.04 (systemd 255), which sends
+the same frame, and 26.04 (systemd 259), which sends an ID derived from
+the machine ID as chassis ID instead of the machine ID),
 BOOTy sends on the `LLDP_EMIT` NICs: chassis ID the machine ID (locally
 assigned; like systemd on the legacy ramdisk, BOOTy creates a random one
 per boot, kept in `/run/booty/machine-id`; it never uses or writes
