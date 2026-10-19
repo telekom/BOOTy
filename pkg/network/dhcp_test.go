@@ -625,7 +625,9 @@ func TestSetupKeepsClientsUntilTeardown(t *testing.T) {
 
 // A lease applied while the setup timer fires counts as success; a lease
 // after the stop is not applied.
-// A lease applied when the timer fires counts.
+// At the timeout Setup checks the applied leases, not only the channel: a
+// lease that was applied but not reported (as when it lands while the
+// timer fires) makes Setup succeed.
 func TestSetupTimeoutRace(t *testing.T) {
 	clients := stubDHCPSetup(t, nil)
 	dhcpSetupTimeout = 50 * time.Millisecond
@@ -702,5 +704,21 @@ func TestOnBoundGatewayChangeAndStaleTeardown(t *testing.T) {
 	slices.Sort(deleted)
 	if !slices.Equal(deleted, []string{"10.0.2.2", "10.0.2.3"}) || len(addrDels) != 1 {
 		t.Fatalf("Teardown deleted routes %v and %d addresses, want both routes and the lease address", deleted, len(addrDels))
+	}
+}
+
+// After the stop (Teardown) a lease that a client still delivers is not
+// applied.
+func TestOnBoundAfterStopIgnored(t *testing.T) {
+	stubDHCPNetlink(t)
+	added := 0
+	dhcpAddrReplace = func(netlink.Link, *netlink.Addr) error { added++; return nil }
+	d := NewDHCPMode()
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d.onBound(dummyLink("eth0", 1), "eth0", make(chan string, 1))(lease24("10.0.2.15", "10.0.2.2"))
+	if added != 0 || len(d.nics) != 0 {
+		t.Fatalf("a lease after the stop was applied: %d addresses, %v", added, d.nics)
 	}
 }
