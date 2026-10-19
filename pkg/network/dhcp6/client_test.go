@@ -307,6 +307,26 @@ func TestDomainList(t *testing.T) {
 	if got := domainList(b); !slices.Equal(got, []string{"a.example", "b"}) {
 		t.Fatalf("domainList = %v", got)
 	}
+	// networkd 255 dhcp6_option_parse_domainname_list: a name may end at
+	// the end of the option when the last byte is 0; one byte after a
+	// name, a label over 63 bytes or past the end, a pointer, or a last
+	// byte other than 0 ignore the list.
+	for _, tt := range []struct {
+		b    []byte
+		want []string
+	}{
+		{[]byte{1, 'a', 0, 2, 'b', 0}, []string{"a", "b\x00"}},
+		{[]byte{0, 1, 'a', 0}, []string{"a"}},
+		{[]byte{1, 'a', 0, 0}, nil},
+		{[]byte{1, 'a'}, nil},
+		{[]byte{1, 'a', 0xc0, 0}, nil},
+		{[]byte{3, 'a', 0}, nil},
+		{append([]byte{64}, make([]byte, 65)...), nil},
+	} {
+		if got := domainList(tt.b); !slices.Equal(got, tt.want) {
+			t.Errorf("domainList(%x) = %q, want %q", tt.b, got, tt.want)
+		}
+	}
 }
 
 // RFC 8415 18.2.1: the first SOLICIT RT is above IRT even with a negative

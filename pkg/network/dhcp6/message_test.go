@@ -216,6 +216,13 @@ func TestDecodeMalformedOptions(t *testing.T) {
 	if _, err := decode(append(encode(msgReply, 1, []dhcpv6.Option{raw(optServerID, testServer)}), 0, 23, 0, 16), 7, time.Now()); err == nil {
 		t.Error("a truncated option was accepted")
 	}
+	// 1 to 3 bytes after the last option are ignored, like networkd.
+	for n := 1; n <= 3; n++ {
+		msg := append(encode(msgReply, 1, []dhcpv6.Option{raw(optServerID, testServer), raw(optDNSServers, net.ParseIP("fd00::53").To16())}), make([]byte, n)...)
+		if r, err := decode(msg, 7, time.Now()); err != nil || len(r.lease.DNS) != 1 {
+			t.Errorf("%d bytes after the options: %v, DNS %v", n, err, r.lease.DNS)
+		}
+	}
 }
 
 func FuzzDecode(f *testing.F) {

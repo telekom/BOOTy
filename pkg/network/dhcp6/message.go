@@ -4,13 +4,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"net"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/insomniacslk/dhcp/dhcpv6"
 	"github.com/insomniacslk/dhcp/iana"
-	"github.com/insomniacslk/dhcp/rfc1035label"
 )
 
 // Message types (RFC 8415 section 7.3).
@@ -131,7 +129,7 @@ func decode(b []byte, iaid uint32, now time.Time) (reply, error) {
 		return reply{}, errShort
 	}
 	var opts dhcpv6.Options
-	if err := opts.FromBytesWithParser(b[dhcpv6.MessageHeaderSize:], lenient); err != nil {
+	if err := opts.FromBytesWithParser(withoutTail(b[dhcpv6.MessageHeaderSize:]), lenient); err != nil {
 		return reply{}, err //nolint:wrapcheck // the caller drops it
 	}
 	r := reply{typ: dhcpv6.MessageType(b[0]), xid: uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])}
@@ -211,31 +209,52 @@ func (l *Lease) ia(ia *dhcpv6.OptIANA, now time.Time) bool {
 
 func seconds(d time.Duration) uint32 { return uint32(d / time.Second) } //nolint:gosec // from 32 bits
 
-// domainList decodes option 24: DNS names in wire format, without
-// compression (RFC 8415 section 10). A malformed list is ignored as a
-// whole, like networkd: rfc1035label rejects a truncated name; a pointer,
-// a reserved label type and a last name without its root label, which
-// rfc1035label takes, are checked here.
-func domainList(b []byte) []string {
-	var l rfc1035label.Labels
-	if l.FromBytes(b) != nil || !plainNames(b) {
-		return nil
+// withoutTail cuts 1 to 3 bytes after the last option, which networkd
+// ignores ("Ignoring %zu invalid byte(s) at the end of the packet"); the
+// library fails the message. A truncated option stays and fails it.
+func withoutTail(b []byte) []byte {
+	n := 0
+	for len(b)-n >= 4 {
+		next := n + 4 + int(binary.BigEndian.Uint16(b[n+2:]))
+		if next > len(b) {
+			return b
+		}
+		n = next
 	}
-	return slices.DeleteFunc(l.Labels, func(s string) bool { return s == "" })
+	return b[:n]
 }
 
-// plainNames tells whether b is a list of names of plain labels, each with
-// its root label.
-func plainNames(b []byte) bool {
-	inName := false
-	for len(b) > 0 {
-		n := int(b[0])
-		if n > 63 || len(b) <= n {
-			return false
-		}
-		b, inName = b[1+n:], n > 0
+// domainList decodes option 24 like networkd 255
+// (dhcp6_option_parse_domainname_list): the last byte is 0, every label
+// has at most 63 bytes and lies inside the option, and a name may end at
+// the end of the option without the root label. Anything else ignores
+// the option as a whole. The names are checked later (validSearchDomain).
+func domainList(b []byte) []string {
+	if len(b) <= 1 || b[len(b)-1] != 0 {
+		return nil
 	}
-	return !inName
+	var out []string
+	for len(b) > 0 {
+		if len(b) <= 1 {
+			return nil // parse_domain: -ENODATA
+		}
+		var labels []string
+		for len(b) > 0 {
+			n := int(b[0])
+			b = b[1:]
+			if n == 0 {
+				break
+			}
+			if n > 63 || n > len(b) {
+				return nil
+			}
+			labels, b = append(labels, string(b[:n])), b[n:]
+		}
+		if len(labels) > 0 {
+			out = append(out, strings.Join(labels, "."))
+		}
+	}
+	return out
 }
 
 // fqdn is option 39 like networkd: flags S (the server updates the AAAA
