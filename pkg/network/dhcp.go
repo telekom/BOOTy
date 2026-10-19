@@ -267,18 +267,33 @@ func (d *DHCPMode) watchNewNICs(hostname string, leased chan<- string) {
 		// Links that are no physical NIC, by index and name: not checked
 		// again until they go or are renamed.
 		notNIC := map[linkKey]bool{}
-		for {
+		for again := false; ; again = true {
 			updates := make(chan netlink.LinkUpdate, 16)
-			opts := netlink.LinkSubscribeOptions{ErrorCallback: func(err error) {
+			// A subscription again lists the links, so a NIC or carrier
+			// whose event was lost (ENOBUFS) is seen.
+			opts := netlink.LinkSubscribeOptions{ListExisting: again, ErrorCallback: func(err error) {
 				d.log.Warn("link watch for DHCP failed, subscribing again", "error", err)
 			}}
-			if err := subscribe(updates, done, opts); err != nil {
+			// netlink keeps the socket of a failed subscription until its
+			// done channel closes: one per subscription.
+			sub := make(chan struct{})
+			end := sync.OnceFunc(func() { close(sub) })
+			go func() {
+				select {
+				case <-done:
+					end()
+				case <-sub:
+				}
+			}()
+			if err := subscribe(updates, sub, opts); err != nil {
+				end()
 				d.log.Warn("NICs that appear later get no DHCP client", "error", err)
 				return
 			}
 			for u := range updates {
 				d.linkUpdate(u, notNIC, hostname, leased)
 			}
+			end()
 			select {
 			case <-done:
 				return

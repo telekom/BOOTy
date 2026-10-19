@@ -54,8 +54,8 @@ type Lease struct {
 	ServerID  []byte
 	DNS       []net.IP
 	Domains   []string
-	// InfoRefresh is the information refresh time (option 32) of a
-	// stateless REPLY, 0 when absent.
+	// InfoRefresh is the information refresh time (option 32, at least
+	// 600 s) of a stateless REPLY, 0 when absent.
 	InfoRefresh time.Duration
 
 	Bound  time.Time
@@ -170,7 +170,8 @@ func (l *Lease) otherOptions(opts []option) {
 		l.Domains = domainList(dl)
 	}
 	if v, ok := find(opts, optInfoRefresh); ok && len(v) == 4 {
-		l.InfoRefresh = time.Duration(binary.BigEndian.Uint32(v)) * time.Second
+		// At least IRT_MINIMUM, also for 0 (RFC 8415 21.23).
+		l.InfoRefresh = max(time.Duration(binary.BigEndian.Uint32(v))*time.Second, 600*time.Second)
 	}
 }
 
