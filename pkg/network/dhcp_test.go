@@ -969,8 +969,8 @@ func TestLeaseExpiryRestartsTheClient(t *testing.T) {
 		t.Fatalf("Teardown stopped the fresh client %d times, want once", fresh[0].stops)
 	}
 	d.restartClient(7, "eth0", &nicClient{client: &fakeRestartClient{}, start: start})
-	if len(fresh) != 2 || fresh[1].stops != 1 || len(d.clients) != 0 {
-		t.Fatalf("a restart after Teardown left a client running: %d clients, stops %d", len(d.clients), fresh[len(fresh)-1].stops)
+	if len(fresh) != 1 || len(d.clients) != 0 {
+		t.Fatalf("a restart after Teardown started a client: %d fresh, %d clients", len(fresh), len(d.clients))
 	}
 	d.onBound(eth0, "eth0", make(chan string, 1))(lease24("10.0.2.16", "10.0.2.2"))
 	if len(d.nics) != 0 {
@@ -993,5 +993,77 @@ func TestOnExpireStopsLeaseExpiryTimer(t *testing.T) {
 	d.onExpire(eth0, "eth0")(nil)
 	if len(timers.timers) != 1 || timers.timers[0].Stop() || len(d.expiry) != 0 {
 		t.Fatal("the expiry timer still runs after the DHCPNAK")
+	}
+}
+
+// Teardown waits for a client restart that began before it, and the
+// restart starts no client after the stop.
+func TestTeardownWaitsForRestart(t *testing.T) {
+	stubDHCPNetlink(t)
+	d := NewDHCPMode()
+	old := &fakeRestartClient{onStop: func() { time.Sleep(300 * time.Millisecond) }}
+	var mu sync.Mutex
+	var fresh []*fakeRestartClient
+	start := func() dhcpClient {
+		c := &fakeRestartClient{}
+		mu.Lock()
+		fresh = append(fresh, c)
+		mu.Unlock()
+		return c
+	}
+	d.clients = map[int]*nicClient{7: {client: old, start: start}}
+	d.mu.Lock()
+	go d.takeForRestart(7, "eth0")
+	time.Sleep(50 * time.Millisecond) // the old client is stopping
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, c := range fresh {
+		if c.stops != 1 {
+			t.Fatalf("a fresh client runs after Teardown (stops %d)", c.stops)
+		}
+	}
+	if len(d.clients) != 0 {
+		t.Fatalf("clients after Teardown: %v", d.clients)
+	}
+}
+
+// A refused lease (no server identifier) restarts the client after a
+// backoff of 2 s, doubled per refusal; a lease resets it.
+func TestRefusedLeaseRestartsWithBackoff(t *testing.T) {
+	stubDHCPNetlink(t)
+	orig := dhcpAfterFunc
+	t.Cleanup(func() { dhcpAfterFunc = orig })
+	var waits []time.Duration
+	var fire func()
+	dhcpAfterFunc = func(d time.Duration, fn func()) *time.Timer {
+		if d <= 64*time.Second { // not the 2 min expiry timer of the lease
+			waits, fire = append(waits, d), fn
+		}
+		return time.NewTimer(time.Hour)
+	}
+	d := NewDHCPMode()
+	link := dummyLink("eth0", 1)
+	started := 0
+	start := func() dhcpClient { started++; return &fakeRestartClient{} }
+	old := &fakeRestartClient{}
+	d.clients = map[int]*nicClient{1: {client: old, start: start}}
+	refused := lease24("10.0.2.15", "10.0.2.2")
+	refused.ServerID = nil
+	bound := d.onBound(link, "eth0", make(chan string, 4))
+	bound(refused)
+	bound(refused) // a retry is pending: no second one
+	fire()
+	bound(refused)
+	fire()
+	bound(lease24("10.0.2.15", "10.0.2.2"))
+	bound(refused)
+	if want := []time.Duration{2 * time.Second, 4 * time.Second, 2 * time.Second}; !slices.Equal(waits, want) {
+		t.Fatalf("retry waits = %v, want %v", waits, want)
+	}
+	if old.stops != 1 || started != 2 {
+		t.Fatalf("old client stops %d, fresh clients %d, want 1 and 2", old.stops, started)
 	}
 }

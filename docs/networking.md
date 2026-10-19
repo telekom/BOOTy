@@ -1114,7 +1114,11 @@ again. BOOTy keeps its own expiry timer per lease: the DHCP client library
 report the expiry and keeps requesting the old address from the old
 server, so at the expiry BOOTy replaces the client of that NIC with a new
 one, like networkd restarts its client. After a DHCPNAK go-dhclient starts
-over itself.
+over itself, after a fixed 1 s (networkd backs off instead). A lease
+without a lifetime or a server identifier is not applied, like networkd;
+since go-dhclient stays bound to it, BOOTy restarts the client of that NIC
+after 2 s, doubled per refusal up to 64 s. Teardown waits for a restart
+in progress, so no client starts after it.
 
 BOOTy does not apply DNS servers or the MTU from the lease. Set
 `dns_resolver` for DNS.
