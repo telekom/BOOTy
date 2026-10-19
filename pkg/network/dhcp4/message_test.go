@@ -43,6 +43,8 @@ func TestDecodeReplyChecks(t *testing.T) {
 		{"ACK without lease time", reply4(layers.DHCPMsgTypeAck, testAddr, sid), false},
 		{"NAK without server ID", reply4(layers.DHCPMsgTypeNak, net.IPv4zero), false},
 		{"NAK", reply4(layers.DHCPMsgTypeNak, net.IPv4zero, sid), true},
+		{"ACK with lease time 0", reply4(layers.DHCPMsgTypeAck, testAddr, sid, layers.NewDHCPOption(layers.DHCPOptLeaseTime, []byte{0, 0, 0, 0})), false},
+		{"ACK with option overload", reply4(layers.DHCPMsgTypeAck, testAddr, sid, lt, layers.NewDHCPOption(optOverload, []byte{3})), false},
 	} {
 		if _, ok := decodeReply(tt.b, time.Now()); ok != tt.ok {
 			t.Errorf("%s: ok = %v, want %v", tt.name, ok, tt.ok)
@@ -113,6 +115,9 @@ func TestUDPPayloadChecksums(t *testing.T) {
 	badIP[14+10] ^= 0xff
 	if _, ok := udpPayload(badIP, true); ok {
 		t.Error("a bad IP header checksum passed")
+	}
+	if _, ok := udpPayload(badIP, false); ok {
+		t.Error("a bad IP header checksum passed without the UDP check (offload marks only the UDP checksum)")
 	}
 	frag := append([]byte(nil), good...)
 	frag[14+6] |= 0x20 // more fragments

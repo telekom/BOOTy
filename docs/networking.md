@@ -1100,7 +1100,9 @@ The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
 - REBINDING at T2: the same DHCPREQUEST as broadcast, until the lease
   expires. Like every networkd broadcast it has the IP source 0.0.0.0
   (the lease address is in `ciaddr`), as captured in kindmetal.
-- INIT-REBOOT (`Reboot`): DHCPREQUEST with only the requested address.
+- INIT-REBOOT (`Reboot`): DHCPREQUEST with only the requested address,
+  sent once; without an answer the client goes to INIT, like networkd.
+  DHCP mode calls it when the carrier returns (wired in #793).
 - DHCPRELEASE at stop (Teardown, before kexec or reboot) from the lease
   address to the server, with the client identifier only, like networkd
   (`SendRelease=yes`; the legacy ramdisk sends it, captured in kindmetal).
@@ -1115,8 +1117,11 @@ The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
   lease time and a T1 at or past T2 get the defaults, like networkd.
 - Replies, like networkd: only Ethernet BOOTP (htype 1, hlen 6, at least
   240 bytes); an OFFER or ACK needs an address, a server identifier (54)
-  and a lease time (51), a NAK a server identifier. The IP header and UDP
-  checksums are checked unless the kernel marks the frame as not yet
+  and a lease time (51) above 0, a NAK a server identifier. A NAK from
+  another server than that of the offer or lease is ignored. An OFFER or
+  ACK with option overload (52, options in `sname` or `file`) is dropped:
+  BOOTy does not read those fields. The IP header checksum is always
+  checked, the UDP checksum unless the kernel marks the frame as not yet
   checksummed (`PACKET_AUXDATA`, checksum offload). Replies larger than
   1500 bytes (jumbo MTU) are read whole.
 - DHCP packets carry the IP TOS of networkd (CS6). Debug logging only, one
