@@ -1625,3 +1625,18 @@ func TestSourceRouting(t *testing.T) {
 		t.Fatalf("after the end: rules deleted %q, routes deleted %q", ruleDels, deleted)
 	}
 }
+
+// Host routes (scope host: localhost, the lease address) stay in the main
+// table only; the table of the NIC gets the subnet route and the others.
+func TestSourceRoutesSkipHostRoutes(t *testing.T) {
+	link := dummyLink("eth0", 7)
+	addr := &netlink.Addr{IPNet: &net.IPNet{IP: net.ParseIP("10.0.2.15").To4(), Mask: net.CIDRMask(24, 32)}}
+	main := []*netlink.Route{
+		{Dst: &net.IPNet{IP: net.ParseIP("127.0.0.1").To4(), Mask: net.CIDRMask(32, 32)}, Scope: netlink.SCOPE_HOST},
+		{Gw: net.ParseIP("10.0.2.2")},
+	}
+	got := sourceRoutes(main, link, addr)
+	if len(got) != 2 || routeDst(got[0]) != "10.0.2.0/24" || got[1].Gw == nil || got[0].Table != 10007 || got[1].Table != 10007 {
+		t.Fatalf("source routes = %v", got)
+	}
+}
