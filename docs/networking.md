@@ -242,9 +242,25 @@ same resolution:
     again, and both connections complete within 100 microseconds (FRR
     debug trace of the production template lab, #811). FRR and GoBGP
     both resolve that collision per RFC 4271 section 6.8 and keep BOOTy's
-    connection, but in about one fault in ten the kept connection was
-    lost as well and the session came up twice. Without the option the
-    leaf's connection usually arrives first. The peer restart above stays:
+    connection; until the fork tag booty.11 GoBGP sometimes reset that
+    connection itself (fixed). With booty.12 and the option on, the
+    production template lab passed 12 of 15 jobs (5 manual runs of #831):
+    the two-uplink and native model labs 5 of 5, the one-uplink lab 2 of
+    5. All three failures are a graceful restart false positive: GoBGP is
+    Established on its own connection, the leaf's connection, whose SYN
+    was pending since the outage, completes a millisecond later, and
+    GoBGP takes that TCP connection as a restart of the peer (RFC 4724
+    section 5: a new connection while Established with the graceful
+    restart capability) and ends the new session, so the session comes
+    up twice. FRR has the same rule (`bgp_accept`), but its own stale
+    connect does not complete against the leaf in the lab. A possible
+    future change in the fork: in Established with graceful restart,
+    treat a new connection as a restart only when it sends an OPEN, and
+    close a connection that ends without one. A restarted peer sends its
+    OPEN at once, but this departs from RFC 4724 section 5, which reacts
+    to the TCP connection itself, so it is not done. Without the option
+    the leaf's connection usually arrives first, and the lab passed 10 of
+    10 jobs. The peer restart above stays:
     GoBGP still holds a peer 5 s in Idle after the peer ended the session
     and refuses the leaf meanwhile, which `ConnectAtOnce` does not change.
   Two more regressions of GoBGP 4.10.0 are fixed in the GoBGP fork that
