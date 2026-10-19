@@ -891,10 +891,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 
 	// Before the network setup: a driver may reset the port when the flag
 	// changes, which would drop BGP sessions set up before.
-	if cfg.DisableNICFirmwareLLDP() {
-		disableNICFirmwareLLDP(ctx, &cfg.Provision.SRIOV)
-		lldpPrepareNICs = func(nics []string) { disableNICFirmwareLLDPOn(nics, &cfg.Provision.SRIOV) }
-	}
+	prepareFirmwareLLDP(ctx, cfg)
 
 	// Set up networking with retry — if connectivity fails, teardown and
 	// rebuild the entire network stack before giving up.
@@ -1209,6 +1206,16 @@ func disableNICFirmwareLLDP(ctx context.Context, sriovCfg *sriov.Config) {
 		return
 	}
 	disableNICFirmwareLLDPOn(nics, sriovCfg)
+}
+
+// prepareFirmwareLLDP stops the firmware LLDP agent of the NICs now and of
+// the NICs that appear later (lldpPrepareNICs), unless the config keeps it.
+func prepareFirmwareLLDP(ctx context.Context, cfg *config.MachineConfig) {
+	if !cfg.DisableNICFirmwareLLDP() {
+		return
+	}
+	disableNICFirmwareLLDP(ctx, &cfg.Provision.SRIOV)
+	lldpPrepareNICs = func(nics []string) { disableNICFirmwareLLDPOn(nics, &cfg.Provision.SRIOV) }
 }
 
 // disableNICFirmwareLLDPOn is disableNICFirmwareLLDP for the given NICs,
@@ -1742,29 +1749,41 @@ var (
 // followLLDPMatches calls start with the NICs the matches select when a
 // NIC that is not known yet appears, until ctx ends.
 func followLLDPMatches(ctx context.Context, matches []network.LinkMatch, known func(string) bool, start func([]string), log *slog.Logger) {
+	check := func() {
+		names, err := resolveLinkMatches(ctx, matches)
+		if err != nil {
+			return
+		}
+		fresh := slices.DeleteFunc(names, known)
+		if len(fresh) > 0 {
+			lldpPrepareNICs(fresh) // the firmware LLDP agent off, like at the start
+			start(fresh)
+		}
+	}
 	go func() {
 		// The subscription ends on a netlink error: subscribe again.
-		for ctx.Err() == nil {
+		for again := false; ctx.Err() == nil; again = true {
 			updates := make(chan netlink.LinkUpdate, 16)
 			opts := netlink.LinkSubscribeOptions{ErrorCallback: func(err error) {
 				log.Warn("link watch for LLDP failed, subscribing again", "error", err)
 			}}
-			if err := lldpLinkSubscribe(updates, ctx.Done(), opts); err != nil {
+			// netlink keeps the socket of a failed subscription until its
+			// done channel closes: one per subscription.
+			sub, end := context.WithCancel(ctx)
+			if err := lldpLinkSubscribe(updates, sub.Done(), opts); err != nil {
+				end()
 				log.Warn("NICs that appear later send no LLDP", "error", err)
 				return
 			}
-			for u := range updates {
-				if u.Header.Type != unix.RTM_NEWLINK || u.Link == nil || known(u.Attrs().Name) {
-					continue
-				}
-				names, err := resolveLinkMatches(ctx, matches)
-				if err != nil {
-					continue
-				}
-				fresh := slices.DeleteFunc(names, known)
-				lldpPrepareNICs(fresh) // the firmware LLDP agent off, like at the start
-				start(fresh)
+			if again {
+				check() // a NIC whose event was lost (ENOBUFS)
 			}
+			for u := range updates {
+				if u.Header.Type == unix.RTM_NEWLINK && u.Link != nil && !known(u.Attrs().Name) {
+					check()
+				}
+			}
+			end()
 			select {
 			case <-ctx.Done():
 			case <-time.After(time.Second):
