@@ -1274,6 +1274,12 @@ DNS and NTP servers of that NIC and restores its MTU (RFC 2131 sections 3.2
 and 4.4.5), like networkd. The client starts over in INIT with a
 DHCPDISCOVER, and its next lease is applied again.
 
+BOOTy does not probe the offered address with ARP and sends no
+DHCPDECLINE (RFC 2131 4.4.1 and RFC 5227 say SHOULD). systemd-networkd 255
+does the same by default: it runs IPv4 ACD on a DHCPv4 address only with
+`[DHCPv4] SendDecline=yes` (`networkd-dhcp4.c`: `duplicate_address_detection
+= dhcp_send_decline`), which defaults to no, and netplan does not set it.
+
 ### DHCPv6
 
 Like networkd with the legacy netplan, every NIC with a DHCP client also
@@ -1323,7 +1329,15 @@ stops and the address and DNS servers go; the next RA starts it again.
 When the carrier returns, BOOTy sends router solicitations (up to three,
 4 s apart, with the source link-layer address) until a client runs, like
 networkd's NDisc client; the kernel sends them only when the link comes
-up.
+up. The first one waits a random 0.5 s to 1 s: RFC 4861 6.3.7 asks for a
+random delay of up to 1 s (MAX_RTR_SOLICITATION_DELAY), and sd-ndisc sends
+its first solicitation 0.5 s after the start with 1 s timer accuracy.
+
+When duplicate address detection fails for a DHCPv6 address, BOOTy sends
+no DECLINE (RFC 8415 18.2.8 asks for one). sd-dhcp6-client in systemd 255
+never sends DECLINE either (the message type is only named), and networkd
+does not act on `IFA_F_DADFAILED` of a DHCPv6 address, so this matches the
+legacy ramdisk.
 
 Because `bond*` names are not physical NICs, DHCP does not run on `bond0`.
 
