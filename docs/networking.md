@@ -1136,8 +1136,11 @@ On every lease (also renewals and leases on the other NICs), BOOTy:
   33 (classful masks, RFC 2132) and a default route through the first
   router that is not 0.0.0.0 (none when all are); first a host route
   (scope link) to every gateway. A route to localhost or to the lease
-  address is a host route (scope host), like networkd. All have the lease
-  address as source, metric 100 and `proto dhcp`. The routes of all NICs stay next to
+  address is a host route (scope host), like networkd. All have metric 100,
+  `proto dhcp` and the lease address as source, except the route to
+  localhost. A malformed option 33 (length not a multiple of 8) or 119 (a
+  truncated name, a pointer that does not point back, a reserved label
+  type) is ignored as a whole. The routes of all NICs stay next to
   each other; routes of the previous lease that the new one does not have
   are removed;
 - sets the lease MTU (option 26) on the NIC, like networkd with netplan's

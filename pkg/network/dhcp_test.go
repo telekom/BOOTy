@@ -1403,7 +1403,7 @@ func TestLeaseRoutesTable(t *testing.T) {
 		{"option 121 masked, host routes", []string{"10.0.2.99"}, append(opt(dhcpOptStaticRoutes, 10, 30, 1, 0, 10, 0, 2, 5),
 			opt(dhcpOptClasslessRoutes, 12, 10, 47, 10, 0, 2, 2, 32, 127, 0, 0, 1, 0, 0, 0, 0, 32, 10, 0, 2, 15, 10, 0, 2, 2)...),
 			[]string{"10.0.2.2/32 via <nil> scope 253 src 10.0.2.15", "10.32.0.0/12 via 10.0.2.2 scope 0 src 10.0.2.15",
-				"127.0.0.1/32 via <nil> scope 254 src <nil>", "10.0.2.15/32 via <nil> scope 254 src <nil>"}},
+				"127.0.0.1/32 via <nil> scope 254 src <nil>", "10.0.2.15/32 via <nil> scope 254 src 10.0.2.15"}},
 	} {
 		l := lease24("10.0.2.15", tt.routers...)
 		l.OtherOptions = tt.opts
@@ -1440,4 +1440,34 @@ func FuzzDomainSearch(f *testing.F) {
 			}
 		}
 	})
+}
+
+// Malformed options 33 and 119 are ignored as a whole, like networkd.
+func TestMalformedRouteAndSearchOptions(t *testing.T) {
+	if got := staticRoutes([]byte{10, 30, 1, 0, 10, 0, 2, 5, 1}); got != nil {
+		t.Errorf("option 33 of 9 bytes = %v, want ignored", got)
+	}
+	ok := []byte{1, 'a', 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 0}
+	for name, data := range map[string][]byte{
+		"forward pointer": append(append([]byte(nil), ok...), 1, 'b', 0xc0, 20),
+		"label type 01":   append(append([]byte(nil), ok...), 0x41, 'b', 0),
+		"label type 10":   append(append([]byte(nil), ok...), 0x81, 'b', 0),
+		"truncated":       append(append([]byte(nil), ok...), 5, 'b'),
+	} {
+		if got := domainSearch(data); got != nil {
+			t.Errorf("%s: domainSearch = %q, want the option ignored", name, got)
+		}
+	}
+	if got := domainSearch(ok); !slices.Equal(got, []string{"a.example"}) {
+		t.Errorf("domainSearch = %q", got)
+	}
+}
+
+// Without a machine ID the client identifier uses a random ID of the run:
+// stable within the run.
+func TestClientIDWithoutMachineID(t *testing.T) {
+	a, b := dhcpClientID("eth0", ""), dhcpClientID("eth0", "")
+	if !bytes.Equal(a, b) || bytes.Equal(a, dhcpClientID("eth0", "x")) || fallbackMachineID() == "" {
+		t.Fatalf("client IDs %x %x", a, b)
+	}
 }
