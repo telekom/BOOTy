@@ -334,3 +334,40 @@ func TestUdevNamesBestEffort(t *testing.T) {
 		t.Fatalf("renames = %v, want %v", renamed, want)
 	}
 }
+
+// The netplan set-name renames run after udevPlan: a NIC they match and a
+// NIC whose udev name they set stay out, so a set-name swap by MAC works
+// (it did before the udev names).
+func TestUdevPlanSkipsSetName(t *testing.T) {
+	restore := snapshotNICFns()
+	defer restore()
+	origNames, origExists := udevNames, linkExists
+	t.Cleanup(func() { udevNames, linkExists = origNames, origExists })
+	names := map[string][]string{"eth0": {"enp1s0"}, "eth1": {"enp2s0"}, "eth2": {"enp3s0"}, "eth3": {"enp4s0"}}
+	udevNames = func(n string) []string { return names[n] }
+	linkExists = func(string) bool { return false }
+	mac := func(b byte) net.HardwareAddr { return net.HardwareAddr{2, 0, 0, 0, 0, b} }
+	linkList = func() ([]netlink.Link, error) {
+		return []netlink.Link{
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth0", HardwareAddr: mac(1)}},
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth1", HardwareAddr: mac(2)}},
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth2", HardwareAddr: mac(3)}},
+			&netlink.Device{LinkAttrs: netlink.LinkAttrs{Name: "eth3", HardwareAddr: mac(4)}},
+		}, nil
+	}
+	for _, tt := range []struct {
+		name    string
+		renames []LinkMatch
+		want    []netname.Rename
+	}{
+		{"swap by MAC", []LinkMatch{{MAC: "02:00:00:00:00:01", SetName: "enp2s0"}, {MAC: "02:00:00:00:00:02", SetName: "enp1s0"}},
+			[]netname.Rename{{From: "eth2", To: "enp3s0"}, {From: "eth3", To: "enp4s0"}}},
+		{"set-name to the udev name of another NIC", []LinkMatch{{MAC: "02:00:00:00:00:03", SetName: "enp1s0"}},
+			[]netname.Rename{{From: "eth1", To: "enp2s0"}, {From: "eth3", To: "enp4s0"}}},
+	} {
+		got, err := udevPlan(context.Background(), &Config{UdevNames: true, LinkRenames: tt.renames}, nil)
+		if err != nil || !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%s: udevPlan = %v, %v, want %v", tt.name, got, err, tt.want)
+		}
+	}
+}

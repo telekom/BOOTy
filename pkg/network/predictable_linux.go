@@ -76,6 +76,23 @@ func applyUdevNames(ctx context.Context, c *Config, plan []netname.Rename) {
 	}
 }
 
+// setNameTouched returns the NICs that the netplan set-name renames match
+// and the names they set. Those renames run after udevPlan, so these stay
+// out of it: a set-name swap by MAC still works.
+func setNameTouched(renames []LinkMatch, links []LinkCandidate) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range renames {
+		if m.SetName == "" {
+			continue
+		}
+		out[m.SetName] = true
+		for _, n := range m.Matches(links) {
+			out[n] = true
+		}
+	}
+	return out
+}
+
 // udevPlan gives every physical NIC that the plan does not rename and the
 // config does not name its first predictable name, the name udev gives it.
 // A name that exists, is planned or is the first name of two NICs is
@@ -86,6 +103,7 @@ func udevPlan(ctx context.Context, c *Config, plan []netname.Rename) ([]netname.
 		return nil, err
 	}
 	configured := ConfiguredInterfaceNames(c)
+	setName := setNameTouched(c.LinkRenames, links)
 	first := map[string][]string{} // predictable name -> NICs
 	for _, l := range links {
 		if names := udevNames(l.Name); len(names) > 0 {
@@ -95,7 +113,7 @@ func udevPlan(ctx context.Context, c *Config, plan []netname.Rename) ([]netname.
 	var out []netname.Rename
 	for _, l := range links {
 		names := udevNames(l.Name)
-		if len(names) == 0 || names[0] == l.Name || slices.Contains(configured, l.Name) ||
+		if len(names) == 0 || names[0] == l.Name || slices.Contains(configured, l.Name) || setName[l.Name] || setName[names[0]] ||
 			slices.ContainsFunc(plan, func(r netname.Rename) bool { return r.From == l.Name || r.To == names[0] }) ||
 			len(first[names[0]]) > 1 || linkExists(names[0]) {
 			continue
