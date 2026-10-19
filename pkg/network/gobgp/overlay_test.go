@@ -290,6 +290,15 @@ func TestParseRouteDistinguisher(t *testing.T) {
 }
 
 // mustRD marshals an RD for the tests.
+// testRD is the RD 65000:n for tests that need distinct RDs.
+func testRD(n uint32) *apipb.RouteDistinguisher {
+	rd, err := parseRouteDistinguisher(fmt.Sprintf("65000:%d", n))
+	if err != nil {
+		panic(err)
+	}
+	return rd
+}
+
 func mustRD(t *testing.T, rd string) *apipb.RouteDistinguisher {
 	t.Helper()
 	a, err := parseRouteDistinguisher(rd)
@@ -4748,7 +4757,7 @@ func TestType2NeighborTiebreakOnMAC(t *testing.T) {
 func TestType2NeighborKeptByTheOtherRD(t *testing.T) {
 	o, m := type2TestOverlay()
 	route := func(rd uint32) *apipb.EVPNMACIPAdvertisementRoute {
-		return &apipb.EVPNMACIPAdvertisementRoute{Rd: buildRouteDistinguisher(65000, rd), MacAddress: "aa:bb:cc:00:00:01", IpAddress: "10.0.0.50"}
+		return &apipb.EVPNMACIPAdvertisementRoute{Rd: testRD(rd), MacAddress: "aa:bb:cc:00:00:01", IpAddress: "10.0.0.50"}
 	}
 	o.handleType2Route(route(1), "10.0.0.1", 0, false)
 	o.handleType2Route(route(2), "10.0.0.1", 0, false)
@@ -4804,7 +4813,7 @@ func TestType2ESIAliasingAndMassWithdraw(t *testing.T) {
 		netlinkOps: mock,
 	}
 	esi := &apipb.EthernetSegmentIdentifier{Type: 0, Value: []byte{0, 0x11, 0x22, 0x33, 0x44, 0x55, 0, 0, 1}}
-	rd := func(n uint32) *apipb.RouteDistinguisher { return buildRouteDistinguisher(65000, n) }
+	rd := func(n uint32) *apipb.RouteDistinguisher { return testRD(n) }
 	ead := func(vtep string, perES, withdraw bool) {
 		tag := uint32(0)
 		if perES {
@@ -4878,7 +4887,7 @@ func TestType2ESIAliasingAndMassWithdraw(t *testing.T) {
 // community. Without it a receiver assumes MPLS or a configured
 // encapsulation for BOOTy's Type-2 and Type-3 routes.
 func TestEVPNRoutesCarryVXLANEncapsulation(t *testing.T) {
-	rd := buildRouteDistinguisher(65000, 4000)
+	rd := testRD(4000)
 	t2 := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
 	t3 := buildEVPNType3NLRI(rd, "10.0.0.1")
 	t5, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", type5DirectGateway, 4000)
