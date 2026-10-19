@@ -8,10 +8,9 @@ import (
 	"net"
 	"testing"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/apiutil"
-	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
-	"google.golang.org/protobuf/types/known/anypb"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 )
 
 // The tests in this file are the wire evidence of docs/rfc-compliance.md:
@@ -27,7 +26,7 @@ const (
 
 // wirePath converts a path that BOOTy builds into GoBGP's native types,
 // as the GoBGP server does in AddPath.
-func wirePath(t *testing.T, nlri *anypb.Any, pattrs []*anypb.Any) (*bgp.EVPNNLRI, []bgp.PathAttributeInterface) {
+func wirePath(t *testing.T, nlri *apipb.NLRI, pattrs []*apipb.Attribute) (*bgp.EVPNNLRI, []bgp.PathAttributeInterface) {
 	t.Helper()
 	p := &apipb.Path{
 		Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
@@ -49,20 +48,13 @@ func wirePath(t *testing.T, nlri *anypb.Any, pattrs []*anypb.Any) (*bgp.EVPNNLRI
 	return evpn, attrs
 }
 
-func wireRD(t *testing.T) *anypb.Any {
-	t.Helper()
-	rd, err := buildRouteDistinguisher(wireASN, wireVNI)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return rd
-}
+func wireRD() *apipb.RouteDistinguisher { return buildRouteDistinguisher(wireASN, wireVNI) }
 
 // wireLabel is the 3-octet label field that carries the VNI: RFC 8365
 // section 5.1.3 puts the whole 24-bit VNI in it, not a 20-bit MPLS label.
 func wireLabel(vni uint32) []byte { return []byte{byte(vni >> 16), byte(vni >> 8), byte(vni)} }
 
-func extCommunities(t *testing.T, attrs []bgp.PathAttributeInterface) []bgp.ExtendedCommunityInterface {
+func wireExtCommunities(t *testing.T, attrs []bgp.PathAttributeInterface) []bgp.ExtendedCommunityInterface {
 	t.Helper()
 	for _, a := range attrs {
 		if ec, ok := a.(*bgp.PathAttributeExtendedCommunities); ok {
@@ -92,11 +84,31 @@ func checkOriginAndNoNextHop(t *testing.T, attrs []bgp.PathAttributeInterface) {
 	}
 }
 
+// checkVXLANEncap checks RFC 8365 section 5.1.3: every EVPN route of an
+// NVE carries exactly one BGP Encapsulation extended community, tunnel type
+// 8 (VXLAN, RFC 9012).
+func checkVXLANEncap(t *testing.T, attrs []bgp.PathAttributeInterface) {
+	t.Helper()
+	var types []uint16
+	for _, ec := range wireExtCommunities(t, attrs) {
+		eb, err := ec.Serialize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if eb[0] == 0x03 && eb[1] == 0x0c {
+			types = append(types, binary.BigEndian.Uint16(eb[6:8]))
+		}
+	}
+	if len(types) != 1 || types[0] != vxlanTunnelType {
+		t.Errorf("encapsulation tunnel types %v, want exactly [8] (VXLAN)", types)
+	}
+}
+
 func mpReachNextHop(t *testing.T, attrs []bgp.PathAttributeInterface) net.IP {
 	t.Helper()
 	for _, a := range attrs {
 		if mp, ok := a.(*bgp.PathAttributeMpReachNLRI); ok {
-			return mp.Nexthop
+			return net.IP(mp.Nexthop.AsSlice())
 		}
 	}
 	t.Fatal("no MP_REACH_NLRI attribute")
@@ -111,7 +123,7 @@ func mpReachNextHop(t *testing.T, attrs []bgp.PathAttributeInterface) net.IP {
 // extended communities of RFC 9135 section 8.1 and RFC 9012 (VXLAN tunnel
 // type 8).
 func TestRFCWireType5(t *testing.T) {
-	nlri, err := buildEVPNType5NLRI(wireRD(t), "198.51.100.10/32", type5DirectGateway, wireVNI)
+	nlri, err := buildEVPNType5NLRI(wireRD(), "198.51.100.10/32", type5DirectGateway, wireVNI)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +162,7 @@ func TestRFCWireType5(t *testing.T) {
 	}
 	checkOriginAndNoNextHop(t, attrs)
 	var rt, encap, rmac int
-	for _, ec := range extCommunities(t, attrs) {
+	for _, ec := range wireExtCommunities(t, attrs) {
 		eb, err := ec.Serialize()
 		if err != nil {
 			t.Fatal(err)
@@ -187,10 +199,7 @@ func TestRFCWireType5(t *testing.T) {
 // ingress replication, Leaf Information Required zero, tunnel identifier
 // the VTEP, and the VNI as 24 bits in the label field.
 func TestRFCWireType3(t *testing.T) {
-	nlri, err := buildEVPNType3NLRI(wireRD(t), wireRouterID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	nlri := buildEVPNType3NLRI(wireRD(), wireRouterID)
 	pattrs, err := buildType3PathAttrs(nlri, wireRouterID, wireASN, wireVNI, "")
 	if err != nil {
 		t.Fatal(err)
@@ -238,16 +247,15 @@ func TestRFCWireType3(t *testing.T) {
 	if !bytes.Equal(v[5:9], net.ParseIP(wireRouterID).To4()) {
 		t.Errorf("PMSI tunnel identifier = %x, want the VTEP %s", v[5:9], wireRouterID)
 	}
+	checkVXLANEncap(t, attrs)
 }
 
 // TestRFCWireType2 checks the MAC/IP route of the L2 mode: RFC 7432
 // section 7.2 (MAC length 48, IP length 32), RFC 9135 section 6.1 (length
-// 37 with one label, no Label2 for asymmetric IRB) and the VNI in Label1.
+// 37 with one label, no Label2 for asymmetric IRB), the VNI in Label1 and
+// the VXLAN encapsulation community of RFC 8365 section 5.1.3 (#746).
 func TestRFCWireType2(t *testing.T) {
-	nlri, err := buildEVPNType2NLRI(wireRD(t), wireMAC, "198.51.100.10", wireVNI)
-	if err != nil {
-		t.Fatal(err)
-	}
+	nlri := buildEVPNType2NLRI(wireRD(), wireMAC, "198.51.100.10", wireVNI)
 	pattrs, err := buildType2PathAttrs(nlri, wireRouterID, wireASN, wireVNI, "")
 	if err != nil {
 		t.Fatal(err)
@@ -277,4 +285,5 @@ func TestRFCWireType2(t *testing.T) {
 		t.Errorf("next hop = %s, want the VTEP %s", nh, wireRouterID)
 	}
 	checkOriginAndNoNextHop(t, attrs)
+	checkVXLANEncap(t, attrs)
 }
