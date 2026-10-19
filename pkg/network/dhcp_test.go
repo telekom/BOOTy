@@ -256,7 +256,7 @@ func stubDHCPNetlink(t *testing.T) {
 }
 
 func dummyLink(name string, index int) *netlink.Dummy {
-	return &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: name, Index: index}}
+	return &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: name, Index: index, RawFlags: unix.IFF_UP | unix.IFF_LOWER_UP}}
 }
 
 func lease24(ip string, router ...string) *dhcp4.Lease {
@@ -1353,8 +1353,9 @@ func TestStartClientAfterStop(t *testing.T) {
 	}
 }
 
-// Like networkd: a NIC without carrier loses its lease state; when the
-// carrier is back, the client confirms the address (INIT-REBOOT).
+// Unlike networkd a NIC without carrier keeps its lease state (address,
+// routes); when the carrier is back the client confirms the address
+// (INIT-REBOOT), like networkd.
 func TestCarrierLossKeepsLeaseAndReturnReboots(t *testing.T) {
 	clients := stubDHCPSetup(t, func(name string, cb dhcp4.Callback) {
 		if name == "eth0" {
@@ -1461,5 +1462,27 @@ func TestCarrierChangeUnchangedAndStopped(t *testing.T) {
 	d.mu.Unlock()
 	if !d.carrierChange(update(true)) || c.reboots != 0 {
 		t.Fatalf("after the stop: reboots %d, want 0 and the NIC still known", c.reboots)
+	}
+}
+
+// A NIC that has no carrier when its client starts counts as down: its
+// first carrier sends the INIT-REBOOT (in INIT: a DISCOVER without the
+// backoff), like networkd starts its client with the carrier.
+func TestStartClientWithoutCarrier(t *testing.T) {
+	clients := stubDHCPSetup(t, nil)
+	dhcpLinkByName = func(name string) (netlink.Link, error) {
+		l := dummyLink(name, int(name[3]-'0')+1)
+		l.RawFlags = unix.IFF_UP // no carrier
+		return l, nil
+	}
+	d := NewDHCPMode()
+	d.startClient(&net.Interface{Name: "eth0", Index: 1}, "", make(chan string, 1))
+	d.startClient(&net.Interface{Name: "eth1", Index: 2}, "", make(chan string, 1))
+	up := netlink.LinkUpdate{Link: dummyLink("eth0", 1)}
+	up.Header.Type = unix.RTM_NEWLINK
+	up.Flags = unix.IFF_UP | unix.IFF_LOWER_UP
+	d.carrierChange(up)
+	if c := clients["eth0"]; c.reboots != 1 {
+		t.Fatalf("reboots = %d, want 1 at the first carrier", c.reboots)
 	}
 }

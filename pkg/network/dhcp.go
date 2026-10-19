@@ -207,7 +207,11 @@ func (d *DHCPMode) startClient(iface *net.Interface, hostname string, leased cha
 		d.log.Warn("Cannot bring up link for DHCP", "interface", iface.Name, "error", err)
 		return
 	}
-	nc := &nicClient{client: dhcpStart(d.clientFor(iface, link, hostname, leased)), link: link}
+	// A NIC without carrier at the start counts as down, so its first
+	// carrier sends the INIT-REBOOT at once, which in INIT restarts the
+	// DISCOVER without the backoff, like networkd starts with the carrier.
+	nc := &nicClient{client: dhcpStart(d.clientFor(iface, link, hostname, leased)), link: link,
+		down: link.Attrs().RawFlags&unix.IFF_LOWER_UP == 0}
 	d.mu.Lock()
 	if d.stopped {
 		d.mu.Unlock()
