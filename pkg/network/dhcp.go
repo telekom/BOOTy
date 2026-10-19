@@ -108,7 +108,7 @@ var (
 	dhcpLinkByName  = netlink.LinkByName
 	dhcpLinkSetUp   = netlink.LinkSetUp
 	dhcpPrepareLink = promoteSecondaries
-	dhcpSubscribe   = netlink.LinkSubscribe
+	dhcpSubscribe   = netlink.LinkSubscribeWithOptions
 	dhcpNewClient   = func(iface *net.Interface, hostname string, onBound, onExpire dhclient.Callback) dhcpClient {
 		return newDHCPClient(iface, hostname, dhcpClientID(iface.Name, lldp.MachineID()), onBound, onExpire)
 	}
@@ -168,6 +168,14 @@ func (d *DHCPMode) Setup(ctx context.Context, cfg *Config) error {
 	if err := d.setupDNS(cfg); err != nil {
 		return err
 	}
+	d.mu.Lock()
+	d.stopped = false
+	d.mu.Unlock()
+	leased := make(chan string, 16)
+	hostname, _ := os.Hostname()
+	// The link watch first, so a NIC that appears while the NICs are
+	// listed is not missed; a NIC that both see gets one client.
+	d.watchNewNICs(hostname, leased)
 	ifaces, err := dhcpInterfaces(ctx)
 	if err != nil {
 		return fmt.Errorf("listing interfaces: %w", err)
@@ -175,17 +183,10 @@ func (d *DHCPMode) Setup(ctx context.Context, cfg *Config) error {
 	if len(ifaces) == 0 {
 		return fmt.Errorf("no physical interfaces found for DHCP")
 	}
-
 	d.log.Info("Starting DHCP on all interfaces", "count", len(ifaces))
-	d.mu.Lock()
-	d.stopped = false
-	d.mu.Unlock()
-	leased := make(chan string, len(ifaces))
-	hostname, _ := os.Hostname()
 	for i := range ifaces {
 		d.startClient(&ifaces[i], hostname, leased)
 	}
-	d.watchNewNICs(hostname, leased)
 
 	timer := time.NewTimer(dhcpSetupTimeout)
 	defer timer.Stop()
@@ -246,49 +247,77 @@ func (d *DHCPMode) startClient(iface *net.Interface, hostname string, leased cha
 // Setup, like networkd matches a link when udev announces it: a driver can
 // bring up its ports late. It runs until the clients stop.
 func (d *DHCPMode) watchNewNICs(hostname string, leased chan<- string) {
-	updates := make(chan netlink.LinkUpdate, 16)
 	done := make(chan struct{})
-	if err := dhcpSubscribe(updates, done); err != nil {
-		d.log.Warn("NICs that appear later get no DHCP client", "error", err)
-		return
-	}
 	d.mu.Lock()
 	d.watchDone = done
 	d.mu.Unlock()
+	subscribe := dhcpSubscribe
 	go func() {
-		notNIC := map[int]bool{} // links that are no physical NIC: not checked again
-		for u := range updates {
-			if u.Link == nil {
-				continue
+		// Links that are no physical NIC, by index and name: not checked
+		// again until they go or are renamed.
+		notNIC := map[linkKey]bool{}
+		for {
+			updates := make(chan netlink.LinkUpdate, 16)
+			opts := netlink.LinkSubscribeOptions{ErrorCallback: func(err error) {
+				d.log.Warn("link watch for DHCP failed, subscribing again", "error", err)
+			}}
+			if err := subscribe(updates, done, opts); err != nil {
+				d.log.Warn("NICs that appear later get no DHCP client", "error", err)
+				return
 			}
-			idx := u.Attrs().Index
-			if u.Header.Type == unix.RTM_DELLINK {
-				delete(notNIC, idx) // the index can come back for another link
-				continue
+			for u := range updates {
+				d.linkUpdate(u, notNIC, hostname, leased)
 			}
-			if u.Header.Type != unix.RTM_NEWLINK || notNIC[idx] {
-				continue
+			select {
+			case <-done:
+				return
+			case <-time.After(time.Second): // the subscription ended on an error
 			}
-			d.mu.Lock()
-			_, known := d.clients[idx]
-			stopped := d.stopped
-			d.mu.Unlock()
-			if known || stopped {
-				continue
-			}
-			ifaces, err := dhcpInterfaces(context.Background())
-			if err != nil {
-				continue
-			}
-			i := slices.IndexFunc(ifaces, func(n net.Interface) bool { return n.Index == idx })
-			if i < 0 {
-				notNIC[idx] = true
-				continue
-			}
-			d.log.Info("Starting DHCP on a new NIC", "interface", ifaces[i].Name)
-			d.startClient(&ifaces[i], hostname, leased)
 		}
 	}()
+}
+
+// linkKey is a link by index and name.
+type linkKey struct {
+	index int
+	name  string
+}
+
+// linkUpdate starts a client for a new physical NIC.
+func (d *DHCPMode) linkUpdate(u netlink.LinkUpdate, notNIC map[linkKey]bool, hostname string, leased chan<- string) {
+	if u.Link == nil {
+		return
+	}
+	key := linkKey{u.Attrs().Index, u.Attrs().Name}
+	if u.Header.Type == unix.RTM_DELLINK {
+		for k := range notNIC {
+			if k.index == key.index {
+				delete(notNIC, k) // the index can come back for another link
+			}
+		}
+		return
+	}
+	if u.Header.Type != unix.RTM_NEWLINK || notNIC[key] {
+		return
+	}
+	d.mu.Lock()
+	_, known := d.clients[key.index]
+	stopped := d.stopped
+	d.mu.Unlock()
+	if known || stopped {
+		return
+	}
+	ifaces, err := dhcpInterfaces(context.Background())
+	if err != nil {
+		return
+	}
+	i := slices.IndexFunc(ifaces, func(n net.Interface) bool { return n.Index == key.index })
+	if i < 0 {
+		notNIC[key] = true
+		return
+	}
+	d.log.Info("Starting DHCP on a new NIC", "interface", ifaces[i].Name)
+	d.startClient(&ifaces[i], hostname, leased)
 }
 
 // stopClients stops every DHCP client, all at once: go-dhclient's Stop
