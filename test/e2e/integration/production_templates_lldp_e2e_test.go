@@ -155,8 +155,16 @@ func prodtplNodeLLDP(t *testing.T, container, nic string) (mac, id, host string)
 // EmitLLDP=yes: on the same leaf, the frame of the networkd node and the
 // frame of BOOTy are the same once the MAC, the machine ID, the interface
 // name and the hostname are replaced, with the same TLVs in the same
-// order.
+// order. CI runs the networkd node on every Ubuntu LTS in standard support
+// (networkd-test.Dockerfile, UBUNTU): 22.04 (systemd 249, the legacy
+// ramdisk) is the parity reference; 24.04 (255) and 26.04 (259) send the
+// same frame, so the comparison has no per-release exceptions.
 func TestProdTplLLDPLikeNetworkd(t *testing.T) {
+	v, err := prodtplExec(context.Background(), prodtplNetworkd, "dpkg-query", "-W", "-f", "${Version}", "systemd")
+	if err != nil {
+		t.Fatalf("networkd node systemd version: %v", err)
+	}
+	t.Logf("networkd node: systemd %s", strings.TrimSpace(v))
 	norm := func(frame []byte, mac, id, nic, host string) string {
 		r := strings.NewReplacer(mac, "MAC", id, "MACHINE-ID", nic, "IFNAME", host, "HOSTNAME")
 		return r.Replace(prodtplLLDPView(frame)) + " tlvs=" + prodtplLLDPTLVs(frame)
