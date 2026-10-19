@@ -596,23 +596,13 @@ func (d *DHCPMode) writeResolvers() {
 	servers := slices.Clone(d.resolvers)
 	var search []string
 	for _, idx := range slices.Sorted(maps.Keys(d.nics)) {
-		n := d.nics[idx]
-		for _, s := range n.dns {
-			if !slices.Contains(servers, s) {
-				servers = append(servers, s)
-			}
-		}
-		for _, dom := range n.domains {
-			if !slices.Contains(search, dom) {
-				search = append(search, dom)
-			}
-		}
+		servers = appendNew(servers, d.nics[idx].dns...)
+		search = appendNew(search, d.nics[idx].domains...)
 	}
-	for _, s := range d.dns6() {
-		if !slices.Contains(servers, s) {
-			servers = append(servers, s)
-		}
+	for _, idx := range slices.Sorted(maps.Keys(d.v6)) {
+		search = appendNew(search, d.v6[idx].domains...)
 	}
+	servers = appendNew(servers, d.dns6()...)
 	content := strings.Join(servers, ",") + " search " + strings.Join(search, " ")
 	// Nothing to write before the first write without servers (the
 	// provisioner resolv.conf stays); after it, no servers left means the
@@ -859,6 +849,16 @@ func (d *DHCPMode) ManagesDNS() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.manageDNS
+}
+
+// appendNew appends the items that list does not have yet.
+func appendNew(list []string, items ...string) []string {
+	for _, it := range items {
+		if !slices.Contains(list, it) {
+			list = append(list, it)
+		}
+	}
+	return list
 }
 
 // restoreMTUs sets the MTU from before the first lease again.

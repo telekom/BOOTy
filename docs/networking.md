@@ -1221,7 +1221,8 @@ DHCPDISCOVER, and its next lease is applied again.
 
 Like networkd with the legacy netplan, every NIC with a DHCP client also
 watches router advertisements (the kernel keeps doing SLAAC). Only an RA
-with hop limit 255 from a link-local address counts (RFC 4861 6.1.2). The
+with code 0 and hop limit 255 from a link-local address counts (RFC 4861
+6.1.2). The
 first RA with the M flag starts a stateful DHCPv6 client
 (`pkg/network/dhcp6`), one with only the O flag a stateless one
 (INFORMATION-REQUEST, options 6, 1, 8); a later RA with the M flag
@@ -1246,8 +1247,11 @@ captured in the CAPRF L2 parity fixture:
   that of option 61, as in networkd.
 
 The leased address goes on the NIC as /128 with its preferred and valid
-lifetimes; the DNS servers (option 23) go to `/etc/resolv.conf` after
-those of DHCPv4. When the lease ends, or the NIC loses carrier, the client
+lifetimes; the DNS servers (option 23, a link-local one with its zone)
+go to `/etc/resolv.conf` after those of DHCPv4, the domain search list
+(option 24) to its `search` line, like networkd. A stateless client asks
+again after the information refresh time (option 32, at least 600 s) or
+a day. When the lease ends, or the NIC loses carrier, the client
 stops and the address and DNS servers go; the next RA starts it again.
 When the carrier returns, BOOTy sends router solicitations (up to three,
 4 s apart, with the source link-layer address) until a client runs, like
