@@ -2897,3 +2897,13 @@ func TestNetworkModeWithResolversLeavesDHCPResolvConf(t *testing.T) {
 		t.Fatal("a bad resolver passed")
 	}
 }
+
+// A bad configured resolver fails the run in the DHCP fallback, as for
+// the other modes: dhcpFallback keeps DNSResolvers for the check.
+func TestDHCPFallbackBadResolverFails(t *testing.T) {
+	netCfg := &network.Config{DNSResolvers: "not-an-ip"}
+	mode, err := networkModeWithResolvers(context.Background(), netCfg, dhcpFallback(context.Background(), netCfg), &linkLayerCleanup{})
+	if err == nil || mode != nil {
+		t.Fatalf("networkModeWithResolvers(dhcpFallback) = %T, %v; want the resolver error", mode, err)
+	}
+}
