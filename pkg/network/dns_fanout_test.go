@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"slices"
@@ -205,5 +206,187 @@ func TestDNSFanoutFailover(t *testing.T) {
 	f.set(nil)
 	if got, _, _ := f.current(); got != nil {
 		t.Fatalf("current after reset = %v", got)
+	}
+}
+
+// countingDial counts the Reads of the fan-out conns of r.
+func countingDial(f *fanout, reads *atomic.Int64) *net.Resolver {
+	return &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, nw, a string) (net.Conn, error) {
+		c, err := f.dial(ctx, nw, a)
+		if fc, ok := c.(*fanoutConn); ok {
+			return countConn{fc, reads}, err
+		}
+		return c, err
+	}}
+}
+
+type countConn struct {
+	*fanoutConn
+	reads *atomic.Int64
+}
+
+func (c countConn) Read(b []byte) (int, error) {
+	c.reads.Add(1)
+	return c.fanoutConn.Read(b) //nolint:wrapcheck // test
+}
+
+func (c countConn) ReadFrom(b []byte) (int, net.Addr, error) {
+	n, err := c.Read(b)
+	return n, nil, err
+}
+
+// One link answers FORMERR without a question (EDNS intolerant), the other
+// NXDOMAIN 50 ms later: the resolver rejects the FORMERR and reads again,
+// and gets the NXDOMAIN. Each negative answer comes once.
+func TestDNSFanoutRejectedNegativeThenNext(t *testing.T) {
+	f, _, port := fanoutTest(t, [][]string{{"127.0.0.1"}, {"127.0.0.2"}})
+	var a, b atomic.Int32
+	udpDNS(t, "127.0.0.1", port, 0, &a, func(q []byte) [][]byte {
+		h := append([]byte(nil), q[:12]...)
+		h[2], h[3] = 0x81, 0x81 // response, FORMERR
+		clear(h[4:12])
+		return [][]byte{h}
+	})
+	udpDNS(t, "127.0.0.2", port, 50*time.Millisecond, &b, func(q []byte) [][]byte { return [][]byte{dnsAnswer(q, 3, nil, false)} })
+	var reads atomic.Int64
+	r := countingDial(f, &reads)
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.LookupIP(context.Background(), "ip4", "image.l2-parity.test.")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		var de *net.DNSError
+		if !errors.As(err, &de) || !de.IsNotFound {
+			t.Fatalf("lookup = %v, want not found", err)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatalf("the lookup never ends; %d Reads", reads.Load())
+	}
+}
+
+// Junk of three bytes with the query ID and a refusing link: the lookup
+// ends at its deadline and the resolver does not read in a loop.
+func TestDNSFanoutJunkDoesNotSpin(t *testing.T) {
+	f, _, port := fanoutTest(t, [][]string{{"127.0.0.1"}, {"127.0.0.2"}})
+	var n atomic.Int32
+	udpDNS(t, "127.0.0.2", port, 0, &n, func(q []byte) [][]byte { return [][]byte{{q[0], q[1], 0x81}} })
+	var reads atomic.Int64
+	r := countingDial(f, &reads)
+	done := make(chan error, 1)
+	go func() {
+		_, err := lookup(t, r, time.Second)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a lookup with junk succeeded")
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatalf("the lookup hangs; %d Reads", reads.Load())
+	}
+	if got := reads.Load(); got > 100 {
+		t.Fatalf("%d Reads for one lookup: Read spins", got)
+	}
+}
+
+// fanoutConn on its own: Read ends at the deadline, Reads after it do not
+// return a held answer again, and Close closes the sockets after the
+// linger time.
+func TestFanoutConnDeadlineAndClose(t *testing.T) {
+	f, _, port := fanoutTest(t, [][]string{{"127.0.0.1"}, {"127.0.0.2"}})
+	var n atomic.Int32
+	udpDNS(t, "127.0.0.2", port, 0, &n, func(q []byte) [][]byte { return [][]byte{{q[0], q[1], 0x81}} })
+	c, err := f.dial(context.Background(), "udp", net.JoinHostPort("127.0.0.1", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fc := c.(*fanoutConn)
+	q := []byte{0x12, 0x34, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 'a', 0, 0, 1, 0, 1}
+	start := time.Now()
+	_ = c.SetDeadline(start.Add(300 * time.Millisecond))
+	if _, err := c.Write(q); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 512)
+	var errs int
+	for range 5 {
+		if _, err := c.Read(buf); err != nil {
+			errs++
+		}
+	}
+	if took := time.Since(start); took > 800*time.Millisecond {
+		t.Fatalf("Reads took %s past the 300 ms deadline", took)
+	}
+	if errs < 4 {
+		t.Fatalf("%d of 5 Reads failed: a held answer comes again", errs)
+	}
+	_ = c.Close()
+	time.Sleep(300 * time.Millisecond) // linger 100 ms
+	for _, l := range fc.conns {
+		if _, err := l.conn.Write(q); !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("socket of %s open after Close: %v", l.server, err)
+		}
+	}
+}
+
+// failWrite is a conn whose Write fails; Read waits for Close.
+type failWrite struct{ net.Conn }
+
+func (failWrite) Write([]byte) (int, error) { return 0, errors.New("network unreachable") }
+
+// A link whose Write fails counts as answered: the NXDOMAIN of the other
+// comes without waiting for the deadline.
+func TestFanoutConnWriteFailureDoesNotWait(t *testing.T) {
+	f, _, port := fanoutTest(t, [][]string{{"127.0.0.1"}, {"127.0.0.2"}})
+	var n atomic.Int32
+	udpDNS(t, "127.0.0.2", port, 0, &n, func(q []byte) [][]byte { return [][]byte{dnsAnswer(q, 3, nil, false)} })
+	p, _ := net.Pipe()
+	udp, err := (&net.Dialer{}).DialContext(context.Background(), "udp", net.JoinHostPort("127.0.0.2", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &fanoutConn{f: f, linger: 0, replies: make(chan fanoutReply, 8), done: make(chan struct{}),
+		conns: []fanoutLink{{conn: failWrite{p}, link: 0, server: "127.0.0.1"}, {conn: udp, link: 1, server: "127.0.0.2"}}}
+	defer c.Close()
+	q := []byte{0x12, 0x34, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 'a', 0, 0, 1, 0, 1}
+	start := time.Now()
+	_ = c.SetDeadline(start.Add(3 * time.Second))
+	if _, err := c.Write(q); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 512)
+	nr, err := c.Read(buf)
+	if err != nil || nr < 4 || buf[3]&0x0f != 3 {
+		t.Fatalf("Read = %d, %v; want the NXDOMAIN", nr, err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("the NXDOMAIN came after %s: Read waited for the failed link", took)
+	}
+}
+
+// The server for the TCP retry is kept per query ID: concurrent truncated
+// lookups each go to their own server.
+func TestDNSFanoutTCPServerPerQuery(t *testing.T) {
+	f := &fanout{}
+	f.set([][]string{{"10.0.0.1"}, {"10.0.1.1"}})
+	f.truncated(1, "10.0.0.1")
+	f.truncated(2, "10.0.1.1")
+	for id, want := range map[uint16]string{2: "10.0.1.1", 1: "10.0.0.1"} {
+		if got, _, ok := f.tcpServer(id); !ok || got != want {
+			t.Errorf("tcpServer(%d) = %q, %v; want %q", id, got, ok, want)
+		}
+	}
+	if _, _, ok := f.tcpServer(1); ok {
+		t.Error("a TCP server is used twice")
+	}
+}
+
+// The fan-out is the process resolver from the start.
+func TestDNSFanoutIsDefaultResolver(t *testing.T) {
+	if !net.DefaultResolver.PreferGo || net.DefaultResolver.Dial == nil {
+		t.Fatal("net.DefaultResolver is not the fan-out")
 	}
 }

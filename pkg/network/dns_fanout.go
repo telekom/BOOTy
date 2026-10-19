@@ -37,8 +37,10 @@ type fanout struct {
 	mu    sync.Mutex
 	links [][]string // per link its servers in order
 	cur   []int      // per link the server asked now; a failure moves on
-	tcp   string     // the server that truncated the last answer
-	port  string     // dnsPort at set
+	// tcp is per query ID the server that truncated its answer; the
+	// resolver asks it again over TCP with the same ID.
+	tcp  map[uint16]string
+	port string // dnsPort at set
 	// linger is fanoutLinger at set.
 	linger time.Duration
 }
@@ -48,7 +50,7 @@ type fanout struct {
 func (f *fanout) set(links [][]string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.links, f.cur, f.tcp, f.port, f.linger = links, make([]int, len(links)), "", dnsPort, fanoutLinger
+	f.links, f.cur, f.tcp, f.port, f.linger = links, make([]int, len(links)), nil, dnsPort, fanoutLinger
 }
 
 // current returns the server asked now on every link.
@@ -74,24 +76,33 @@ func (f *fanout) failed(link int, server string) {
 	}
 }
 
-func (f *fanout) truncated(server string) {
+func (f *fanout) truncated(id uint16, server string) {
 	f.mu.Lock()
-	f.tcp = server
-	f.mu.Unlock()
+	defer f.mu.Unlock()
+	if f.tcp == nil || len(f.tcp) >= 256 { // ponytail: lookups that never asked over TCP are dropped in bulk
+		f.tcp = map[uint16]string{}
+	}
+	f.tcp[id] = server
+}
+
+// tcpServer returns (and forgets) the server that truncated the answer to
+// the query with id.
+func (f *fanout) tcpServer(id uint16) (server, port string, ok bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	server, ok = f.tcp[id]
+	delete(f.tcp, id)
+	return server, f.port, ok
 }
 
 // dial gives the Go resolver one connection for a query to address. Over
 // UDP with two links or more it is a fan-out to the current server of each;
-// TCP (after a truncated answer) goes to the server that truncated.
+// TCP (after a truncated answer) goes to the server that truncated the
+// answer to that query.
 func (f *fanout) dial(ctx context.Context, network, address string) (net.Conn, error) {
 	var d net.Dialer
 	if !strings.HasPrefix(network, "udp") {
-		f.mu.Lock()
-		if f.tcp != "" {
-			address, f.tcp = net.JoinHostPort(f.tcp, f.port), ""
-		}
-		f.mu.Unlock()
-		return d.DialContext(ctx, network, address) //nolint:wrapcheck // the resolver reports it
+		return &tcpConn{ctx: ctx, f: f, network: network, address: address}, nil
 	}
 	servers, links, port := f.current()
 	if len(servers) < 2 {
@@ -139,11 +150,11 @@ type fanoutConn struct {
 	replies chan fanoutReply
 	done    chan struct{}
 
-	mu       sync.Mutex
-	id       uint16 // the query ID
-	deadline time.Time
-	answered []bool // per conn: answered or failed
-	negative []byte // the first negative answer, held back
+	mu        sync.Mutex
+	id        uint16 // the query ID
+	deadline  time.Time
+	answered  []bool   // per conn: answered or failed
+	negatives [][]byte // negative answers, held until every link answered
 }
 
 // rcodeOK tells a response that counts as an answer: NOERROR. NXDOMAIN,
@@ -156,13 +167,17 @@ func (c *fanoutConn) Write(b []byte) (int, error) {
 		c.id = binary.BigEndian.Uint16(b)
 	}
 	c.answered = make([]bool, len(c.conns))
-	c.negative = nil
+	c.negatives = nil
 	c.mu.Unlock()
 	var sent bool
 	var last error
-	for _, l := range c.conns {
+	for i, l := range c.conns {
 		if _, err := l.conn.Write(b); err != nil {
 			last = err
+			c.mu.Lock()
+			c.answered[i] = true // no answer to wait for
+			c.mu.Unlock()
+			c.f.failed(l.link, l.server)
 			continue
 		}
 		sent = true
@@ -196,12 +211,19 @@ func (c *fanoutConn) readers() {
 	}
 }
 
+// Read returns the first positive answer; a negative one only when every
+// link answered, and each negative once (the resolver reads again after
+// one it rejects).
 func (c *fanoutConn) Read(b []byte) (int, error) {
 	c.start.Do(c.readers)
 	for {
 		c.mu.Lock()
 		deadline := c.deadline
+		n, ok := c.nextNegative(b)
 		c.mu.Unlock()
+		if ok {
+			return n, nil
+		}
 		var timeout <-chan time.Time
 		var timer *time.Timer
 		if !deadline.IsZero() {
@@ -218,15 +240,16 @@ func (c *fanoutConn) Read(b []byte) (int, error) {
 			}
 		case <-timeout:
 			c.mu.Lock()
-			held := c.negative
 			for i, done := range c.answered {
 				if !done {
+					c.answered[i] = true
 					c.f.failed(c.conns[i].link, c.conns[i].server)
 				}
 			}
+			n, ok := c.nextNegative(b)
 			c.mu.Unlock()
-			if held != nil {
-				return copy(b, held), nil
+			if ok {
+				return n, nil
 			}
 			return 0, os.ErrDeadlineExceeded
 		}
@@ -245,22 +268,40 @@ func (c *fanoutConn) take(r fanoutReply, b []byte) (n int, ok bool, err error) {
 	case r.err != nil:
 		c.f.failed(c.conns[r.i].link, c.conns[r.i].server)
 	case rcodeOK(r.b):
-		if len(r.b) >= 3 && r.b[2]&0x02 != 0 {
-			c.f.truncated(c.conns[r.i].server) // TC: the resolver asks this server over TCP
+		if r.b[2]&0x02 != 0 {
+			c.f.truncated(c.id, c.conns[r.i].server) // TC: the resolver asks this server over TCP
 		}
 		return copy(b, r.b), true, nil
-	case c.negative == nil:
-		c.negative = r.b
+	default:
+		c.negatives = append(c.negatives, r.b)
 	}
+	if n, ok := c.nextNegative(b); ok {
+		return n, true, nil // every link answered, none better
+	}
+	if r.err != nil && c.allAnswered() {
+		return 0, true, r.err // every link failed
+	}
+	return 0, false, nil
+}
+
+func (c *fanoutConn) allAnswered() bool {
 	for _, done := range c.answered {
 		if !done {
-			return 0, false, nil
+			return false
 		}
 	}
-	if c.negative != nil {
-		return copy(b, c.negative), true, nil // every link answered, none better
+	return true
+}
+
+// nextNegative returns the next held negative answer once every link
+// answered; c.mu is held.
+func (c *fanoutConn) nextNegative(b []byte) (int, bool) {
+	if len(c.negatives) == 0 || !c.allAnswered() {
+		return 0, false
 	}
-	return 0, true, r.err // every link failed
+	n := copy(b, c.negatives[0])
+	c.negatives = c.negatives[1:]
+	return n, true
 }
 
 func (c *fanoutConn) ReadFrom(b []byte) (int, net.Addr, error) {
@@ -296,3 +337,66 @@ func (c *fanoutConn) SetReadDeadline(t time.Time) error {
 }
 
 func (c *fanoutConn) SetWriteDeadline(time.Time) error { return nil }
+
+// tcpConn dials at the first Write: the query ID picks the server that
+// truncated the UDP answer, else the resolver's address.
+type tcpConn struct {
+	net.Conn
+	ctx      context.Context //nolint:containedctx // the resolver's dial context, used at the first Write
+	f        *fanout
+	network  string
+	address  string
+	deadline time.Time
+}
+
+func (c *tcpConn) Write(b []byte) (int, error) {
+	if c.Conn == nil {
+		if err := c.connect(b); err != nil {
+			return 0, err
+		}
+	}
+	return c.Conn.Write(b) //nolint:wrapcheck // the resolver reports it
+}
+
+// connect dials the server for the query in b (2 bytes length, then the
+// message with its ID).
+func (c *tcpConn) connect(b []byte) error {
+	address := c.address
+	if len(b) >= 4 {
+		if s, port, ok := c.f.tcpServer(binary.BigEndian.Uint16(b[2:])); ok {
+			address = net.JoinHostPort(s, port)
+		}
+	}
+	var d net.Dialer
+	conn, err := d.DialContext(c.ctx, c.network, address)
+	if err != nil {
+		return err //nolint:wrapcheck // the resolver reports it
+	}
+	if !c.deadline.IsZero() {
+		_ = conn.SetDeadline(c.deadline)
+	}
+	c.Conn = conn
+	return nil
+}
+
+func (c *tcpConn) Read(b []byte) (int, error) {
+	if c.Conn == nil {
+		return 0, net.ErrClosed
+	}
+	return c.Conn.Read(b) //nolint:wrapcheck // the resolver reports it
+}
+
+func (c *tcpConn) Close() error {
+	if c.Conn == nil {
+		return nil
+	}
+	return c.Conn.Close() //nolint:wrapcheck // nothing to add
+}
+
+func (c *tcpConn) SetDeadline(t time.Time) error {
+	c.deadline = t
+	if c.Conn == nil {
+		return nil
+	}
+	return c.Conn.SetDeadline(t) //nolint:wrapcheck // nothing to add
+}
