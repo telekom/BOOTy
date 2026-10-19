@@ -243,6 +243,16 @@ func (c *Client) phase(l *Lease, typ byte, until time.Time) bool {
 	return false
 }
 
+// infoRefresh is the wait before the next INFORMATION-REQUEST: option 32,
+// at least IRT_MINIMUM (600 s), else IRT_DEFAULT (86400 s), RFC 8415
+// 18.2.6 and 21.23.
+func infoRefresh(v time.Duration) time.Duration {
+	if v == 0 {
+		return 24 * time.Hour
+	}
+	return max(v, 600*time.Second)
+}
+
 // information sends INFORMATION-REQUESTs until a REPLY, then waits for the
 // refresh time (the default of 86400 s).
 func (c *Client) information() {
@@ -263,7 +273,7 @@ func (c *Client) information() {
 		}
 		select {
 		case <-c.stop:
-		case <-c.after(24 * time.Hour):
+		case <-c.after(infoRefresh(r.lease.InfoRefresh)):
 		}
 		return
 	}

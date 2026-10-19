@@ -1485,6 +1485,7 @@ func TestStartClientWithoutCarrier(t *testing.T) {
 		return l, nil
 	}
 	d := NewDHCPMode()
+	t.Cleanup(func() { _ = d.Teardown(context.Background()) }) // waits for the senders of the carrier
 	d.startClient(&net.Interface{Name: "eth0", Index: 1}, "", make(chan string, 1))
 	d.startClient(&net.Interface{Name: "eth1", Index: 2}, "", make(chan string, 1))
 	up := netlink.LinkUpdate{Link: dummyLink("eth0", 1)}

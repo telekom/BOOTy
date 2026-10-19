@@ -43,6 +43,8 @@ type nic6 struct {
 	stateful bool
 	addr     *netlink.Addr
 	dns      []string
+	// domains is the domain search list (option 24).
+	domains []string
 }
 
 // Seams for tests.
@@ -133,7 +135,7 @@ func watchRA(ctx context.Context, iface *net.Interface, fn func(managed, other b
 // (it was not forwarded) and a link-local source.
 func validRA(b []byte, cm *ipv6.ControlMessage, src net.Addr) bool {
 	a, ok := src.(*net.IPAddr)
-	return len(b) >= 16 && b[0] == byte(ipv6.ICMPTypeRouterAdvertisement) &&
+	return len(b) >= 16 && b[0] == byte(ipv6.ICMPTypeRouterAdvertisement) && b[1] == 0 &&
 		cm != nil && cm.HopLimit == 255 && ok && a.IP.IsLinkLocalUnicast()
 }
 
@@ -223,10 +225,15 @@ func (d *DHCPMode) onBound6(idx int) dhcp6.Callback {
 				n.addr = addr
 			}
 		}
-		n.dns = nil
+		n.dns, n.domains = nil, nil
 		for _, ip := range l.DNS {
-			n.dns = append(n.dns, ip.String())
+			s := ip.String()
+			if ip.IsLinkLocalUnicast() {
+				s += "%" + n.link.Attrs().Name // a link-local server needs its zone
+			}
+			n.dns = append(n.dns, s)
 		}
+		n.domains = l.Domains // option 24, like networkd
 		d.writeResolvers()
 	}
 }
@@ -237,7 +244,7 @@ func (d *DHCPMode) onExpire6(idx int) dhcp6.Callback {
 		defer d.mu.Unlock()
 		if n := d.v6[idx]; n != nil {
 			d.dropAddr6(n)
-			n.dns = nil
+			n.dns, n.domains = nil, nil
 			d.writeResolvers()
 		}
 	}
@@ -279,7 +286,7 @@ func (d *DHCPMode) stop6(idx int, all bool) {
 	}
 	d.mu.Lock()
 	d.dropAddr6(n)
-	n.dns = nil
+	n.dns, n.domains = nil, nil
 	d.writeResolvers()
 	d.mu.Unlock()
 }
