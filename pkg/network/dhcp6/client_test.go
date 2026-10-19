@@ -6,6 +6,7 @@ import (
 	"net"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -467,6 +468,21 @@ func (f *fakeNet) countType(typ byte) int {
 	return n
 }
 
+// otherServer is a second DHCPv6 server.
+var otherServer = []byte{0, 1, 0, 1, 8, 8, 8, 8}
+
+// noBindingFrom is a REPLY of server whose IA_NA has the status NoBinding.
+func noBindingFrom(msg, server []byte) []byte {
+	r := noBinding(msg)
+	opts := parseOptions(r[4:])
+	for i := range opts {
+		if opts[i].code == optServerID {
+			opts[i].data = server
+		}
+	}
+	return encode(msgReply, xidOf(msg), opts)
+}
+
 // noBinding is a REPLY whose IA_NA has the status NoBinding.
 func noBinding(msg []byte) []byte {
 	clientID, _ := find(parseOptions(msg[4:]), optClientID)
@@ -487,7 +503,7 @@ func TestRenewNoBindingRequests(t *testing.T) {
 			case msgSolicit:
 				return serverReply(msg, msgReply, true)
 			case msgRenew:
-				return noBinding(msg)
+				return noBindingFrom(msg, otherServer)
 			case msgRequest:
 				if answered {
 					return serverReply(msg, msgReply, false)
@@ -530,6 +546,9 @@ func TestRenewNoBindingRequests(t *testing.T) {
 		if ia, _ := find(parseOptions(req[4:]), optIANA); !bytes.Contains(ia, testAddr.To16()) {
 			t.Errorf("REQUEST IA_NA %x without the address", ia)
 		}
+		if sid, _ := find(parseOptions(req[4:]), optServerID); !bytes.Equal(sid, otherServer) {
+			t.Errorf("REQUEST to server %x, want %x that answered NoBinding", sid, otherServer)
+		}
 	}
 }
 
@@ -570,5 +589,90 @@ func TestInformationWaitsRefreshTime(t *testing.T) {
 		if !slices.Equal(waits, []time.Duration{tt.want}) {
 			t.Errorf("option 32 %x: waits %v, want %s", tt.opt, waits, tt.want)
 		}
+	}
+}
+
+// The REQUEST after NoBinding stops at the end of the valid lifetime of
+// the address (180 s; NoBinding at T1, 60 s): eight REQUESTs fit, not ten.
+func TestNoBindingRequestBoundedByLifetime(t *testing.T) {
+	f := newFakeNet()
+	f.answer = func(msg []byte) []byte {
+		switch msg[0] {
+		case msgSolicit:
+			return serverReply(msg, msgReply, true)
+		case msgRenew:
+			return noBinding(msg)
+		}
+		return nil
+	}
+	bound, expired := make(chan *Lease, 4), make(chan *Lease, 1)
+	c := f.client(true)
+	c.OnBound = func(l *Lease) { bound <- l }
+	c.OnExpire = func(l *Lease) { expired <- l }
+	c.Start()
+	l := <-bound
+	f.tick(t)
+	select {
+	case <-expired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no expiry")
+	}
+	f.mu.Lock()
+	now := f.now
+	f.mu.Unlock()
+	close(f.stopped)
+	c.Stop()
+	if n := f.countType(msgRequest); n != 8 {
+		t.Errorf("%d REQUESTs after NoBinding, want 8 within the valid lifetime", n)
+	}
+	if now.After(l.Expire) {
+		t.Errorf("the lease ended at %s, after its expiry %s", now, l.Expire)
+	}
+}
+
+// countTransport counts the sockets that are open.
+type countTransport struct {
+	fakeTransport
+	open *atomic.Int32
+}
+
+func (c *countTransport) close() error { c.open.Add(-1); return nil }
+
+// A stateless client closes its socket before the information refresh
+// wait.
+func TestInformationClosesSocketBeforeWait(t *testing.T) {
+	f := newFakeNet()
+	f.answer = func(msg []byte) []byte {
+		if msg[0] == msgInformationRequest {
+			return serverReply(msg, msgReply, false)
+		}
+		return nil
+	}
+	var open atomic.Int32
+	c := f.client(false)
+	c.newTransport = func(*net.Interface) (transport, error) {
+		open.Add(1)
+		return &countTransport{fakeTransport{f: f}, &open}, nil
+	}
+	openAtWait := make(chan int32, 1)
+	after := c.after
+	c.after = func(d time.Duration) <-chan time.Time {
+		select {
+		case openAtWait <- open.Load():
+		default:
+		}
+		return after(d)
+	}
+	c.Start()
+	var got int32
+	select {
+	case got = <-openAtWait:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no refresh wait")
+	}
+	close(f.stopped)
+	c.Stop()
+	if got != 0 {
+		t.Fatalf("%d sockets open during the information refresh wait, want 0", got)
 	}
 }

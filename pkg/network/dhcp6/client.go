@@ -187,20 +187,28 @@ func (c *Client) solicit() {
 			c.bind(bound)
 			return
 		case best != nil:
-			c.request(&best.lease)
+			c.request(&best.lease, time.Time{})
 			return
 		}
 	}
 }
 
 // request asks for an advertised (or, after NoBinding, the current)
-// address, up to ten times or until a REPLY with NoBinding; it tells
-// whether a REPLY bound it.
-func (c *Client) request(adv *Lease) bool {
+// address, up to ten times, until a REPLY with NoBinding or until until
+// (when set: the end of the valid lifetime of the current address); it
+// tells whether a REPLY bound it.
+func (c *Client) request(adv *Lease, until time.Time) bool {
 	start, xid := c.now(), rand.Uint32()&0xffffff //nolint:gosec // a transaction ID
 	var rt time.Duration
 	for n := 0; n < 10 && !c.stopped(); n++ {
 		rt = c.next(requestRT, rt)
+		if !until.IsZero() {
+			left := until.Sub(c.now())
+			if left <= 0 {
+				return false
+			}
+			rt = min(rt, left)
+		}
 		r, err := c.exchangeOne(func() []byte {
 			return encode(msgRequest, xid, c.withTail(start, option{optServerID, adv.ServerID}, iaOption(optIANA, c.IAID, adv)))
 		}, xid, rt, msgReply)
@@ -274,7 +282,7 @@ func (c *Client) phase(l *Lease, typ byte, until time.Time) (bound, noBinding bo
 		case r.iaStatus == statusNoBinding:
 			req := *l
 			req.ServerID = r.lease.ServerID
-			return c.request(&req), true
+			return c.request(&req, l.Expire), true
 		case r.hasAddr:
 			c.bind(&r.lease)
 			return true, false
