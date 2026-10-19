@@ -1144,6 +1144,11 @@ func TestLeaseSearchDomains(t *testing.T) {
 	if got := domainSearch([]byte{0xc0, 0}); got != nil {
 		t.Fatalf("a pointer loop gave %q", got)
 	}
+	// A pointer to a name that ends with a pointer (RFC 1035 4.1.4).
+	chained := []byte{3, 'c', 'o', 'm', 0, 1, 'x', 0xc0, 0, 1, 'y', 0xc0, 5}
+	if got, want := domainSearch(chained), []string{"com", "x.com", "y.x.com"}; !slices.Equal(got, want) {
+		t.Fatalf("chained pointers: %q, want %q", got, want)
+	}
 }
 
 // leaseRoutes cases: null routers (networkd-dhcp4.c), option 33 without
