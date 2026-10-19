@@ -40,6 +40,12 @@ type DHCPMode struct {
 	// does not: after a failed renewal it renews again forever and never
 	// reaches the expiry, so OnExpire only comes for a DHCPNAK.
 	expiry map[int]leaseTimer
+	// restarts are client restarts in progress; Teardown waits for them.
+	restarts sync.WaitGroup
+	// retry restarts the client of a NIC whose lease was refused, after
+	// retryWait (doubled per refusal up to 64 s, reset by a lease).
+	retry     map[int]*time.Timer
+	retryWait map[int]time.Duration
 }
 
 // nicClient is the running DHCP client of one NIC and how to start a fresh
@@ -198,12 +204,55 @@ func (d *DHCPMode) stopClients() {
 	d.stopped = true
 	clients := d.clients
 	d.clients = nil
+	for idx, t := range d.retry {
+		t.Stop()
+		delete(d.retry, idx)
+	}
 	d.mu.Unlock()
 	var wg sync.WaitGroup
 	for _, c := range clients {
 		wg.Go(c.client.Stop)
 	}
 	wg.Wait()
+}
+
+// takeForRestart takes the client of a NIC out of d.clients and restarts
+// it; Teardown waits for the restart. The caller holds d.mu and does not
+// after the call.
+func (d *DHCPMode) takeForRestart(idx int, ifName string) {
+	nc := d.clients[idx]
+	delete(d.clients, idx)
+	if nc == nil || d.stopped {
+		d.mu.Unlock()
+		return
+	}
+	d.restarts.Add(1)
+	d.mu.Unlock()
+	defer d.restarts.Done()
+	d.restartClient(idx, ifName, nc)
+}
+
+// retryAfterRefusal restarts the client of a NIC whose lease was refused
+// (no lifetime, no server identifier): go-dhclient stays bound to it and
+// would send REQUESTs without end. Like networkd, which ignores such an
+// ACK and tries again, the restart comes after a backoff of 2 s, doubled
+// per refusal up to 64 s.
+func (d *DHCPMode) retryAfterRefusal(idx int, ifName string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.stopped || d.retry[idx] != nil {
+		return
+	}
+	wait := min(max(2*d.retryWait[idx], 2*time.Second), 64*time.Second)
+	if d.retryWait == nil {
+		d.retryWait, d.retry = map[int]time.Duration{}, map[int]*time.Timer{}
+	}
+	d.retryWait[idx] = wait
+	d.retry[idx] = dhcpAfterFunc(wait, func() {
+		d.mu.Lock()
+		delete(d.retry, idx)
+		d.takeForRestart(idx, ifName)
+	})
 }
 
 // restartClient replaces the client of a NIC whose lease ended with a fresh
@@ -214,6 +263,12 @@ func (d *DHCPMode) stopClients() {
 // d.mu: Stop waits for the client, whose OnBound may wait for d.mu.
 func (d *DHCPMode) restartClient(idx int, ifName string, nc *nicClient) {
 	nc.client.Stop()
+	d.mu.Lock()
+	stopped := d.stopped
+	d.mu.Unlock()
+	if stopped {
+		return
+	}
 	fresh := nc.start()
 	d.mu.Lock()
 	if d.stopped {
@@ -292,6 +347,7 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- strin
 		}
 		if err != nil {
 			d.log.Warn("ignoring DHCP lease", "iface", ifName, "error", err)
+			d.retryAfterRefusal(link.Attrs().Index, ifName)
 			return
 		}
 		d.mu.Lock()
@@ -299,6 +355,7 @@ func (d *DHCPMode) onBound(link netlink.Link, ifName string, leased chan<- strin
 		if d.stopped {
 			return
 		}
+		delete(d.retryWait, link.Attrs().Index)
 		if err := d.apply(link, addr, lease); err != nil {
 			d.log.Warn("failed to apply DHCP lease", "iface", ifName, "error", err)
 			return
@@ -350,12 +407,7 @@ func (d *DHCPMode) armExpiry(link netlink.Link, ifName string, at time.Time) {
 		}
 		d.log.Warn("DHCP lease expired without renewal", "iface", ifName)
 		d.endLease(link, ifName)
-		nc := d.clients[idx]
-		delete(d.clients, idx)
-		d.mu.Unlock()
-		if nc != nil {
-			d.restartClient(idx, ifName, nc)
-		}
+		d.takeForRestart(idx, ifName)
 	})}
 }
 
@@ -536,6 +588,7 @@ func (d *DHCPMode) WaitForConnectivity(ctx context.Context, target string, timeo
 // routes that their leases configured, so a network retry starts clean.
 func (d *DHCPMode) Teardown(_ context.Context) error {
 	d.stopClients()
+	d.restarts.Wait() // a restart that began before the stop
 	d.mu.Lock()
 	for _, t := range d.expiry {
 		t.timer.Stop()
