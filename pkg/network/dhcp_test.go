@@ -1642,9 +1642,9 @@ func TestSourceRoutesSkipHostRoutes(t *testing.T) {
 	}
 }
 
-// A failed link watch subscribes again: the old subscription is closed
-// (netlink keeps its socket until done closes) and the new one lists the
-// links, so NICs whose events were lost are seen.
+// A failed link watch subscribes again: the done channel of the old
+// subscription closes (upstream netlink keeps its socket until then) and
+// the new one lists the links, so NICs whose events were lost are seen.
 func TestLinkWatchResubscribes(t *testing.T) {
 	stubDHCPSetup(t, func(name string, cb dhcp4.Callback) {
 		if name == "eth0" {

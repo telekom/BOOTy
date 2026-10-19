@@ -264,8 +264,9 @@ func (d *DHCPMode) watchNewNICs(hostname string, leased chan<- string) {
 		notNIC := map[linkKey]bool{}
 		for again := false; ; again = true {
 			updates := make(chan netlink.LinkUpdate, 16)
-			// netlink keeps the socket of a failed subscription until its
-			// done channel closes: one per subscription.
+			// One done channel per subscription, closed when it ends: the
+			// netlink fork (#833) closes the socket after a receive error
+			// itself; upstream v1.3.1 keeps it until done closes.
 			sub := make(chan struct{})
 			end := sync.OnceFunc(func() { close(sub) })
 			// A subscription again lists the links, so a NIC or carrier
