@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -388,5 +389,33 @@ func TestDNSFanoutTCPServerPerQuery(t *testing.T) {
 func TestDNSFanoutIsDefaultResolver(t *testing.T) {
 	if !net.DefaultResolver.PreferGo || net.DefaultResolver.Dial == nil {
 		t.Fatal("net.DefaultResolver is not the fan-out")
+	}
+}
+
+// One link answers NXDOMAIN, the other is a silent listener: at the 300 ms
+// deadline the first Read returns the held NXDOMAIN (the silent link counts
+// as answered then), and a second Read ends with os.ErrDeadlineExceeded.
+func TestFanoutConnDeadlineReturnsHeldNegativeOnce(t *testing.T) {
+	f, _, port := fanoutTest(t, [][]string{{"127.0.0.1"}, {"127.0.0.2"}})
+	var a, b atomic.Int32
+	udpDNS(t, "127.0.0.1", port, 0, &a, func(q []byte) [][]byte { return [][]byte{dnsAnswer(q, 3, nil, false)} })
+	udpDNS(t, "127.0.0.2", port, 0, &b, func([]byte) [][]byte { return nil })
+	c, err := f.dial(context.Background(), "udp", net.JoinHostPort("127.0.0.1", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	q := []byte{0x12, 0x34, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 'a', 0, 0, 1, 0, 1}
+	_ = c.SetDeadline(time.Now().Add(300 * time.Millisecond))
+	if _, err := c.Write(q); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 512)
+	n, err := c.Read(buf)
+	if err != nil || n < 4 || buf[3]&0x0f != 3 {
+		t.Fatalf("first Read = %d, %v; want the NXDOMAIN at the deadline", n, err)
+	}
+	if _, err := c.Read(buf); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("second Read = %v, want os.ErrDeadlineExceeded", err)
 	}
 }
