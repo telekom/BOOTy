@@ -18,11 +18,7 @@ func TestGolden(t *testing.T) {
 	var got []string
 	add := func(name string, m *message, secs uint16) {
 		m.secs = secs
-		b, err := m.encode()
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		got = append(got, name+" "+hex.EncodeToString(b))
+		got = append(got, name+" "+hex.EncodeToString(m.encode()))
 	}
 	const xid = 0x01020304
 	c := newFakeNet().client()

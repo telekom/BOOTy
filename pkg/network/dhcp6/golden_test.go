@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/insomniacslk/dhcp/dhcpv6"
 )
 
 var update = flag.Bool("update", false, "rewrite testdata/golden.txt")
@@ -26,9 +28,9 @@ func TestGolden(t *testing.T) {
 		b[1], b[2], b[3] = 0, 0, 0
 		got = append(got, name+" "+hex.EncodeToString(b))
 	}
-	first := func(msgs [][]byte, typ byte) []byte {
+	first := func(msgs [][]byte, typ dhcpv6.MessageType) []byte {
 		for _, m := range msgs {
-			if m[0] == typ {
+			if dhcpv6.MessageType(m[0]) == typ {
 				return m
 			}
 		}
@@ -49,7 +51,7 @@ func TestGolden(t *testing.T) {
 	// SOLICIT, ADVERTISE, REQUEST, REPLY, RELEASE.
 	f := newFakeNet()
 	f.answer = func(msg []byte) []byte {
-		switch msg[0] {
+		switch dhcpv6.MessageType(msg[0]) {
 		case msgSolicit:
 			return serverReply(msg, msgAdvertise, false)
 		case msgRequest, msgRelease:
@@ -71,7 +73,7 @@ func TestGolden(t *testing.T) {
 	// RENEW and REBIND without answers.
 	f = newFakeNet()
 	f.answer = func(msg []byte) []byte {
-		if msg[0] == msgSolicit {
+		if dhcpv6.MessageType(msg[0]) == msgSolicit {
 			return serverReply(msg, msgReply, true)
 		}
 		return nil
