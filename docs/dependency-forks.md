@@ -75,5 +75,5 @@ fork, then run the unit tests: `TestParseLLDPMandatoryTLVs` and
 `TestParseLLDPShortOrgTLVs` (gopacket) and
 `TestFollowLLDPMatchesResubscribeClosesSocket` (netlink),
 `TestLeaseSearchDomains` and `TestMalformedRouteAndSearchOptions`
-(dhcp, `pkg/network`) fail with a release that lacks a fix. `FuzzParseLLDP` does not: `parseLLDP` recovers
-decoder panics.
+(dhcp, `pkg/network`) fail with a release that lacks a fix.
+`FuzzParseLLDP` does not: `parseLLDP` recovers decoder panics.
