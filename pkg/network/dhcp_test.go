@@ -1486,3 +1486,43 @@ func TestStartClientWithoutCarrier(t *testing.T) {
 		t.Fatalf("reboots = %d, want 1 at the first carrier", c.reboots)
 	}
 }
+
+// The console order of kindmetal: the client starts before the NIC has
+// carrier, and the carrier comes up around the first ACK. Carrier before
+// the lease restarts the DISCOVER once (dhcp4 drops that request when the
+// lease binds); carrier after the lease does nothing. Only a carrier loss
+// after the lease makes its return confirm the lease, once.
+func TestCarrierUpAroundFirstLease(t *testing.T) {
+	stubDHCPNetlink(t)
+	for _, tt := range []struct {
+		name   string
+		events string // c: carrier up, l: carrier lost, b: lease bound
+		want   int
+	}{
+		{"carrier before the lease", "cbc", 1},
+		{"carrier after the lease", "bc", 0},
+		{"loss after the lease", "blc", 1},
+		{"carrier, lease, loss, return", "cbclc", 2},
+	} {
+		d := NewDHCPMode()
+		fc := &fakeDHCPClient{}
+		link := dummyLink("eth0", 1)
+		d.clients = map[int]*nicClient{1: {client: fc, link: link, down: true}} // started without carrier
+		for _, e := range tt.events {
+			if e == 'b' {
+				d.onBound(link, "eth0", make(chan string, 1))(lease24("10.0.2.15", "10.0.2.2"))
+				continue
+			}
+			u := netlink.LinkUpdate{Link: dummyLink("eth0", 1)}
+			u.Header.Type = unix.RTM_NEWLINK
+			u.Flags = unix.IFF_UP
+			if e == 'c' {
+				u.Flags |= unix.IFF_LOWER_UP
+			}
+			d.carrierChange(u)
+		}
+		if fc.reboots != tt.want {
+			t.Errorf("%s (%s): %d reboots, want %d", tt.name, tt.events, fc.reboots, tt.want)
+		}
+	}
+}

@@ -694,3 +694,42 @@ func TestRebootEndsBlockingReceive(t *testing.T) {
 		t.Fatalf("%d INIT-REBOOTs, want 1", n)
 	}
 }
+
+// A reboot request that comes before DHCP mode applied the first lease
+// (the carrier came up around the ACK, kindmetal console order) is dropped
+// when the lease binds: one REQUEST, no INIT-REBOOT for the lease just
+// bound.
+func TestBindDropsPendingReboot(t *testing.T) {
+	f := newFakeNet()
+	f.answer = func(s sent) []byte {
+		switch s.m.typ {
+		case layers.DHCPMsgTypeDiscover:
+			return serverReply(s.m, layers.DHCPMsgTypeOffer)
+		case layers.DHCPMsgTypeRequest:
+			return serverReply(s.m, layers.DHCPMsgTypeAck)
+		}
+		return nil
+	}
+	bound := make(chan *Lease, 4)
+	c := f.client()
+	var once sync.Once
+	c.OnBound = func(l *Lease) {
+		once.Do(c.Reboot) // the carrier event, before the lease is applied
+		bound <- l
+	}
+	c.Start()
+	<-bound
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		f.mu.Lock()
+		n := len(f.waits)
+		f.mu.Unlock()
+		if n > 0 { // the wait for T1, or a receive of an INIT-REBOOT
+			break
+		}
+	}
+	close(f.stopped)
+	c.Stop()
+	if n := count(f.messages(), func(s sent) bool { return s.m.typ == layers.DHCPMsgTypeRequest }); n != 1 {
+		t.Fatalf("%d REQUESTs, want 1: no INIT-REBOOT for the lease just bound", n)
+	}
+}
