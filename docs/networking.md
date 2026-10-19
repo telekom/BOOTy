@@ -1132,17 +1132,20 @@ On every lease (also renewals and leases on the other NICs), BOOTy:
   without a router removes the default route of its NIC;
 - sets the lease MTU (option 26) on the NIC, like networkd with netplan's
   `UseMTU=true`, clamped like networkd: at least 576 (1280 when the NIC
-  has IPv6) and at most the largest MTU of the NIC. Teardown restores the
-  MTU from before;
+  has IPv6) and at most the largest MTU of the NIC. The end of the lease
+  and Teardown restore the MTU from before (Teardown again when the
+  restore at the end failed);
 - writes `/etc/resolv.conf` with the configured resolvers (`dns_resolver`,
   netplan `nameservers`) first and then the DNS servers (option 6) of all
   leases, like systemd-resolved with `UseDNS=yes`, and the lease domains
-  (option 15) as `search` line, as in the legacy ramdisk's resolv.conf. A
-  lease domain that is not a DNS name (an underscore, for example) is left
-  out; the rest is written. When the last lease ends, its servers leave
-  resolv.conf. With
-  `PROVISIONER_FILES_TARGET=ramdisk` and a provisioner `/etc/resolv.conf`,
-  that file stays, as in the legacy ramdisk.
+  (option 15, one trailing NUL dropped) as `search` line, as in the legacy
+  ramdisk's resolv.conf. A lease domain that is not a DNS name (an
+  underscore, an empty label, a label starting or ending with `-`,
+  `localhost`) is left out; the rest is written. A configured resolver
+  that is not an IP address fails the setup. When the last lease ends, its
+  servers leave resolv.conf. With `PROVISIONER_FILES_TARGET=ramdisk` and a
+  provisioner `/etc/resolv.conf`, that file stays, as in the legacy
+  ramdisk.
 
 When the lease of a NIC ends (it expires before a renewal or rebind, or the
 server answers with DHCPNAK), BOOTy removes the address, default route,

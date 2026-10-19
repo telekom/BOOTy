@@ -437,9 +437,24 @@ func ConfigureResolvConf(servers, search []string) error {
 }
 
 // validSearchDomain accepts a DNS name of letters, digits, hyphens and dots.
+// Like systemd's dns_name_normalize it rejects an empty label ("a..b"), a
+// label that starts or ends with a hyphen, and localhost (is_localhost).
 func validSearchDomain(d string) bool {
 	const nameChars = ".-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	return d != "" && len(d) <= 253 && strings.Trim(d, nameChars) == ""
+	d = strings.TrimSuffix(d, ".")
+	if d == "" || len(d) > 253 || strings.Trim(d, nameChars) != "" {
+		return false
+	}
+	lower := strings.ToLower(d)
+	if lower == "localhost" || strings.HasSuffix(lower, ".localhost") {
+		return false
+	}
+	for _, label := range strings.Split(d, ".") {
+		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+	}
+	return true
 }
 
 // writeResolvConf replaces resolv.conf (also a symlink) with the lines; no

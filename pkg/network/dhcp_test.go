@@ -1119,7 +1119,7 @@ func TestOnBoundKeepsProvisionerResolvConf(t *testing.T) {
 }
 
 // TestOnBoundSetsLeaseMTU: netplan writes UseMTU=true for dhcp4, so the
-// lease MTU (option 26) is set; networkd ignores values below 576.
+// lease MTU (option 26) is set; networkd raises values below 576 to 576 (and caps them at the NIC maximum).
 // Teardown restores the MTU from before.
 func TestOnBoundSetsLeaseMTU(t *testing.T) {
 	stubDHCPNetlink(t)
@@ -1245,5 +1245,60 @@ func TestEndLeaseRemovesLastDNSServers(t *testing.T) {
 	d.onExpire(link, "eth0")(nil)
 	if want := []string{"10.0.2.3", ""}; !slices.Equal(written, want) {
 		t.Fatalf("resolv.conf writes = %q, want %q", written, want)
+	}
+}
+
+// A bad dns_resolver fails Setup, as it failed the run before.
+func TestSetupRejectsBadResolver(t *testing.T) {
+	stubDHCPNetlink(t)
+	err := NewDHCPMode().Setup(context.Background(), &Config{DNSResolvers: "8.8.8.8\nsearch evil.example"})
+	if err == nil || !strings.Contains(err.Error(), "DNS resolvers") {
+		t.Fatalf("Setup() = %v, want the resolver error", err)
+	}
+}
+
+// Option 15 with one trailing NUL is used without it, like networkd.
+func TestLeaseDomainTrailingNul(t *testing.T) {
+	if got := leaseDomain(" l2.example\x00"); got != "l2.example" {
+		t.Fatalf("leaseDomain = %q", got)
+	}
+}
+
+func TestValidSearchDomainLikeSystemd(t *testing.T) {
+	for d, want := range map[string]bool{
+		"l2.example": true, "l2.example.": true, "a-b.example": true,
+		"a..b": false, "-a.example": false, "a-.example": false, "localhost": false, "foo.localhost": false,
+		"corp_lan.example": false, strings.Repeat("a", 64) + ".example": false,
+	} {
+		if got := validSearchDomain(d); got != want {
+			t.Errorf("validSearchDomain(%q) = %v, want %v", d, got, want)
+		}
+	}
+}
+
+// A failed MTU restore at the end of a lease stays for Teardown.
+func TestEndLeaseKeepsFailedMTURestore(t *testing.T) {
+	stubDHCPNetlink(t)
+	var mtus []int
+	fail := true
+	dhcpSetMTU = func(_ netlink.Link, mtu int) error {
+		mtus = append(mtus, mtu)
+		if mtu == 1500 && fail {
+			fail = false
+			return errors.New("device busy")
+		}
+		return nil
+	}
+	d := NewDHCPMode()
+	link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth0", Index: 7, MTU: 1500}}
+	l := lease24("10.0.2.15", "10.0.2.2")
+	l.MTU = 9000
+	d.onBound(link, "eth0", make(chan string, 1))(l)
+	d.onExpire(link, "eth0")(nil)
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if want := []int{9000, 1500, 1500}; !slices.Equal(mtus, want) {
+		t.Fatalf("MTUs = %v, want %v (Teardown retries the restore)", mtus, want)
 	}
 }

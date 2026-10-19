@@ -2939,3 +2939,26 @@ func TestLinkLayerTeardownStopsLLDPFirst(t *testing.T) {
 		t.Fatalf("teardown order %v, want lldp before the mode", order)
 	}
 }
+
+type dnsManagingMode struct{ teardownRecorderMode }
+
+func (dnsManagingMode) ManagesDNS() bool { return true }
+
+// A mode that writes resolv.conf itself (DHCP) keeps its file: the
+// configured resolvers are only checked, a bad one still fails.
+func TestNetworkModeWithResolversLeavesDHCPResolvConf(t *testing.T) {
+	orig := configureResolvers
+	t.Cleanup(func() { configureResolvers = orig })
+	writes := 0
+	configureResolvers = func(string) error { writes++; return nil }
+	mode := dnsManagingMode{teardownRecorderMode{teardown: func() error { return nil }}}
+	if _, err := networkModeWithResolvers(context.Background(), &network.Config{DNSResolvers: "10.9.9.9"}, mode, &linkLayerCleanup{}); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 0 {
+		t.Fatalf("resolv.conf written %d times over the DHCP mode's file", writes)
+	}
+	if _, err := networkModeWithResolvers(context.Background(), &network.Config{DNSResolvers: "not-an-ip"}, mode, &linkLayerCleanup{}); err == nil {
+		t.Fatal("a bad resolver passed")
+	}
+}

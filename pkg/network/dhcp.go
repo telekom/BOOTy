@@ -160,18 +160,9 @@ func (d *DHCPMode) Setup(ctx context.Context, cfg *Config) error {
 	if d.log == nil {
 		d.log = slog.Default().With("component", "dhcp")
 	}
-	d.mu.Lock()
-	d.manageDNS = cfg != nil && !cfg.KeepResolvConf
-	d.resolvers = nil
-	if d.manageDNS {
-		for _, r := range strings.Split(cfg.DNSResolvers, ",") {
-			if r = strings.TrimSpace(r); r != "" {
-				d.resolvers = append(d.resolvers, r)
-			}
-		}
+	if err := d.setupDNS(cfg); err != nil {
+		return err
 	}
-	d.writeResolvers()
-	d.mu.Unlock()
 	ifaces, err := dhcpInterfaces(ctx)
 	if err != nil {
 		return fmt.Errorf("listing interfaces: %w", err)
@@ -473,11 +464,13 @@ func (d *DHCPMode) endLease(link netlink.Link, ifName string) {
 	d.publishNTP()
 	d.writeResolvers()
 	if m, ok := d.mtus[idx]; ok {
-		delete(d.mtus, idx)
-		if m.set != m.orig {
-			if err := dhcpSetMTU(link, m.orig); err != nil {
-				d.log.Warn("failed to restore the MTU of an ended DHCP lease", "iface", ifName, "error", err)
-			}
+		if m.set == m.orig {
+			delete(d.mtus, idx)
+		} else if err := dhcpSetMTU(link, m.orig); err != nil {
+			// Kept, so Teardown tries again.
+			d.log.Warn("failed to restore the MTU of an ended DHCP lease", "iface", ifName, "error", err)
+		} else {
+			delete(d.mtus, idx)
 		}
 	}
 	removed := true
@@ -523,7 +516,7 @@ func (d *DHCPMode) apply(link netlink.Link, addr *netlink.Addr, lease *dhclient.
 			d.stale = append(d.stale, dhcpApplied{link: link, addr: prev.addr})
 		}
 	}
-	d.nics[idx] = dhcpApplied{link: link, addr: addr, route: route, dns: leaseDNS(lease), ntp: leaseNTPServers(lease), domain: strings.TrimSpace(lease.DomainName)}
+	d.nics[idx] = dhcpApplied{link: link, addr: addr, route: route, dns: leaseDNS(lease), ntp: leaseNTPServers(lease), domain: leaseDomain(lease.DomainName)}
 	d.applyMTU(link, lease.MTU)
 	d.writeResolvers()
 	return nil
@@ -787,6 +780,45 @@ func linkMaxMTU(index int) int {
 func ipv6Enabled(name string) bool {
 	b, err := os.ReadFile("/proc/sys/net/ipv6/conf/" + name + "/disable_ipv6")
 	return err == nil && strings.TrimSpace(string(b)) == "0"
+}
+
+// setupDNS takes the configured resolvers; resolv.conf is DHCP mode's
+// unless the provisioner keeps its own.
+func (d *DHCPMode) setupDNS(cfg *Config) error {
+	if cfg != nil && !cfg.KeepResolvConf {
+		// A bad dns_resolver fails the setup as before; it must not block
+		// writing the lease DNS servers later.
+		if _, err := ResolverLines(cfg.DNSResolvers); err != nil {
+			return fmt.Errorf("DNS resolvers: %w", err)
+		}
+	}
+	d.mu.Lock()
+	d.manageDNS = cfg != nil && !cfg.KeepResolvConf
+	d.resolvers = nil
+	if d.manageDNS {
+		for _, r := range strings.Split(cfg.DNSResolvers, ",") {
+			if r = strings.TrimSpace(r); r != "" {
+				d.resolvers = append(d.resolvers, r)
+			}
+		}
+	}
+	d.writeResolvers()
+	d.mu.Unlock()
+	return nil
+}
+
+// leaseDomain returns option 15 without spaces and one trailing NUL, like
+// networkd (MAKE_CSTRING_ALLOW_TRAILING_NUL).
+func leaseDomain(s string) string {
+	return strings.TrimSpace(strings.TrimSuffix(s, "\x00"))
+}
+
+// ManagesDNS tells whether DHCP mode writes resolv.conf itself (the
+// configured servers and those of the leases).
+func (d *DHCPMode) ManagesDNS() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.manageDNS
 }
 
 // restoreMTUs sets the MTU from before the first lease again.
