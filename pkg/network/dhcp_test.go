@@ -1572,3 +1572,23 @@ func TestLinkServers(t *testing.T) {
 		t.Fatalf("linkServers with domains = %v, want %v", got, want)
 	}
 }
+
+// Teardown puts the plain Go resolver back when DHCP mode manages DNS,
+// and leaves it alone otherwise.
+func TestTeardownResetsDNSFanout(t *testing.T) {
+	stubDHCPNetlink(t)
+	for _, manage := range []bool{true, false} {
+		var calls [][][]string
+		dhcpSetDNSServers = func(l [][]string) { calls = append(calls, l) }
+		d := &DHCPMode{manageDNS: manage}
+		if err := d.Teardown(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if manage && (len(calls) != 1 || calls[0] != nil) {
+			t.Errorf("manageDNS: dhcpSetDNSServers calls %v, want one with nil", calls)
+		}
+		if !manage && len(calls) != 0 {
+			t.Errorf("keep resolv.conf: dhcpSetDNSServers calls %v, want none", calls)
+		}
+	}
+}
