@@ -98,29 +98,30 @@ func lenient(code dhcpv6.OptionCode, data []byte) (dhcpv6.Option, error) {
 }
 
 // strict checks what drops the whole message in networkd 255
-// (dhcp6_lease_parse_message): a second client or server identifier, a
-// preference other than 1 byte, a status code under 2 bytes and an
-// information refresh time other than 4 bytes.
+// (dhcp6_lease_parse_message): a client or server identifier after a
+// non-empty one, a preference other than 1 byte, a status code under 2
+// bytes or other than success, and an information refresh time other
+// than 4 bytes. A status inside an IA (NoBinding) is no top-level status.
 func strict(opts dhcpv6.Options) bool {
-	ids := map[dhcpv6.OptionCode]int{}
+	seen := map[dhcpv6.OptionCode]bool{}
 	for _, o := range opts {
-		n := len(o.ToBytes())
+		b := o.ToBytes()
 		switch o.Code() {
 		case optClientID, optServerID:
-			ids[o.Code()]++
-			if ids[o.Code()] > 1 {
+			if seen[o.Code()] {
 				return false
 			}
+			seen[o.Code()] = len(b) > 0
 		case optPreference:
-			if n != 1 {
+			if len(b) != 1 {
 				return false
 			}
 		case optStatusCode:
-			if n < 2 {
+			if len(b) < 2 || iana.StatusCode(binary.BigEndian.Uint16(b)) != iana.StatusSuccess {
 				return false
 			}
 		case optInfoRefresh:
-			if n != 4 {
+			if len(b) != 4 {
 				return false
 			}
 		}
@@ -128,10 +129,13 @@ func strict(opts dhcpv6.Options) bool {
 	return true
 }
 
-// optionData returns the payload of the first option with code.
+// optionData returns the payload of the first option with code that is
+// not empty (networkd sets an identifier only from a non-empty one).
 func optionData(opts dhcpv6.Options, code dhcpv6.OptionCode) []byte {
-	if o := opts.GetOne(code); o != nil {
-		return o.ToBytes()
+	for _, o := range opts.Get(code) {
+		if b := o.ToBytes(); len(b) > 0 {
+			return b
+		}
 	}
 	return nil
 }
@@ -142,7 +146,6 @@ type reply struct {
 	xid         uint32
 	clientID    []byte
 	rapidCommit bool
-	status      iana.StatusCode // top-level status code, 0 = success
 	iaStatus    iana.StatusCode // status code of our IA_NA, 0 = success
 	pref        byte            // server preference (option 7), 0 when absent
 	lease       Lease
@@ -179,9 +182,6 @@ func decode(b []byte, iaid uint32, now time.Time) (reply, error) {
 		r.pref = p[0]
 	}
 	mo := dhcpv6.MessageOptions{Options: opts}
-	if st := mo.Status(); st != nil {
-		r.status = st.StatusCode
-	}
 	r.lease.DNS = mo.DNS()
 	if dl := optionData(opts, optDomainList); dl != nil {
 		r.lease.Domains = domainList(dl)

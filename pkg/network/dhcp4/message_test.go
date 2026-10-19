@@ -279,6 +279,9 @@ func TestOptionsKeepLastValidCopy(t *testing.T) {
 		{[]byte("no address\x00"), true},
 		{nil, false},
 		{[]byte("no\x00address"), false},
+		{[]byte("a\x00\x00"), false},
+		{[]byte("a\x80"), false},
+		{[]byte("a\x7f"), true},
 		{[]byte("adresse \xe9puis\xe9e"), false},
 	} {
 		if _, ok := options(tlv(56, tt.msg...)); ok != tt.ok {
