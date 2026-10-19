@@ -130,17 +130,21 @@ func (c *Client) Stop() {
 // like networkd restarts its client when the carrier comes back: it ends
 // any wait or exchange in progress (a renewal that waits for an answer or
 // after a failed send, the INIT backoff).
+//
+// The flag decides, the token only wakes a wait: the flag is set (under
+// c.mu, which open checks) before the token, so a wake always finds it,
+// and the run loop starts one INIT-REBOOT per request.
 func (c *Client) Reboot() {
-	c.rebootReq.Store(true)
-	select {
-	case c.reboot <- struct{}{}:
-	default:
-	}
 	c.mu.Lock()
+	c.rebootReq.Store(true)
 	if c.tr != nil {
 		_ = c.tr.close() // ends a receive in progress
 	}
 	c.mu.Unlock()
+	select {
+	case c.reboot <- struct{}{}:
+	default:
+	}
 }
 
 func (c *Client) stopped() bool {
@@ -278,16 +282,15 @@ func (c *Client) boundState() state {
 		// An infinite lease: only a reboot request or Stop ends the wait.
 		select {
 		case <-c.stop:
-		case <-c.reboot:
-			return stateRebooting
+		case <-c.reboot: // the run loop sees the flag
 		}
 		return stateBound
 	}
 	select {
 	case <-c.stop:
 		return stateBound
-	case <-c.reboot:
-		return stateRebooting
+	case <-c.reboot: // the run loop sees the flag
+		return stateBound
 	case <-c.after(l.Renew.Sub(c.now())):
 		return stateRenewing
 	}
@@ -389,6 +392,9 @@ func (c *Client) expire() state {
 // like networkd ("NAK from unexpected server, ignoring").
 func (c *Client) exchange(send func(transport, *message) error, m *message, timeout time.Duration, server net.IP, types ...layers.DHCPMsgType) (reply, error) {
 	tr, err := c.open()
+	if interrupted(err) {
+		return reply{}, err
+	}
 	if err != nil {
 		c.Log.Debug("DHCP transport", "error", err)
 		return reply{}, c.pause(timeout)
@@ -442,16 +448,18 @@ func (c *Client) wanted(r *reply, m *message, server net.IP, types []layers.DHCP
 
 // pause waits d after a transport error, so a failing socket does not spin.
 func (c *Client) pause(d time.Duration) error {
-	if c.rebootReq.Load() {
-		return errReboot
-	}
-	select {
-	case <-c.stop:
-		return errStopped
-	case <-c.reboot:
-		return errReboot
-	case <-c.after(d):
-		return errTimeout
+	timeout := c.after(d)
+	for {
+		if c.rebootReq.Load() {
+			return errReboot
+		}
+		select {
+		case <-c.stop:
+			return errStopped
+		case <-c.reboot: // a stale token without the flag keeps waiting
+		case <-timeout:
+			return errTimeout
+		}
 	}
 }
 
@@ -465,6 +473,11 @@ func (c *Client) open() (transport, error) {
 	if c.stopped() {
 		_ = tr.close()
 		return nil, errStopped
+	}
+	if c.rebootReq.Load() {
+		// Reboot came while no transport was open: it closed nothing.
+		_ = tr.close()
+		return nil, errReboot
 	}
 	c.tr = tr
 	return tr, nil
