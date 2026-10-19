@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -1598,5 +1599,52 @@ func TestSourceRoutesSkipHostRoutes(t *testing.T) {
 	got := sourceRoutes(main, link, addr)
 	if len(got) != 2 || routeDst(got[0]) != "10.0.2.0/24" || got[1].Gw == nil || got[0].Table != 10007 || got[1].Table != 10007 {
 		t.Fatalf("source routes = %v", got)
+	}
+}
+
+// A failed link watch subscribes again: the old subscription is closed
+// (netlink keeps its socket until done closes) and the new one lists the
+// links, so NICs whose events were lost are seen.
+func TestLinkWatchResubscribes(t *testing.T) {
+	stubDHCPSetup(t, func(name string, cb dhcp4.Callback) {
+		if name == "eth0" {
+			cb(lease24("10.0.2.15", "10.0.2.2"))
+		}
+	})
+	type sub struct {
+		done <-chan struct{}
+		list bool
+	}
+	subs := make(chan sub, 2)
+	var calls atomic.Int32
+	dhcpSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}, o netlink.LinkSubscribeOptions) error {
+		subs <- sub{done, o.ListExisting}
+		if calls.Add(1) == 1 {
+			close(ch) // the receive failed (ENOBUFS)
+			return nil
+		}
+		go func() { <-done; close(ch) }()
+		return nil
+	}
+	d := NewDHCPMode()
+	if err := d.Setup(context.Background(), &Config{}); err != nil {
+		t.Fatal(err)
+	}
+	first, second := <-subs, <-subs
+	select {
+	case <-first.done:
+	case <-time.After(time.Second):
+		t.Fatal("the failed subscription is not closed")
+	}
+	if first.list || !second.list {
+		t.Errorf("ListExisting = %v, %v; want only the second subscription to list the links", first.list, second.list)
+	}
+	if err := d.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-second.done:
+	case <-time.After(time.Second):
+		t.Fatal("Teardown does not close the subscription")
 	}
 }

@@ -532,3 +532,43 @@ func TestRenewNoBindingRequests(t *testing.T) {
 		}
 	}
 }
+
+// A stateless client waits the information refresh time of the REPLY
+// (option 32, at least 600 s) before it asks again; a day without it.
+func TestInformationWaitsRefreshTime(t *testing.T) {
+	for _, tt := range []struct {
+		opt  []byte
+		want time.Duration
+	}{{[]byte{0, 0, 0x0e, 0x10}, time.Hour}, {[]byte{0, 0, 0, 0}, 600 * time.Second}, {nil, 24 * time.Hour}} {
+		f := newFakeNet()
+		f.answer = func(msg []byte) []byte {
+			if msg[0] != msgInformationRequest {
+				return nil
+			}
+			r := serverReply(msg, msgReply, false)
+			if tt.opt != nil {
+				r = encode(msgReply, xidOf(msg), append(parseOptions(r[4:]), option{optInfoRefresh, tt.opt}))
+			}
+			return r
+		}
+		bound := make(chan *Lease, 2)
+		c := f.client(false)
+		c.OnBound = func(l *Lease) { bound <- l }
+		c.Start()
+		<-bound
+		var waits []time.Duration
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			f.mu.Lock()
+			waits = slices.Clone(f.waits)
+			f.mu.Unlock()
+			if len(waits) > 0 {
+				break
+			}
+		}
+		close(f.stopped)
+		c.Stop()
+		if !slices.Equal(waits, []time.Duration{tt.want}) {
+			t.Errorf("option 32 %x: waits %v, want %s", tt.opt, waits, tt.want)
+		}
+	}
+}
