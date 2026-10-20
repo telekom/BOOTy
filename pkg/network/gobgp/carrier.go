@@ -8,8 +8,6 @@ import (
 	"log/slog"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v4/api"
-	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
@@ -26,8 +24,8 @@ type carrierWatch struct {
 	// to a new link-local address; nil keeps the address of peers.
 	current func(iface string) string
 	down    map[string]bool
-	// disable stops a peer (GoBGP DisablePeer by default); enable starts
-	// it again (UnderlayTier.newCarrierWatch sets it).
+	// disable and enable stop and start a peer (UnderlayTier.newCarrierWatch
+	// sets them).
 	disable, enable func(ctx context.Context, addr string) error
 	// announce sends a Router Advertisement on an interface whose carrier
 	// came back. An FRR unnumbered peer forgets the neighbor address on
@@ -42,13 +40,10 @@ type carrierWatch struct {
 	log      *slog.Logger
 }
 
-func newCarrierWatch(bgp *server.BgpServer, peers map[string]string, log *slog.Logger) *carrierWatch {
+func newCarrierWatch(peers map[string]string, log *slog.Logger) *carrierWatch {
 	return &carrierWatch{
-		peers: peers,
-		down:  map[string]bool{},
-		disable: func(ctx context.Context, addr string) error {
-			return bgp.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: addr, Communication: "interface down"}) //nolint:wrapcheck // logged with the peer
-		},
+		peers:    peers,
+		down:     map[string]bool{},
 		announce: sendRouterAdvertisement,
 		// GoBGP connects 2 to 3 s after the enable.
 		raRepeat: time.Second,

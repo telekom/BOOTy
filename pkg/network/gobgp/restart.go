@@ -191,13 +191,23 @@ func (u *UnderlayTier) restartPeer(ctx context.Context, addr string) (bool, erro
 //
 // The peer is not deleted and added again, which would start it at once:
 // it then connects 1.5 to 2 s after the carrier, when the leaf (FRR)
-// connects too, and the connection that completes after the session is
-// up ends it as a graceful restart of the leaf (RFC 4724 section 5;
-// production template lab). Not deleting it also keeps the stale routes
-// of a leaf in graceful restart, as FRR keeps those of a peer in NSF wait
-// across interface down and up (bgp_stop in bgp_fsm.c). A peer that is
-// not administratively down (the carrier loss did not stop it, so its
-// session may still be up) is left alone.
+// connects too. GoBGP (fork commit 6bf0511e) takes a connection that
+// completes after the session is up as a graceful restart of the leaf
+// whenever the leaf sent the graceful restart capability, and ends the
+// session (production template lab). RFC 4724 section 5 and FRR
+// (bgp_accept, PEER_STATUS_NSF_MODE) do that only when the leaf sent
+// address family tuples. Not deleting the peer also keeps the stale
+// routes of a leaf in graceful restart, as FRR keeps those of a peer in
+// NSF wait across interface down and up (bgp_stop in bgp_fsm.c).
+//
+// A peer that is not administratively down (the carrier loss did not stop
+// it, so its session may still be up) is left alone: EnablePeer on an
+// enabled GoBGP peer is not a no-op. In Idle it restarts the running idle
+// hold timer, in Active, OpenSent and OpenConfirm it logs "code logic
+// bug", and in every state it flips the peer's AdminDown state flag
+// (changeadminState, pkg/server/fsm.go). stopPeer waits until GoBGP has
+// applied the stop, so the admin state read here is not a stop that is
+// still queued.
 func (u *UnderlayTier) startStoppedPeer(ctx context.Context, addr string) error {
 	stopped := false
 	if err := u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
@@ -216,3 +226,32 @@ func (u *UnderlayTier) startStoppedPeer(ctx context.Context, addr string) error 
 	}
 	return nil
 }
+
+// stopPeer stops the peer at addr (DisablePeer) and waits until GoBGP has
+// applied it, at most stopWait; the caller holds peerOps. DisablePeer only
+// queues the change for the FSM, in a channel with room for one: an
+// EnablePeer while it is queued is dropped, and an admin state read
+// before the FSM took it is still up. Either left the peer down for good
+// after a fast carrier flap.
+func (u *UnderlayTier) stopPeer(ctx context.Context, addr string) error {
+	if err := u.bgp.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: addr, Communication: "interface down"}); err != nil {
+		return fmt.Errorf("disable peer %s: %w", addr, err)
+	}
+	for deadline := time.Now().Add(stopWait); ; time.Sleep(10 * time.Millisecond) {
+		down := false
+		if err := u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
+			down = p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_DOWN
+		}); err != nil {
+			return fmt.Errorf("list peer %s: %w", addr, err)
+		}
+		if down {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("peer %s: still enabled %v after DisablePeer", addr, stopWait)
+		}
+	}
+}
+
+// stopWait bounds stopPeer; GoBGP applies a stop within milliseconds.
+const stopWait = time.Second

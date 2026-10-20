@@ -570,3 +570,48 @@ func TestCarrierEnableHoldsPeerOps(t *testing.T) {
 	u.peerOps.Unlock()
 	<-done
 }
+
+// A carrier loss and return handled back to back leave the peer enabled:
+// DisablePeer only queues the stop, so without stopPeer's wait the start
+// read the peer as still enabled and skipped it, and the stop then left
+// the peer down for good (reviewer probe: 27 of 30 runs).
+func TestCarrierFlapBackToBack(t *testing.T) {
+	u, w, _ := carrierTier(t, false)
+	w.handle("eth0", false)
+	w.handle("eth0", true)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		admin := apipb.PeerState_ADMIN_STATE_UNSPECIFIED
+		_ = u.bgp.ListPeer(context.Background(), &apipb.ListPeerRequest{Address: "127.0.0.1"}, func(p *apipb.Peer) { admin = p.GetState().GetAdminState() })
+		if admin == apipb.PeerState_ADMIN_STATE_DOWN && time.Until(deadline) < time.Second {
+			t.Fatal("peer stuck administratively down after a fast carrier flap")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// A peer that is enabled and waits in Idle (its session ended and the
+// restarter does not run) when the carrier returns without a stop before
+// is not reset, enabled or added again.
+func TestCarrierReturnLeavesIdlePeer(t *testing.T) {
+	u, w, conn := carrierTier(t, false)
+	_ = conn.Close()
+	waitPeer(t, u, idleAfterUp)
+	w.disable = func(context.Context, string) error { return errors.New("lost") }
+	w.handle("eth0", false)
+	reset := false
+	w.enable = func(ctx context.Context, addr string) error {
+		err := u.startStoppedPeer(ctx, addr)
+		_ = u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
+			reset = p.GetState().GetAdminState() != apipb.PeerState_ADMIN_STATE_UP || p.GetTimers().GetState().GetUptime() == nil
+		})
+		return err
+	}
+	w.handle("eth0", true)
+	if reset {
+		t.Fatal("the Idle peer was stopped or added again")
+	}
+	waitPeer(t, u, func(p *apipb.Peer) bool {
+		return p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_UP && p.GetTimers().GetState().GetUptime() != nil
+	})
+}

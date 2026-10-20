@@ -306,12 +306,18 @@ same resolution:
   to 5.7 s for FRR. FRR starts the session at once on interface up
   (`bgp_start_interface_nbrs` in `bgp_zebra.c`). BOOTy does not delete
   and add the peer to start it at once: it then connects at the same
-  time as the leaf, and the leaf's connection that completes after the
-  session is up ends it as a graceful restart (RFC 4724 section 5). In
-  the production template lab that happened in 4 of 11 jobs. The peer
-  also keeps the stale routes of a leaf in graceful restart, like FRR
-  for a peer in NSF wait (`bgp_stop` in `bgp_fsm.c`). A peer that the
-  carrier loss did not stop is left alone.
+  time as the leaf. GoBGP takes a leaf connection that completes after
+  the session is up as a graceful restart and ends the session whenever
+  the leaf sent the graceful restart capability (GoBGP fork commit
+  6bf0511e). RFC 4724 section 5 and FRR (`bgp_accept`,
+  `PEER_STATUS_NSF_MODE`) do that only when the leaf also sent address
+  family tuples. In the production template lab that happened in 4 of 11
+  jobs. The peer also keeps the stale routes of a leaf in graceful
+  restart, like FRR for a peer in NSF wait (`bgp_stop` in `bgp_fsm.c`).
+  A peer that the carrier loss did not stop is left alone. BOOTy waits
+  until GoBGP has applied the stop on carrier loss (at most 1 s):
+  `DisablePeer` only queues it, so a carrier return right after it read
+  the peer as still enabled, and the queued stop then left it down.
 
 GoBGP mode installs the learned IPv4 and IPv6 unicast routes like zebra:
 into the table of each session's VRF (the main table without a VRF), with
