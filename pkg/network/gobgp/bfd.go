@@ -158,48 +158,53 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 // itself (the outgoingConnManager.run and connectLoop functions of the
 // fork); without it, after 1.5 to 2 s.
 //
-// Like bgpd, a BFD Down does not reset a BGP session that came up in the
-// same second (bss->last_event > peer->uptime, both in seconds): a
-// route reflector with "update-source" re-keys its BFD session for us
-// when the BGP session comes up (bgp_peer_bfd_update_source), so the BFD
-// session we just brought Up goes Down in that second. The FRR shadow
-// node sees the same Down and keeps the session; kindmetal and the lab
-// saw BOOTy reset the RR session once at every start. The RR comes up
-// when it receives our KEEPALIVE and can re-key BFD before its KEEPALIVE
-// moves our session from OpenConfirm to Established, so a BFD Down in
-// OpenConfirm does not reset the session at once either (bgpd would, but
-// its BFD Down comes through zebra and arrives after its KEEPALIVE).
-// GoBGP's ListPeer shows OpenConfirm until its server loop handles the
-// state change, after the FSM logged "Peer Up", and then Established
-// without an uptime until the FSM sets it; both count as coming up. So a
-// real failure is not hidden until the hold timer expires, a skipped BFD
-// Down is checked again when the session is Established: if BFD is not
-// Up again within bfdRecheckGrace of the Down, the session is reset then.
+// Like bgpd, a BFD Down does not reset a BGP session that is just coming
+// up: a route reflector with "update-source" re-keys its BFD session for
+// us when its side of the BGP session comes up
+// (bgp_peer_bfd_update_source), so the BFD session we just brought Up goes
+// Down at once. The FRR shadow node sees the same Down and keeps the
+// session. The RR comes up when it receives our KEEPALIVE, and GoBGP
+// writes that KEEPALIVE before its server loop moves the peer out of
+// Active (outgoing connection) or OpenSent (incoming connection), so
+// ListPeer can show any state from Active to Established without an
+// uptime when the Down arrives. Only Idle (no session; the reset sets the
+// idle hold time after reset) and an Established session with an uptime
+// reset at once. bgpd keeps the session when the BFD Down comes in the
+// second it came up (bss->last_event > peer->uptime, both in seconds);
+// GoBGP's uptime is in whole seconds too, so a Down in the next second can
+// be 1 ms after the session came up, and it does not reset the session
+// either. A skipped BFD Down is checked again (recheck), so a real failure
+// is not hidden until the hold timer expires: if BFD is not Up again
+// within bfdRecheckGrace of the Down and the session is Established, it is
+// reset then.
 func (u *UnderlayTier) bfdChanged(p *bfd.Peer, from, to bfd.State, diag bfd.Diag) {
 	u.bfdUp.Store(p.Name, to == bfd.StateUp)
 	if from != bfd.StateUp || to != bfd.StateDown {
 		return
 	}
+	now := time.Now
+	if u.now != nil {
+		now = u.now
+	}
+	downAt := now()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	session := u.bgpSession
 	if session == nil {
 		session = u.sessionState
 	}
-	now := time.Now
-	if u.now != nil {
-		now = u.now
-	}
-	// Only the same second: GoBGP's uptime is wall-clock time, and a time
-	// sync that steps the clock back puts it in the future (FRR compares
-	// monotonic times). Then the BFD Down resets the session as usual.
-	switch state, at := session(ctx, p.Name); {
-	case state == apipb.PeerState_SESSION_STATE_OPENCONFIRM:
-		u.log.Info("BFD down while the BGP session is coming up (OpenConfirm), not resetting it yet", "peer", p.Name, "diag", diag)
+	// GoBGP's uptime is wall-clock time, and a time sync that steps the
+	// clock back puts it in the future (FRR compares monotonic times).
+	// Then the BFD Down resets the session as usual.
+	state, at := session(ctx, p.Name)
+	switch upFor := downAt.Unix() - at.Unix(); {
+	case state == apipb.PeerState_SESSION_STATE_IDLE:
+	case state != apipb.PeerState_SESSION_STATE_ESTABLISHED || at.IsZero():
+		u.log.Info("BFD down while the BGP session is coming up, not resetting it yet", "peer", p.Name, "state", state, "diag", diag)
 		u.recheck(p)
 		return
-	case state == apipb.PeerState_SESSION_STATE_ESTABLISHED && (at.IsZero() || now().Unix() == at.Unix()):
-		u.log.Info("BFD down in the second the BGP session came up, not resetting it yet, like FRR", "peer", p.Name, "diag", diag)
+	case upFor == 0 || upFor == 1:
+		u.log.Info("BFD down right after the BGP session came up, not resetting it yet, like FRR", "peer", p.Name, "diag", diag)
 		u.recheck(p)
 		return
 	}
@@ -246,7 +251,8 @@ func (u *UnderlayTier) stopRechecks() {
 
 // resetUnlessBFDUp waits until the BGP session of name is Established with
 // an uptime, then resets it unless BFD came Up again within grace after
-// downAt. A session that does not come up needs no reset.
+// downAt. A session that is not coming up (OpenConfirm or later) when the
+// grace time is over needs no reset.
 func (u *UnderlayTier) resetUnlessBFDUp(ctx context.Context, name string, downAt time.Time, grace time.Duration) {
 	session := u.bgpSession
 	if session == nil {
@@ -266,10 +272,10 @@ func (u *UnderlayTier) resetUnlessBFDUp(ctx context.Context, name string, downAt
 			return
 		case state == apipb.PeerState_SESSION_STATE_OPENCONFIRM || state == apipb.PeerState_SESSION_STATE_ESTABLISHED && at.IsZero():
 			continue // still coming up; the hold timer bounds this
+		case time.Since(downAt) < grace:
+			continue // ListPeer can lag behind the FSM (bfdChanged)
 		case state != apipb.PeerState_SESSION_STATE_ESTABLISHED:
 			return
-		case time.Since(downAt) < grace:
-			continue
 		}
 		u.log.Warn("BGP session came up while BFD stayed down, resetting it", "peer", name)
 		rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
