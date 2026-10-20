@@ -25,9 +25,11 @@ import (
 type netdevsim struct {
 	id  int
 	dir string // /sys/bus/netdevsim/devices/netdevsim<id>
-	// wedged is set when a sysfs write to the device did not return.
-	wedged bool
 }
+
+// wedgedID is the id of the netdevsim device that a sysfs write did not
+// return for, 0 for none. The tests do not run in parallel.
+var wedgedID int
 
 const netdevsimBus = "/sys/bus/netdevsim"
 
@@ -45,14 +47,20 @@ func newNetdevsim(t *testing.T, id, ports int) *netdevsim {
 	if _, err := os.Stat(netdevsimBus); err != nil {
 		t.Fatalf("netdevsim not loaded (modprobe netdevsim): %v", err)
 	}
+	// The wedged device keeps its PF netdev, and every Discover blocks on
+	// its devlink lock: fail now instead of at the go test timeout.
+	if wedgedID != 0 {
+		t.Fatalf("netdevsim%d is wedged by an earlier test", wedgedID)
+	}
 	n := &netdevsim{id: id, dir: filepath.Join(netdevsimBus, "devices", "netdevsim"+strconv.Itoa(id))}
 	n.within(t, "new_device", func() error {
 		return os.WriteFile(filepath.Join(netdevsimBus, "new_device"), fmt.Appendf(nil, "%d %d", id, ports), 0o200)
 	})
 	t.Cleanup(func() {
 		// del_device of a wedged device blocks with the netdevsim bus lock
-		// held, and then new_device of every later test blocks too.
-		if n.wedged {
+		// held. Skipping it does not make the device usable again: later
+		// tests fail at the wedgedID check above.
+		if wedgedID == n.id {
 			t.Logf("not deleting the wedged %s", n.name())
 			return
 		}
@@ -82,7 +90,7 @@ func (n *netdevsim) within(t *testing.T, what string, fn func() error) {
 			t.Fatalf("%s: %v", what, err)
 		}
 	case <-time.After(limit):
-		n.wedged = true
+		wedgedID = n.id
 		out, err := exec.CommandContext(t.Context(), "dmesg").CombinedOutput()
 		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 		lines = lines[max(0, len(lines)-60):]
