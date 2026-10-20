@@ -12,7 +12,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,14 +21,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Transmit timing of systemd-networkd (networkd-lldp-tx.c in systemd 249,
-// sd-lldp-tx.c since 250): 4 fast frames 1 s apart (txFastInit, msgFastTx
-// of IEEE 802.1AB), then one frame every 30 s (msgTxInterval), TTL 120 s
-// (4 intervals). networkd starts the fast frames again on each carrier gain.
+// Transmit timing of systemd-networkd 249 (networkd-lldp-tx.c; the same
+// in sd-lldp-tx.c since 250). txFastInit (IEEE 802.1AB) is 4 frames.
+// msgFastTx (1 s) and msgTxInterval (30 s) lose half the jitter, and each
+// delay adds a random jitter in [0, 400 ms), so the frames go out 1 s and
+// 30 s apart on average. TTL 120 s is ceil(4 * 29.8 s).
 const (
 	txFastInit     = 4
-	txFastInterval = time.Second
-	txInterval     = 30 * time.Second
+	txJitter       = 400 * time.Millisecond
+	txFastInterval = time.Second - txJitter/2
+	txInterval     = 30*time.Second - txJitter/2
 	txTTL          = 120
 )
 
@@ -185,12 +186,13 @@ func tlv(t layers.LLDPTLVType, s string) layers.LinkLayerDiscoveryValue {
 // EmitLLDP=yes. It returns a function that waits for the senders.
 func Emit(ctx context.Context, ifaces []string, info *Info, log *slog.Logger) (wait func()) {
 	var wg sync.WaitGroup
+	states := make(map[string]chan linkState, len(ifaces))
 	for _, iface := range ifaces {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			emitOn(ctx, iface, info, log.With("interface", iface))
-		}()
+		states[iface] = make(chan linkState, 1)
+	}
+	wg.Go(func() { watchCarrier(ctx, states, log) })
+	for iface, ch := range states {
+		wg.Go(func() { emitOn(ctx, iface, info, ch, log.With("interface", iface)) })
 	}
 	return wg.Wait
 }
@@ -223,41 +225,73 @@ func dottedMAC(mac net.HardwareAddr) string {
 	return b.String()
 }
 
-func emitOn(ctx context.Context, iface string, info *Info, log *slog.Logger) {
+// emitOn sends the frames of one NIC like networkd 249: a carrier gain
+// starts the transmit timer (link_carrier_gained -> link_lldp_emit_start),
+// a carrier loss stops it (link_carrier_lost -> link_lldp_emit_stop).
+// states carries the carrier of the NIC (watchCarrier).
+func emitOn(ctx context.Context, iface string, info *Info, states <-chan linkState, log *slog.Logger) {
 	if info.Profile == ProfileBM4XCableCheck {
 		log.Info("sending LLDP frames with the bm4x-cablecheck identity")
 	} else {
 		log.Info("sending LLDP frames like networkd EmitLLDP=yes")
 	}
+	// Log a failure once; the NIC may come back (carrier, rename).
 	failed := false
-	var fast fastInit
-	for {
-		now := time.Now()
-		up, changes := carrier(iface)
-		switch {
-		case fast.due(now, up, changes):
-			frame, err := sendFrame(iface, info, Frame)
-			recordTX(iface, info, frame, err, now)
-			if err != nil && !failed {
-				// Log once; the NIC may come back (rename).
-				log.Warn("LLDP frame not sent", "error", err)
-				failed = true
-			} else if err == nil {
-				failed = false
-			}
-			fast.sent(now)
-		case !up:
-			recordTX(iface, info, nil, nil, now)
+	warn := func(err error) {
+		if !failed {
+			log.Warn("LLDP frame not sent", "error", err)
+			failed = true
 		}
+	}
+	var tx txTimer
+	var cur linkState
+	timer := time.NewTimer(0)
+	timer.Stop()
+	arm := func() {
+		timer.Stop()
+		if !tx.next.IsZero() {
+			timer.Reset(time.Until(tx.next))
+		}
+	}
+	for {
 		select {
 		case <-ctx.Done():
 			// IEEE 802.1AB: a port that stops sending sends a shutdown
 			// LLDPDU, so the switch does not keep BOOTy for the TTL.
-			if _, err := sendFrame(iface, info, ShutdownFrame); err != nil {
-				log.Debug("LLDP shutdown frame not sent", "error", err)
+			if cur.carrier {
+				if _, err := sendFrame(iface, info, ShutdownFrame); err != nil {
+					log.Debug("LLDP shutdown frame not sent", "error", err)
+				}
 			}
 			return
-		case <-time.After(fast.wait(time.Now())):
+		case s := <-states:
+			now := time.Now()
+			switch {
+			case s.err != nil:
+				tx.stop()
+				recordTX(iface, info, nil, s.err, now)
+				warn(s.err)
+			case !s.carrier:
+				tx.stop()
+				recordTX(iface, info, nil, nil, now)
+				failed = false
+			case !cur.carrier:
+				tx.start(now)
+				failed = false
+			}
+			cur = s
+			arm()
+		case <-timer.C:
+			now := time.Now()
+			frame, err := sendFrame(iface, info, Frame)
+			recordTX(iface, info, frame, err, now)
+			if err != nil {
+				warn(err)
+			} else {
+				failed = false
+			}
+			tx.fired(now)
+			arm()
 		}
 	}
 }
@@ -284,60 +318,4 @@ var sendFrame = func(iface string, info *Info, build func(string, net.HardwareAd
 		return nil, fmt.Errorf("send on %s: %w", iface, err)
 	}
 	return frame, nil
-}
-
-// carrier reads the carrier of the NIC and its carrier change count from
-// sysfs. The count grows with every loss and gain of the carrier, so it
-// also shows a flap between two polls. A NIC that is down or gone has no
-// carrier.
-func carrier(iface string) (up bool, changes uint64) {
-	b, err := os.ReadFile(filepath.Join(sysClassNet, iface, "carrier"))
-	up = err == nil && strings.TrimSpace(string(b)) == "1"
-	if b, err := os.ReadFile(filepath.Join(sysClassNet, iface, "carrier_changes")); err == nil {
-		changes, _ = strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
-	}
-	return up, changes
-}
-
-// fastInit is the transmit timer of networkd for one NIC. A carrier gain
-// (link_carrier_gained, link_lldp_emit_start in systemd 249) starts the
-// fast start again: the next txFastInit frames go out txFastInterval
-// apart, then one every txInterval. Without carrier networkd stops the
-// timer (link_carrier_lost), so no frame counts. The emitter polls the
-// carrier every txFastInterval; a change of the carrier change count is a
-// carrier gain even when the poll did not see the loss.
-type fastInit struct {
-	count   int       // frames since the carrier came up
-	changes uint64    // carrier change count at the last poll
-	next    time.Time // the next frame is due
-}
-
-// due notes the carrier state of a poll and reports whether a frame is
-// due.
-func (f *fastInit) due(now time.Time, up bool, changes uint64) bool {
-	if !up || changes != f.changes {
-		f.count, f.next = 0, now
-	}
-	f.changes = changes
-	return up && !now.Before(f.next)
-}
-
-// sent counts a frame and schedules the next one. A failed send counts
-// too, like in networkd.
-func (f *fastInit) sent(now time.Time) {
-	f.count++
-	if f.count < txFastInit {
-		f.next = now.Add(txFastInterval)
-	} else {
-		f.next = now.Add(txInterval)
-	}
-}
-
-// wait is the time to the next poll: at most txFastInterval, so a carrier
-// gain is seen within it.
-func (f *fastInit) wait(now time.Time) time.Duration {
-	if d := f.next.Sub(now); d > 0 && d < txFastInterval {
-		return d
-	}
-	return txFastInterval
 }
