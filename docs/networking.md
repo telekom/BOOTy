@@ -218,12 +218,24 @@ same resolution:
     connections meanwhile
     ([osrg/gobgp#3735](https://github.com/osrg/gobgp/issues/3735)). In
     the lab a leaf-initiated session to BOOTy took 36 s against 2.3 s for
-    FRR (the leaf then retries after its connect timer). Status: the wait
-    is upstream since osrg/gobgp 4e70e768 (fork tag v4.10.0-booty.17):
-    the idle hold time backs off like FRR's `v_start`, 1 s after a TCP
-    close, doubled after a NOTIFICATION sent or received, a hold timer
-    expiry or an invalid message, up to 120 s, and 1 s again after
-    Established and after an administrative shutdown. GoBGP still refuses
+    FRR (the leaf then retries after its connect timer). Status: upstream
+    osrg/gobgp 4e70e768 replaced the fixed 5 s with a backoff (fork tag
+    v4.10.0-booty.17), and since the fork tag v4.10.0-booty.19 the backoff
+    follows `v_start` of FRR 10.2.1, the FRR of the legacy ramdisk (10.3
+    has the same rules): 1 s after Established (`bgp_establish`) and
+    after an administrative shutdown (`no neighbor shutdown`); doubled, up
+    to 120 s, for a NOTIFICATION received in OpenConfirm or Established
+    (`bgp_stop_with_error`) and for a NOTIFICATION that GoBGP sends for a
+    message error, a bad peer AS or BFD Down (`bgp_write_notify`); back
+    to 1 s for a hold timer expiry and for the FSM Error that answers an
+    unexpected message in OpenSent, a NOTIFICATION included
+    (`bgp_stop_with_notify`); kept for a closed or failed TCP connection,
+    an unexpected message in OpenConfirm (`bgp_fsm_exception`) and
+    graceful restart (`bgp_stop`). A reset (`ResetPeer`, also with
+    `BfdDown`) waits `IdleHoldTimeAfterReset` (BOOTy: 1 s), where FRR
+    waits 2 s after `clear bgp` and after BFD Down (`peer_clear` and
+    `bgp_bfd.c` write a NOTIFICATION, which doubles `v_start`); the
+    backoff after the reset is the `v_start` of FRR. GoBGP still refuses
     connections in Idle (RFC 4271 section 8.2.2, the reason the maintainer
     gave when closing #3735), so the workaround in BOOTy (#745) stays. When a session ends and BOOTy did not stop
     the peer (carrier loss) and GoBGP keeps no graceful restart routes of
@@ -589,18 +601,18 @@ BOOTy's other dependency forks (gopacket, netlink) are listed in
 [Dependency forks](dependency-forks.md).
 
 GoBGP mode embeds GoBGP through a fork tag:
-`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.18`
+`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.19`
 in `go.mod`. The tag is upstream master 57fa92f1 (2026-10-20, after
 4.10.0; there is no newer release) on the fork branch `booty/master`,
-with fourteen fixes and four features that upstream does not have. The
+with fifteen fixes and four features that upstream does not have. The
 tags up to v4.10.0-booty.16 are v4.10.0 with the fixes on the branch
 `booty/v4.10`. Do not use the tag v4.10.0-booty.7: it stops answering a
 NOTIFICATION in OpenSent, which RFC 4271 section 8.2.2 does not allow
 (booty.8 and later answer it again).
 
 Upstream master since 4.10.0 also changes behaviour that BOOTy sees:
-the idle hold time backs off like FRR (4e70e768, see
-[BGP sessions](#bgp-sessions)), the native BFD of GoBGP sends Cease/BFD Down
+the idle hold time backs off (4e70e768; the fork changes the rules to
+those of FRR, see [BGP sessions](#bgp-sessions)), the native BFD of GoBGP sends Cease/BFD Down
 (7d11a2c2), a second MP_REACH_NLRI next hop that is not link-local is
 dropped (7491a4e0), and NEXT_HOP is checked only when the UPDATE has
 NLRIs that use it (f5881559).
@@ -618,10 +630,11 @@ NLRIs that use it (f5881559).
 | No connect retry in OpenConfirm (RFC 4271 section 8.2.2) after the outgoing connect failed, and a test of the dialed mark (booty.12) | GoBGP connected again while the session went on with the leaf's connection. |
 | In OpenConfirm and Established the outgoing connection manager skips the dial and keeps running instead of ending (booty.13) | With a stale FSM state the manager of booty.12 could end while the FSM was already back in Active, which then had no outgoing connection manager. |
 | Take a new connection from a restarting peer (RFC 4724, [osrg/gobgp#3745](https://github.com/osrg/gobgp/issues/3745)) | A peer that restarts with graceful restart cannot open a new session while the old one is still up. |
-| Take a new connection as a restart only from a peer that sent graceful restart AFI/SAFI tuples (RFC 4724 section 5, Events 16 and 17; FRR `bgp_accept` needs `PEER_STATUS_NSF_MODE`) (booty.18) | A helper-only peer (FRR leaves without `bgp graceful-restart`) whose late second connection completes after the session came up gets its session ended: the graceful restart false positive of the one-uplink production template lab. |
+| Take a new connection as a restart only from a peer that sent graceful restart AFI/SAFI tuples in the current session (RFC 4724 section 5, Events 16 and 17; FRR `bgp_accept` needs `PEER_STATUS_NSF_MODE`, computed per session) (booty.18; booty.19: the tuples of the current OPEN, not of an earlier session) | A helper-only peer (FRR leaves without `bgp graceful-restart`) whose late second connection completes after the session came up gets its session ended: the graceful restart false positive of the one-uplink production template lab. |
 | Discard EVPN NLRIs of unknown route types ([osrg/gobgp#3742](https://github.com/osrg/gobgp/issues/3742)) | An EVPN route type that GoBGP does not know resets the session instead of being ignored (RFC 7606). |
 | Decode the EVPN ARP/ND extended community (RFC 9047, [osrg/gobgp#3746](https://github.com/osrg/gobgp/issues/3746)) | The router (R), override (O) and immutable (I) flags of a MAC/IP route, and the proxy flag that FRR sends, are not available to BOOTy. |
-| Feature: `ResetPeerRequest.BfdDown` sends Cease/BFD Down (RFC 9384), opt-in, as a reset: `IdleHoldTimeAfterReset` applies, also for a peer without a session (booty.4; booty.17: built on the upstream subcode of 93858cae); BOOTy sets it for its BFD resets | The peer of a BFD reset gets Cease/Administrative Reset (subcode 4), not BFD Down (subcode 10) like from FRR. Upstream sends BFD Down only from its native BFD (7d11a2c2), with the backed-off idle hold time. |
+| Idle hold backoff with the rules of `v_start` of FRR 10.2.1 instead of those of upstream 4e70e768; a reset of a peer without a session also sets the backoff back to 1 s like `peer_clear` (booty.19) | GoBGP doubles the idle hold time also for a hold timer expiry and for a NOTIFICATION in OpenSent, where FRR goes back to 1 s: a peer that keeps failing in OpenSent waits up to 120 s in Idle, and GoBGP refuses its connections meanwhile. |
+| Feature: `ResetPeerRequest.BfdDown` sends Cease/BFD Down (RFC 9384), opt-in, as a reset: `IdleHoldTimeAfterReset` applies, also for a peer without a session (booty.4; booty.17: built on the upstream subcode of 93858cae; booty.19: two resets in a row keep their mark); BOOTy sets it for its BFD resets | The peer of a BFD reset gets Cease/Administrative Reset (subcode 4), not BFD Down (subcode 10) like from FRR. Upstream sends BFD Down only from its native BFD (7d11a2c2), with the backed-off idle hold time. |
 | Feature: `TimersConfig.ConnectAtOnce` starts the first connect after Idle at once, opt-in; BOOTy sets it with `BGP_CONNECT_AT_ONCE` (off by default) | GoBGP waits a random 1.5 to 2 s before it connects ([osrg/gobgp#3736](https://github.com/osrg/gobgp/issues/3736)); FRR connects when `BGP_Start` runs. |
 | Feature: Enhanced Route Refresh (RFC 7313), always on, with a bound (the graceful restart stale routes time, else 360 s) on the routes that a BoRR without EoRR leaves stale | The OPEN lacks the capability that FRR sends; a refresh from the peer has no begin and end markers, so stale routes are not swept. |
 | Feature: Paths-Limit capability (limit 0, no limit), always sent for the families that receive with ADD-PATH | The OPEN lacks the capability that FRR sends with ADD-PATH. |
@@ -640,7 +653,7 @@ GoBGP 4 is required: GoBGP 3.37 panics on a truncated EVPN NLRI from any
 peer, also on an IPv4-only session, which ends BOOTy (PID 1);
 `TestEVPNDecodeTruncatedNLRIReturnsError` pins that 4.10 returns an error.
 
-Drop the replace when an osrg/gobgp release contains all eighteen changes
+Drop the replace when an osrg/gobgp release contains all nineteen changes
 (for the two opt-in features, with the same API). Then
 check the GO-2026-4736 exception in `hack/check-govulncheck.py`: it names
 `github.com/osrg/gobgp/v4` 4.10.0, which govulncheck does not report while
@@ -655,7 +668,7 @@ the change.
 | Image flavors | Default and `iso` flavors only (`make iso`, `make docker`, `make dockerx86`). `slim`, `micro`, `gobgp` and `gobgp-iso` ship no FRR binaries | All flavors. The BOOTy binary is the same in every flavor |
 | Peer modes | Unnumbered only, on all detected physical NICs. `BGP_PEER_MODE`, `BGP_INTERFACES` and `BGP_NEIGHBORS` are ignored | With `frr.conf` neighbors or `BGP_SESSIONS`: one session per neighbor (see [BGP sessions](#bgp-sessions)). Otherwise `unnumbered`, `dual`, `numbered` (see [GoBGP peer modes](#gobgp-peer-modes)) |
 | Remote AS | Peer group with `remote-as external` (eBGP only) | Per session: number, `internal` or `external`. Without sessions: unnumbered learns it from the peer OPEN, numbered uses `BGP_REMOTE_ASN` (`0` means iBGP) |
-| BFD | Yes. `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` together create the `datacenter` BFD profile on the fabric peers and the DCGWs | Yes, BOOTy's own BFD (`pkg/network/bfd`): asynchronous mode, RFC 5881 single-hop (IPv4 and IPv6 link-local) and RFC 5883 multihop, Poll/Final, no echo or authentication. BOOTy does not ask for Demand mode itself, but it honours a peer's Demand (D) bit: no periodic packets while both sides are Up and no Poll Sequence runs (RFC 5880 6.8.7). Like FRR bfdd it advertises Required Min Echo RX 50 ms. Echo mode on the leaf is not supported: the 50 ms invites a peer with `echo-mode` to send echo packets, which come back only through IP forwarding, and with `IP_FORWARDING=false` (the bm4x template) the ramdisk drops them, so that peer's echo session fails. For IPv4 the legacy ramdisk (FRR bfdd) has the same exposure; for IPv6 FRR 10.3 bfdd loops the echo packets back in software (`bp_bfd_echo_in`), BOOTy does not. The fabric does not enable echo mode. `neighbor X bfd` in `frr.conf` with the profile timers (FRR defaults 300/300/3), or `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` for the native peers. BFD down resets the BGP session, which connects again after 1 s like FRR 10.3 bgpd (Cease subcode 4 instead of 10) |
+| BFD | Yes. `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` together create the `datacenter` BFD profile on the fabric peers and the DCGWs | Yes, BOOTy's own BFD (`pkg/network/bfd`): asynchronous mode, RFC 5881 single-hop (IPv4 and IPv6 link-local) and RFC 5883 multihop, Poll/Final, no echo or authentication. BOOTy does not ask for Demand mode itself, but it honours a peer's Demand (D) bit: no periodic packets while both sides are Up and no Poll Sequence runs (RFC 5880 6.8.7). Like FRR bfdd it advertises Required Min Echo RX 50 ms. Echo mode on the leaf is not supported: the 50 ms invites a peer with `echo-mode` to send echo packets, which come back only through IP forwarding, and with `IP_FORWARDING=false` (the bm4x template) the ramdisk drops them, so that peer's echo session fails. For IPv4 the legacy ramdisk (FRR bfdd) has the same exposure; for IPv6 FRR 10.3 bfdd loops the echo packets back in software (`bp_bfd_echo_in`), BOOTy does not. The fabric does not enable echo mode. `neighbor X bfd` in `frr.conf` with the profile timers (FRR defaults 300/300/3), or `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` for the native peers. BFD down resets the BGP session with Cease/BFD Down (subcode 10) like FRR, and GoBGP connects again after `IdleHoldTimeAfterReset` (1 s); FRR waits 2 s, because writing the NOTIFICATION doubles `v_start` |
 | Authentication | `BGP_AUTH_PASSWORD` as TCP-MD5 on the fabric peer group and the DCGWs. Whitespace and control characters are rejected | `BGP_AUTH_PASSWORD` as TCP-MD5 on all peers |
 | Timers | `BGP_KEEPALIVE` and `BGP_HOLD` apply only when both are set. Otherwise FRR uses its `datacenter` defaults | Per session from `frr.conf` or `BGP_SESSIONS`, else the `frr defaults` profile. Without sessions: keepalive 3 s, hold 9 s, connect retry 5 s; hold must be 0 or at least 3 and keepalive must not exceed hold / 3 |
 | Peer readiness | Not checked. The connectivity check only polls the target URL | `BGP_MIN_PEERS` established peers (default 1) before the target poll |

@@ -63,7 +63,7 @@ require (
 // GoBGP master after 4.10.0 (57fa92f1) plus the BOOTy fixes; why, and when
 // to drop it:
 // docs/networking.md#gobgp-version-and-fork
-replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.18
+replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.19
 
 // gopacket 1.7.4 and netlink 1.3.1 plus the BOOTy fixes; why, and when to
 // drop them: docs/dependency-forks.md

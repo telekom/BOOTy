@@ -18,11 +18,15 @@ import (
 // peerRestarter starts a GoBGP peer again at once when its session ends
 // while BOOTy keeps the peer up. GoBGP then holds the peer in Idle for its
 // idle hold time and closes every connection that the peer opens meanwhile
-// (RFC 4271 section 8.2.2). Since osrg/gobgp 4e70e768 the idle hold time
-// backs off like FRR's start timer: 1 s after a TCP close, doubled after
-// each NOTIFICATION, hold timer expiry or invalid message, up to 120 s,
-// and 1 s again after Established (before: a fixed 5 s, osrg/gobgp#3735;
-// lab: 36 s against 2.3 s for FRR). A leaf that ends the session (clear
+// (RFC 4271 section 8.2.2). Since the GoBGP fork tag v4.10.0-booty.19 the
+// idle hold time follows v_start of FRR 10.2.1 (before: a fixed 5 s,
+// osrg/gobgp#3735; lab: 36 s against 2.3 s for FRR): 1 s after
+// Established and after an administrative shutdown; doubled, up to 120 s,
+// for a NOTIFICATION received in OpenConfirm or Established and for a
+// NOTIFICATION that GoBGP sends for a message error or BFD Down; back to
+// 1 s for a hold timer expiry and for the FSM Error in OpenSent; kept for
+// a closed TCP connection. A reset (ResetPeer) waits
+// IdleHoldTimeAfterReset (idleHoldAfterReset). A leaf that ends the session (clear
 // bgp, BFD down on the leaf, hold timer) and connects again when FRR's
 // start timer expires (1 s after a TCP close, 2 s after a NOTIFICATION)
 // can still be refused and then retries only after its connect timer. FRR
