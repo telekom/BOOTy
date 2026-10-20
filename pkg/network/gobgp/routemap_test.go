@@ -58,8 +58,8 @@ func TestBuildPolicyTemplate(t *testing.T) {
 		t.Fatalf("TAG-FABRIC-IN actions = %v", tag)
 	}
 	for _, set := range p.sets {
-		if set.GetDefinedType() == apipb.DefinedType_DEFINED_TYPE_NEIGHBOR && set.GetList()[0] != "fe80::1/128" {
-			t.Fatalf("neighbor set %s = %v, want the address without zone", set.GetName(), set.GetList())
+		if set.GetDefinedType() == apipb.DefinedType_DEFINED_TYPE_NEIGHBOR && set.GetList()[0] != "fe80::1%eth1/128" {
+			t.Fatalf("neighbor set %s = %v, want the address with its zone", set.GetName(), set.GetList())
 		}
 	}
 	if _, err := buildPolicy(peers, templateMaps[:1], nil); err == nil {
@@ -68,6 +68,23 @@ func TestBuildPolicyTemplate(t *testing.T) {
 	deny := []network.CommunityList{{Name: "cm-received-fabric", Entries: []network.CommunityListEntry{{Deny: true, Communities: []string{"1:1"}}}}}
 	if _, err := buildPolicy(peers, templateMaps, deny); err == nil {
 		t.Fatal("community-list deny entry accepted")
+	}
+}
+
+// Only a link-local address keeps its zone: GoBGP sees a zone only on a
+// link-local neighbor (the TCP scope), so a zone on another address would
+// never match.
+func TestHostPrefix(t *testing.T) {
+	for in, want := range map[string]string{
+		"fe80::1%eth0":     "fe80::1%eth0/128",
+		"fe80::1":          "fe80::1/128",
+		"2001:db8::1%eth0": "2001:db8::1/128",
+		"2001:db8::1":      "2001:db8::1/128",
+		"192.0.2.1":        "192.0.2.1/32",
+	} {
+		if got := hostPrefix(netip.MustParseAddr(in)); got != want {
+			t.Errorf("hostPrefix(%s) = %s, want %s", in, got, want)
+		}
 	}
 }
 

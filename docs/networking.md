@@ -167,17 +167,12 @@ same resolution:
   (the switch came back with another MAC). A switch that does not answer
   at setup gets its peer on a placeholder address that moves the same
   way. A moved peer takes only the route-maps and the `bgp
-  ebgp-requires-policy` reject of its own session, also when it leaves an
-  address that a peer on another port still has (all placeholders are
-  one address). Deviation: this adds 3 to 4 s (the 3 s grace and the 1 s
-  round) to the recovery after such a change; FRR follows the RA at once
-  (lab: FRR 1.5 to 2.8 s, BOOTy 5.3 to 6.6 s after a 95 s outage with a
-  new MAC).
-- Deviation: unnumbered peers with the same link-local address on
-  different ports (for example two switches that both use `fe80::1`)
-  share their route-maps and the `bgp ebgp-requires-policy` reject,
-  because GoBGP neighbor sets have no zone. A session can then come up
-  and exchange no routes. A fix is in progress.
+  ebgp-requires-policy` reject of its own session, also when a peer on
+  another port has the same address (the placeholder, or a switch with
+  the same link-local address). Deviation: this adds 3 to 4 s (the 3 s
+  grace and the 1 s round) to the recovery after such a change; FRR
+  follows the RA at once (lab: FRR 1.5 to 2.8 s, BOOTy 5.3 to 6.6 s after
+  a 95 s outage with a new MAC).
 - `neighbor X allowas-in [N]` (native `allowASIn`, FRR's default N is 3)
   accepts paths with the own AS up to N times. GoBGP has one count per
   session, so a session uses the highest count of its families.
@@ -199,6 +194,11 @@ same resolution:
   route-map that a session names but that is not defined stops the setup
   (fail-fast); FRR instead denies all routes of that peer in that
   direction. A community-list `deny` entry stops the setup too.
+  The route-maps and the `bgp ebgp-requires-policy` reject of an
+  unnumbered session match its link-local address with the interface, so
+  sessions on different ports keep their own policy also when the switches
+  use the same link-local address (`fe80::1` on every port), like the
+  per-interface peers of FRR.
 - Route-map coverage: the production template (bm4x-operator provcfg
   `frr.conf.tpl`) uses `route-map NAME permit|deny SEQ`, `set
   local-preference`, `set community ... additive`, and `match community`
@@ -630,10 +630,10 @@ BOOTy's other dependency forks (gopacket, netlink) are listed in
 [Dependency forks](dependency-forks.md).
 
 GoBGP mode embeds GoBGP through a fork tag:
-`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.21`
+`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.22`
 in `go.mod`. The tag is upstream master 57fa92f1 (2026-10-20, after
 4.10.0; there is no newer release) on the fork branch `booty/master`,
-with eighteen fixes and four features that upstream does not have. The
+with nineteen fixes and four features that upstream does not have. The
 tags up to v4.10.0-booty.16 are v4.10.0 with the fixes on the branch
 `booty/v4.10`. Do not use the tag v4.10.0-booty.7: it stops answering a
 NOTIFICATION in OpenSent, which RFC 4271 section 8.2.2 does not allow
@@ -663,6 +663,7 @@ NLRIs that use it (f5881559).
 | Discard EVPN NLRIs of unknown route types ([osrg/gobgp#3742](https://github.com/osrg/gobgp/issues/3742)) | An EVPN route type that GoBGP does not know resets the session instead of being ignored (RFC 7606). |
 | Decode the EVPN ARP/ND extended community (RFC 9047, [osrg/gobgp#3746](https://github.com/osrg/gobgp/issues/3746)) | The router (R), override (O) and immutable (I) flags of a MAC/IP route, and the proxy flag that FRR sends, are not available to BOOTy. |
 | `DisablePeer` of a peer that already waits in Idle sets the idle hold time and the backoff back to 1 s, like `no neighbor shutdown` in FRR (bgpd.c:4941) (booty.21) | `DisablePeer` and `EnablePeer` of a peer that waited a backed-off time in Idle (up to 120 s) waited it again after the carrier returned. |
+| A neighbor set entry can carry the IPv6 zone (`fe80::1%eth0/128`) and then matches only the neighbor with that zone; an entry without a zone matches every zone as before (booty.22; upstream master has the same gap). BOOTy writes the zone for every link-local peer | Unnumbered peers on different ports whose switches have the same link-local address (`fe80::1` on every port) share all neighbor sets: one port's route-maps and `bgp ebgp-requires-policy` reject apply to the other port too, and a session can be Established but exchange no routes. |
 | `EnablePeer` or `DisablePeer` for the admin state that the peer already has changes nothing (booty.20; also on upstream master) | The request flipped `State.AdminDown`, so the API reported the wrong admin state, and in Idle it started the idle hold timer again. |
 | The latest admin state request wins when the FSM has not taken the one before it (booty.20; also on upstream master) | The request was dropped with a log line only: `DisablePeer`, `EnablePeer`, `DisablePeer` in a row could leave the peer up. |
 | Idle hold backoff with the rules of `v_start` of FRR 10.2.1 instead of those of upstream 4e70e768; a reset of a peer without a session also sets the backoff back to 1 s like `peer_clear` (booty.19) | GoBGP doubles the idle hold time also for a hold timer expiry and for a NOTIFICATION in OpenSent, where FRR goes back to 1 s: a peer that keeps failing in OpenSent waits up to 120 s in Idle, and GoBGP refuses its connections meanwhile. |
