@@ -16,17 +16,22 @@ import (
 )
 
 // peerRestarter starts a GoBGP peer again at once when its session ends
-// while BOOTy keeps the peer up. GoBGP then holds the peer 5 s in Idle
-// (holdtimeIdle, pkg/server/fsm.go) and closes every connection that the
-// peer opens meanwhile, so a leaf that ends the session (clear bgp, BFD
-// down on the leaf, hold timer) and connects again when FRR's start timer
-// expires (1 s after a TCP close, 2 s after a NOTIFICATION) is refused and retries only after its connect timer
-// (osrg/gobgp#3735; lab: 36 s against 2.3 s for FRR). FRR accepts
-// connections while it waits. A peer that is added again starts in Active
-// at once: it accepts the leaf's connection and, with BGP_CONNECT_AT_ONCE
-// (ConnectAtOnce), connects itself at once. ConnectAtOnce does not replace the
-// restart: it shortens the first connect after Idle, but GoBGP still holds
-// the peer 5 s in Idle and refuses the leaf meanwhile.
+// while BOOTy keeps the peer up. GoBGP then holds the peer in Idle for its
+// idle hold time and closes every connection that the peer opens meanwhile
+// (RFC 4271 section 8.2.2). Since osrg/gobgp 4e70e768 the idle hold time
+// backs off like FRR's start timer: 1 s after a TCP close, doubled after
+// each NOTIFICATION, hold timer expiry or invalid message, up to 120 s,
+// and 1 s again after Established (before: a fixed 5 s, osrg/gobgp#3735;
+// lab: 36 s against 2.3 s for FRR). A leaf that ends the session (clear
+// bgp, BFD down on the leaf, hold timer) and connects again when FRR's
+// start timer expires (1 s after a TCP close, 2 s after a NOTIFICATION)
+// can still be refused and then retries only after its connect timer. FRR
+// accepts connections while it waits. A peer that is added again starts
+// in Active at once: it accepts the leaf's connection and, with
+// BGP_CONNECT_AT_ONCE (ConnectAtOnce), connects itself at once.
+// ConnectAtOnce does not replace the restart: it shortens the first
+// connect after Idle, but GoBGP still holds the peer in Idle and refuses
+// the leaf meanwhile.
 type peerRestarter struct {
 	// peers returns the GoBGP peer addresses whose host is addr: the peer
 	// state events carry the address without the zone of a link-local

@@ -318,9 +318,10 @@ func TestResetPeerReestablishes(t *testing.T) {
 
 	// Carrier loss past BFD: the carrier code disables the peer, BFD then
 	// resets the peer without a session, and the carrier comes back. The
-	// peer must start with the 1 s idle hold after reset, not the 5 s
-	// holdtimeIdle (osrg/gobgp#3740, for BFD Down since the fork tag
-	// v4.10.0-booty.4).
+	// peer must start with the 1 s idle hold after reset (osrg/gobgp#3740,
+	// for BFD Down since the fork tag v4.10.0-booty.4; before
+	// v4.10.0-booty.17 the alternative was the fixed 5 s holdtimeIdle,
+	// since then it is the 1 s that the administrative shutdown leaves).
 	if err := a.srv.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: "127.0.0.1", Communication: "interface down"}); err != nil {
 		t.Fatal(err)
 	}
@@ -336,11 +337,11 @@ func TestResetPeerReestablishes(t *testing.T) {
 	t.Logf("connecting %s after the carrier came back", time.Since(start).Round(100*time.Millisecond))
 
 	// A short carrier flap: the carrier comes back before BFD goes down,
-	// so the peer already waits the 5 s holdtimeIdle of the
-	// administrative shutdown when BFD resets it. The reset shortens the
-	// running wait to the 1 s idle hold after reset (fork tag
-	// v4.10.0-booty.6); before, the leaf's connection was refused for the
-	// rest of the 5 s.
+	// so the peer already waits in Idle after the administrative shutdown
+	// when BFD resets it. The reset shortens a longer running wait to the
+	// 1 s idle hold after reset and never makes it longer (fork tag
+	// v4.10.0-booty.6). Before v4.10.0-booty.17 that wait was the fixed
+	// 5 s holdtimeIdle; since then the administrative shutdown leaves 1 s.
 	wait("Established before the flap", is(apipb.PeerState_SESSION_STATE_ESTABLISHED), 15*time.Second)
 	if err := a.srv.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: "127.0.0.1", Communication: "interface down"}); err != nil {
 		t.Fatal(err)
