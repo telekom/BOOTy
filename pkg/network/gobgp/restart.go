@@ -159,16 +159,28 @@ func keepsGracefulRestartRoutes(p *apipb.Peer) bool {
 func (u *UnderlayTier) restartPeer(ctx context.Context, addr string) (bool, error) {
 	u.peerOps.Lock()
 	defer u.peerOps.Unlock()
-	conf := u.peerConfs[addr]
-	if conf == nil || !u.needsRestart(ctx, addr) {
+	if u.peerConfs[addr] == nil || !u.needsRestart(ctx, addr) {
 		return false, nil // moved by the relearner, or no longer waiting
 	}
+	return true, u.readdPeer(ctx, addr)
+}
+
+// readdPeer deletes the peer at addr and adds it again as it was added.
+// A new GoBGP peer goes to Active at once: it accepts the leaf's
+// connection and connects itself, where an existing peer waits its idle
+// hold time in Idle and closes the leaf's connections meanwhile. The
+// caller holds peerOps.
+func (u *UnderlayTier) readdPeer(ctx context.Context, addr string) error {
+	conf := u.peerConfs[addr]
+	if conf == nil {
+		return fmt.Errorf("peer %s: not added", addr)
+	}
 	if err := u.bgp.DeletePeer(ctx, &apipb.DeletePeerRequest{Address: addr}); err != nil {
-		return false, fmt.Errorf("delete peer %s: %w", addr, err)
+		return fmt.Errorf("delete peer %s: %w", addr, err)
 	}
 	peer, _ := proto.Clone(conf).(*apipb.Peer)
 	if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
-		return false, fmt.Errorf("add peer %s: %w", addr, err)
+		return fmt.Errorf("add peer %s: %w", addr, err)
 	}
-	return true, nil
+	return nil
 }

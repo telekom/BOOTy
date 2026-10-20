@@ -342,3 +342,125 @@ func TestPeerStateEventDropsZone(t *testing.T) {
 		t.Fatalf("peerStateEvent() = %v, want fe80::1 established up", s)
 	}
 }
+
+// The kindmetal EVPN parity run with both leaves down: on one uplink BFD
+// fails before the carrier (BFD reset, the restarter adds the peer again,
+// then the carrier loss stops it), on the other after it. When the
+// carrier returns, the leaf connects at once (FRR starts the session on
+// interface up), and BOOTy must accept it at once. With EnablePeer GoBGP
+// waits its idle hold time first and closes the leaf's connection: 5 s
+// for the first uplink (holdtimeIdle), 1 s for the second (the BFD reset
+// set IdleHoldTimeAfterReset), and both sessions were back only after
+// BOOTy's own connect.
+func TestCarrierReturnStartsPeerAtOnce(t *testing.T) {
+	if testing.Short() {
+		t.Skip("takes up to 2 s")
+	}
+	ctx := context.Background()
+	bootyPort := freePort(t)
+	u := &UnderlayTier{bgp: startServerAt(t, 65001, "10.0.0.1", "127.0.0.1", bootyPort), log: slog.Default()}
+	timers := func(atOnce bool) *apipb.Timers {
+		return &apipb.Timers{Config: &apipb.TimersConfig{ConnectRetry: 10, HoldTime: 9, KeepaliveInterval: 3, IdleHoldTimeAfterReset: idleHoldAfterReset, ConnectAtOnce: atOnce}}
+	}
+	type uplink struct {
+		iface, addr string
+		leaf        *server.BgpServer
+	}
+	links := []*uplink{{iface: "eth0", addr: "127.0.0.2"}, {iface: "eth1", addr: "127.0.0.3"}}
+	leafPeer := func(l *uplink) *apipb.Peer {
+		return &apipb.Peer{
+			Conf:      &apipb.PeerConf{NeighborAddress: "127.0.0.1", PeerAsn: 65001},
+			Transport: &apipb.Transport{LocalAddress: l.addr, RemotePort: uint32(bootyPort)}, //nolint:gosec // test port
+			Timers:    timers(true), AfiSafis: ipv4Families(),
+		}
+	}
+	ifaces := map[string]string{}
+	for i, l := range links {
+		port := freePort(t)
+		l.leaf = startServerAt(t, uint32(65002+i), l.addr, l.addr, port) //nolint:gosec // small
+		if err := l.leaf.AddPeer(ctx, &apipb.AddPeerRequest{Peer: leafPeer(l)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := u.addPeer(ctx, &apipb.Peer{
+			Conf:      &apipb.PeerConf{NeighborAddress: l.addr, PeerAsn: uint32(65002 + i)},  //nolint:gosec // small
+			Transport: &apipb.Transport{LocalAddress: "127.0.0.1", RemotePort: uint32(port)}, //nolint:gosec // test port
+			Timers:    timers(false), AfiSafis: ipv4Families(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		u.recordInterfacePeer(l.iface, l.addr)
+		ifaces[l.iface] = l.addr
+	}
+	if err := u.startRestarter(); err != nil {
+		t.Fatal(err)
+	}
+	defer u.stopRestart()
+	w := u.newCarrierWatch(ifaces)
+	w.announce = func(string) {}
+	w.raRepeat = 0
+
+	waitFor := func(addr string, ok func(*apipb.Peer) bool) {
+		t.Helper()
+		for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			done := false
+			_ = u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) { done = ok(p) })
+			if done {
+				return
+			}
+		}
+		t.Fatalf("peer %s: state not reached", addr)
+	}
+	established := func(p *apipb.Peer) bool {
+		return p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_ESTABLISHED
+	}
+	bfdDown := func(addr string) {
+		t.Helper()
+		if err := u.bgp.ResetPeer(ctx, &apipb.ResetPeerRequest{Address: addr, BfdDown: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	carrierLoss := func(l *uplink) {
+		t.Helper()
+		w.handle(l.iface, false)
+		if err := l.leaf.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: "127.0.0.1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, l := range links {
+		waitFor(l.addr, established)
+	}
+
+	// eth0: BFD Down, the restarter adds the peer again, then the carrier goes.
+	bfdDown(links[0].addr)
+	waitFor(links[0].addr, func(p *apipb.Peer) bool { return p.GetTimers().GetState().GetUptime() == nil })
+	carrierLoss(links[0])
+	// eth1: the carrier goes, then BFD Down.
+	carrierLoss(links[1])
+	bfdDown(links[1].addr)
+	for _, l := range links {
+		waitFor(l.addr, func(p *apipb.Peer) bool {
+			return p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_DOWN && p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_IDLE
+		})
+	}
+
+	start := time.Now()
+	for _, l := range links {
+		w.handle(l.iface, true)
+		// The leaf starts the session at once on interface up, like FRR.
+		if err := l.leaf.DeletePeer(ctx, &apipb.DeletePeerRequest{Address: "127.0.0.1"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := l.leaf.AddPeer(ctx, &apipb.AddPeerRequest{Peer: leafPeer(l)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	limited, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	for _, l := range links {
+		if _, ok := waitEstablished(limited, u.bgp, l.addr, 0); !ok {
+			t.Errorf("%s: not Established within 1.5 s after the carrier returned", l.iface)
+			continue
+		}
+		t.Logf("%s: Established %v after the carrier returned", l.iface, time.Since(start))
+	}
+}

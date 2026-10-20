@@ -293,7 +293,16 @@ same resolution:
   `network.bgp.fastExternalFailover`, `BGP_FAST_EXTERNAL_FAILOVER`; on by
   default like FRR) stops an unnumbered session as soon as its NIC loses
   carrier. Native sessions without the setting keep a
-  `no bgp fast-external-failover` of `frr.conf` in the same VRF.
+  `no bgp fast-external-failover` of `frr.conf` in the same VRF. When the
+  carrier returns, BOOTy starts the session at once, like FRR
+  (`bgp_start_interface_nbrs` in `bgp_zebra.c`): it deletes the GoBGP peer
+  and adds it again, as after a session end (above). GoBGP's
+  `EnablePeer` would first wait the idle hold time in Idle and close the
+  leaf's connections meanwhile: 5 s (`holdtimeIdle`) for a peer that BFD
+  reset before the carrier loss, 1 s (`IdleHoldTimeAfterReset`) when BFD
+  went down after it. In the kindmetal EVPN parity run with both leaves
+  down this delayed one uplink by 5 s, and all four sessions were back
+  after 6.8 s against 4.6 to 5.7 s for FRR.
 
 GoBGP mode installs the learned IPv4 and IPv6 unicast routes like zebra:
 into the table of each session's VRF (the main table without a VRF), with

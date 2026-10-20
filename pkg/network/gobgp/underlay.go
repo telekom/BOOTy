@@ -780,6 +780,13 @@ func (u *UnderlayTier) startCarrierWatch() {
 func (u *UnderlayTier) newCarrierWatch(peers map[string]string) *carrierWatch {
 	w := newCarrierWatch(u.bgp, peers, u.log)
 	w.current = u.ifacePeer
+	// FRR starts the session at once when the interface comes up
+	// (bgp_zebra.c, bgp_start_interface_nbrs: BGP_Stop, BGP_Start).
+	// GoBGP's EnablePeer restarts the idle hold timer instead: 5 s
+	// (holdtimeIdle) once the peer has left Idle, or IdleHoldTimeAfterReset
+	// after a BFD reset while the carrier was gone, and it closes the
+	// leaf's connections meanwhile. A peer added again starts at once.
+	w.enable = u.readdPeer
 	// Under peerOps, so the peer restarter cannot delete and add a peer
 	// between the stop and its own check, which would leave it up on a
 	// link without carrier.
