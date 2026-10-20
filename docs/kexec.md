@@ -39,13 +39,13 @@ checked against a primary source in this repository are marked "verify".
 | Path resolution | The kernel and initrd paths are resolved under the target root, then under `/boot` inside it. Symlinks are followed only inside the target root. | `main.go` (`resolveKexecPath`, `resolveKexecCandidate`) |
 | Load | `kexec_file_load(kernel_fd, initrd_fd, cmdline, flags=0)`. | `pkg/kexec/kexec_linux.go` (`Load`) |
 | Release target | After the load, BOOTy unmounts every mount below the target root; a busy block device mount is remounted read-only. `KEXEC_UNMOUNT_TARGET=false` keeps it mounted. | `main.go` (`releaseKexecTarget`), `pkg/disk` (`UnmountOrRemountReadOnly`) |
-| 1. Watchdog | `watchdogHandoff(false)` disarms the watchdog: the magic close (`V`) for `/dev/watchdog`, an IPMI Set Watchdog Timer without action (stop) for the BMC watchdog of the IPMI fallback (PR #816). `WATCHDOG_HANDOFF=keep` leaves either armed. | `main_watchdog.go`, `pkg/watchdog/device_linux.go`, `pkg/watchdog/bmc_linux.go` |
+| 1. Watchdog | `watchdogHandoff(false)` disarms the watchdog: the magic close (`V`) for `/dev/watchdog`, an IPMI Set Watchdog Timer without action (stop) for the BMC watchdog of the IPMI fallback (PR #721; since PR #816 over `/dev/ipmi0` without `ipmitool`). `WATCHDOG_HANDOFF=keep` leaves either armed. | `main_watchdog.go`, `pkg/watchdog/device_linux.go`, `pkg/watchdog/bmc_linux.go` |
 | 2. LLDP shutdown | `stopLLDPEmit` stops the every-NIC LLDP sender, which sends the IEEE 802.1AB shutdown LLDPDU (TTL 0) on each NIC. | `main.go` (`stopLLDPEmit`), `pkg/network/lldp/tx.go` (`ShutdownFrame`) |
 | 3. Log flush | `flushLogs` (`flushObservability`) closes the CAPRF log handler; the bounded ring waits up to `LOG_FLUSH_TIMEOUT_SEC` (default 5 s) for queued lines. | `main.go` (`doKexecExecute`, `flushObservability`), `pkg/caprf/loghandler.go` |
 | 4. Network stop | `stopNetwork` (`stopNetworkOnce`, PR #723) tears the network mode down once and waits at most 5 s (`networkStopTimeout`). GoBGP mode sends a Cease NOTIFICATION to every peer and BFD AdminDown; FRR mode stops FRR (`frr.Manager.Teardown`). | `main.go` (`stopNetworkOnce`) |
 | 5. Execute | `sync()`, then `reboot(LINUX_REBOOT_CMD_KEXEC)`. | `pkg/kexec/kexec_linux.go` (`Execute`) |
 | Fallback | Any failure before or in execute returns `false`; BOOTy cleans up the target mounts and reboots through `reboot(2)`, or powers off for A/B preserve-existing. | `main.go` (`cleanupFailedKexecTarget`, `handleProvisionHandoff`) |
-| A/B rule | With `IMAGE_MODE=ab` and `AB_PRESERVE_EXISTING=true`, a missing kexec leads to a power off, not a reboot, because the firmware boot path still points at the old slot. Config validation rejects `DISABLE_KEXEC`, `SECUREBOOT_REENABLE`, `SUCCESS_ACTION=poweroff` and `CAPRF_LEGACY_COMPAT` with it. | `pkg/provision/orchestrator.go` (`RequiresABKexec`), `docs/ab-partitioning.md` |
+| A/B rule | With `IMAGE_MODE=ab` and `AB_PRESERVE_EXISTING=true`, a missing kexec leads to a power off, not a reboot, because the firmware boot path still points at the old slot. Config validation rejects `DISABLE_KEXEC`, `SECUREBOOT_REENABLE` and `SUCCESS_ACTION=poweroff` with it. `CAPRF_LEGACY_COMPAT` presets `SUCCESS_ACTION=poweroff` only when `SUCCESS_ACTION` is not set explicitly; validation does not reject `CAPRF_LEGACY_COMPAT` itself. | `pkg/provision/orchestrator.go` (`RequiresABKexec`), `docs/ab-partitioning.md` |
 
 `doKexecExecute` runs steps 1 to 5 in this order, after the target release.
 
@@ -149,7 +149,7 @@ not happen.
   | `kexec_file_load`, Canonical-signed (Ubuntu) kernel | `ENOKEY` | `tryKexec` fails, BOOTy reboots |
   | `kexec_file_load`, unsigned kernel | `ENODATA` | BOOTy reboots |
   | `kexec_load` | `EACCES` | not used by BOOTy |
-  | PCI config write, BAR `mmap` | `EPERM` | `mstconfig` (`NUM_VFS`) fails, so the firmware-change path that disables kexec does not run either |
+  | PCI config write, BAR `mmap` | `EPERM` | `mstconfig` fails, so `setup-mellanox` fails: a run with `NUM_VFS` > 0 fails under Secure Boot, with no kexec and no handoff (configure SR-IOV out of band) |
 
   Without Secure Boot, `lockdown=integrity` on the command line gives the
   same denials, and the Debian kernel is also refused, because the Debian CA
@@ -211,9 +211,11 @@ not happen.
 ## 7. Memory
 
 - The new kernel and initrd are loaded into memory before the jump, while
-  BOOTy's own ramdisk is still in RAM: since PR #782 the base ramdisk and the
-  payload archives it booted with (today only `frr`; `qemu-img` and
-  `ipmitool` are no payloads since PR #815 and PR #816). BOOTy does not check
+  BOOTy's own ramdisk is still in RAM. The ISO targets ship one initramfs
+  with FRR inside (`initrd.Dockerfile`). Only the optional `--target=split`
+  build (PR #782) has a base ramdisk plus payload archives, which all stay
+  in RAM (today only `frr`; `qemu-img` and `ipmitool` are not payloads since
+  PR #815 and PR #816). BOOTy does not check
   free memory before the load. When `kexec_file_load` fails with `ENOMEM`,
   `tryKexec` returns `false` and BOOTy reboots through the firmware.
 - Placement limits: on x86 the initrd must fit where the new kernel's boot
@@ -258,8 +260,10 @@ confirmed cases in the quirks database.
   `stopNetwork` and then `kexecExecute` (`main.go`). `stopNetworkOnce` tears
   the network mode down once and waits at most 5 s: GoBGP mode sends a BGP
   Cease NOTIFICATION to every peer and BFD AdminDown; FRR mode stops FRR
-  (`frr.Manager.Teardown`). The leaf ends the sessions at once, not after
-  the BFD detection time or the BGP hold timer.
+  (`frr.Manager.Teardown`). With GoBGP the leaf ends the sessions at once,
+  not after the BFD detection time or the BGP hold timer. That the FRR stop
+  ends them at once in the same way is FRR behaviour that is not tested
+  here (verify).
 - A teardown that does not finish in 5 s does not stop the kexec. Sessions
   that were not closed then end on the leaf at the BFD detection time or
   the hold timer, because the link usually stays up during a kexec.
@@ -276,8 +280,9 @@ confirmed cases in the quirks database.
 - Intel firmware LLDP: with `LLDP_DISABLE_FW_AGENT=true` (default) BOOTy
   turns off the firmware LLDP agent of Intel NICs, and with it the firmware
   DCBX, and never turns them on again. They stay off after the kexec; ice
-  keeps the setting in the NVM, so it also survives a reboot (see
-  [configuration.md](configuration.md)).
+  keeps the setting in the NVM, so it also survives a reboot. Ports whose
+  agent an SR-IOV profile sets (`firmware.fwLLDPAgent`) are left to that
+  profile (see [configuration.md](configuration.md)).
 - MAC addresses: physical MACs are unchanged. Bond MACs and VF MACs set by
   BOOTy are not carried over, unless VFs survive (section 2).
 - VLAN, VRF, VXLAN devices created by BOOTy disappear with the old kernel.
@@ -314,7 +319,8 @@ confirmed cases in the quirks database.
   the same handoff. Kexec saves one POST per provision, the largest single
   saving of the fast cycle ([agent-fast-cycle.md](agent-fast-cycle.md),
   item 4.7).
-- Watchdog (PR #721, IPMI fallback PR #816): with `WATCHDOG_ENABLE=true`,
+- Watchdog (PR #721, also the IPMI fallback; PR #816 moved it to
+  `/dev/ipmi0` and dropped `ipmitool`): with `WATCHDOG_ENABLE=true`,
   BOOTy disarms the watchdog before kexec (`WATCHDOG_HANDOFF=stop`, default)
   or leaves it armed (`keep`). `stop` is the magic close for `/dev/watchdog`
   and an IPMI stop command for the BMC watchdog of the IPMI fallback
@@ -388,7 +394,8 @@ Knobs and recommended defaults:
 | `pkg/kexec` unit tests | `DefaultEntry` with real fixtures (Ubuntu 22.04 cloud image, Ubuntu 24.04 GCP with the initrdless fallback, CentOS Stream 9 BLS, Flatcar) and one test per refusal. | `pkg/kexec/default_test.go`, `pkg/kexec/testdata/` |
 | Target release | Unmount or read-only fallback before kexec. | `main_kexec_release_test.go`, `pkg/disk/kexec_release_test.go` |
 | Handoff message | `PlannedHandoff` decisions. | `pkg/provision` tests (PR #724) |
-| Network stop before the handoff | Order watchdog, LLDP shutdown, log flush, network stop, execute; one teardown, bounded wait; the stop before reboot and power off. | `main_network_stop_test.go` (PR #723) |
+| Network stop before the handoff | `doKexecExecute` runs the log flush, then the network stop, then the kexec (`TestDoKexecExecuteFlushesThenStopsNetwork`); `tryKexec` stops the network after the load; one teardown, bounded wait; the stop before reboot and power off. | `main_network_stop_test.go` (PR #723, PR #810) |
+| LLDP shutdown at the handoff | `doKexecExecute`, `reboot`, `requestReboot` and `requestPowerOff` call `stopLLDPEmit` (AST check; not the position of the call). | `main_test.go` (`TestHandoffsStopLLDPEmit`) |
 | A/B preserve-existing KVM scenarios | Upgrade paths that end in kexec. | `test/e2e/kvm/ab_sysext_test.go` |
 | Fast cycle timing | Deprovision and provision cycle time on every PR. | PR #715 |
 
@@ -405,6 +412,8 @@ Gaps:
 - No test of the BGP and BFD behaviour at the handoff with a real peer
   (#723 has unit tests; the CAPRF kindmetal EVPN lab is the planned place).
 - No test of the watchdog with `WATCHDOG_HANDOFF=keep` across kexec.
+- No test pins the full order in `doKexecExecute`: where `watchdogHandoff`
+  and `stopLLDPEmit` run relative to the log flush and the network stop.
 - No arm64 kexec test.
 - No test on real hardware of the EFI runtime handover, GPUs, RAID
   controllers or IOMMU state after kexec.
