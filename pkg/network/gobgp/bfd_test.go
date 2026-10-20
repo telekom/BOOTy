@@ -505,19 +505,20 @@ func TestBFDDownWhileStartingRecheck(t *testing.T) {
 }
 
 // A recheck checks the session it was started for. When BOOTy restarts
-// the peer (Idle, or a new uptime) and the new session comes up while BFD
+// the peer (Idle, deleted and added again, or a new uptime) and the new session comes up while BFD
 // is still Down, the recheck ends without a reset: the new session has
 // its own BFD Down.
 func TestBFDRecheckEndsWithItsSession(t *testing.T) {
 	now := time.Now()
 	for _, tt := range []struct {
-		name   string
-		first  apipb.PeerState_SessionState
-		firstT time.Time
-		idle   bool
+		name    string
+		first   apipb.PeerState_SessionState
+		firstT  time.Time
+		between []apipb.PeerState_SessionState // states before the new session
 	}{
-		{"restarted while coming up", apipb.PeerState_SESSION_STATE_ACTIVE, time.Time{}, true},
-		{"restarted after it came up", apipb.PeerState_SESSION_STATE_ESTABLISHED, now, false},
+		{"restarted while coming up", apipb.PeerState_SESSION_STATE_ACTIVE, time.Time{}, []apipb.PeerState_SessionState{apipb.PeerState_SESSION_STATE_IDLE}},
+		{"restarted after it came up", apipb.PeerState_SESSION_STATE_ESTABLISHED, now, nil},
+		{"deleted and added again", apipb.PeerState_SESSION_STATE_ACTIVE, time.Time{}, []apipb.PeerState_SessionState{apipb.PeerState_SESSION_STATE_UNSPECIFIED}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -534,9 +535,9 @@ func TestBFDRecheckEndsWithItsSession(t *testing.T) {
 			p := &bfd.Peer{Name: "198.51.100.1"}
 			u.bfdChanged(p, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
 			time.Sleep(50 * time.Millisecond)
-			if tt.idle {
+			for _, st := range tt.between {
 				mu.Lock()
-				state, at = apipb.PeerState_SESSION_STATE_IDLE, time.Time{}
+				state, at = st, time.Time{}
 				mu.Unlock()
 				time.Sleep(50 * time.Millisecond)
 			}
@@ -574,6 +575,79 @@ func TestBFDRecheckOncePerPeer(t *testing.T) {
 	mu.Lock()
 	state, at = apipb.PeerState_SESSION_STATE_ESTABLISHED, time.Now()
 	mu.Unlock()
+	time.Sleep(time.Second)
+	u.stopRechecks()
+	if n := resets.Load(); n != 1 {
+		t.Fatalf("resets = %d, want 1", n)
+	}
+}
+
+// A Down for a new session that arrives while the recheck of the old one
+// still runs (BOOTy restarted the peer within a tick) is checked: the
+// recheck binds to the new session and resets it if BFD stays Down.
+func TestBFDRecheckRebindsToNewSession(t *testing.T) {
+	var mu sync.Mutex
+	u1 := time.Now().Truncate(time.Second)
+	state, at := apipb.PeerState_SESSION_STATE_ESTABLISHED, u1
+	var resets atomic.Int32
+	u := &UnderlayTier{log: slog.Default(), bfdUpGrace: 300 * time.Millisecond,
+		now: func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return at
+		},
+		resetBGP: func(context.Context, string, string) { resets.Add(1) },
+		bgpSession: func(context.Context, string) (apipb.PeerState_SessionState, time.Time) {
+			mu.Lock()
+			defer mu.Unlock()
+			return state, at
+		},
+	}
+	p := &bfd.Peer{Name: "198.51.100.1"}
+	u.bfdChanged(p, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown) // the old session's Down
+	// Within one tick: BFD Up, BOOTy restarts the peer, the new session's Down.
+	u.bfdChanged(p, bfd.StateDown, bfd.StateUp, bfd.DiagNone)
+	mu.Lock()
+	at = u1.Add(5 * time.Second)
+	mu.Unlock()
+	u.bfdChanged(p, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
+	time.Sleep(time.Second)
+	u.stopRechecks()
+	if n := resets.Load(); n != 1 {
+		t.Fatalf("resets = %d, want 1: the new session's Down with BFD down for the grace time", n)
+	}
+}
+
+// A recheck that ended (BFD came Up again) leaves no entry behind: the
+// next Down starts a new recheck, which resets the session if BFD stays
+// Down.
+func TestBFDRecheckAfterAnEndedOne(t *testing.T) {
+	var resets atomic.Int32
+	u := &UnderlayTier{log: slog.Default(), bfdUpGrace: 200 * time.Millisecond,
+		resetBGP: func(context.Context, string, string) { resets.Add(1) },
+		bgpSession: func(context.Context, string) (apipb.PeerState_SessionState, time.Time) {
+			return apipb.PeerState_SESSION_STATE_OPENCONFIRM, time.Time{}
+		},
+	}
+	p := &bfd.Peer{Name: "198.51.100.1"}
+	u.bfdChanged(p, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
+	u.bfdChanged(p, bfd.StateDown, bfd.StateUp, bfd.DiagNone)
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		u.checkMu.Lock()
+		n := len(u.rechecks)
+		u.checkMu.Unlock()
+		if n == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the recheck did not end after BFD came Up")
+		}
+	}
+	uptime := time.Now()
+	u.bgpSession = func(context.Context, string) (apipb.PeerState_SessionState, time.Time) {
+		return apipb.PeerState_SESSION_STATE_ESTABLISHED, uptime
+	}
+	u.bfdChanged(p, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
 	time.Sleep(time.Second)
 	u.stopRechecks()
 	if n := resets.Load(); n != 1 {

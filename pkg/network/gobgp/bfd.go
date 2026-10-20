@@ -241,7 +241,8 @@ type bfdRecheck struct {
 
 // recheck starts resetUnlessBFDUp for p, for the session with uptime (zero:
 // the session that comes up next). A peer has at most one recheck: a
-// Down while one runs restarts its grace time. Teardown stops it
+// Down while one runs restarts its grace time and binds it to the
+// session of that Down. Teardown stops it
 // (stopRechecks).
 func (u *UnderlayTier) recheck(p *bfd.Peer, uptime time.Time) {
 	grace := cmp.Or(u.bfdUpGrace, bfdRecheckGrace(p))
@@ -251,7 +252,9 @@ func (u *UnderlayTier) recheck(p *bfd.Peer, uptime time.Time) {
 		u.checkCtx, u.stopChecks = context.WithCancel(context.Background())
 	}
 	if rc, ok := u.rechecks[p.Name]; ok {
-		rc.downAt = time.Now()
+		// The Down can be one of a new session (BOOTy restarted the
+		// peer within a tick): check that one.
+		rc.downAt, rc.uptime = time.Now(), uptime
 		return
 	}
 	if u.rechecks == nil {
