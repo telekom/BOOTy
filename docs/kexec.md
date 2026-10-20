@@ -31,19 +31,23 @@ checked against a primary source in this repository are marked "verify".
 
 | Step | What happens | Reference |
 |------|--------------|-----------|
-| Trigger | A successful provision run (or a successful standby `provision` command) returns `runmode.ProvisionCompleteError`. `runCAPRF` calls `tryKexec`. | `main.go` (`case errors.As(modeErr, &provisionErr)`) |
+| Trigger | A successful provision run (or a successful standby `provision` command) returns `runmode.ProvisionCompleteError`. `endRun` calls `finishProvision`, which calls `tryKexec`. | `main.go` (`endRun`, `finishProvision`) |
 | Announcement | Before that, the `report-success` step sends `provisioning complete handoff=<kexec\|reboot\|poweroff>`. `PlannedHandoff` makes the same decision as `tryKexec`, including a dry run of the entry resolution. CAPRF power cycles the host only for `poweroff`. | `pkg/provision/orchestrator.go` (`PlannedHandoff`), [caprf-integration.md](caprf-integration.md#handoff) |
-| Gates | `tryKexec` returns `false` (no kexec) when `DISABLE_KEXEC=true`, when `SUCCESS_ACTION=poweroff` (`KexecDisabled`), when `SECUREBOOT_REENABLE=true`, or when a step changed firmware values (`FirmwareChanged`, today only the Mellanox `NUM_VFS` path). | `main.go` (`tryKexec`), `pkg/config/config.go` (`KexecDisabled`) |
+| Gates | `tryKexec` returns `false` (no kexec) when `DISABLE_KEXEC=true`, when `SUCCESS_ACTION=poweroff` (`KexecDisabled`), when `SECUREBOOT_REENABLE=true`, or when a step changed firmware values (`FirmwareChanged`: the Mellanox `NUM_VFS` path, or an SR-IOV profile that stored firmware values, `res.Reboot`). A stored SR-IOV firmware change that needs a verify reboot (`SRIOV_VERIFY_REBOOT=on` with `REBOOT_URL`) ends the task earlier with `RebootRequiredError`: BOOTy reboots into the ramdisk and does not reach `tryKexec`. | `main.go` (`tryKexec`), `pkg/config/config.go` (`KexecDisabled`), `pkg/provision/sriov.go` (`configureSRIOV`, `RebootRequiredError`) |
 | Target kept mounted | When kexec is possible, `teardown-chroot` keeps `/newroot` mounted so BOOTy can read the kernel. | `pkg/provision/orchestrator.go` (`ShouldKeepTargetRootMountedForKexec`) |
 | Entry resolution | `kexec.DefaultEntry` returns the entry that GRUB would boot, and only when it is sure. It reads `grub.cfg` from `/boot/grub`, then `/boot/grub2`, accepts only the shapes that `grub-mkconfig` generates on Debian and Ubuntu, and returns `ErrUnsupported` for everything else. | `pkg/kexec/default.go`, `pkg/kexec/grubwords.go`, real fixtures in `pkg/kexec/testdata/` |
 | Path resolution | The kernel and initrd paths are resolved under the target root, then under `/boot` inside it. Symlinks are followed only inside the target root. | `main.go` (`resolveKexecPath`, `resolveKexecCandidate`) |
 | Load | `kexec_file_load(kernel_fd, initrd_fd, cmdline, flags=0)`. | `pkg/kexec/kexec_linux.go` (`Load`) |
 | Release target | After the load, BOOTy unmounts every mount below the target root; a busy block device mount is remounted read-only. `KEXEC_UNMOUNT_TARGET=false` keeps it mounted. | `main.go` (`releaseKexecTarget`), `pkg/disk` (`UnmountOrRemountReadOnly`) |
-| Watchdog | `watchdogHandoff(false)` disarms the hardware watchdog with the magic close, or leaves it armed with `WATCHDOG_HANDOFF=keep`. | `main_watchdog.go`, `pkg/watchdog/` |
-| Log flush | `flushObservability` closes the CAPRF log handler; the bounded ring waits up to `LOG_FLUSH_TIMEOUT_SEC` (default 5 s) for queued lines. | `main.go` (`doKexecExecute`, `flushObservability`), `pkg/caprf/loghandler.go` |
-| Execute | `sync()`, then `reboot(LINUX_REBOOT_CMD_KEXEC)`. | `pkg/kexec/kexec_linux.go` (`Execute`) |
+| 1. Watchdog | `watchdogHandoff(false)` disarms the watchdog: the magic close (`V`) for `/dev/watchdog`, an IPMI Set Watchdog Timer without action (stop) for the BMC watchdog of the IPMI fallback (PR #816). `WATCHDOG_HANDOFF=keep` leaves either armed. | `main_watchdog.go`, `pkg/watchdog/device_linux.go`, `pkg/watchdog/bmc_linux.go` |
+| 2. LLDP shutdown | `stopLLDPEmit` stops the every-NIC LLDP sender, which sends the IEEE 802.1AB shutdown LLDPDU (TTL 0) on each NIC. | `main.go` (`stopLLDPEmit`), `pkg/network/lldp/tx.go` (`ShutdownFrame`) |
+| 3. Log flush | `flushLogs` (`flushObservability`) closes the CAPRF log handler; the bounded ring waits up to `LOG_FLUSH_TIMEOUT_SEC` (default 5 s) for queued lines. | `main.go` (`doKexecExecute`, `flushObservability`), `pkg/caprf/loghandler.go` |
+| 4. Network stop | `stopNetwork` (`stopNetworkOnce`, PR #723) tears the network mode down once and waits at most 5 s (`networkStopTimeout`). GoBGP mode sends a Cease NOTIFICATION to every peer and BFD AdminDown; FRR mode stops FRR (`frr.Manager.Teardown`). | `main.go` (`stopNetworkOnce`) |
+| 5. Execute | `sync()`, then `reboot(LINUX_REBOOT_CMD_KEXEC)`. | `pkg/kexec/kexec_linux.go` (`Execute`) |
 | Fallback | Any failure before or in execute returns `false`; BOOTy cleans up the target mounts and reboots through `reboot(2)`, or powers off for A/B preserve-existing. | `main.go` (`cleanupFailedKexecTarget`, `handleProvisionHandoff`) |
 | A/B rule | With `IMAGE_MODE=ab` and `AB_PRESERVE_EXISTING=true`, a missing kexec leads to a power off, not a reboot, because the firmware boot path still points at the old slot. Config validation rejects `DISABLE_KEXEC`, `SECUREBOOT_REENABLE`, `SUCCESS_ACTION=poweroff` and `CAPRF_LEGACY_COMPAT` with it. | `pkg/provision/orchestrator.go` (`RequiresABKexec`), `docs/ab-partitioning.md` |
+
+`doKexecExecute` runs steps 1 to 5 in this order, after the target release.
 
 ### Which entry BOOTy kexecs
 
@@ -59,7 +63,8 @@ entry). In short:
   `$vt_handoff` is dropped.
 - The Ubuntu initrdless fallback (`GRUB_FORCE_PARTUUID` cloud images): GRUB
   would boot the initrdless branch; BOOTy kexecs the branch with the initrd,
-  because kexec needs an initrd. Both branches must differ only in one
+  because BOOTy's `kexec.Load` needs an initrd: it always opens the initrd
+  and does not pass `KEXEC_FILE_NO_INITRAMFS`. Both branches must differ only in one
   trailing `panic=-1`. `grubenv` stays unchanged.
 - Refused (reboot through the firmware): BLS (`blscfg`, RHEL-likes, also BLS
   entries without `grub.cfg`), Flatcar (`configfile`, gptprio), any other
@@ -79,7 +84,8 @@ entry). In short:
 | `DISABLE_KEXEC=true` | Reboot. | `handoff=reboot` |
 | `SUCCESS_ACTION=poweroff` (also via `CAPRF_LEGACY_COMPAT=true`) | Power off. | `handoff=poweroff` |
 | `SECUREBOOT_REENABLE=true` | Reboot. CAPRF turns Secure Boot on. | `handoff=reboot` |
-| Firmware values changed (Mellanox `NUM_VFS`) | Reboot. | `handoff=reboot` |
+| Firmware values changed (Mellanox `NUM_VFS`, or an SR-IOV profile stored firmware values) | Reboot. | `handoff=reboot` |
+| SR-IOV verify reboot (`SRIOV_VERIFY_REBOOT=on`, `REBOOT_URL` set) | Reboot into the ramdisk before any disk change (`RebootRequiredError`); the next BOOTy boot finishes the task. | `reboot-required` status, no success message yet |
 | `DefaultEntry` returns an error (refused shape, no `grub.cfg`) | Reboot. | `handoff=reboot` |
 | `kexec_file_load` fails (for example a kernel signature that lockdown rejects, section 4) | Reboot. | `handoff=kexec` was announced; the actual handoff is a reboot. CAPRF does not power cycle in either case. |
 | `reboot(LINUX_REBOOT_CMD_KEXEC)` returns | Reboot. | as above |
@@ -95,7 +101,7 @@ not happen.
 |------|--------------------|-----------------|--------|
 | POST and device init | Resets and re-initializes devices, trains memory and links | Nothing. Devices stay in the state that the old kernel's `shutdown` callbacks left them in. | Devices with weak or missing `shutdown` handlers start in an unexpected state (section 8). |
 | Device shutdown | Power or bus reset | The kernel calls `device_shutdown()` (each driver's `.shutdown`) before it jumps (verify for the BOOTy kernel version). | Quality of `.shutdown` decides success. |
-| NIC, HBA, GPU firmware | Restarts on reset | Not restarted. Firmware-level settings (for example ConnectX `NUM_OF_VFS`, `SRIOV_EN`, `LINK_TYPE`) that need a firmware reset stay pending. | BOOTy already refuses kexec after the Mellanox change. Other firmware changes (by vendor tools, by CAPRF through Redfish while the host ran BOOTy, or BIOS changes) are not detected by BOOTy. |
+| NIC, HBA, GPU firmware | Restarts on reset | Not restarted. Firmware-level settings (for example ConnectX `NUM_OF_VFS`, `SRIOV_EN`, `LINK_TYPE`) that need a firmware reset stay pending. | BOOTy already refuses kexec after its own firmware changes (Mellanox `NUM_VFS`, SR-IOV profiles that store firmware values). Other firmware changes (by vendor tools, by CAPRF through Redfish while the host ran BOOTy, or BIOS changes) are not detected by BOOTy. |
 | DMA in flight | Stopped by reset | Must be stopped by drivers. A device that keeps DMA running can write into memory that the new kernel now uses. | Memory corruption that is hard to diagnose (verify; classic kexec risk). |
 | IOMMU | Reset, tables rebuilt by firmware and kernel | The old kernel disables translation on shutdown, or the new kernel inherits enabled translation and must handle it (the kdump case copies tables, verify for normal kexec). | DMAR or AMD-Vi faults at boot, devices that fail to probe (section 8). |
 | SR-IOV VFs | Gone after reset | PF drivers usually remove VFs in `.shutdown` or `remove` (verify per driver). If not, VFs and their PCI state survive. | Unexpected VFs, wrong `sriov_numvfs`, or failure to create VFs in the target until a reboot. |
@@ -133,9 +139,9 @@ not happen.
 - The BOOTy kernel is the Debian-signed 6.12 kernel of Debian 13 (PR #701,
   `initrd.Dockerfile`). Debian kernels enable lockdown (`integrity`)
   automatically when Secure Boot is on.
-- Measured in QEMU with OVMF, Microsoft keys, shim and GRUB from the BOOTy
-  ISO (PR #737, open at the time of writing; the table is in its
-  description):
+- Booting BOOTy with Secure Boot on is supported (PR #737; see the README
+  [Secure Boot](../README.md#secure-boot) section). Measured in QEMU with
+  OVMF, Microsoft keys, shim and GRUB from the BOOTy ISO:
 
   | Call under lockdown | Result | Effect on BOOTy |
   |---------------------|--------|-----------------|
@@ -153,9 +159,9 @@ not happen.
   secondary, platform with MOK). Ubuntu targets always reboot.
   `PlannedHandoff` does not know this in advance and announces `kexec`; the
   load fails and BOOTy reboots.
-- CAPRF disables Secure Boot through Redfish before it boots BOOTy
-  (`disableSecureBoot` step in CAPRF). Then BOOTy runs without lockdown and
-  unsigned kexec works. This also means the provisioning boot itself is not
+- By default, CAPRF disables Secure Boot through Redfish before it boots
+  BOOTy (`disableSecureBoot` step in CAPRF; CAPRF behaviour, verify). Then
+  BOOTy runs without lockdown and unsigned kexec works. This also means the provisioning boot itself is not
   Secure Boot protected.
 - `SECUREBOOT_REENABLE=true` disables kexec because CAPRF turns Secure Boot on
   and the host must boot through the firmware.
@@ -204,8 +210,12 @@ not happen.
 
 ## 7. Memory
 
-- The new kernel and initrd are loaded into memory before the jump. A large
-  target initrd needs free memory while BOOTy's own initramfs is still in RAM.
+- The new kernel and initrd are loaded into memory before the jump, while
+  BOOTy's own ramdisk is still in RAM: since PR #782 the base ramdisk and the
+  payload archives it booted with (today only `frr`; `qemu-img` and
+  `ipmitool` are no payloads since PR #815 and PR #816). BOOTy does not check
+  free memory before the load. When `kexec_file_load` fails with `ENOMEM`,
+  `tryKexec` returns `false` and BOOTy reboots through the firmware.
 - Placement limits: on x86 the initrd must fit where the new kernel's boot
   protocol allows (below 4 GiB unless the kernel supports higher placement,
   verify).
@@ -243,16 +253,16 @@ confirmed cases in the quirks database.
 
 ## 9. Networking and the fabric
 
-- On `main`, BOOTy does not tear down its network mode before kexec. The
-  provision handoff path calls `tryKexec` directly; `netMode.Teardown` runs
-  only on other exit paths (`main.go`, `runCAPRF`). PR #723 (open at the time
-  of writing) stops the network once, bounded to 5 s, after the kexec load
-  and the log flush and right before the jump: BFD AdminDown, then GoBGP
-  `Stop`, which ends every session with a Cease.
-- Without #723, GoBGP sessions end without a BGP NOTIFICATION and BFD goes
-  silent. During a kexec the link usually stays up, so the leaf keeps the old
-  sessions until the BFD detection time or the BGP hold timer runs out. FRR
-  mode daemons die with the old kernel in the same way.
+- BOOTy stops its network mode right before the jump (PR #723).
+  `doKexecExecute` runs `watchdogHandoff`, `stopLLDPEmit`, `flushLogs`,
+  `stopNetwork` and then `kexecExecute` (`main.go`). `stopNetworkOnce` tears
+  the network mode down once and waits at most 5 s: GoBGP mode sends a BGP
+  Cease NOTIFICATION to every peer and BFD AdminDown; FRR mode stops FRR
+  (`frr.Manager.Teardown`). The leaf ends the sessions at once, not after
+  the BFD detection time or the BGP hold timer.
+- A teardown that does not finish in 5 s does not stop the kexec. Sessions
+  that were not closed then end on the leaf at the BFD detection time or
+  the hold timer, because the link usually stays up during a kexec.
 - The leaf withdraws the host routes, EVPN Type-2 and Type-5 entries. The
   target OS then establishes its own sessions. The fabric sees one session
   flap per handoff. With BFD this looks like a link failure in fabric
@@ -260,8 +270,14 @@ confirmed cases in the quirks database.
 - Link state: NIC drivers bring the link down in `.shutdown` or not, depending
   on the driver (verify). The switch port can see a short carrier loss, no
   loss, or a longer renegotiation.
-- LLDP: BOOTy's LLDP frames stop; the neighbour entry times out on the switch
-  until the target OS sends LLDP.
+- LLDP: `stopLLDPEmit` sends the IEEE 802.1AB shutdown LLDPDU (TTL 0,
+  `pkg/network/lldp/tx.go`) on each NIC, so the switch removes the neighbour
+  at once. The switch has no neighbour until the target OS sends LLDP.
+- Intel firmware LLDP: with `LLDP_DISABLE_FW_AGENT=true` (default) BOOTy
+  turns off the firmware LLDP agent of Intel NICs, and with it the firmware
+  DCBX, and never turns them on again. They stay off after the kexec; ice
+  keeps the setting in the NVM, so it also survives a reboot (see
+  [configuration.md](configuration.md)).
 - MAC addresses: physical MACs are unchanged. Bond MACs and VF MACs set by
   BOOTy are not carried over, unless VFs survive (section 2).
 - VLAN, VRF, VXLAN devices created by BOOTy disappear with the old kernel.
@@ -298,13 +314,22 @@ confirmed cases in the quirks database.
   the same handoff. Kexec saves one POST per provision, the largest single
   saving of the fast cycle ([agent-fast-cycle.md](agent-fast-cycle.md),
   item 4.7).
-- Watchdog (PR #721): with `WATCHDOG_ENABLE=true`, BOOTy disarms the watchdog
-  before kexec (`WATCHDOG_HANDOFF=stop`, default) or leaves it armed
-  (`keep`). With `keep`, the target must pet it before the timeout, which
-  counts from the handoff and includes the kexec and the target boot.
-  Drivers that stop the watchdog on reboot (`watchdog_stop_on_reboot`) also
-  disarm it at kexec; the BMC watchdog of the IPMI fallback stays armed. See
+- Watchdog (PR #721, IPMI fallback PR #816): with `WATCHDOG_ENABLE=true`,
+  BOOTy disarms the watchdog before kexec (`WATCHDOG_HANDOFF=stop`, default)
+  or leaves it armed (`keep`). `stop` is the magic close for `/dev/watchdog`
+  and an IPMI stop command for the BMC watchdog of the IPMI fallback
+  (`pkg/watchdog/bmc_linux.go`). With `keep`, the target must pet it before
+  the timeout, which counts from the handoff and includes the kexec and the
+  target boot. Drivers that stop the watchdog on reboot
+  (`watchdog_stop_on_reboot`) also disarm it at kexec. The BMC watchdog of
+  the IPMI fallback stays armed only with `keep`; the target then needs an
+  IPMI watchdog client that pets the BMC watchdog. See
   [caprf-integration.md](caprf-integration.md).
+- Kernel panic (PR #765): BOOTy sets `kernel.panic=10` only in the ramdisk
+  kernel (`main_panic.go`), unless the BOOTy command line sets `panic=`. The
+  value does not carry over: the target kernel uses its own default unless
+  its command line sets `panic=`. A panic of the BOOTy kernel during the
+  jump still reboots the host after 10 s.
 - Time and RTC (PR #713): BOOTy syncs the clock before the first TLS check and
   writes the RTC in UTC (`TIME_WRITE_RTC`). The kexec'd kernel reads the RTC
   again, so it starts with the corrected time; kernel time itself does not
@@ -332,7 +357,7 @@ confirmed cases in the quirks database.
 | Standby agent fast cycle, no firmware or security changes | kexec | Saves POST time. |
 | A/B preserve-existing upgrade (today) | kexec (required by BOOTy) | Firmware still points at the old slot; see [ab-partitioning.md](ab-partitioning.md). |
 | TPM-sealed disk keys, remote attestation, measured-boot policies | reboot | Section 3. |
-| Firmware settings changed (NIC NV config, SR-IOV firmware, disk firmware activation) | reboot | Section 2. BOOTy enforces it only for the Mellanox path. |
+| Firmware settings changed (NIC NV config, SR-IOV firmware, disk firmware activation) | reboot | Section 2. BOOTy enforces it only for its own changes: the Mellanox `NUM_VFS` path and SR-IOV profiles that store firmware values. |
 | BIOS attributes changed or pending | reboot | Section 2. BOOTy cannot detect pending Redfish settings. |
 | Secure Boot on during BOOTy, target not signed by a key in BOOTy's keyrings (for example Ubuntu) | reboot (automatic, load fails) | Section 4. |
 | `SECUREBOOT_REENABLE=true` | reboot (enforced) | Section 4. |
@@ -363,13 +388,15 @@ Knobs and recommended defaults:
 | `pkg/kexec` unit tests | `DefaultEntry` with real fixtures (Ubuntu 22.04 cloud image, Ubuntu 24.04 GCP with the initrdless fallback, CentOS Stream 9 BLS, Flatcar) and one test per refusal. | `pkg/kexec/default_test.go`, `pkg/kexec/testdata/` |
 | Target release | Unmount or read-only fallback before kexec. | `main_kexec_release_test.go`, `pkg/disk/kexec_release_test.go` |
 | Handoff message | `PlannedHandoff` decisions. | `pkg/provision` tests (PR #724) |
+| Network stop before the handoff | Order watchdog, LLDP shutdown, log flush, network stop, execute; one teardown, bounded wait; the stop before reboot and power off. | `main_network_stop_test.go` (PR #723) |
 | A/B preserve-existing KVM scenarios | Upgrade paths that end in kexec. | `test/e2e/kvm/ab_sysext_test.go` |
 | Fast cycle timing | Deprovision and provision cycle time on every PR. | PR #715 |
 
 Gaps:
 
-- Secure Boot with lockdown is measured (PR #737) but not a KVM regression
-  scenario on `main`.
+- Secure Boot with lockdown is measured (PR #737, README
+  [Secure Boot](../README.md#secure-boot)) but kexec under lockdown is not a
+  KVM regression scenario on `main`.
 - No test with a TPM that checks PCR values or sealed unlock after kexec.
 - No test of the announced `handoff=kexec` followed by a failed load (the
   message and the actual handoff differ).
