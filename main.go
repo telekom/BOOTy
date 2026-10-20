@@ -1747,8 +1747,11 @@ var (
 // followLLDPMatches calls start with the NICs the matches select when a
 // NIC that is not known yet appears, until ctx ends.
 func followLLDPMatches(ctx context.Context, matches []network.LinkMatch, known func(string) bool, start func([]string), log *slog.Logger) {
+	// The watch outlives the call: it keeps the functions of the call, so a
+	// test that restores them at its end does not race with it.
+	subscribe, resolve := lldpLinkSubscribe, resolveLinkMatches
 	check := func() {
-		names, err := resolveLinkMatches(ctx, matches)
+		names, err := resolve(ctx, matches)
 		if err != nil {
 			return
 		}
@@ -1768,7 +1771,7 @@ func followLLDPMatches(ctx context.Context, matches []network.LinkMatch, known f
 			// netlink keeps the socket of a failed subscription until its
 			// done channel closes: one per subscription.
 			sub, end := context.WithCancel(ctx)
-			if err := lldpLinkSubscribe(updates, sub.Done(), opts); err != nil {
+			if err := subscribe(updates, sub.Done(), opts); err != nil {
 				end()
 				log.Warn("NICs that appear later send no LLDP", "error", err)
 				return
