@@ -339,7 +339,7 @@ jobs:
             test_tag: e2e
             test_regex: "^TestMirroredRootBootFailoverVM$"
             # Two subtests of at most 8 + 6 + 6 minutes plus image preparation.
-            test_timeout: 50m
+            go_timeout: 50m
             timeout_minutes: 70
             privileged: true
             ovmf_vars: OVMF_VARS.fd
@@ -362,7 +362,7 @@ jobs:
             test_tag: e2e
             test_regex: "^TestMirroredRootBootFailoverVM$"
             # Two subtests of at most 8 + 6 + 6 minutes plus image preparation.
-            test_timeout: 50m
+            go_timeout: 50m
             timeout_minutes: 70
             privileged: true
             ovmf_vars: OVMF_VARS.fd
@@ -389,7 +389,7 @@ jobs:
               d27fd905b01bf76b8a14c9ac88eb55c76a79f8025a7c2c15b8481ac786153ce0  https://launchpad.net/ubuntu/+archive/primary/+files/linux-modules-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
             test_tag: e2e
             test_regex: "^TestMirroredRootBootFailoverVM$"
-            test_timeout: 50m
+            go_timeout: 50m
             timeout_minutes: 70
             privileged: true
             ovmf_vars: OVMF_VARS.fd
