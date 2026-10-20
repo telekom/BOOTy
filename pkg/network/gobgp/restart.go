@@ -159,67 +159,60 @@ func keepsGracefulRestartRoutes(p *apipb.Peer) bool {
 func (u *UnderlayTier) restartPeer(ctx context.Context, addr string) (bool, error) {
 	u.peerOps.Lock()
 	defer u.peerOps.Unlock()
-	if u.peerConfs[addr] == nil || !u.needsRestart(ctx, addr) {
+	conf := u.peerConfs[addr]
+	if conf == nil || !u.needsRestart(ctx, addr) {
 		return false, nil // moved by the relearner, or no longer waiting
 	}
-	return true, u.readdPeer(ctx, addr)
-}
-
-// readdPeer deletes the peer at addr and adds it again as it was added.
-// A new GoBGP peer goes to Active at once: it accepts the leaf's
-// connection and connects itself, where an existing peer waits its idle
-// hold time in Idle and closes the leaf's connections meanwhile. The
-// caller holds peerOps.
-func (u *UnderlayTier) readdPeer(ctx context.Context, addr string) error {
-	conf := u.peerConfs[addr]
-	if conf == nil {
-		return fmt.Errorf("peer %s: not added", addr)
-	}
 	if err := u.bgp.DeletePeer(ctx, &apipb.DeletePeerRequest{Address: addr}); err != nil {
-		return fmt.Errorf("delete peer %s: %w", addr, err)
+		return false, fmt.Errorf("delete peer %s: %w", addr, err)
 	}
 	peer, _ := proto.Clone(conf).(*apipb.Peer)
 	if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
-		// A failed add does not get better with a retry (the config
-		// was added before); the peer stays down until BOOTy restarts.
+		// A retry does not help: the same config was added before. The
+		// peer stays down until BOOTy starts again.
 		u.log.Error("BGP peer deleted but not added again, it stays down", "neighbor", addr, "error", err)
-		return fmt.Errorf("add peer %s: %w", addr, err)
+		return false, fmt.Errorf("add peer %s: %w", addr, err)
 	}
-	return nil
+	return true, nil
 }
 
 // startStoppedPeer starts the peer at addr again when the carrier of its
 // interface returns; the caller holds peerOps.
 //
-// FRR starts the session at once when the interface comes up
-// (bgp_zebra.c, bgp_start_interface_nbrs: BGP_Stop, BGP_Start), and it
-// accepts the leaf's connection meanwhile. GoBGP's EnablePeer restarts the
-// idle hold timer instead: 5 s (holdtimeIdle) once the peer has left Idle,
-// or IdleHoldTimeAfterReset after a BFD reset while the carrier was gone,
-// and it closes the leaf's connections in that time. So the peer is added
-// again (readdPeer): it accepts the leaf's connection at once and
-// connects itself after 1.5 to 2 s, at once with BGP_CONNECT_AT_ONCE.
+// GoBGP's EnablePeer restarts the idle hold timer of the peer, and the
+// peer closes the leaf's connections until it expires. Its length
+// depended on the order of BFD loss and carrier loss: IdleHoldTimeAfterReset
+// (1 s) when BFD went down after the carrier loss (the BFD reset of the
+// stopped peer set it), but 5 s (holdtimeIdle) when BFD went down first,
+// because the peer restarter had added the peer again and its first idle
+// hold timer set holdtimeIdle. A reset of the stopped peer sends nothing
+// and sets IdleHoldTimeAfterReset for the next start (GoBGP fork,
+// osrg/gobgp#3740), so the wait is always 1 s.
 //
-// Two cases use EnablePeer: a peer whose stale routes GoBGP keeps for a
-// graceful restart (keepsGracefulRestartRoutes), as FRR keeps the stale
-// paths of a peer in NSF wait across interface down and up (bgp_stop in
-// bgp_fsm.c), and deleting the peer would drop them. A peer that is not
-// administratively down (the carrier loss did not stop it, so its session
-// may still be up) has nothing to start and is left alone.
+// The peer is not deleted and added again, which would start it at once:
+// it then connects 1.5 to 2 s after the carrier, when the leaf (FRR)
+// connects too, and the connection that completes after the session is
+// up ends it as a graceful restart of the leaf (RFC 4724 section 5;
+// production template lab). Not deleting it also keeps the stale routes
+// of a leaf in graceful restart, as FRR keeps those of a peer in NSF wait
+// across interface down and up (bgp_stop in bgp_fsm.c). A peer that is
+// not administratively down (the carrier loss did not stop it, so its
+// session may still be up) is left alone.
 func (u *UnderlayTier) startStoppedPeer(ctx context.Context, addr string) error {
-	var stopped, keep bool
+	stopped := false
 	if err := u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
 		stopped = p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_DOWN
-		keep = keepsGracefulRestartRoutes(p)
 	}); err != nil {
 		return fmt.Errorf("list peer %s: %w", addr, err)
 	}
-	switch {
-	case !stopped:
+	if !stopped {
 		return nil
-	case keep:
-		return u.bgp.EnablePeer(ctx, &apipb.EnablePeerRequest{Address: addr}) //nolint:wrapcheck // logged with the peer
-	default:
-		return u.readdPeer(ctx, addr)
 	}
+	if err := u.bgp.ResetPeer(ctx, &apipb.ResetPeerRequest{Address: addr}); err != nil {
+		return fmt.Errorf("reset peer %s: %w", addr, err)
+	}
+	if err := u.bgp.EnablePeer(ctx, &apipb.EnablePeerRequest{Address: addr}); err != nil {
+		return fmt.Errorf("enable peer %s: %w", addr, err)
+	}
+	return nil
 }

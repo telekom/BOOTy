@@ -50,8 +50,7 @@ func newCarrierWatch(bgp *server.BgpServer, peers map[string]string, log *slog.L
 			return bgp.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: addr, Communication: "interface down"}) //nolint:wrapcheck // logged with the peer
 		},
 		announce: sendRouterAdvertisement,
-		// GoBGP connects 1.5 to 2 s after the start without
-		// BGP_CONNECT_AT_ONCE.
+		// GoBGP connects 2 to 3 s after the enable.
 		raRepeat: time.Second,
 		log:      log,
 	}

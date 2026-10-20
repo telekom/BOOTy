@@ -348,14 +348,12 @@ func TestPeerStateEventDropsZone(t *testing.T) {
 // fails before the carrier (BFD reset, the restarter adds the peer again,
 // then the carrier loss stops it), on the other after it. When the
 // carrier returns, the leaf connects at once (FRR starts the session on
-// interface up), and BOOTy must accept it at once. With EnablePeer GoBGP
-// waits its idle hold time first and closes the leaf's connection: 5 s
-// for the first uplink (holdtimeIdle), 1 s for the second (the BFD reset
-// set IdleHoldTimeAfterReset), and both sessions were back only after
-// BOOTy's own connect.
-func TestCarrierReturnStartsPeerAtOnce(t *testing.T) {
+// interface up). With EnablePeer alone GoBGP held the first peer 5 s in
+// Idle (holdtimeIdle) and closed the leaf's connection meanwhile; now
+// both wait IdleHoldTimeAfterReset (1 s) and connect 1.5 to 2 s later.
+func TestCarrierReturnWaitsIdleHoldAfterReset(t *testing.T) {
 	if testing.Short() {
-		t.Skip("takes up to 2 s")
+		t.Skip("takes about 3 s")
 	}
 	ctx := context.Background()
 	bootyPort := freePort(t)
@@ -455,11 +453,11 @@ func TestCarrierReturnStartsPeerAtOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	limited, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	limited, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	for _, l := range links {
 		if _, ok := waitEstablished(limited, u.bgp, l.addr, 0); !ok {
-			t.Errorf("%s: not Established within 1.5 s after the carrier returned", l.iface)
+			t.Errorf("%s: not Established within 3 s after the carrier returned", l.iface)
 			continue
 		}
 		t.Logf("%s: Established %v after the carrier returned", l.iface, time.Since(start))

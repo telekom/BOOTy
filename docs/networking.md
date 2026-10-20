@@ -294,22 +294,24 @@ same resolution:
   default like FRR) stops an unnumbered session as soon as its NIC loses
   carrier. Native sessions without the setting keep a
   `no bgp fast-external-failover` of `frr.conf` in the same VRF. When the
-  carrier returns, BOOTy deletes the GoBGP peer and adds it again, as after
-  a session end (above). The new peer accepts the leaf's connection at
-  once and connects itself after a random 1.5 to 2 s, or at once with
-  `BGP_CONNECT_AT_ONCE`. FRR starts the session at once on interface up
-  (`bgp_start_interface_nbrs` in `bgp_zebra.c`). GoBGP's `EnablePeer`
-  would first wait the idle hold time in Idle and close the leaf's
-  connections meanwhile: 5 s (`holdtimeIdle`) for a peer that BFD reset
-  before the carrier loss, 1 s (`IdleHoldTimeAfterReset`) when BFD went
-  down after it. In the kindmetal EVPN parity run with both leaves down
-  this delayed one uplink by 5 s, and all four sessions were back after
-  6.8 s against 4.6 to 5.7 s for FRR. Two cases keep `EnablePeer` or
-  nothing. A peer whose stale routes GoBGP keeps for a graceful restart
-  is enabled, because deleting it would drop them; FRR also keeps the
-  stale paths of a peer in NSF wait across interface down and up
-  (`bgp_stop` in `bgp_fsm.c`). A peer that the carrier loss did not stop
-  is left alone.
+  carrier returns, BOOTy resets the stopped GoBGP peer and enables it. The
+  reset sends nothing; it makes the peer wait `IdleHoldTimeAfterReset`
+  (1 s) in Idle, then connect after a random 1.5 to 2 s, and accept the
+  leaf's connection from the end of the 1 s. Without the reset the wait
+  depended on the order of BFD loss and carrier loss: 1 s when BFD went
+  down after the carrier loss, 5 s (`holdtimeIdle`) when it went down
+  first, because the peer restarter had added the peer again. In the
+  kindmetal EVPN parity run with both leaves down this delayed one
+  uplink by 5 s, and all four sessions were back after 6.8 s against 4.6
+  to 5.7 s for FRR. FRR starts the session at once on interface up
+  (`bgp_start_interface_nbrs` in `bgp_zebra.c`). BOOTy does not delete
+  and add the peer to start it at once: it then connects at the same
+  time as the leaf, and the leaf's connection that completes after the
+  session is up ends it as a graceful restart (RFC 4724 section 5). In
+  the production template lab that happened in 4 of 11 jobs. The peer
+  also keeps the stale routes of a leaf in graceful restart, like FRR
+  for a peer in NSF wait (`bgp_stop` in `bgp_fsm.c`). A peer that the
+  carrier loss did not stop is left alone.
 
 GoBGP mode installs the learned IPv4 and IPv6 unicast routes like zebra:
 into the table of each session's VRF (the main table without a VRF), with
