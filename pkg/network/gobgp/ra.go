@@ -22,13 +22,15 @@ import (
 // Router Advertisement timing of FRR 10.2 zebra (zebra/rtadv.c,
 // zebra/rtadv.h) and RFC 4861 section 10.
 const (
-	// raFastCount is the number of RAs sent 1 s apart when the RAs start
-	// and when a NIC gets carrier back. Zebra sets inFastRexmit with
-	// RTADV_NUM_FAST_REXMITS (4) in ipv6_nd_suppress_ra_set and
-	// rtadv_if_up; rtadv_timer sends them 1 s apart
-	// (RTADV_FAST_REXMIT_PERIOD) and then, one tick later, the first
+	// raFastRexmits is RTADV_NUM_FAST_REXMITS: zebra sets inFastRexmit
+	// with it in ipv6_nd_suppress_ra_set and rtadv_if_up, and
+	// rtadv_timer sends them 1 s apart (RTADV_FAST_REXMIT_PERIOD).
+	raFastRexmits = 4
+
+	// raFastCount is the number of RAs sent 1 s apart when the RAs
+	// start: the fast retransmits and then, one tick later, the first
 	// regular RA, because AdvIntervalTimer starts at 0.
-	raFastCount = 5
+	raFastCount = raFastRexmits + 1
 
 	// raFastInterval is RTADV_FAST_REXMIT_PERIOD.
 	raFastInterval = time.Second
@@ -54,10 +56,17 @@ type raSchedule struct {
 	next time.Time // next RA due
 }
 
-// restart starts the fast RAs at once, like zebra rtadv_if_up.
-func (s *raSchedule) restart(now time.Time) {
+// start starts the fast RAs at once, when the RAs start.
+func (s *raSchedule) start(now time.Time) {
 	s.fast = raFastCount
 	s.next = now
+}
+
+// carrierUp starts the fast retransmits again on the next 1 s tick, like
+// zebra rtadv_if_up, which only sets them for rtadv_timer.
+func (s *raSchedule) carrierUp(now time.Time) {
+	s.fast = raFastRexmits
+	s.next = now.Add(raFastInterval)
 }
 
 // retry schedules the next try 1 s after an RA that did not go out: no
@@ -108,11 +117,10 @@ func (u *UnderlayTier) startPeriodicRA() {
 	stop, done := make(chan struct{}), make(chan struct{})
 	u.stopRA, u.raDone = stop, done
 	var wg sync.WaitGroup
-	u.raRS = make(map[string]chan struct{}, len(u.nics))
 	u.raUp = make(map[string]chan struct{}, len(u.nics))
 	for _, nic := range u.nics {
 		rs, up := make(chan struct{}, 1), make(chan struct{}, 1)
-		u.raRS[nic], u.raUp[nic] = rs, up
+		u.raUp[nic] = up
 		c, err := listenRS(nic, rs)
 		if err != nil {
 			u.log.Warn("router solicitations are not answered", "nic", nic, "error", err)
@@ -131,15 +139,6 @@ func (u *UnderlayTier) startPeriodicRA() {
 		wg.Wait()
 		close(done)
 	}()
-}
-
-// solicitRA asks for an RA on nic like a Router Solicitation, so the
-// scheduler keeps MIN_DELAY_BETWEEN_RAS.
-func (u *UnderlayTier) solicitRA(nic string) {
-	select {
-	case u.raRS[nic] <- struct{}{}:
-	default: // an answer is already scheduled, or no RAs on nic
-	}
 }
 
 // stopPeriodicRA stops the RAs and waits, so the final RA with lifetime 0
@@ -165,7 +164,7 @@ func advertise(nic string, stop, rs, up <-chan struct{}) {
 			s.retry(now)
 		}
 	}
-	s.restart(time.Now())
+	s.start(time.Now())
 	send(time.Now())
 	t := time.NewTimer(time.Until(s.next))
 	defer t.Stop()
@@ -175,7 +174,7 @@ func advertise(nic string, stop, rs, up <-chan struct{}) {
 			raSend(nic, 0)
 			return
 		case <-up:
-			s.restart(time.Now())
+			s.carrierUp(time.Now())
 		case <-rs:
 			s.solicited(time.Now(), raDelay())
 		case now := <-t.C:

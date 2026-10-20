@@ -22,8 +22,9 @@ type sentRA struct {
 }
 
 // recordRAs replaces raSend and returns the RAs that went out so far.
-// An RA goes out from readyAt on (tentative link-local address before).
-func recordRAs(t *testing.T, readyAt time.Duration) func() []sentRA {
+// An RA does not go out while failing reports true (no carrier, tentative
+// link-local address); nil never fails.
+func recordRAs(t *testing.T, failing func(time.Duration) bool) func() []sentRA {
 	t.Helper()
 	var mu sync.Mutex
 	var got []sentRA
@@ -34,7 +35,7 @@ func recordRAs(t *testing.T, readyAt time.Duration) func() []sentRA {
 		mu.Lock()
 		defer mu.Unlock()
 		at := time.Since(start)
-		if at < readyAt {
+		if failing != nil && failing(at) {
 			return false
 		}
 		got = append(got, sentRA{at, lifetime})
@@ -59,13 +60,14 @@ func regular(secs ...float64) []sentRA {
 // at its time into the run.
 func runAdvertise(t *testing.T, total time.Duration, act func(rs, up chan struct{})) []sentRA {
 	t.Helper()
-	return runAdvertiseReady(t, 0, total, act)
+	return runAdvertiseFailing(t, nil, total, act)
 }
 
-// runAdvertiseReady is runAdvertise with RAs that go out from readyAt on.
-func runAdvertiseReady(t *testing.T, readyAt, total time.Duration, act func(rs, up chan struct{})) []sentRA {
+// runAdvertiseFailing is runAdvertise with RAs that fail while failing
+// reports true.
+func runAdvertiseFailing(t *testing.T, failing func(time.Duration) bool, total time.Duration, act func(rs, up chan struct{})) []sentRA {
 	t.Helper()
-	got := recordRAs(t, readyAt)
+	got := recordRAs(t, failing)
 	stop, done := make(chan struct{}), make(chan struct{})
 	rs, up := make(chan struct{}, 1), make(chan struct{}, 1)
 	go func() {
@@ -101,8 +103,41 @@ func TestRAFastStartLikeZebra(t *testing.T) {
 // skips the interface until then (zebra/rtadv.c rtadv_timer).
 func TestRAFastStartCountsOnlySentRAs(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		got := runAdvertiseReady(t, 2500*time.Millisecond, 20*time.Second, nil)
+		got := runAdvertiseFailing(t, func(at time.Duration) bool { return at < 2500*time.Millisecond }, 20*time.Second, nil)
 		want := append(regular(3, 4, 5, 6, 7, 17), sentRA{20 * time.Second, 0})
+		if !slices.Equal(got, want) {
+			t.Fatalf("RAs %v, want %v", got, want)
+		}
+	})
+}
+
+// A regular RA that did not go out is tried again 1 s later, and the
+// next regular one is 10 s after the one that went out.
+func TestRARegularRetried(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		failing := func(at time.Duration) bool { return at >= 13500*time.Millisecond && at < 14500*time.Millisecond }
+		got := runAdvertiseFailing(t, failing, 26*time.Second, nil)
+		want := append(regular(0, 1, 2, 3, 4, 15, 25), sentRA{26 * time.Second, 0})
+		if !slices.Equal(got, want) {
+			t.Fatalf("RAs %v, want %v", got, want)
+		}
+	})
+}
+
+// An RA that did not go out is not the last RA for the rate limit of
+// solicitations: the regular RA at 14 s fails, a solicitation at 14.1 s
+// is answered after its delay, 3 s after the RA at 4 s.
+func TestRAFailedTryIsNotLastRA(t *testing.T) {
+	orig := raDelay
+	t.Cleanup(func() { raDelay = orig })
+	raDelay = func() time.Duration { return 100 * time.Millisecond }
+	synctest.Test(t, func(t *testing.T) {
+		failing := func(at time.Duration) bool { return at >= 13500*time.Millisecond && at < 14050*time.Millisecond }
+		got := runAdvertiseFailing(t, failing, 26*time.Second, func(rs, _ chan struct{}) {
+			time.Sleep(14100 * time.Millisecond)
+			rs <- struct{}{}
+		})
+		want := append(regular(0, 1, 2, 3, 4, 14.2, 24.2), sentRA{26 * time.Second, 0})
 		if !slices.Equal(got, want) {
 			t.Fatalf("RAs %v, want %v", got, want)
 		}
@@ -126,9 +161,9 @@ func TestRASolicitationWaitsRandomDelay(t *testing.T) {
 	})
 }
 
-// startPeriodicRA wires the carrier and solicitation channels by NIC: a
-// carrier-up for eth1 (the map that watchCarrierUp gets) restarts the
-// fast RAs of eth1 only, and solicitRA reaches the channel of its NIC.
+// startPeriodicRA wires the carrier channels by NIC: a carrier-up for
+// eth1 (the map that watchCarrierUp gets) moves the next RA of eth1 to
+// 1 s after it, and eth0 keeps its schedule.
 func TestStartPeriodicRAChannelsByNIC(t *testing.T) {
 	var mu sync.Mutex
 	count := map[string]int{}
@@ -146,53 +181,43 @@ func TestStartPeriodicRAChannelsByNIC(t *testing.T) {
 	u.nics = []string{"eth0", "eth1"}
 	u.startPeriodicRA()
 	defer u.stopPeriodicRA()
-	time.Sleep(200 * time.Millisecond)
+	start := time.Now()
+	time.Sleep(500 * time.Millisecond)
 	select {
 	case u.raUp["eth1"] <- struct{}{}:
 	case <-time.After(time.Second):
 		t.Fatal("no carrier channel for eth1")
 	}
-	time.Sleep(300 * time.Millisecond) // before the second fast RA at 1 s
+	time.Sleep(1250*time.Millisecond - time.Since(start)) // eth0 at 1 s, eth1 at 1.5 s
 	mu.Lock()
 	got := map[string]int{"eth0": count["eth0"], "eth1": count["eth1"]}
 	mu.Unlock()
-	if got["eth0"] != 1 || got["eth1"] != 2 {
-		t.Fatalf("RAs %v, want eth0 1 and eth1 2", got)
+	if got["eth0"] != 2 || got["eth1"] != 1 {
+		t.Fatalf("RAs %v, want eth0 2 and eth1 1", got)
 	}
 }
 
-// solicitRA signals the solicitation channel of its NIC, does not block
-// on a full one, and ignores a NIC without RAs.
-func TestSolicitRA(t *testing.T) {
-	u := &UnderlayTier{raRS: map[string]chan struct{}{"eth0": make(chan struct{}, 1), "eth1": make(chan struct{}, 1)}}
-	u.solicitRA("eth1")
-	u.solicitRA("eth1")
-	u.solicitRA("eth9")
-	if len(u.raRS["eth0"]) != 0 || len(u.raRS["eth1"]) != 1 {
-		t.Fatalf("signals eth0 %d eth1 %d, want 0 and 1", len(u.raRS["eth0"]), len(u.raRS["eth1"]))
+// Without another neighbor, the relearner sends no RA: like zebra and the
+// legacy ramdisk, only the scheduled RAs go out.
+func TestMovedPeerSendsNoRA(t *testing.T) {
+	got := recordRAs(t, nil)
+	if moved := movedPeer(context.Background(), "lo", "fe80::1%lo"); moved != "" {
+		t.Fatalf("moved to %q, want none", moved)
+	}
+	if ras := got(); len(ras) != 0 {
+		t.Fatalf("RAs %v, want none", ras)
 	}
 }
 
-// Without another neighbor, the relearner asks the RA scheduler for an
-// RA instead of sending one itself.
-func TestMovedPeerSolicitsRA(t *testing.T) {
-	var asked []string
-	if got := movedPeer(context.Background(), "lo", "fe80::1%lo", func(nic string) { asked = append(asked, nic) }); got != "" {
-		t.Fatalf("moved to %q, want none", got)
-	}
-	if !slices.Equal(asked, []string{"lo"}) {
-		t.Fatalf("RAs asked for %v, want lo", asked)
-	}
-}
-
-// Carrier back starts the fast RAs again, like zebra rtadv_if_up.
+// Carrier back starts the 4 fast retransmits again on the next 1 s tick,
+// like zebra rtadv_if_up, which only sets them for rtadv_timer.
 func TestRACarrierUpRestartsFastStart(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		got := runAdvertise(t, 50*time.Second, func(_, up chan struct{}) {
 			time.Sleep(30 * time.Second)
 			up <- struct{}{}
 		})
-		want := append(regular(0, 1, 2, 3, 4, 14, 24, 30, 31, 32, 33, 34, 44), sentRA{50 * time.Second, 0})
+		want := append(regular(0, 1, 2, 3, 4, 14, 24, 31, 32, 33, 34, 44), sentRA{50 * time.Second, 0})
 		if !slices.Equal(got, want) {
 			t.Fatalf("RAs %v, want %v", got, want)
 		}

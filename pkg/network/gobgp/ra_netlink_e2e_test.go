@@ -3,6 +3,7 @@
 package gobgp
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/net/ipv6"
+	"golang.org/x/sys/unix"
 
 	"github.com/telekom/BOOTy/pkg/network"
 )
@@ -201,7 +203,9 @@ func TestUnderlaySetupAdvertisesBeforeDiscovery(t *testing.T) {
 }
 
 // sendRA sends nothing and reports false while the link-local address is
-// tentative and without carrier, and true once the address is usable.
+// tentative, also when a global address on the NIC is valid, and without
+// carrier. Once the link-local address is usable, the RA on the wire goes
+// from it to ff02::1 with hop limit 255 (RFC 4861 sections 6.1.2, 6.2.8).
 func TestSendRAWaitsForDADAndCarrier(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Fatal("test requires root (run with sudo)")
@@ -215,22 +219,39 @@ func TestSendRAWaitsForDADAndCarrier(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	setUp := func(name string, up bool) {
+	link := func(name string) netlink.Link {
 		t.Helper()
 		l, err := netlink.LinkByName(name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		set := netlink.LinkSetUp
-		if !up {
-			set = netlink.LinkSetDown
-		}
-		if err := set(l); err != nil {
+		return l
+	}
+	global, err := netlink.ParseAddr("2001:db8::17/64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	global.Flags = unix.IFA_F_NODAD // valid while the link-local address is tentative
+	if err := netlink.AddrAdd(link("sr-b0"), global); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := network.ListenICMPv6(context.Background(), "sr-p0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	pc := ipv6.NewPacketConn(conn)
+	var f ipv6.ICMPFilter
+	f.SetAll(true)
+	f.Accept(ipv6.ICMPTypeRouterAdvertisement)
+	if err := errors.Join(pc.SetICMPFilter(&f), pc.SetControlMessage(ipv6.FlagHopLimit|ipv6.FlagDst, true)); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"sr-p0", "sr-b0"} {
+		if err := netlink.LinkSetUp(link(n)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	setUp("sr-p0", true)
-	setUp("sr-b0", true)
 	if sendRA("sr-b0", raLifetime) {
 		t.Fatal("RA sent with a tentative link-local address")
 	}
@@ -241,7 +262,26 @@ func TestSendRAWaitsForDADAndCarrier(t *testing.T) {
 	if !ok {
 		t.Fatal("no RA after DAD")
 	}
-	setUp("sr-p0", false) // sr-b0 loses carrier
+	b0, err := net.InterfaceByName("sr-b0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 1500)
+	n, cm, src, err := pc.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("no RA on the peer: %v", err)
+	}
+	want := routerAdvertisement(b0.HardwareAddr, raLifetime)
+	if n != len(want) || !bytes.Equal(buf[:2], want[:2]) || !bytes.Equal(buf[4:n], want[4:]) { // the kernel fills the checksum
+		t.Fatalf("RA % x, want % x", buf[:n], want)
+	}
+	if ip := src.(*net.IPAddr).IP; !ip.IsLinkLocalUnicast() || cm == nil || cm.HopLimit != 255 || !cm.Dst.Equal(net.IPv6linklocalallnodes) {
+		t.Fatalf("RA from %s with %+v, want a link-local source, ff02::1 and hop limit 255", ip, cm)
+	}
+	if err := netlink.LinkSetDown(link("sr-p0")); err != nil { // sr-b0 loses carrier
+		t.Fatal(err)
+	}
 	time.Sleep(100 * time.Millisecond)
 	if sendRA("sr-b0", raLifetime) {
 		t.Fatal("RA sent without carrier")
@@ -284,5 +324,51 @@ func TestUnderlaySetupFailureStopsRAs(t *testing.T) {
 	}
 	if u.stopRA != nil {
 		t.Fatal("stopRA still set after the failed Setup")
+	}
+}
+
+// An optimistic link-local address (RFC 4429) is not a source for RAs
+// either: sendRA waits until DAD is done.
+func TestSendRAWaitsForOptimisticDAD(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("test requires root (run with sudo)")
+	}
+	enterTestNetns(t)
+	if err := netlink.LinkAdd(&netlink.Veth{LinkAttrs: netlink.LinkAttrs{Name: "so-b0"}, PeerName: "so-p0"}); err != nil {
+		t.Fatalf("add veth: %v", err)
+	}
+	for k, v := range map[string]string{"accept_dad": "1", "dad_transmits": "3", "optimistic_dad": "1"} {
+		if err := os.WriteFile("/proc/sys/net/ipv6/conf/so-b0/"+k, []byte(v), 0o644); err != nil { //nolint:gosec // test sysctl
+			t.Skipf("no optimistic DAD in this kernel: %v", err)
+		}
+	}
+	for _, n := range []string{"so-p0", "so-b0"} {
+		l, err := netlink.LinkByName(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := netlink.LinkSetUp(l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, err := netlink.LinkByName("so-b0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	optimistic := false
+	for deadline := time.Now().Add(time.Second); !optimistic && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		addrs, _ := netlink.AddrList(l, netlink.FAMILY_V6)
+		for _, a := range addrs {
+			optimistic = optimistic || (a.IP.IsLinkLocalUnicast() && a.Flags&unix.IFA_F_OPTIMISTIC != 0)
+		}
+	}
+	if !optimistic {
+		t.Skip("no optimistic link-local address")
+	}
+	for deadline := time.Now().Add(time.Second); !hasCarrier("so-b0") && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if sendRA("so-b0", raLifetime) {
+		t.Fatal("RA sent from an optimistic link-local address")
 	}
 }

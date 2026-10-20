@@ -105,7 +105,7 @@ type UnderlayTier struct {
 	stopCarrier  chan struct{}                 // stops the carrier watch
 	carrierDone  <-chan struct{}               // closed when the carrier watch ended
 	raDone       chan struct{}                 // closed when the RA goroutines exited
-	raRS, raUp   map[string]chan struct{}      // per NIC: ask for an RA, carrier is back (startPeriodicRA)
+	raUp         map[string]chan struct{}      // per NIC: carrier is back (startPeriodicRA)
 	peerCountFn  func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
 	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
 	bfd          *bfd.Manager                  // BFD sessions of the peers
@@ -1056,19 +1056,23 @@ var raSend = sendRA
 // the interface, so that the zebra of the adjacent FRR switch learns our
 // link-local address and registers it as the BGP unnumbered peer of the
 // interface. RFC 4861 section 6.1.2 mandates Hop Limit 255; receivers
-// discard RAs with any other value. It reports false without carrier and
-// when the write fails, which it does while the link-local address is
-// tentative (the kernel has no source address). Zebra rtadv_timer skips
-// an interface that is not operative or has no link-local address
-// (zebra/rtadv.c), and zebra does not learn a tentative address
-// (zebra/if_netlink.c, IFA_F_TENTATIVE).
+// discard RAs with any other value. The source is the link-local address
+// of the NIC (section 6.2.8). It sends nothing and reports false without
+// carrier, without a link-local address that finished DAD, and when the
+// write fails. Zebra rtadv_timer skips an interface that is not operative
+// or has no link-local address (zebra/rtadv.c), and zebra does not learn a
+// tentative address (zebra/if_netlink.c, IFA_F_TENTATIVE).
 func sendRA(iface string, lifetime uint16) bool {
 	link, err := netlink.LinkByName(iface)
 	if err != nil || link.Attrs().RawFlags&unix.IFF_LOWER_UP == 0 {
 		return false
 	}
+	src := raSource(link)
+	if src == nil {
+		return false
+	}
 	lc := net.ListenConfig{}
-	conn, err := lc.ListenPacket(context.Background(), "ip6:ipv6-icmp", "::"+"%"+iface)
+	conn, err := lc.ListenPacket(context.Background(), "ip6:ipv6-icmp", src.String()+"%"+iface)
 	if err != nil {
 		return false
 	}
@@ -1082,6 +1086,22 @@ func sendRA(iface string, lifetime uint16) bool {
 	dst := &net.IPAddr{IP: net.IPv6linklocalallnodes, Zone: iface}
 	_, err = conn.WriteTo(routerAdvertisement(link.Attrs().HardwareAddr, lifetime), dst)
 	return err == nil
+}
+
+// raSource returns the link-local address of link that finished DAD:
+// not tentative or failed. The kernel keeps IFA_F_TENTATIVE on an
+// optimistic address (RFC 4429) until DAD is done.
+func raSource(link netlink.Link) net.IP {
+	addrs, err := network.RetryDump(func() ([]netlink.Addr, error) { return netlink.AddrList(link, netlink.FAMILY_V6) })
+	if err != nil {
+		return nil
+	}
+	for _, a := range addrs {
+		if a.IP.IsLinkLocalUnicast() && a.Flags&(unix.IFA_F_TENTATIVE|unix.IFA_F_DADFAILED) == 0 {
+			return a.IP
+		}
+	}
+	return nil
 }
 
 // routerAdvertisement builds the ICMPv6 Router Advertisement (RFC 4861
