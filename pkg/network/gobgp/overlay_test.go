@@ -4387,6 +4387,49 @@ func TestType2NeighborRouterFlag(t *testing.T) {
 	}
 }
 
+// The router flag of a Type-2 neighbor comes from the best route of the IP,
+// not from any route, and it moves with the best route.
+func TestType2NeighborRouterFollowsBestPath(t *testing.T) {
+	path := func(rd uint32, vtep string, seq uint32, router, withdraw bool) *apipb.Path {
+		p := type2TestPath(t, rd, vtep, &apipb.MacMobilityExtended{SequenceNum: seq})
+		p.GetNlri().GetEvpnMacadv().IpAddress = "fd00::5"
+		p.IsWithdraw = withdraw
+		ext, err := wrapExt(&apipb.ArpNdExtended{IsRouter: router})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ec := p.GetPattrs()[1].GetExtendedCommunities()
+		ec.Communities = append(ec.Communities, ext)
+		return p
+	}
+	lastNeighbor := func(list []*netlink.Neigh) *netlink.Neigh {
+		for i := len(list) - 1; i >= 0; i-- {
+			if list[i].Family != syscall.AF_BRIDGE {
+				return list[i]
+			}
+		}
+		return nil
+	}
+
+	o, mock := type2TestOverlay()
+	o.processRouteUpdate(path(1, "10.0.0.1", 1, false, false)) // best: higher sequence
+	o.processRouteUpdate(path(2, "10.0.0.2", 0, true, false))  // stale, router
+	if got := o.type2Neigh["fd00::5"]; got.router {
+		t.Fatalf("neighbor %+v takes the router flag of a route that is not the best", got)
+	}
+	if n := lastNeighbor(mock.sets); n == nil || n.Flags&netlink.NTF_ROUTER != 0 {
+		t.Fatalf("neighbor set %v, want one without NTF_ROUTER", n)
+	}
+
+	o.processRouteUpdate(path(1, "10.0.0.1", 1, false, true)) // the router route becomes the best
+	if got := o.type2Neigh["fd00::5"]; !got.router {
+		t.Fatalf("neighbor %+v after the withdraw of the best route, want the router flag of the new best route", got)
+	}
+	if n := lastNeighbor(mock.sets); n == nil || n.Flags&netlink.NTF_ROUTER == 0 {
+		t.Fatalf("neighbor set %v after the withdraw of the best route, want NTF_ROUTER", n)
+	}
+}
+
 // The real Teardown removes the FDB entries (a VXLAN device BOOTy did not
 // create would keep them) and forgets the routes; a callback after it
 // installs nothing, and a new Setup installs them again.
