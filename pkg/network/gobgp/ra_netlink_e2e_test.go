@@ -199,3 +199,90 @@ func TestUnderlaySetupAdvertisesBeforeDiscovery(t *testing.T) {
 		t.Fatal("no RAs while Setup looked for the peer")
 	}
 }
+
+// sendRA sends nothing and reports false while the link-local address is
+// tentative and without carrier, and true once the address is usable.
+func TestSendRAWaitsForDADAndCarrier(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Fatal("test requires root (run with sudo)")
+	}
+	enterTestNetns(t)
+	if err := netlink.LinkAdd(&netlink.Veth{LinkAttrs: netlink.LinkAttrs{Name: "sr-b0"}, PeerName: "sr-p0"}); err != nil {
+		t.Fatalf("add veth: %v", err)
+	}
+	for k, v := range map[string]string{"accept_dad": "1", "dad_transmits": "3"} {
+		if err := os.WriteFile("/proc/sys/net/ipv6/conf/sr-b0/"+k, []byte(v), 0o644); err != nil { //nolint:gosec // test sysctl
+			t.Fatal(err)
+		}
+	}
+	setUp := func(name string, up bool) {
+		t.Helper()
+		l, err := netlink.LinkByName(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		set := netlink.LinkSetUp
+		if !up {
+			set = netlink.LinkSetDown
+		}
+		if err := set(l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setUp("sr-p0", true)
+	setUp("sr-b0", true)
+	if sendRA("sr-b0", raLifetime) {
+		t.Fatal("RA sent with a tentative link-local address")
+	}
+	ok := false
+	for deadline := time.Now().Add(10 * time.Second); !ok && time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		ok = sendRA("sr-b0", raLifetime)
+	}
+	if !ok {
+		t.Fatal("no RA after DAD")
+	}
+	setUp("sr-p0", false) // sr-b0 loses carrier
+	time.Sleep(100 * time.Millisecond)
+	if sendRA("sr-b0", raLifetime) {
+		t.Fatal("RA sent without carrier")
+	}
+}
+
+// A failed setupBGP stops the RAs that Setup started.
+func TestUnderlaySetupFailureStopsRAs(t *testing.T) {
+	raTestVeth(t, "sf-b0", "sf-p0")
+	p, err := netlink.LinkByName("sf-p0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := netlink.LinkSetDown(p); err != nil { // no carrier: no placeholder peer
+		t.Fatal(err)
+	}
+	u := NewUnderlayTier(&Config{
+		ASN: 65000, RouterID: "192.0.2.17", PeerMode: network.PeerModeUnnumbered,
+		Interfaces: []string{"sf-b0"}, ListenPort: -1, MTU: 1500,
+	})
+	u.log = slog.Default()
+	var done chan struct{}
+	u.discoverPeer = func(context.Context, string) (string, error) {
+		done = u.raDone
+		return "", errors.New("no leaf in this test")
+	}
+	ctx := context.Background()
+	if err := u.Setup(ctx); err == nil {
+		_ = u.Teardown(ctx)
+		t.Fatal("Setup without a peer succeeded")
+	}
+	defer func() { _ = u.Teardown(ctx) }()
+	if done == nil {
+		t.Fatal("no RAs while Setup looked for the peer")
+	}
+	select {
+	case <-done:
+	default:
+		t.Fatal("RAs still running after the failed Setup")
+	}
+	if u.stopRA != nil {
+		t.Fatal("stopRA still set after the failed Setup")
+	}
+}

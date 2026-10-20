@@ -105,6 +105,7 @@ type UnderlayTier struct {
 	stopCarrier  chan struct{}                 // stops the carrier watch
 	carrierDone  <-chan struct{}               // closed when the carrier watch ended
 	raDone       chan struct{}                 // closed when the RA goroutines exited
+	raRS, raUp   map[string]chan struct{}      // per NIC: ask for an RA, carrier is back (startPeriodicRA)
 	peerCountFn  func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
 	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
 	bfd          *bfd.Manager                  // BFD sessions of the peers
@@ -1047,44 +1048,40 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 	return nil
 }
 
-// sendRouterAdvertisement sends an ICMPv6 Router Advertisement (type 134) on
-// the interface so that the adjacent FRR switch's zebra learns our link-local
-// address and registers it as the BGP unnumbered peer for the interface.
-// FRR's BGP unnumbered peering requires zebra to receive an RA from the peer.
-// RFC 4861 §6.1.2 mandates Hop Limit = 255; receivers discard RAs with any
-// other value.
-func sendRouterAdvertisement(iface string) { raSend(iface, raLifetime) }
-
-// raSend sends one RA with the given router lifetime; tests replace it.
+// raSend sends one RA with the given router lifetime and reports whether
+// it went out; tests replace it.
 var raSend = sendRA
 
-func sendRA(iface string, lifetime uint16) {
-	ifi, err := net.InterfaceByName(iface)
-	if err != nil {
-		return
+// sendRA sends an ICMPv6 Router Advertisement (type 134) to ff02::1 on
+// the interface, so that the zebra of the adjacent FRR switch learns our
+// link-local address and registers it as the BGP unnumbered peer of the
+// interface. RFC 4861 section 6.1.2 mandates Hop Limit 255; receivers
+// discard RAs with any other value. It reports false without carrier and
+// when the write fails, which it does while the link-local address is
+// tentative (the kernel has no source address). Zebra rtadv_timer skips
+// an interface that is not operative or has no link-local address
+// (zebra/rtadv.c), and zebra does not learn a tentative address
+// (zebra/if_netlink.c, IFA_F_TENTATIVE).
+func sendRA(iface string, lifetime uint16) bool {
+	link, err := netlink.LinkByName(iface)
+	if err != nil || link.Attrs().RawFlags&unix.IFF_LOWER_UP == 0 {
+		return false
 	}
-
 	lc := net.ListenConfig{}
 	conn, err := lc.ListenPacket(context.Background(), "ip6:ipv6-icmp", "::"+"%"+iface)
 	if err != nil {
-		return
+		return false
 	}
 	defer conn.Close() //nolint:errcheck // best-effort RA
 
-	// Set Hop Limit to 255 as required by RFC 4861 §6.1.2.
-	// FRR's zebra silently drops RAs with any other hop limit.
 	pc := ipv6.NewPacketConn(conn)
 	if err := pc.SetMulticastHopLimit(mandatedHopLimit); err != nil {
 		slog.Warn("failed to set multicast hop limit", "iface", iface, "error", err)
-		return
+		return false
 	}
-	if err := pc.SetHopLimit(mandatedHopLimit); err != nil {
-		slog.Warn("failed to set hop limit", "iface", iface, "error", err)
-		return
-	}
-
-	dst := &net.IPAddr{IP: net.ParseIP("ff02::1"), Zone: iface} // all-nodes multicast
-	_, _ = conn.WriteTo(routerAdvertisement(ifi.HardwareAddr, lifetime), dst)
+	dst := &net.IPAddr{IP: net.IPv6linklocalallnodes, Zone: iface}
+	_, err = conn.WriteTo(routerAdvertisement(link.Attrs().HardwareAddr, lifetime), dst)
+	return err == nil
 }
 
 // routerAdvertisement builds the ICMPv6 Router Advertisement (RFC 4861

@@ -41,6 +41,12 @@ const (
 	maxRADelay = 500 * time.Millisecond
 )
 
+// raDelay is the random delay of an answer to a Router Solicitation;
+// tests replace it.
+var raDelay = func() time.Duration {
+	return rand.N(maxRADelay) //nolint:gosec // timing jitter
+}
+
 // raSchedule is the RA timing of one NIC.
 type raSchedule struct {
 	fast int       // fast RAs left
@@ -52,6 +58,14 @@ type raSchedule struct {
 func (s *raSchedule) restart(now time.Time) {
 	s.fast = raFastCount
 	s.next = now
+}
+
+// retry schedules the next try 1 s after an RA that did not go out: no
+// carrier, a tentative link-local address or a failed write. Only an RA
+// that went out counts as a fast RA, so all of them reach the switch
+// after DAD, as in zebra, which skips the interface until then.
+func (s *raSchedule) retry(now time.Time) {
+	s.next = now.Add(raFastInterval)
 }
 
 // sent records an RA sent at now and schedules the next one: 1 s later
@@ -94,10 +108,11 @@ func (u *UnderlayTier) startPeriodicRA() {
 	stop, done := make(chan struct{}), make(chan struct{})
 	u.stopRA, u.raDone = stop, done
 	var wg sync.WaitGroup
-	ups := make(map[string]chan struct{}, len(u.nics))
+	u.raRS = make(map[string]chan struct{}, len(u.nics))
+	u.raUp = make(map[string]chan struct{}, len(u.nics))
 	for _, nic := range u.nics {
 		rs, up := make(chan struct{}, 1), make(chan struct{}, 1)
-		ups[nic] = up
+		u.raRS[nic], u.raUp[nic] = rs, up
 		c, err := listenRS(nic, rs)
 		if err != nil {
 			u.log.Warn("router solicitations are not answered", "nic", nic, "error", err)
@@ -109,13 +124,22 @@ func (u *UnderlayTier) startPeriodicRA() {
 			}
 		})
 	}
-	if err := watchCarrierUp(stop, ups, &wg); err != nil {
+	if err := watchCarrierUp(stop, u.raUp, &wg); err != nil {
 		u.log.Warn("RAs do not start fast again after a carrier loss", "error", err)
 	}
 	go func() {
 		wg.Wait()
 		close(done)
 	}()
+}
+
+// solicitRA asks for an RA on nic like a Router Solicitation, so the
+// scheduler keeps MIN_DELAY_BETWEEN_RAS.
+func (u *UnderlayTier) solicitRA(nic string) {
+	select {
+	case u.raRS[nic] <- struct{}{}:
+	default: // an answer is already scheduled, or no RAs on nic
+	}
 }
 
 // stopPeriodicRA stops the RAs and waits, so the final RA with lifetime 0
@@ -134,9 +158,15 @@ func (u *UnderlayTier) stopPeriodicRA() {
 // restarts the fast RAs, a value on rs is a Router Solicitation.
 func advertise(nic string, stop, rs, up <-chan struct{}) {
 	var s raSchedule
+	send := func(now time.Time) {
+		if raSend(nic, raLifetime) {
+			s.sent(now)
+		} else {
+			s.retry(now)
+		}
+	}
 	s.restart(time.Now())
-	raSend(nic, raLifetime)
-	s.sent(time.Now())
+	send(time.Now())
 	t := time.NewTimer(time.Until(s.next))
 	defer t.Stop()
 	for {
@@ -147,10 +177,9 @@ func advertise(nic string, stop, rs, up <-chan struct{}) {
 		case <-up:
 			s.restart(time.Now())
 		case <-rs:
-			s.solicited(time.Now(), rand.N(maxRADelay)) //nolint:gosec // timing jitter
+			s.solicited(time.Now(), raDelay())
 		case now := <-t.C:
-			raSend(nic, raLifetime)
-			s.sent(now)
+			send(now)
 		}
 		t.Reset(time.Until(s.next))
 	}

@@ -92,9 +92,11 @@ func (u *UnderlayTier) startRelearn() {
 		peers:       u.ifacePeerSnapshot,
 		established: u.peerEstablished,
 		carrier:     hasCarrier,
-		moved:       movedPeer,
-		replace:     u.replaceInterfacePeer,
-		log:         u.log,
+		moved: func(ctx context.Context, iface, old string) string {
+			return movedPeer(ctx, iface, old, u.solicitRA)
+		},
+		replace: u.replaceInterfacePeer,
+		log:     u.log,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	u.stopRelearn = cancel
@@ -130,14 +132,16 @@ func hasCarrier(iface string) bool {
 // movedPeer returns another link-local neighbor on iface that answers on
 // the BGP port, when the old address does not. A switch that connects
 // from its new address leaves it in the neighbor table; the RA asks it to.
-func movedPeer(ctx context.Context, iface, old string) string {
+// solicit asks the RA scheduler for that RA, which keeps
+// MIN_DELAY_BETWEEN_RAS.
+func movedPeer(ctx context.Context, iface, old string, solicit func(string)) string {
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {
 		return ""
 	}
 	cands := slices.DeleteFunc(findLinkLocalNeighbors(ifi, iface), func(a string) bool { return a == old })
 	if len(cands) == 0 {
-		sendRouterAdvertisement(iface)
+		solicit(iface)
 		return ""
 	}
 	return chooseMoved(ctx, old, cands)
