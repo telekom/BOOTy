@@ -395,8 +395,6 @@ func TestCarrierReturnWaitsIdleHoldAfterReset(t *testing.T) {
 	}
 	defer u.stopRestart()
 	w := u.newCarrierWatch(ifaces)
-	w.announce = func(string) {}
-	w.raRepeat = 0
 
 	waitFor := func(addr string, ok func(*apipb.Peer) bool) {
 		t.Helper()
@@ -472,8 +470,6 @@ func carrierTier(t *testing.T, gr bool) (*UnderlayTier, *carrierWatch, net.Conn)
 	conn := fakeSpeaker(t, u, gr)
 	u.recordInterfacePeer("eth0", "127.0.0.1")
 	w := u.newCarrierWatch(map[string]string{"eth0": "127.0.0.1"})
-	w.announce = func(string) {}
-	w.raRepeat = 0
 	return u, w, conn
 }
 

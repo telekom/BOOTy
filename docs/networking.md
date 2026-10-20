@@ -761,14 +761,36 @@ per boot, kept in `/run/booty/machine-id`; it never uses or writes
 provisioned OS), port ID the interface name, TTL 120 s, system name the
 hostname, and the capabilities station, bridge and router (station
 enabled). When the sending stops, BOOTy sends a shutdown LLDPDU (TTL 0,
-IEEE 802.1AB), so the switch drops BOOTy at once instead of after 120 s;
-networkd does not send one. An `emit-lldp: true` on a netplan match block
-without `set-name` (the legacy L2 netplan has `all-en` with `name: "en*"`)
-sends on every NIC the block selects. BOOTy sends in every network mode,
-like networkd, which sends whatever the addressing (DHCP, static, FRR).
-Outside GoBGP mode a NIC that appears later and a block selects sends too
-(with the firmware LLDP agent turned off first, like at the start); the
-GoBGP underlay sends only on the NICs resolved at the setup. With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
+IEEE 802.1AB) on each NIC with carrier, so the switch drops BOOTy at once
+instead of after 120 s; networkd does not send one. An `emit-lldp: true` on a netplan match
+block without `set-name` (the legacy L2 netplan has `all-en` with
+`name: "en*"`) sends on every NIC the block selects. BOOTy sends in every
+network mode, like networkd, which sends whatever the addressing (DHCP,
+static, FRR). Outside GoBGP mode a NIC that appears later and a block
+selects sends too (with the firmware LLDP agent turned off first, like at
+the start); the GoBGP underlay sends only on the NICs resolved at the
+setup.
+
+The timing is that of networkd 249 (`networkd-lldp-tx.c`), in every
+profile. Each delay is a base plus a random jitter of 0 to 400 ms:
+
+- A NIC sends only while it has carrier (`link_has_carrier`: operstate
+  up, or operstate unknown with lower up and running and not dormant).
+  BOOTy follows the carrier with netlink link updates, like networkd.
+- Carrier gained (`link_carrier_gained`, `link_lldp_emit_start`): the
+  first frame 0.8 s plus jitter later, then 3 more 0.8 s plus jitter
+  apart (txFastInit 4, msgFastTx 1 s of IEEE 802.1AB), then one every
+  29.8 s plus jitter (msgTxInterval 30 s). The TTL is 120 s.
+- Carrier lost (`link_carrier_lost`, `link_lldp_emit_stop`): no frames,
+  and none counts. The next carrier gain starts the 4 fast frames again.
+  A failed send counts, like in networkd.
+- A start while the timer runs sets the fast frames back to 4 and only
+  lowers the timeout, like `link_lldp_emit_start`.
+- When the link watch loses updates (ENOBUFS), BOOTy subscribes again and
+  reads the carrier again. A NIC that is missing, deleted or renamed gets
+  no frames; BOOTy logs it once and `booty lldp status` shows it.
+
+With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
 physical NIC, logs each new or changed neighbor and adds the current
 neighbors to the hardware inventory report; the legacy ramdisk only
 sends. The receive joins the LLDP multicast groups (01:80:c2:00:00:0e,
@@ -960,12 +982,74 @@ locally assigned port ID unchanged; check it on a leaf before relying on it.
 | `numbered` | Numbered sessions to `BGP_NEIGHBORS` | IPv4 unicast, L2VPN EVPN | `BGP_NEIGHBORS` (IPv4). The host must already reach the neighbors |
 
 Fabric NICs are the NICs in `BGP_INTERFACES`, or all detected physical NICs
-when it is empty. BOOTy waits up to 10 s for the listed NICs. In unnumbered
-and dual mode, BOOTy sends an IPv6 Router Advertisement on each fabric NIC
-every 10 s with router lifetime 30 s (zebra's default for that interval),
-so that FRR peers learn the BOOTy link-local address. Teardown
-stops these RAs with a final RA with router lifetime 0 (RFC 4861 section
-6.2.5), so no neighbor keeps BOOTy as a default router.
+when it is empty. BOOTy waits up to 10 s for the listed NICs.
+
+In unnumbered and dual mode, and on the NICs of interface sessions, BOOTy
+sends IPv6 Router Advertisements on each fabric NIC like zebra does for a
+bgpd unnumbered peer (FRR 10.2 `zebra/rtadv.c`), so that FRR peers learn
+the BOOTy link-local address:
+
+- The RAs start before BOOTy looks for the peers. The first 5 RAs go out
+  1 s apart: the 4 fast retransmits of zebra (`RTADV_NUM_FAST_REXMITS`,
+  `RTADV_FAST_REXMIT_PERIOD`) and then its first regular RA. After that,
+  one RA goes out every 10 s (bgpd `BGP_UNNUM_DEFAULT_RA_INTERVAL`) with
+  router lifetime 30 s (the zebra default for that interval).
+- The source of each RA is the link-local address of the NIC (RFC 4861
+  section 6.2.8), never a global or a tentative address. An RA does not
+  go out without carrier or while the link-local address is tentative
+  (DAD, also with optimistic DAD); BOOTy then tries again 1 s later. Only an RA that
+  went out counts as one of the 5, so all 5 reach the switch after DAD.
+  Zebra skips such an interface in `rtadv_timer` and does not learn a
+  tentative address (`zebra/if_netlink.c`). The legacy captures show 4
+  or 5 fast RAs: at 0, 1, 2 and 3 s and the next one 10 s later, or a
+  fifth one on the next tick.
+- When a fabric NIC gets carrier back, the 4 fast retransmits start again
+  1 s later, like zebra: `rtadv_if_up` only sets them, and `rtadv_timer`
+  sends them on its next 1 s tick. This also applies without
+  `bgp fast-external-failover`. The next regular RA comes 10 s after the
+  last fast one; zebra goes on with the regular timer where it stopped,
+  which is 0 to 10 s.
+  An FRR unnumbered peer forgets the neighbor address on interface down and
+  accepts a connection again only after an RA.
+- Each fabric NIC joins the all-routers group `ff02::2` (RFC 4861 section
+  6.2.2, zebra `if_join_all_router`) and answers a valid Router
+  Solicitation (section 6.1.1) with a multicast RA. The answer waits a
+  random time of up to 0.5 s (`MAX_RA_DELAY_TIME`), and at least 3 s
+  (`MIN_DELAY_BETWEEN_RAS`) plus that time after the last RA (section
+  6.2.6). When an RA is due earlier, that RA is the answer. The next
+  regular RA comes 10 s after the answer, as in zebra.
+- The relearner sends no RAs of its own, like zebra and the legacy
+  ramdisk: a switch that comes back with another address finds BOOTy from
+  the scheduled RAs, and BOOTy finds the switch from its RAs.
+- Teardown stops the RAs with a final RA with router lifetime 0 (RFC 4861
+  section 6.2.5), so no neighbor keeps BOOTy as a default router, and then
+  leaves `ff02::2`.
+
+RFC 4861 audit of these RAs:
+
+| Section | Rule | BOOTy | Reason |
+|---|---|---|---|
+| 6.1.1 | Validate a received Router Solicitation: hop limit 255, code 0, at least 8 octets, option lengths not 0, no source link-layer address option from `::` (the kernel checks the checksum) | Compliant | |
+| 6.1.2 | Receivers accept only RAs with hop limit 255, code 0, a link-local source and at least 16 octets | Compliant as a sender: hop limit 255, code 0, link-local source, 24 octets | The kernel and zebra on the leaf drop other RAs |
+| 6.2.1 | AdvDefaultLifetime is 0 or between MaxRtrAdvInterval and 9000 s, by default 3 times MaxRtrAdvInterval | Compliant: 30 s, 3 times the 10 s interval | As the zebra default for that interval |
+| 6.2.2 | An advertising interface MUST join the all-routers group | Compliant: each fabric NIC joins `ff02::2` while it sends RAs | As zebra `if_join_all_router` |
+| 6.2.4 | Random interval between MinRtrAdvInterval and MaxRtrAdvInterval; at most `MAX_INITIAL_RTR_ADVERTISEMENTS` (3) initial RAs, with intervals of at most `MAX_INITIAL_RTR_ADVERT_INTERVAL` (16 s) | Deviation: 5 fast RAs 1 s apart, then a fixed 10 s | As zebra (`rtadv_timer`, its FIXME for the fixed interval); FRR unnumbered peering depends on the early RAs |
+| 6.2.5 | When the interface stops advertising, SHOULD send final RAs with router lifetime 0 (at most `MAX_FINAL_RTR_ADVERTISEMENTS`) and leave the all-routers group | Compliant: one final RA, then BOOTy leaves `ff02::2` | |
+| 6.2.6 | Answer a solicitation after a random delay of up to `MAX_RA_DELAY_TIME`, and not before `MIN_DELAY_BETWEEN_RAS` after the last multicast RA | Compliant. Deviation from zebra, which with `ipv6 nd ra-fast-retrans` (on by default) answers at once (`rtadv_process_solicit`) | No Router Solicitation was seen on the fabric (0 of 48 captures of the kindmetal EVPN parity runs), so the delay does not change the boot |
+| 6.2.6 | Consecutive multicast RAs MUST be at least `MIN_DELAY_BETWEEN_RAS` (3 s) apart | Deviation: the 5 fast RAs 1 s apart at the start, the 4 fast RAs 1 s apart after the carrier returns (the first one 1 s after it, which can be less than 3 s after the last RA), and the final RA with lifetime 0, which can come less than 3 s after the last RA | As zebra (fast retransmits in `rtadv_timer`, set by `ipv6_nd_suppress_ra_set` and `rtadv_if_up`, and the RA with lifetime 0 of `ipv6_nd_suppress_ra_set`); the leaf needs the early RAs to accept the unnumbered session |
+| 6.2.8 | The source address of an RA MUST be the link-local address of the interface | Compliant: the socket is bound to the link-local address that finished DAD; without one, no RA goes out | Zebra sends from the link-local address it learned, which excludes tentative addresses |
+
+BOOTy finds the leaf of an unnumbered session in the neighbor table. The
+leaf gets there from its RAs: the kernel adds the source link-layer
+address of an RA also with `accept_ra` 0. The leaf also gets there when
+it connects after an RA of BOOTy, from the address resolution of that
+connection. Like FRR, BOOTy sends no echo request to `ff02::1` to find the
+leaf. In the kindmetal EVPN parity runs, the echo request that BOOTy sent
+before did not go out on the first fabric NIC, because the link-local
+address was still tentative. On the second fabric NIC, the leaf knew the
+BOOTy MAC address from the RA before it, so the leaf answered without an
+address resolution, and only other nodes on the segment got into the
+neighbor table.
 
 With `VRF_NAME`, BOOTy puts the fabric NICs into the VRF. It skips a NIC
 that carries an IPv4 default route, because that NIC is a management NIC.
@@ -1056,7 +1140,9 @@ With `asn_server` > 65535, `provision_vni` must be 65535 or lower, because a
 ### Routes BOOTy processes
 
 BOOTy accepts a route update only when its route target matches the local
-route target. A withdraw without a route target is accepted. BOOTy ignores
+route target. An update whose BGP Encapsulation communities do not include
+VXLAN (RFC 8365 section 6) is handled as a withdraw of its route; an update
+without the community counts as VXLAN, like FRR. A withdraw without a route target is accepted. BOOTy ignores
 routes whose next hop is its own router ID.
 
 | Route | Action |
