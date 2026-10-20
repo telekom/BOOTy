@@ -553,7 +553,7 @@ BOOTy's other dependency forks (gopacket, netlink) are listed in
 [Dependency forks](dependency-forks.md).
 
 GoBGP mode embeds GoBGP 4.10.0 through a fork tag:
-`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.13`
+`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.16`
 in `go.mod`. The tag is v4.10.0 with sixteen fixes and four features. Do
 not use the tag v4.10.0-booty.7: it stops answering a NOTIFICATION in
 OpenSent, which RFC 4271 section 8.2.2 does not allow (booty.8 and later
@@ -573,7 +573,7 @@ answer it again).
 | In OpenConfirm and Established the outgoing connection manager skips the dial and keeps running instead of ending (booty.13) | With a stale FSM state the manager of booty.12 could end while the FSM was already back in Active, which then had no outgoing connection manager. |
 | Take a new connection from a restarting peer (RFC 4724) | A peer that restarts with graceful restart cannot open a new session while the old one is still up. |
 | Discard EVPN NLRIs of unknown route types | An EVPN route type that GoBGP does not know resets the session instead of being ignored (RFC 7606). |
-| Send IPv4 routes with an IPv6 next hop only with the extended next hop capability | A peer without RFC 8950 support gets routes with a next hop it cannot use. |
+| Send IPv4 routes with an IPv6 next hop only with the extended next hop capability, for all five IPv4 families of RFC 8950 section 4, IPv4 VPN multicast included (booty.15), and with an IPv4-mapped IPv6 next hop counted as IPv6 (booty.16) | A peer without RFC 8950 support gets routes with a next hop it cannot use. Before booty.15 and booty.16, IPv4 VPN multicast routes and routes with an IPv4-mapped IPv6 next hop such as `::ffff:192.0.2.1` still went to such a peer. |
 | Advertise extended next hop only for the IPv4 families of RFC 8950 | GoBGP also offers it for l2vpn evpn, and FRR logs a capability warning per OPEN. |
 | Keep unknown EVPN extended community sub-types (RFC 7606 section 7.14) | A route with an EVPN extended community sub-type that GoBGP does not know is treated as withdrawn: FRR's MAC/IP routes with the ARP/ND community (sub-type 0x08) are withdrawn. |
 | Decode the EVPN ARP/ND extended community (RFC 9047) | The router (R), override (O) and immutable (I) flags of a MAC/IP route, and the proxy flag that FRR sends, are not available to BOOTy. |
