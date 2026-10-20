@@ -188,35 +188,38 @@ func (u *UnderlayTier) restartPeer(ctx context.Context, addr string) (bool, erro
 // startStoppedPeer starts the peer at addr again when the carrier of its
 // interface returns; the caller holds peerOps.
 //
-// GoBGP's EnablePeer restarts the idle hold timer of the peer, and the
-// peer closes the leaf's connections until it expires. Its length
-// depended on the order of BFD loss and carrier loss: IdleHoldTimeAfterReset
-// (1 s) when BFD went down after the carrier loss (the BFD reset of the
-// stopped peer set it), but 5 s (holdtimeIdle) when BFD went down first,
-// because the peer restarter had added the peer again and its first idle
-// hold timer set holdtimeIdle. A reset of the stopped peer sends nothing
-// and sets IdleHoldTimeAfterReset for the next start (GoBGP fork,
-// osrg/gobgp#3740), so the wait is always 1 s.
+// GoBGP's EnablePeer starts the idle hold timer of the peer, and the peer
+// closes the leaf's connections until it expires. With GoBGP 4.10.0 its
+// length depended on the order of BFD loss and carrier loss (1 s or the
+// fixed 5 s). With the GoBGP fork tag v4.10.0-booty.21 an administrative
+// shutdown sets the idle hold time to 1 s, also for a peer that already
+// waits in Idle, like "no neighbor shutdown" in FRR. A reset of the
+// stopped peer sends nothing and sets IdleHoldTimeAfterReset for the next
+// start (osrg/gobgp#3740). Since booty.21 the reset is redundant with
+// BOOTy's IdleHoldTimeAfterReset of 1 s (the carrier tests pass without
+// it); it is kept so that the wait stays IdleHoldTimeAfterReset if that
+// value changes.
 //
 // The peer is not deleted and added again, which would start it at once:
 // it then connects 1.5 to 2 s after the carrier, when the leaf (FRR)
-// connects too. GoBGP (fork commit 6bf0511e) takes a connection that
+// connects too. GoBGP up to the fork tag booty.17 took a connection that
 // completes after the session is up as a graceful restart of the leaf
-// whenever the leaf sent the graceful restart capability, and ends the
-// session (production template lab). RFC 4724 section 5 and FRR
-// (bgp_accept, PEER_STATUS_NSF_MODE) do that only when the leaf sent
-// address family tuples. Not deleting the peer also keeps the stale
-// routes of a leaf in graceful restart, as FRR keeps those of a peer in
-// NSF wait across interface down and up (bgp_stop in bgp_fsm.c).
+// whenever the leaf sent the graceful restart capability, and ended the
+// session (production template lab). Since booty.18 and booty.19 it does
+// that only when the leaf sent address family tuples in the current
+// session, like RFC 4724 section 5 and FRR (bgp_accept,
+// PEER_STATUS_NSF_MODE), so helper-only leaves are not affected. Not
+// deleting the peer also keeps the stale routes of a leaf in graceful
+// restart, as FRR keeps those of a peer in NSF wait across interface down
+// and up (bgp_stop in bgp_fsm.c).
 //
 // A peer that is not administratively down (the carrier loss did not stop
-// it, so its session may still be up) is left alone: EnablePeer on an
-// enabled GoBGP peer is not a no-op. In Idle it restarts the running idle
-// hold timer, in Active, OpenSent and OpenConfirm it logs "code logic
-// bug", and in every state it flips the peer's AdminDown state flag
-// (changeadminState, pkg/server/fsm.go). stopPeer waits until GoBGP has
-// applied the stop, so the admin state read here is not a stop that is
-// still queued.
+// it, so its session may still be up) is left alone. Up to the fork tag
+// booty.19, EnablePeer on an enabled GoBGP peer restarted the running idle
+// hold timer in Idle, logged "code logic bug" in Active, OpenSent and
+// OpenConfirm, and flipped the peer's AdminDown state flag; booty.20 makes
+// it a no-op. stopPeer waits until GoBGP has applied the stop, so the
+// admin state read here is not a stop that is still queued.
 func (u *UnderlayTier) startStoppedPeer(ctx context.Context, addr string) error {
 	stopped := false
 	if err := u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
@@ -238,11 +241,12 @@ func (u *UnderlayTier) startStoppedPeer(ctx context.Context, addr string) error 
 
 // stopPeer stops the peer at addr (DisablePeer) and waits until GoBGP has
 // applied it; the caller holds peerOps. DisablePeer and EnablePeer only
-// queue the change for the FSM, in a channel with room for one, and
-// GoBGP drops a change while another one is queued. So an admin state
-// read before the FSM took the change is the old one, and a stop or
-// start right after another one can be lost: the peer stayed down for
-// good after a fast carrier flap, or up after down, up, down.
+// queue the change for the FSM, so an admin state read before the FSM
+// took the change is the old one. Up to the fork tag booty.19 GoBGP also
+// dropped a change while another one was queued, and a stop or start
+// right after another one could be lost: the peer stayed down for good
+// after a fast carrier flap, or up after down, up, down. Since booty.20
+// the latest change wins, so the wait is belt and braces for that.
 // startStoppedPeer waits for its start the same way.
 func (u *UnderlayTier) stopPeer(ctx context.Context, addr string) error {
 	if err := u.bgp.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: addr, Communication: "interface down"}); err != nil {
