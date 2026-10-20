@@ -1075,6 +1075,12 @@ func (o *OverlayTier) handleType5Update(
 
 // fibShadows reports whether the underlay FIB writer owns prefix in the
 // overlay route table.
+//
+// The check and the RouteReplace that follows it are not atomic with the
+// FIB writer: the writer can install its route between them, and the
+// overlay route then replaces it. The window is bounded by the periodic
+// FIB resync (fibResyncDefault, 30 s), which installs the writer's routes
+// again with force.
 func (o *OverlayTier) fibShadows(prefix string) bool {
 	return o.fibOwns != nil && o.fibOwns(o.fibTable(), netip.MustParsePrefix(prefix))
 }
@@ -1312,6 +1318,13 @@ func (o *OverlayTier) resolveType5Gateway(ip net.IP) {
 // resolveType5Prefix re-evaluates the paths of a prefix with a path via the
 // gateway IP ip. The caller holds type5PathsMu.
 func (o *OverlayTier) resolveType5Prefix(prefix string, ip net.IP) {
+	if o.fibShadows(prefix) {
+		// The kernel route is the FIB writer's: do not replace or delete
+		// it. fibRemoved installs a resolved path when the writer removes
+		// its route.
+		delete(o.type5Active, prefix)
+		return
+	}
 	active, had := o.type5Active[prefix]
 	if p := o.type5Paths[prefix][active]; had && p != nil &&
 		(!type5OverlayGateway(p.route).Equal(ip) || o.type2HasIP(ip)) {

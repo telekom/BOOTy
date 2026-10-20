@@ -5290,3 +5290,52 @@ func TestType5OverlayVRFNotShadowed(t *testing.T) {
 		t.Fatalf("route replaces = %v, want 10.200.0.0/24 in table 100", mock.routeReplaces)
 	}
 }
+
+// A gateway IP Type-5 path kept in the shadow is not installed over the FIB
+// writer's route when the Type-2 route of its gateway IP arrives. It is
+// installed when the writer removes its route.
+func TestType5GatewayIPShadowedNotInstalledOnType2(t *testing.T) {
+	o, m := type2TestOverlay()
+	o.cfg.ResolveOverlayIndex = true
+	p := netip.MustParsePrefix("10.100.0.0/24")
+	owned := fibOwnerStub{routeKey(unix.RT_TABLE_MAIN, p): true}
+	o.fibOwns = owned.owns
+	gw := net.ParseIP("10.1.0.5")
+	t5 := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: gw.String()}
+	t2 := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:00:00:05", IpAddress: gw.String()}
+	o.handleType5Route(t5, "10.0.0.1", nil, false)
+	o.handleType2Route(t2, "10.0.0.2", 0, false)
+	for _, r := range m.routeReplaces {
+		if r.Dst != nil && r.Dst.String() == p.String() {
+			t.Fatalf("shadowed gateway IP path installed over the FIB route: %+v", r)
+		}
+	}
+	delete(owned, routeKey(unix.RT_TABLE_MAIN, p))
+	o.fibRemoved(unix.RT_TABLE_MAIN, p)
+	if n := len(m.routeReplaces); n == 0 || m.routeReplaces[n-1].Dst.String() != p.String() || !m.routeReplaces[n-1].Gw.Equal(gw) {
+		t.Fatalf("backup not installed after FIB removal: %v", m.routeReplaces)
+	}
+}
+
+// The Type-5 route was installed first and the FIB writer replaced it. The
+// Type-2 withdraw of the gateway IP does not delete the writer's route.
+func TestType2WithdrawKeepsFIBRoute(t *testing.T) {
+	o, m := type2TestOverlay()
+	o.cfg.ResolveOverlayIndex = true
+	p := netip.MustParsePrefix("10.100.0.0/24")
+	owned := fibOwnerStub{}
+	o.fibOwns = owned.owns
+	gw := net.ParseIP("10.1.0.5")
+	t5 := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: gw.String()}
+	t2 := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:00:00:05", IpAddress: gw.String()}
+	o.handleType2Route(t2, "10.0.0.2", 0, false)
+	o.handleType5Route(t5, "10.0.0.1", nil, false)
+	owned[routeKey(unix.RT_TABLE_MAIN, p)] = true // the FIB writer replaced the route
+	before := len(m.routeDels)
+	o.handleType2Route(t2, "10.0.0.2", 0, true)
+	for _, r := range m.routeDels[before:] {
+		if r.Dst != nil && r.Dst.String() == p.String() {
+			t.Fatalf("Type-2 withdraw deleted the FIB writer's route: %+v", r)
+		}
+	}
+}

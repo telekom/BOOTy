@@ -1058,8 +1058,9 @@ without a kernel route and logs a warning. A withdraw meanwhile only
 forgets the path. When the FIB writer removes its route (for example the
 default route after a leaf fault), BOOTy installs the Type-5 route as the
 backup. This also applies when the Type-5 route was installed first and
-the FIB writer replaced it. zebra instead selects one route by
-administrative distance.
+the FIB writer replaced it. In FRR both are BGP routes: bgpd best-path
+selection picks one, and no re-evaluation, including gateway IP
+resolution, installs a path that was not selected.
 
 The underlay `/32` routes use a fabric NIC with link scope. With
 `VRF_NAME`, BOOTy uses the first NIC in the VRF and the VRF table. Without
