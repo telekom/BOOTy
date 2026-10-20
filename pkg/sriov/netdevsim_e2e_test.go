@@ -3,7 +3,6 @@
 package sriov
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -26,6 +25,8 @@ import (
 type netdevsim struct {
 	id  int
 	dir string // /sys/bus/netdevsim/devices/netdevsim<id>
+	// wedged is set when a sysfs write to the device did not return.
+	wedged bool
 }
 
 const netdevsimBus = "/sys/bus/netdevsim"
@@ -44,10 +45,18 @@ func newNetdevsim(t *testing.T, id, ports int) *netdevsim {
 	if _, err := os.Stat(netdevsimBus); err != nil {
 		t.Fatalf("netdevsim not loaded (modprobe netdevsim): %v", err)
 	}
-	writeSys(t, filepath.Join(netdevsimBus, "new_device"), fmt.Sprintf("%d %d", id, ports))
 	n := &netdevsim{id: id, dir: filepath.Join(netdevsimBus, "devices", "netdevsim"+strconv.Itoa(id))}
+	n.within(t, "new_device", func() error {
+		return os.WriteFile(filepath.Join(netdevsimBus, "new_device"), fmt.Appendf(nil, "%d %d", id, ports), 0o200)
+	})
 	t.Cleanup(func() {
-		within(t, "del_device", func() error {
+		// del_device of a wedged device blocks with the netdevsim bus lock
+		// held, and then new_device of every later test blocks too.
+		if n.wedged {
+			t.Logf("not deleting the wedged %s", n.name())
+			return
+		}
+		n.within(t, "del_device", func() error {
 			return os.WriteFile(filepath.Join(netdevsimBus, "del_device"), []byte(strconv.Itoa(id)), 0o200)
 		})
 	})
@@ -59,24 +68,21 @@ func newNetdevsim(t *testing.T, id, ports int) *netdevsim {
 // within runs fn and fails the test when fn fails or does not return in
 // a minute. A netdevsim sysfs write that oopses in the kernel never
 // returns, and it holds the device lock, so every later write to the
-// device hangs too: fail with the kernel log instead of waiting for the
-// go test timeout.
-func within(t *testing.T, what string, fn func() error) {
+// device hangs too: mark the device wedged and fail with the kernel log
+// instead of waiting for the go test timeout. fn runs on another
+// goroutine that can outlive the test, so it must not use t.
+func (n *netdevsim) within(t *testing.T, what string, fn func() error) {
 	t.Helper()
 	const limit = time.Minute
 	done := make(chan error, 1)
-	go func() {
-		// fn can end with t.Fatal (runtime.Goexit) and returns no error then.
-		err := errors.New("ended without a result")
-		defer func() { done <- err }()
-		err = fn()
-	}()
+	go func() { done <- fn() }()
 	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatalf("%s: %v", what, err)
 		}
 	case <-time.After(limit):
+		n.wedged = true
 		out, err := exec.CommandContext(t.Context(), "dmesg").CombinedOutput()
 		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 		lines = lines[max(0, len(lines)-60):]
@@ -86,9 +92,10 @@ func within(t *testing.T, what string, fn func() error) {
 
 // vfRepTeardownOopses reports a kernel whose netdevsim oopses when it
 // deletes a VF representor (sriov_numvfs 0 or legacy mode in switchdev
-// mode, del_device): Linux 6.18 to 7.0 with PSP call
-// psp_dev_unregister(NULL) for VF ports. Linux 7.1 has the fix, commit
-// 7ce3f1bedaac "netdevsim: psp: only call nsim_psp_uninit() on PFs". The
+// mode, del_device): Linux 6.18 to 7.1-rc2 with PSP call
+// psp_dev_unregister(NULL) for VF ports. Linux 7.1-rc3 has the fix, commit
+// 7ce3f1bedaac "netdevsim: psp: only call nsim_psp_uninit() on PFs"; 7.0.y
+// and 6.18.y have no backport. The
 // PF ports have the psp_rereg debugfs file when the kernel has PSP.
 func (n *netdevsim) vfRepTeardownOopses(t *testing.T) bool {
 	t.Helper()
@@ -104,6 +111,13 @@ func (n *netdevsim) vfRepTeardownOopses(t *testing.T) bool {
 	var major, minor int
 	if _, err := fmt.Sscanf(release, "%d.%d", &major, &minor); err != nil {
 		t.Fatalf("kernel release %q: %v", release, err)
+	}
+	if major == 7 && minor == 1 {
+		var rc int
+		if _, after, ok := strings.Cut(release, "-rc"); ok {
+			_, _ = fmt.Sscanf(after, "%d", &rc)
+		}
+		return rc == 1 || rc == 2
 	}
 	return major < 7 || major == 7 && minor < 1
 }
@@ -178,9 +192,18 @@ func writeSys(t *testing.T, path, value string) {
 
 func netdevsimPFs(t *testing.T, n *netdevsim) []PF {
 	t.Helper()
-	all, err := NewInspector().Discover()
+	pfs, err := n.discover()
 	if err != nil {
 		t.Fatal(err)
+	}
+	return pfs
+}
+
+// discover returns the PF ports of the device.
+func (n *netdevsim) discover() ([]PF, error) {
+	all, err := NewInspector().Discover()
+	if err != nil {
+		return nil, err
 	}
 	var pfs []PF
 	for _, pf := range all {
@@ -188,7 +211,7 @@ func netdevsimPFs(t *testing.T, n *netdevsim) []PF {
 			pfs = append(pfs, pf)
 		}
 	}
-	return pfs
+	return pfs, nil
 }
 
 // waitPFs waits until Discover reports want PF ports of the device: udev
@@ -254,12 +277,13 @@ func netdevsimReconcile(t *testing.T, n *netdevsim, rt RuntimeSettings) *Result 
 	waitPFs(t, n, 1)
 	p := Profile{Name: "nsim", Match: Match{Driver: "netdevsim"}, Runtime: rt}
 	r := &Reconciler{Config: &Config{Profiles: []Profile{p}, OnDrift: OnDriftFail},
-		Discover: func() ([]PF, error) { return netdevsimPFs(t, n), nil },
+		Discover: n.discover,
 		Runtime:  NewKernelRuntime()}
+	ctx := t.Context()
 	var res *Result
-	within(t, "reconcile", func() error {
+	n.within(t, "reconcile", func() error {
 		var err error
-		if res, err = r.Run(t.Context()); err != nil {
+		if res, err = r.Run(ctx); err != nil {
 			return fmt.Errorf("%w\nfindings: %+v", err, res.Findings)
 		}
 		return nil
