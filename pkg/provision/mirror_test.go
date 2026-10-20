@@ -874,6 +874,20 @@ func TestConfigureMdadmAtWritesTargetFiles(t *testing.T) {
 	}
 }
 
+// Two arrays (root and a separate /boot): one rd.md.uuid each, one space apart.
+func TestDracutMirrorConfTwoArrays(t *testing.T) {
+	got := dracutMirrorConf([]string{
+		"ARRAY /dev/md2 metadata=1.0 name=host:2 UUID=aaaa:bbbb:cccc:dddd",
+		"ARRAY /dev/md1 metadata=1.0 name=host:1 UUID=1111:2222:3333:4444",
+	})
+	want := "# Written by BOOTy: assemble the mirror arrays in the initramfs.\n" +
+		"add_dracutmodules+=\" mdraid \"\nmdadmconf=\"yes\"\n" +
+		"kernel_cmdline+=\" rd.md.uuid=aaaa:bbbb:cccc:dddd rd.md.uuid=1111:2222:3333:4444 \"\n"
+	if got != want {
+		t.Fatalf("dracutMirrorConf =\n%s\nwant\n%s", got, want)
+	}
+}
+
 func TestConfigureMdadmAtWithoutMirrorDoesNothing(t *testing.T) {
 	root := t.TempDir()
 	cmd := newMockCommander()
