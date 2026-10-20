@@ -5,6 +5,7 @@ package gobgp
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -463,4 +464,111 @@ func TestCarrierReturnStartsPeerAtOnce(t *testing.T) {
 		}
 		t.Logf("%s: Established %v after the carrier returned", l.iface, time.Since(start))
 	}
+}
+
+// carrierTier is a tier with the GoBGP peer 127.0.0.1 of a fake speaker
+// on eth0, and the carrier watch of that interface.
+func carrierTier(t *testing.T, gr bool) (*UnderlayTier, *carrierWatch, net.Conn) {
+	t.Helper()
+	u := &UnderlayTier{log: slog.Default(), bgp: startServer(t, 65000, "192.0.2.17", -1)}
+	conn := fakeSpeaker(t, u, gr)
+	u.recordInterfacePeer("eth0", "127.0.0.1")
+	w := u.newCarrierWatch(map[string]string{"eth0": "127.0.0.1"})
+	w.announce = func(string) {}
+	w.raRepeat = 0
+	return u, w, conn
+}
+
+// A leaf that restarts with graceful restart (its session ended without
+// a NOTIFICATION) and then loses carrier keeps its stale routes in GoBGP
+// until the carrier is back and it advertises again, like FRR: bgp_stop
+// keeps the stale paths of a peer in NSF wait and the restart timer runs
+// on (bgp_fsm.c), and the start on interface up (bgp_start_interface_nbrs)
+// does not clear them. Deleting the GoBGP peer would drop them.
+func TestCarrierReturnKeepsGracefulRestartRoutes(t *testing.T) {
+	u, w, conn := carrierTier(t, true)
+	nlri, err := bgp.NewIPAddrPrefix(netip.MustParsePrefix("10.9.9.0/24"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nh, err := bgp.NewPathAttributeNextHop(netip.MustParseAddr("127.0.0.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := bgp.NewBGPUpdateMessage(nil, []bgp.PathAttributeInterface{
+		bgp.NewPathAttributeOrigin(0),
+		bgp.NewPathAttributeAsPath([]bgp.AsPathParamInterface{bgp.NewAs4PathParam(bgp.BGP_ASPATH_ATTR_TYPE_SEQ, []uint32{65500})}),
+		nh,
+	}, []bgp.PathNLRI{{NLRI: nlri}})
+	b, err := update.Serialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write(b); err != nil {
+		t.Fatal(err)
+	}
+	family := ipv4Families()[0].GetConfig().GetFamily()
+	hasRoute := func() bool { return len(listPaths(t, u.bgp, family)["10.9.9.0/24"]) > 0 }
+	for deadline := time.Now().Add(5 * time.Second); !hasRoute(); time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("route not received")
+		}
+	}
+	_ = conn.Close()
+	waitPeer(t, u, func(p *apipb.Peer) bool { return idleAfterUp(p) && keepsGracefulRestartRoutes(p) })
+
+	w.handle("eth0", false)
+	waitPeer(t, u, func(p *apipb.Peer) bool {
+		return p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_DOWN
+	})
+	if !hasRoute() {
+		t.Fatal("the carrier loss dropped the stale route")
+	}
+	w.handle("eth0", true)
+	waitPeer(t, u, func(p *apipb.Peer) bool {
+		return p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_UP
+	})
+	if !hasRoute() {
+		t.Fatal("the carrier return dropped the stale route of the restarting leaf")
+	}
+}
+
+// A session that is still Established when the carrier returns (the
+// carrier loss did not stop it, for example a lost DisablePeer) is left
+// alone.
+func TestCarrierReturnLeavesEstablishedPeer(t *testing.T) {
+	u, w, _ := carrierTier(t, false)
+	var up int64
+	_ = u.bgp.ListPeer(context.Background(), &apipb.ListPeerRequest{Address: "127.0.0.1"}, func(p *apipb.Peer) {
+		up = p.GetTimers().GetState().GetUptime().GetSeconds()
+	})
+	w.disable = func(context.Context, string) error { return errors.New("lost") }
+	w.handle("eth0", false)
+	w.handle("eth0", true)
+	time.Sleep(200 * time.Millisecond)
+	waitPeer(t, u, func(p *apipb.Peer) bool {
+		return p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_ESTABLISHED &&
+			p.GetTimers().GetState().GetUptime().GetSeconds() == up && !p.GetConf().GetAdminDown()
+	})
+}
+
+// The carrier watch starts a peer under peerOps, so the peer restarter
+// and the relearner cannot delete and add it at the same time.
+func TestCarrierEnableHoldsPeerOps(t *testing.T) {
+	u := &UnderlayTier{log: slog.Default(), bgp: startServer(t, 65000, "192.0.2.17", -1)}
+	w := u.newCarrierWatch(map[string]string{"eth0": "127.0.0.1"})
+	u.peerOps.Lock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = w.enable(context.Background(), "127.0.0.1")
+	}()
+	select {
+	case <-done:
+		u.peerOps.Unlock()
+		t.Fatal("enable ran without peerOps")
+	case <-time.After(200 * time.Millisecond):
+	}
+	u.peerOps.Unlock()
+	<-done
 }

@@ -180,7 +180,46 @@ func (u *UnderlayTier) readdPeer(ctx context.Context, addr string) error {
 	}
 	peer, _ := proto.Clone(conf).(*apipb.Peer)
 	if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: peer}); err != nil {
+		// A failed add does not get better with a retry (the config
+		// was added before); the peer stays down until BOOTy restarts.
+		u.log.Error("BGP peer deleted but not added again, it stays down", "neighbor", addr, "error", err)
 		return fmt.Errorf("add peer %s: %w", addr, err)
 	}
 	return nil
+}
+
+// startStoppedPeer starts the peer at addr again when the carrier of its
+// interface returns; the caller holds peerOps.
+//
+// FRR starts the session at once when the interface comes up
+// (bgp_zebra.c, bgp_start_interface_nbrs: BGP_Stop, BGP_Start), and it
+// accepts the leaf's connection meanwhile. GoBGP's EnablePeer restarts the
+// idle hold timer instead: 5 s (holdtimeIdle) once the peer has left Idle,
+// or IdleHoldTimeAfterReset after a BFD reset while the carrier was gone,
+// and it closes the leaf's connections in that time. So the peer is added
+// again (readdPeer): it accepts the leaf's connection at once and
+// connects itself after 1.5 to 2 s, at once with BGP_CONNECT_AT_ONCE.
+//
+// Two cases use EnablePeer: a peer whose stale routes GoBGP keeps for a
+// graceful restart (keepsGracefulRestartRoutes), as FRR keeps the stale
+// paths of a peer in NSF wait across interface down and up (bgp_stop in
+// bgp_fsm.c), and deleting the peer would drop them. A peer that is not
+// administratively down (the carrier loss did not stop it, so its session
+// may still be up) has nothing to start and is left alone.
+func (u *UnderlayTier) startStoppedPeer(ctx context.Context, addr string) error {
+	var stopped, keep bool
+	if err := u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
+		stopped = p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_DOWN
+		keep = keepsGracefulRestartRoutes(p)
+	}); err != nil {
+		return fmt.Errorf("list peer %s: %w", addr, err)
+	}
+	switch {
+	case !stopped:
+		return nil
+	case keep:
+		return u.bgp.EnablePeer(ctx, &apipb.EnablePeerRequest{Address: addr}) //nolint:wrapcheck // logged with the peer
+	default:
+		return u.readdPeer(ctx, addr)
+	}
 }
