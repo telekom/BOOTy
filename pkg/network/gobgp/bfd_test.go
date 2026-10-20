@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -125,8 +126,9 @@ func TestBFDChanged(t *testing.T) {
 // in whole seconds, so neither does one in the next second. Nor does one
 // in any state from Active to Established without an uptime: ListPeer
 // lags behind the FSM, which sent the KEEPALIVE that brings the RR up.
-// An earlier uptime, an uptime in the future (the clock stepped back) and
-// Idle reset it.
+// A Down for an unknown peer (BOOTy restarted it) is ignored. An earlier
+// uptime, an uptime in the future (the clock stepped back) and Idle reset
+// it. These are Downs with diag 3, the RR's re-key.
 func TestBFDChangedAtBGPStart(t *testing.T) {
 	now := time.Unix(1_000_000, 500_000_000)
 	for _, tt := range []struct {
@@ -161,6 +163,43 @@ func TestBFDChangedAtBGPStart(t *testing.T) {
 				t.Fatalf("resets = %d, want a reset %v", resets, tt.reset)
 			}
 			u.bfdChanged(p, bfd.StateInit, bfd.StateUp, bfd.DiagNone) // ends the recheck
+		})
+	}
+}
+
+// A path failure (diag 1, the detection time expired) gets only the
+// tolerance of main and bgpd: OpenConfirm, no uptime yet, or the same
+// second. In the next second, before OpenConfirm or for an unknown peer
+// it resets the session at once.
+func TestBFDPathFailureAtBGPStart(t *testing.T) {
+	now := time.Unix(1_000_000, 500_000_000)
+	for _, tt := range []struct {
+		name  string
+		at    time.Time
+		state apipb.PeerState_SessionState
+		reset bool
+	}{
+		{"same second", now.Add(-400 * time.Millisecond), apipb.PeerState_SESSION_STATE_ESTABLISHED, false},
+		{"next second", time.Unix(999_999, 0), apipb.PeerState_SESSION_STATE_ESTABLISHED, true},
+		{"OpenConfirm", time.Time{}, apipb.PeerState_SESSION_STATE_OPENCONFIRM, false},
+		{"established, uptime not set yet", time.Time{}, apipb.PeerState_SESSION_STATE_ESTABLISHED, false},
+		{"OpenSent", time.Time{}, apipb.PeerState_SESSION_STATE_OPENSENT, true},
+		{"Active", time.Time{}, apipb.PeerState_SESSION_STATE_ACTIVE, true},
+		{"unknown peer", time.Time{}, apipb.PeerState_SESSION_STATE_UNSPECIFIED, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resets := 0
+			u := &UnderlayTier{log: slog.Default(), now: func() time.Time { return now },
+				resetBGP:   func(context.Context, string, string) { resets++ },
+				bgpSession: func(context.Context, string) (apipb.PeerState_SessionState, time.Time) { return tt.state, tt.at },
+			}
+			p := &bfd.Peer{Name: "198.51.100.2"}
+			u.bfdChanged(p, bfd.StateUp, bfd.StateDown, bfd.DiagTimeExpired)
+			if (resets == 1) != tt.reset {
+				t.Fatalf("resets = %d, want a reset %v", resets, tt.reset)
+			}
+			u.bfdChanged(p, bfd.StateInit, bfd.StateUp, bfd.DiagNone) // ends the recheck
+			u.stopRechecks()
 		})
 	}
 }
@@ -465,6 +504,83 @@ func TestBFDDownWhileStartingRecheck(t *testing.T) {
 	}
 }
 
+// A recheck checks the session it was started for. When BOOTy restarts
+// the peer (Idle, or a new uptime) and the new session comes up while BFD
+// is still Down, the recheck ends without a reset: the new session has
+// its own BFD Down.
+func TestBFDRecheckEndsWithItsSession(t *testing.T) {
+	now := time.Now()
+	for _, tt := range []struct {
+		name   string
+		first  apipb.PeerState_SessionState
+		firstT time.Time
+		idle   bool
+	}{
+		{"restarted while coming up", apipb.PeerState_SESSION_STATE_ACTIVE, time.Time{}, true},
+		{"restarted after it came up", apipb.PeerState_SESSION_STATE_ESTABLISHED, now, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var mu sync.Mutex
+			state, at := tt.first, tt.firstT
+			resets := make(chan struct{}, 2)
+			u := &UnderlayTier{log: slog.Default(), bfdUpGrace: 200 * time.Millisecond, now: func() time.Time { return now },
+				resetBGP: func(context.Context, string, string) { resets <- struct{}{} },
+				bgpSession: func(context.Context, string) (apipb.PeerState_SessionState, time.Time) {
+					mu.Lock()
+					defer mu.Unlock()
+					return state, at
+				},
+			}
+			p := &bfd.Peer{Name: "198.51.100.1"}
+			u.bfdChanged(p, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
+			time.Sleep(50 * time.Millisecond)
+			if tt.idle {
+				mu.Lock()
+				state, at = apipb.PeerState_SESSION_STATE_IDLE, time.Time{}
+				mu.Unlock()
+				time.Sleep(50 * time.Millisecond)
+			}
+			mu.Lock()
+			state, at = apipb.PeerState_SESSION_STATE_ESTABLISHED, now.Add(5*time.Second)
+			mu.Unlock()
+			select {
+			case <-resets:
+				t.Fatal("the recheck reset the restarted session")
+			case <-time.After(time.Second):
+			}
+			u.stopRechecks()
+		})
+	}
+}
+
+// A BFD flap while a recheck runs does not start a second one: the
+// session is reset once, after the grace time from the last Down.
+func TestBFDRecheckOncePerPeer(t *testing.T) {
+	var mu sync.Mutex
+	state, at := apipb.PeerState_SESSION_STATE_OPENCONFIRM, time.Time{}
+	var resets atomic.Int32
+	u := &UnderlayTier{log: slog.Default(), bfdUpGrace: 200 * time.Millisecond,
+		resetBGP: func(context.Context, string, string) { resets.Add(1) },
+		bgpSession: func(context.Context, string) (apipb.PeerState_SessionState, time.Time) {
+			mu.Lock()
+			defer mu.Unlock()
+			return state, at
+		},
+	}
+	p := &bfd.Peer{Name: "198.51.100.1"}
+	u.bfdChanged(p, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
+	u.bfdChanged(p, bfd.StateDown, bfd.StateUp, bfd.DiagNone)
+	u.bfdChanged(p, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown)
+	mu.Lock()
+	state, at = apipb.PeerState_SESSION_STATE_ESTABLISHED, time.Now()
+	mu.Unlock()
+	time.Sleep(time.Second)
+	u.stopRechecks()
+	if n := resets.Load(); n != 1 {
+		t.Fatalf("resets = %d, want 1", n)
+	}
+}
+
 // A session that is Established with an uptime when BFD goes Down (the
 // same second) keeps it when BFD is Up again inside the grace time.
 func TestBFDDownRecheckWaitsForGrace(t *testing.T) {
@@ -601,6 +717,81 @@ func TestBFDDownWhenPeerGetsOurKeepalive(t *testing.T) {
 		u.stopRechecks()
 		_ = conn.Close()
 		_ = ln.Close()
+	}
+	t.Logf("ListPeer states when the peer got our KEEPALIVE: %v", states)
+}
+
+// The same race on an incoming connection (dcgw01 is not passive): GoBGP
+// writes its KEEPALIVE in OpenSent and moves the peer to OpenConfirm
+// later, so ListPeer can still show OpenSent when the peer's BFD Down
+// arrives. It does not reset the session either.
+func TestBFDDownWhenPeerGetsOurKeepaliveIncoming(t *testing.T) {
+	ctx := context.Background()
+	readMsg := func(t *testing.T, conn net.Conn) uint8 {
+		t.Helper()
+		hdr := make([]byte, bgp.BGP_HEADER_LENGTH)
+		if _, err := io.ReadFull(conn, hdr); err != nil {
+			t.Fatal(err)
+		}
+		body := make([]byte, int(hdr[16])<<8|int(hdr[17])-bgp.BGP_HEADER_LENGTH)
+		if _, err := io.ReadFull(conn, body); err != nil {
+			t.Fatal(err)
+		}
+		return hdr[18]
+	}
+	open, err := bgp.NewBGPOpenMessage(65000, 90, netip.MustParseAddr("198.51.100.1"), []bgp.OptionParameterInterface{
+		bgp.NewOptionParameterCapability([]bgp.ParameterCapabilityInterface{
+			bgp.NewCapMultiProtocol(bgp.RF_IPv4_UC), bgp.NewCapFourOctetASNumber(65000),
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	openB, _ := open.Serialize()
+	states := map[apipb.PeerState_SessionState]int{}
+	for range 20 {
+		port := freePort(t)
+		resets := 0
+		u := &UnderlayTier{log: slog.Default(), bgp: startServer(t, 65000, "192.0.2.17", port),
+			resetBGP: func(context.Context, string, string) { resets++ }}
+		if err := u.bgp.AddPeer(ctx, &apipb.AddPeerRequest{Peer: &apipb.Peer{
+			Conf:      &apipb.PeerConf{NeighborAddress: "127.0.0.1", PeerAsn: 65000},
+			Transport: &apipb.Transport{PassiveMode: true},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		// GoBGP closes a connection that arrives while the peer is Idle.
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			if state, _ := u.sessionState(ctx, "127.0.0.1"); state == apipb.PeerState_SESSION_STATE_ACTIVE {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("peer not Active")
+			}
+		}
+		var d net.Dialer
+		conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := conn.Write(openB); err != nil {
+			t.Fatal(err)
+		}
+		for typ := readMsg(t, conn); typ != bgp.BGP_MSG_KEEPALIVE; typ = readMsg(t, conn) {
+			if typ != bgp.BGP_MSG_OPEN {
+				t.Fatalf("message %d, want our OPEN or KEEPALIVE", typ)
+			}
+		}
+		state, _ := u.sessionState(ctx, "127.0.0.1")
+		states[state]++
+		p := &bfd.Peer{Name: "127.0.0.1"}
+		u.bfdChanged(p, bfd.StateUp, bfd.StateDown, bfd.DiagNeighborSaysDown) // the RR re-keys BFD
+		if resets != 0 {
+			t.Fatalf("the BFD Down reset the session in %v (states so far %v)", state, states)
+		}
+		u.bfdChanged(p, bfd.StateDown, bfd.StateUp, bfd.DiagNone)
+		u.stopRechecks()
+		_ = conn.Close()
 	}
 	t.Logf("ListPeer states when the peer got our KEEPALIVE: %v", states)
 }
