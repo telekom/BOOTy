@@ -258,13 +258,13 @@ same resolution:
     GoBGP takes that TCP connection as a restart of the peer (RFC 4724
     section 5: a new connection while Established with the graceful
     restart capability) and ends the new session, so the session comes
-    up twice. FRR has the same rule (`bgp_accept`), but its own stale
-    connect does not complete against the leaf in the lab. A possible
-    future change in the fork: in Established with graceful restart,
-    treat a new connection as a restart only when it sends an OPEN, and
-    close a connection that ends without one. A restarted peer sends its
-    OPEN at once, but this departs from RFC 4724 section 5, which reacts
-    to the TCP connection itself, so it is not done. Without the option
+    up twice. RFC 4724 section 5 (Events 16 and 17) and FRR
+    (`bgp_accept` acts only with `PEER_STATUS_NSF_MODE`, set only for a
+    family with `PEER_CAP_RESTART_AF_RCV`) apply that rule only to a peer
+    that sent graceful restart AFI/SAFI tuples. The leaves are
+    helper-only, so since the fork tag booty.18 GoBGP handles their late
+    connection as a collision and closes it. The production template
+    lab with the option on has not been run again since. Without the option
     the leaf's connection usually arrives first, and the lab passed 10 of
     10 jobs. The peer restart above stays:
     GoBGP still holds a peer in Idle for its idle hold time after the peer
@@ -589,10 +589,10 @@ BOOTy's other dependency forks (gopacket, netlink) are listed in
 [Dependency forks](dependency-forks.md).
 
 GoBGP mode embeds GoBGP through a fork tag:
-`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.17`
+`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.18`
 in `go.mod`. The tag is upstream master 57fa92f1 (2026-10-20, after
 4.10.0; there is no newer release) on the fork branch `booty/master`,
-with thirteen fixes and four features that upstream does not have. The
+with fourteen fixes and four features that upstream does not have. The
 tags up to v4.10.0-booty.16 are v4.10.0 with the fixes on the branch
 `booty/v4.10`. Do not use the tag v4.10.0-booty.7: it stops answering a
 NOTIFICATION in OpenSent, which RFC 4271 section 8.2.2 does not allow
@@ -618,6 +618,7 @@ NLRIs that use it (f5881559).
 | No connect retry in OpenConfirm (RFC 4271 section 8.2.2) after the outgoing connect failed, and a test of the dialed mark (booty.12) | GoBGP connected again while the session went on with the leaf's connection. |
 | In OpenConfirm and Established the outgoing connection manager skips the dial and keeps running instead of ending (booty.13) | With a stale FSM state the manager of booty.12 could end while the FSM was already back in Active, which then had no outgoing connection manager. |
 | Take a new connection from a restarting peer (RFC 4724, [osrg/gobgp#3745](https://github.com/osrg/gobgp/issues/3745)) | A peer that restarts with graceful restart cannot open a new session while the old one is still up. |
+| Take a new connection as a restart only from a peer that sent graceful restart AFI/SAFI tuples (RFC 4724 section 5, Events 16 and 17; FRR `bgp_accept` needs `PEER_STATUS_NSF_MODE`) (booty.18) | A helper-only peer (FRR leaves without `bgp graceful-restart`) whose late second connection completes after the session came up gets its session ended: the graceful restart false positive of the one-uplink production template lab. |
 | Discard EVPN NLRIs of unknown route types ([osrg/gobgp#3742](https://github.com/osrg/gobgp/issues/3742)) | An EVPN route type that GoBGP does not know resets the session instead of being ignored (RFC 7606). |
 | Decode the EVPN ARP/ND extended community (RFC 9047, [osrg/gobgp#3746](https://github.com/osrg/gobgp/issues/3746)) | The router (R), override (O) and immutable (I) flags of a MAC/IP route, and the proxy flag that FRR sends, are not available to BOOTy. |
 | Feature: `ResetPeerRequest.BfdDown` sends Cease/BFD Down (RFC 9384), opt-in, as a reset: `IdleHoldTimeAfterReset` applies, also for a peer without a session (booty.4; booty.17: built on the upstream subcode of 93858cae); BOOTy sets it for its BFD resets | The peer of a BFD reset gets Cease/Administrative Reset (subcode 4), not BFD Down (subcode 10) like from FRR. Upstream sends BFD Down only from its native BFD (7d11a2c2), with the backed-off idle hold time. |
@@ -639,7 +640,7 @@ GoBGP 4 is required: GoBGP 3.37 panics on a truncated EVPN NLRI from any
 peer, also on an IPv4-only session, which ends BOOTy (PID 1);
 `TestEVPNDecodeTruncatedNLRIReturnsError` pins that 4.10 returns an error.
 
-Drop the replace when an osrg/gobgp release contains all seventeen changes
+Drop the replace when an osrg/gobgp release contains all eighteen changes
 (for the two opt-in features, with the same API). Then
 check the GO-2026-4736 exception in `hack/check-govulncheck.py`: it names
 `github.com/osrg/gobgp/v4` 4.10.0, which govulncheck does not report while
