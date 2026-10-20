@@ -315,9 +315,11 @@ same resolution:
   jobs. The peer also keeps the stale routes of a leaf in graceful
   restart, like FRR for a peer in NSF wait (`bgp_stop` in `bgp_fsm.c`).
   A peer that the carrier loss did not stop is left alone. BOOTy waits
-  until GoBGP has applied the stop on carrier loss (at most 1 s):
-  `DisablePeer` only queues it, so a carrier return right after it read
-  the peer as still enabled, and the queued stop then left it down.
+  until GoBGP has applied each stop and start (at most 200 ms, a few
+  milliseconds in practice): `DisablePeer` and `EnablePeer` only queue the
+  change, and GoBGP drops a change while another one is queued. Without
+  the wait a fast carrier flap left the peer down, or up after down, up,
+  down.
 
 GoBGP mode installs the learned IPv4 and IPv6 unicast routes like zebra:
 into the table of each session's VRF (the main table without a VRF), with

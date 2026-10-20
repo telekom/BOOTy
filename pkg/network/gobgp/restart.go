@@ -224,34 +224,44 @@ func (u *UnderlayTier) startStoppedPeer(ctx context.Context, addr string) error 
 	if err := u.bgp.EnablePeer(ctx, &apipb.EnablePeerRequest{Address: addr}); err != nil {
 		return fmt.Errorf("enable peer %s: %w", addr, err)
 	}
-	return nil
+	return u.waitAdminState(ctx, addr, apipb.PeerState_ADMIN_STATE_UP)
 }
 
 // stopPeer stops the peer at addr (DisablePeer) and waits until GoBGP has
-// applied it, at most stopWait; the caller holds peerOps. DisablePeer only
-// queues the change for the FSM, in a channel with room for one: an
-// EnablePeer while it is queued is dropped, and an admin state read
-// before the FSM took it is still up. Either left the peer down for good
-// after a fast carrier flap.
+// applied it; the caller holds peerOps. DisablePeer and EnablePeer only
+// queue the change for the FSM, in a channel with room for one, and
+// GoBGP drops a change while another one is queued. So an admin state
+// read before the FSM took the change is the old one, and a stop or
+// start right after another one can be lost: the peer stayed down for
+// good after a fast carrier flap, or up after down, up, down.
+// startStoppedPeer waits for its start the same way.
 func (u *UnderlayTier) stopPeer(ctx context.Context, addr string) error {
 	if err := u.bgp.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: addr, Communication: "interface down"}); err != nil {
 		return fmt.Errorf("disable peer %s: %w", addr, err)
 	}
-	for deadline := time.Now().Add(stopWait); ; time.Sleep(10 * time.Millisecond) {
-		down := false
+	return u.waitAdminState(ctx, addr, apipb.PeerState_ADMIN_STATE_DOWN)
+}
+
+// waitAdminState waits until the peer at addr has the admin state want,
+// at most stopWait.
+func (u *UnderlayTier) waitAdminState(ctx context.Context, addr string, want apipb.PeerState_AdminState) error {
+	for deadline := time.Now().Add(stopWait); ; time.Sleep(5 * time.Millisecond) {
+		state := apipb.PeerState_ADMIN_STATE_UNSPECIFIED
 		if err := u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
-			down = p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_DOWN
+			state = p.GetState().GetAdminState()
 		}); err != nil {
 			return fmt.Errorf("list peer %s: %w", addr, err)
 		}
-		if down {
+		if state == want {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("peer %s: still enabled %v after DisablePeer", addr, stopWait)
+			return fmt.Errorf("peer %s: admin state %v, not %v, %v after the change", addr, state, want, stopWait)
 		}
 	}
 }
 
-// stopWait bounds stopPeer; GoBGP applies a stop within milliseconds.
-const stopWait = time.Second
+// stopWait bounds the wait for an admin state change. GoBGP applies one
+// within a few milliseconds (at most 10 ms seen in 250 stops and starts with
+// the race detector); peerOps is held meanwhile.
+const stopWait = 200 * time.Millisecond

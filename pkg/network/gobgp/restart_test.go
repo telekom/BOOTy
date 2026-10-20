@@ -546,25 +546,27 @@ func TestCarrierReturnLeavesEstablishedPeer(t *testing.T) {
 	})
 }
 
-// The carrier watch starts a peer under peerOps, so the peer restarter
-// and the relearner cannot delete and add it at the same time.
-func TestCarrierEnableHoldsPeerOps(t *testing.T) {
+// The carrier watch stops and starts a peer under peerOps, so the peer
+// restarter and the relearner cannot delete and add it at the same time.
+func TestCarrierOpsHoldPeerOps(t *testing.T) {
 	u := &UnderlayTier{log: slog.Default(), bgp: startServer(t, 65000, "192.0.2.17", -1)}
 	w := u.newCarrierWatch(map[string]string{"eth0": "127.0.0.1"})
-	u.peerOps.Lock()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_ = w.enable(context.Background(), "127.0.0.1")
-	}()
-	select {
-	case <-done:
+	for name, op := range map[string]func(context.Context, string) error{"disable": w.disable, "enable": w.enable} {
+		u.peerOps.Lock()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = op(context.Background(), "127.0.0.1")
+		}()
+		select {
+		case <-done:
+			u.peerOps.Unlock()
+			t.Fatalf("%s ran without peerOps", name)
+		case <-time.After(200 * time.Millisecond):
+		}
 		u.peerOps.Unlock()
-		t.Fatal("enable ran without peerOps")
-	case <-time.After(200 * time.Millisecond):
+		<-done
 	}
-	u.peerOps.Unlock()
-	<-done
 }
 
 // A carrier loss and return handled back to back leave the peer enabled:
@@ -610,4 +612,47 @@ func TestCarrierReturnLeavesIdlePeer(t *testing.T) {
 	waitPeer(t, u, func(p *apipb.Peer) bool {
 		return p.GetState().GetAdminState() == apipb.PeerState_ADMIN_STATE_UP && p.GetTimers().GetState().GetUptime() != nil
 	})
+}
+
+func adminState(u *UnderlayTier) apipb.PeerState_AdminState {
+	a := apipb.PeerState_ADMIN_STATE_UNSPECIFIED
+	_ = u.bgp.ListPeer(context.Background(), &apipb.ListPeerRequest{Address: "127.0.0.1"}, func(p *apipb.Peer) { a = p.GetState().GetAdminState() })
+	return a
+}
+
+// Carrier down, up and down back to back: the second stop met the start
+// still queued, GoBGP dropped it and the peer stayed enabled on a link
+// without carrier (reviewer probe: 24 of 30 runs). startStoppedPeer now
+// waits until the start is applied.
+func TestCarrierFlapDownUpDown(t *testing.T) {
+	u, w, _ := carrierTier(t, false)
+	w.handle("eth0", false)
+	w.handle("eth0", true)
+	w.handle("eth0", false)
+	time.Sleep(300 * time.Millisecond)
+	if a := adminState(u); a != apipb.PeerState_ADMIN_STATE_DOWN {
+		t.Fatalf("admin state %v after carrier down, up, down; want down", a)
+	}
+	w.handle("eth0", true)
+	time.Sleep(300 * time.Millisecond)
+	if a := adminState(u); a != apipb.PeerState_ADMIN_STATE_UP {
+		t.Fatalf("admin state %v after the carrier returned; want up", a)
+	}
+}
+
+// Fast carrier flaps of a peer that already waits in Idle (its session
+// ended, the restarter does not run): the stop must be waited for by its
+// admin state, the session state is Idle before the stop is applied.
+func TestCarrierFlapIdlePeer(t *testing.T) {
+	u, w, conn := carrierTier(t, false)
+	_ = conn.Close()
+	waitPeer(t, u, idleAfterUp)
+	for i := range 10 {
+		w.handle("eth0", false)
+		w.handle("eth0", true)
+		time.Sleep(50 * time.Millisecond)
+		if a := adminState(u); a != apipb.PeerState_ADMIN_STATE_UP {
+			t.Fatalf("flap %d: admin state %v after the carrier returned; want up", i, a)
+		}
+	}
 }
