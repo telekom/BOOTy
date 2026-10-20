@@ -177,7 +177,9 @@ func TestReplaceInterfacePeerSharedPlaceholder(t *testing.T) {
 	sets := func() map[string][]string {
 		out := map[string][]string{}
 		_ = s.ListDefinedSet(ctx, &apipb.ListDefinedSetRequest{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR},
-			func(d *apipb.DefinedSet) { out[d.GetName()] = slices.Sorted(slices.Values(d.GetList())) })
+			func(d *apipb.DefinedSet) {
+				out[d.GetName()] = slices.Compact(slices.Sorted(slices.Values(d.GetList())))
+			})
 		return out
 	}
 	const placeholder = "fe80::fdff:ffff:ffff:ff80/128"
@@ -195,9 +197,29 @@ func TestReplaceInterfacePeerSharedPlaceholder(t *testing.T) {
 		t.Fatalf("neighbor sets after the first move = %v, want %v", got, want)
 	}
 
+	// A move that fails (the eth9 peer is not in GoBGP here) keeps the old
+	// address in the sets of its session.
+	u.ifacePeerConfs["eth9"] = buildInterfacePeer(cfg, "eth9", placeholderPeer("eth9"), ipv4Families())
+	if err := u.replaceInterfacePeer(ctx, "eth9", placeholderPeer("eth9"), "fe80::9%eth9"); err == nil {
+		t.Fatal("moving a peer that is not in GoBGP succeeded")
+	}
+	got = sets()
+	want = map[string][]string{
+		"rm-out-OUT-ipv4-unicast":               {"fe80::2/128"},
+		"ebgp-requires-policy-in-ipv4-unicast":  {"fe80::9/128", placeholder},
+		"ebgp-requires-policy-out-ipv4-unicast": {"fe80::9/128", placeholder},
+	}
+	if !maps.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("neighbor sets after a failed move = %v, want %v", got, want)
+	}
+
 	// The second switch answers; its peer is not in GoBGP here, so only
 	// its neighbor sets move. The placeholder leaves every set.
-	if err := u.moveNeighborSets(ctx, placeholderPeer("eth9"), "fe80::9%eth9"); err != nil {
+	leave, err := u.joinNeighborSets(ctx, placeholderPeer("eth9"), "fe80::9%eth9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := u.leaveNeighborSets(ctx, placeholderPeer("eth9"), leave); err != nil {
 		t.Fatal(err)
 	}
 	got = sets()
