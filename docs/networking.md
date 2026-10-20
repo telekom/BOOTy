@@ -948,15 +948,21 @@ the BOOTy link-local address:
   `RTADV_FAST_REXMIT_PERIOD`) and then its first regular RA. After that,
   one RA goes out every 10 s (bgpd `BGP_UNNUM_DEFAULT_RA_INTERVAL`) with
   router lifetime 30 s (the zebra default for that interval).
-- An RA does not go out without carrier or while the link-local address
-  is tentative (DAD); BOOTy then tries again 1 s later. Only an RA that
+- The source of each RA is the link-local address of the NIC (RFC 4861
+  section 6.2.8), never a global or a tentative address. An RA does not
+  go out without carrier or while the link-local address is tentative
+  (DAD, also with optimistic DAD); BOOTy then tries again 1 s later. Only an RA that
   went out counts as one of the 5, so all 5 reach the switch after DAD.
   Zebra skips such an interface in `rtadv_timer` and does not learn a
   tentative address (`zebra/if_netlink.c`). The legacy captures show 4
   or 5 fast RAs: at 0, 1, 2 and 3 s and the next one 10 s later, or a
   fifth one on the next tick.
-- When a fabric NIC gets carrier back, the 5 fast RAs start again (zebra
-  `rtadv_if_up`). This also applies without `bgp fast-external-failover`.
+- When a fabric NIC gets carrier back, the 4 fast retransmits start again
+  1 s later, like zebra: `rtadv_if_up` only sets them, and `rtadv_timer`
+  sends them on its next 1 s tick. This also applies without
+  `bgp fast-external-failover`. The next regular RA comes 10 s after the
+  last fast one; zebra goes on with the regular timer where it stopped,
+  which is 0 to 10 s.
   An FRR unnumbered peer forgets the neighbor address on interface down and
   accepts a connection again only after an RA.
 - Each fabric NIC joins the all-routers group `ff02::2` (RFC 4861 section
@@ -966,8 +972,9 @@ the BOOTy link-local address:
   (`MIN_DELAY_BETWEEN_RAS`) plus that time after the last RA (section
   6.2.6). When an RA is due earlier, that RA is the answer. The next
   regular RA comes 10 s after the answer, as in zebra.
-- When the relearner finds no other neighbor for a peer, it asks for an
-  RA like a solicitation, with the same delays.
+- The relearner sends no RAs of its own, like zebra and the legacy
+  ramdisk: a switch that comes back with another address finds BOOTy from
+  the scheduled RAs, and BOOTy finds the switch from its RAs.
 - Teardown stops the RAs with a final RA with router lifetime 0 (RFC 4861
   section 6.2.5), so no neighbor keeps BOOTy as a default router, and then
   leaves `ff02::2`.
@@ -978,11 +985,13 @@ RFC 4861 audit of these RAs:
 |---|---|---|---|
 | 6.1.1 | Validate a received Router Solicitation: hop limit 255, code 0, at least 8 octets, option lengths not 0, no source link-layer address option from `::` (the kernel checks the checksum) | Compliant | |
 | 6.1.2 | Receivers accept only RAs with hop limit 255, code 0, a link-local source and at least 16 octets | Compliant as a sender: hop limit 255, code 0, link-local source, 24 octets | The kernel and zebra on the leaf drop other RAs |
+| 6.2.1 | AdvDefaultLifetime is 0 or between MaxRtrAdvInterval and 9000 s, by default 3 times MaxRtrAdvInterval | Compliant: 30 s, 3 times the 10 s interval | As the zebra default for that interval |
 | 6.2.2 | An advertising interface MUST join the all-routers group | Compliant: each fabric NIC joins `ff02::2` while it sends RAs | As zebra `if_join_all_router` |
 | 6.2.4 | Random interval between MinRtrAdvInterval and MaxRtrAdvInterval; at most `MAX_INITIAL_RTR_ADVERTISEMENTS` (3) initial RAs, with intervals of at most `MAX_INITIAL_RTR_ADVERT_INTERVAL` (16 s) | Deviation: 5 fast RAs 1 s apart, then a fixed 10 s | As zebra (`rtadv_timer`, its FIXME for the fixed interval); FRR unnumbered peering depends on the early RAs |
 | 6.2.5 | When the interface stops advertising, SHOULD send final RAs with router lifetime 0 (at most `MAX_FINAL_RTR_ADVERTISEMENTS`) and leave the all-routers group | Compliant: one final RA, then BOOTy leaves `ff02::2` | |
 | 6.2.6 | Answer a solicitation after a random delay of up to `MAX_RA_DELAY_TIME`, and not before `MIN_DELAY_BETWEEN_RAS` after the last multicast RA | Compliant. Deviation from zebra, which with `ipv6 nd ra-fast-retrans` (on by default) answers at once (`rtadv_process_solicit`) | No Router Solicitation was seen on the fabric (0 of 48 captures of the kindmetal EVPN parity runs), so the delay does not change the boot |
-| 6.2.6 | Consecutive multicast RAs MUST be at least `MIN_DELAY_BETWEEN_RAS` (3 s) apart | Deviation: the 5 fast RAs 1 s apart, the RA at once when the carrier returns, and the final RA with lifetime 0 right after the last RA | As zebra (fast retransmits in `rtadv_timer`, `rtadv_if_up`, the RA with lifetime 0 of `ipv6_nd_suppress_ra_set`); the leaf needs the early RAs to accept the unnumbered session |
+| 6.2.6 | Consecutive multicast RAs MUST be at least `MIN_DELAY_BETWEEN_RAS` (3 s) apart | Deviation: the 5 fast RAs 1 s apart at the start, the 4 fast RAs 1 s apart after the carrier returns (the first one 1 s after it, which can be less than 3 s after the last RA), and the final RA with lifetime 0, which can come less than 3 s after the last RA | As zebra (fast retransmits in `rtadv_timer`, set by `ipv6_nd_suppress_ra_set` and `rtadv_if_up`, and the RA with lifetime 0 of `ipv6_nd_suppress_ra_set`); the leaf needs the early RAs to accept the unnumbered session |
+| 6.2.8 | The source address of an RA MUST be the link-local address of the interface | Compliant: the socket is bound to the link-local address that finished DAD; without one, no RA goes out | Zebra sends from the link-local address it learned, which excludes tentative addresses |
 
 BOOTy finds the leaf of an unnumbered session in the neighbor table. The
 leaf gets there from its RAs: the kernel adds the source link-layer
