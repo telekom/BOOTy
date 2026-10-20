@@ -936,12 +936,56 @@ locally assigned port ID unchanged; check it on a leaf before relying on it.
 | `numbered` | Numbered sessions to `BGP_NEIGHBORS` | IPv4 unicast, L2VPN EVPN | `BGP_NEIGHBORS` (IPv4). The host must already reach the neighbors |
 
 Fabric NICs are the NICs in `BGP_INTERFACES`, or all detected physical NICs
-when it is empty. BOOTy waits up to 10 s for the listed NICs. In unnumbered
-and dual mode, BOOTy sends an IPv6 Router Advertisement on each fabric NIC
-every 10 s with router lifetime 30 s (zebra's default for that interval),
-so that FRR peers learn the BOOTy link-local address. Teardown
-stops these RAs with a final RA with router lifetime 0 (RFC 4861 section
-6.2.5), so no neighbor keeps BOOTy as a default router.
+when it is empty. BOOTy waits up to 10 s for the listed NICs.
+
+In unnumbered and dual mode, and on the NICs of interface sessions, BOOTy
+sends IPv6 Router Advertisements on each fabric NIC like zebra does for a
+bgpd unnumbered peer (FRR 10.2 `zebra/rtadv.c`), so that FRR peers learn
+the BOOTy link-local address:
+
+- The RAs start before BOOTy looks for the peers. The first 5 RAs go out
+  1 s apart: the 4 fast retransmits of zebra (`RTADV_NUM_FAST_REXMITS`,
+  `RTADV_FAST_REXMIT_PERIOD`) and then its first regular RA. After that,
+  one RA goes out every 10 s (bgpd `BGP_UNNUM_DEFAULT_RA_INTERVAL`) with
+  router lifetime 30 s (the zebra default for that interval). An RA does
+  not go out while the link-local address is tentative; the 5 RAs over
+  4 s also cover DAD.
+- When a fabric NIC gets carrier back, the 5 fast RAs start again (zebra
+  `rtadv_if_up`). This also applies without `bgp fast-external-failover`.
+  An FRR unnumbered peer forgets the neighbor address on interface down and
+  accepts a connection again only after an RA.
+- Each fabric NIC joins the all-routers group `ff02::2` (RFC 4861 section
+  6.2.2, zebra `if_join_all_router`) and answers a valid Router
+  Solicitation (section 6.1.1) with a multicast RA. The answer waits a
+  random time of up to 0.5 s (`MAX_RA_DELAY_TIME`), and at least 3 s
+  (`MIN_DELAY_BETWEEN_RAS`) plus that time after the last RA (section
+  6.2.6). When an RA is due earlier, that RA is the answer. The next
+  regular RA comes 10 s after the answer, as in zebra.
+- Teardown stops the RAs with a final RA with router lifetime 0 (RFC 4861
+  section 6.2.5), so no neighbor keeps BOOTy as a default router, and then
+  leaves `ff02::2`.
+
+Deviations from RFC 4861, the same as zebra: the 5 fast RAs are 1 s apart,
+less than MinRtrAdvInterval (at least 3 s, section 6.2.1), and more than
+the 3 initial RAs of section 6.2.4 (`MAX_INITIAL_RTR_ADVERTISEMENTS`). The
+regular interval is a fixed 10 s, not a random time between
+MinRtrAdvInterval and MaxRtrAdvInterval (section 6.2.4; zebra
+`rtadv_timer` has a FIXME for this). Deviation from zebra: with
+`ipv6 nd ra-fast-retrans` (on by default) zebra answers a solicitation at
+once (`rtadv_process_solicit`); BOOTy keeps the random delay that section
+6.2.6 makes a MUST.
+
+BOOTy finds the leaf of an unnumbered session in the neighbor table. The
+leaf gets there from its RAs: the kernel adds the source link-layer
+address of an RA also with `accept_ra` 0. The leaf also gets there when
+it connects after an RA of BOOTy, from the address resolution of that
+connection. Like FRR, BOOTy sends no echo request to `ff02::1` to find the
+leaf. In the kindmetal EVPN parity runs, the echo request that BOOTy sent
+before did not go out on the first fabric NIC, because the link-local
+address was still tentative. On the second fabric NIC, the leaf knew the
+BOOTy MAC address from the RA before it, so the leaf answered without an
+address resolution, and only other nodes on the segment got into the
+neighbor table.
 
 With `VRF_NAME`, BOOTy puts the fabric NICs into the VRF. It skips a NIC
 that carries an IPv4 default route, because that NIC is a management NIC.
