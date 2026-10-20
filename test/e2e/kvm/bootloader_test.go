@@ -41,7 +41,13 @@ func TestUEFIBootPathSmoke(t *testing.T) {
 	args = append(args,
 		"-kernel", kernel,
 		"-initrd", initramfs,
-		"-append", "console=ttyS0 panic=1",
+		// kho=off: Linux 7.0 (runner image 20261018) enables kexec handover
+		// by default. When its scratch area fits, it reserves about 330 MiB of
+		// the 512 MiB guest, and under OVMF only about 40 MiB stay free, so
+		// the initramfs unpack fails with "write error". Whether it fits
+		// depends on where the kernel and initrd land, so the boot failed
+		// at random.
+		"-append", "console=ttyS0 panic=1 kho=off",
 	)
 	args = append(args, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)
 

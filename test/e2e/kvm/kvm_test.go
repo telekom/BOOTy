@@ -132,6 +132,9 @@ func runQEMUSmoke(t *testing.T, args []string, timeout time.Duration, scenario s
 	}
 
 	if requireBootyMarker && !strings.Contains(outStr, bootyStartMarker) {
+		if strings.Contains(outStr, "Initramfs unpacking failed") {
+			t.Fatalf("QEMU %s: the guest kernel could not unpack the initramfs (often too little guest RAM). Output:\n%s", scenario, out)
+		}
 		t.Fatalf("QEMU %s completed without BOOTy marker. tail:\n%s", scenario, tail(out, 1200))
 	}
 
