@@ -7,12 +7,13 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
-	"errors"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -172,24 +173,6 @@ func TestFrameBM4XCableCheck(t *testing.T) {
 	}
 }
 
-// Only the bm4x profile and LLDP_EMIT_ALL skip NICs without carrier; the
-// networkd emitter tries every NIC as before.
-func TestCarrierOnly(t *testing.T) {
-	for _, tt := range []struct {
-		info Info
-		want bool
-	}{
-		{Info{}, false},
-		{Info{Profile: ProfileNetworkd}, false},
-		{Info{Profile: ProfileBM4XCableCheck}, true},
-		{Info{CarrierOnly: true}, true},
-	} {
-		if got := tt.info.carrierOnly(); got != tt.want {
-			t.Errorf("%+v: carrierOnly = %v, want %v", tt.info, got, tt.want)
-		}
-	}
-}
-
 // network.lldp.portIDFormat selects the port ID of the bm4x-cablecheck
 // profile; "" is "mac" byte for byte.
 func TestFrameBM4XPortIDFormats(t *testing.T) {
@@ -270,8 +253,10 @@ func TestShutdownFrame(t *testing.T) {
 
 // The sender ends with the shutdown LLDPDU when it stops.
 func TestEmitEndsWithShutdownFrame(t *testing.T) {
-	orig := sendFrame
-	t.Cleanup(func() { sendFrame = orig })
+	orig, origSys := sendFrame, sysClassNet
+	t.Cleanup(func() { sendFrame, sysClassNet = orig, origSys })
+	sysClassNet = t.TempDir()
+	setCarrier(t, "eth0", true, 1)
 	ttls := make(chan uint16, 16)
 	sendFrame = func(iface string, info *Info, build func(string, net.HardwareAddr, *Info) ([]byte, error)) ([]byte, error) {
 		b, err := build(iface, net.HardwareAddr{2, 0, 0, 0, 0, 1}, info)
@@ -301,25 +286,125 @@ func TestEmitEndsWithShutdownFrame(t *testing.T) {
 	}
 }
 
-// Only sent frames count for the fast start; a carrier loss starts it
-// over; a NIC without carrier is polled at the fast interval.
+// The transmit timer of networkd 249 (networkd-lldp-tx.c): a carrier gain
+// starts 4 frames 1 s apart, then one every 30 s; without carrier no frame
+// goes out and none counts.
 func TestFastInit(t *testing.T) {
+	// The first poll with carrier sends, whatever the change count.
+	var first fastInit
+	if !first.due(time.Unix(1000, 0), true, 0) {
+		t.Fatal("no frame at the first poll with carrier")
+	}
 	var f fastInit
-	frame, fast, slow := []byte{1}, txFastInterval, txInterval
-	for i, tt := range []struct {
-		frame []byte
-		err   error
-		want  time.Duration
-	}{
-		{nil, nil, fast}, {nil, nil, fast}, // no carrier yet
-		{frame, nil, fast}, {frame, nil, fast}, {frame, nil, fast}, {frame, nil, slow}, // 4 fast frames
-		{frame, nil, slow},
-		{nil, errors.New("send failed"), slow}, // an error does not restart
-		{nil, nil, fast},                       // carrier lost
-		{frame, nil, fast}, {frame, nil, fast}, {frame, nil, fast}, {frame, nil, slow},
-	} {
-		if got := f.next(tt.frame, tt.err); got != tt.want {
-			t.Fatalf("step %d: wait %v, want %v", i, got, tt.want)
+	now := time.Unix(1000, 0)
+	// poll advances the clock by d, polls with the carrier state and sends
+	// a frame when one is due; it reports whether one was due.
+	poll := func(d time.Duration, up bool, changes uint64) bool {
+		now = now.Add(d)
+		if !f.due(now, up, changes) {
+			return false
 		}
+		f.sent(now)
+		return true
+	}
+	// frames polls every second for 40 s and returns the seconds at which
+	// frames went out.
+	frames := func(up bool, changes uint64) []int {
+		var at []int
+		for i := range 40 {
+			if poll(time.Second, up, changes) {
+				at = append(at, i)
+			}
+		}
+		return at
+	}
+	fastStart := []int{0, 1, 2, 3, 33}
+	if got := frames(false, 1); len(got) != 0 {
+		t.Fatalf("frames without carrier at %v, want none", got)
+	}
+	if got := frames(true, 2); !slices.Equal(got, fastStart) {
+		t.Fatalf("after the carrier came up: frames at %v, want %v", got, fastStart)
+	}
+	// A carrier loss that a poll sees stops the frames and the counting;
+	// the gain starts the fast frames again.
+	if got := frames(false, 3); len(got) != 0 {
+		t.Fatalf("frames after the carrier loss at %v, want none", got)
+	}
+	if got := frames(true, 4); !slices.Equal(got, fastStart) {
+		t.Fatalf("after the carrier came back: frames at %v, want %v", got, fastStart)
+	}
+	// A flap between two polls (the carrier change count grew by 2) is a
+	// carrier gain too.
+	if got := frames(true, 6); !slices.Equal(got, fastStart) {
+		t.Fatalf("after a flap between polls: frames at %v, want %v", got, fastStart)
+	}
+	// Without a change count (no carrier_changes file) a carrier loss
+	// that a poll sees still starts the fast frames again.
+	if got := frames(false, 6); len(got) != 0 {
+		t.Fatalf("frames after the carrier loss at %v, want none", got)
+	}
+	if got := frames(true, 6); !slices.Equal(got, fastStart) {
+		t.Fatalf("after the carrier came back with the same count: frames at %v, want %v", got, fastStart)
+	}
+	// The poll interval: at most 1 s, and the time to a due frame below it.
+	if w := f.wait(now); w != txFastInterval {
+		t.Fatalf("wait %v in the slow phase, want %v", w, txFastInterval)
+	}
+	f.next = now.Add(300 * time.Millisecond)
+	if w := f.wait(now); w != 300*time.Millisecond {
+		t.Fatalf("wait %v before a frame due in 300ms, want 300ms", w)
+	}
+}
+
+// setCarrier writes the carrier and carrier_changes files of a NIC under
+// sysClassNet, like the kernel.
+func setCarrier(t *testing.T, iface string, up bool, changes int) {
+	t.Helper()
+	dir := filepath.Join(sysClassNet, iface)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	carrier := map[bool]string{false: "0\n", true: "1\n"}[up]
+	if err := os.WriteFile(filepath.Join(dir, "carrier"), []byte(carrier), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "carrier_changes"), []byte(strconv.Itoa(changes)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// In every profile a NIC without carrier gets no frame, and its first
+// frame goes out within a fast interval once the carrier is up: networkd
+// starts sending on carrier gain and stops on carrier loss.
+func TestEmitWaitsForCarrier(t *testing.T) {
+	origSend, origSys := sendFrame, sysClassNet
+	t.Cleanup(func() { sendFrame, sysClassNet = origSend, origSys })
+	sysClassNet = t.TempDir()
+	setCarrier(t, "eth0", false, 1)
+	sent := make(chan struct{}, 16)
+	sendFrame = func(iface string, info *Info, build func(string, net.HardwareAddr, *Info) ([]byte, error)) ([]byte, error) {
+		b, err := build(iface, net.HardwareAddr{2, 0, 0, 0, 0, 1}, info)
+		if err != nil {
+			return nil, err
+		}
+		l, _ := gopacket.NewPacket(b, layers.LayerTypeEthernet, gopacket.Default).Layer(layers.LayerTypeLinkLayerDiscovery).(*layers.LinkLayerDiscovery)
+		if l != nil && l.TTL != 0 { // not the shutdown LLDPDU
+			sent <- struct{}{}
+		}
+		return b, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	wait := Emit(ctx, []string{"eth0"}, &Info{MachineID: "m", SystemName: "host1"}, slog.Default())
+	t.Cleanup(func() { cancel(); wait() })
+	select {
+	case <-sent:
+		t.Fatal("frame sent on a NIC without carrier")
+	case <-time.After(txFastInterval + txFastInterval/2):
+	}
+	setCarrier(t, "eth0", true, 2)
+	select {
+	case <-sent:
+	case <-time.After(txFastInterval + txFastInterval/2):
+		t.Fatal("no frame within a fast interval of the carrier")
 	}
 }

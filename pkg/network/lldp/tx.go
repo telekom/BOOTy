@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,8 +22,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Transmit timing of systemd-networkd (sd-lldp-tx.c): 4 fast frames 1 s
-// apart, then one frame every 30 s, TTL 120 s (4 intervals).
+// Transmit timing of systemd-networkd (networkd-lldp-tx.c in systemd 249,
+// sd-lldp-tx.c since 250): 4 fast frames 1 s apart (txFastInit, msgFastTx
+// of IEEE 802.1AB), then one frame every 30 s (msgTxInterval), TTL 120 s
+// (4 intervals). networkd starts the fast frames again on each carrier gain.
 const (
 	txFastInit     = 4
 	txFastInterval = time.Second
@@ -51,17 +54,10 @@ type Info struct {
 	PrettyHostname string // system description; omitted when empty
 	Profile        string // identity profile; "" is ProfileNetworkd
 	PortIDFormat   string // port ID of the bm4x-cablecheck profile; "" is PortIDMAC
-	// CarrierOnly skips NICs without carrier instead of trying to send
-	// (LLDP_EMIT_ALL). The bm4x-cablecheck profile always does.
-	CarrierOnly bool
 	// Announce is the announce level; "" is AnnounceParity. System is the
 	// host data that the standard and full levels send.
 	Announce string
 	System   System
-}
-
-func (i *Info) carrierOnly() bool {
-	return i.CarrierOnly || i.Profile == ProfileBM4XCableCheck
 }
 
 // SystemInfo reads the machine ID of the boot, the hostname and the pretty
@@ -236,16 +232,23 @@ func emitOn(ctx context.Context, iface string, info *Info, log *slog.Logger) {
 	failed := false
 	var fast fastInit
 	for {
-		frame, err := sendFrame(iface, info, Frame)
-		recordTX(iface, info, frame, err, time.Now())
-		if err != nil && !failed {
-			// Log once; the NIC may come back (carrier, rename).
-			log.Warn("LLDP frame not sent", "error", err)
-			failed = true
-		} else if err == nil {
-			failed = false
+		now := time.Now()
+		up, changes := carrier(iface)
+		switch {
+		case fast.due(now, up, changes):
+			frame, err := sendFrame(iface, info, Frame)
+			recordTX(iface, info, frame, err, now)
+			if err != nil && !failed {
+				// Log once; the NIC may come back (rename).
+				log.Warn("LLDP frame not sent", "error", err)
+				failed = true
+			} else if err == nil {
+				failed = false
+			}
+			fast.sent(now)
+		case !up:
+			recordTX(iface, info, nil, nil, now)
 		}
-		wait := fast.next(frame, err)
 		select {
 		case <-ctx.Done():
 			// IEEE 802.1AB: a port that stops sending sends a shutdown
@@ -254,20 +257,17 @@ func emitOn(ctx context.Context, iface string, info *Info, log *slog.Logger) {
 				log.Debug("LLDP shutdown frame not sent", "error", err)
 			}
 			return
-		case <-time.After(wait):
+		case <-time.After(fast.wait(time.Now())):
 		}
 	}
 }
 
-// sendFrame sends the frame that build makes for the NIC and returns it;
-// nil when the NIC has no carrier. Tests replace it.
+// sendFrame sends the frame that build makes for the NIC and returns it.
+// Tests replace it.
 var sendFrame = func(iface string, info *Info, build func(string, net.HardwareAddr, *Info) ([]byte, error)) ([]byte, error) {
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {
 		return nil, fmt.Errorf("interface %s: %w", iface, err)
-	}
-	if info.carrierOnly() && ifi.Flags&net.FlagRunning == 0 {
-		return nil, nil // no carrier: send once the link is up
 	}
 	frame, err := build(iface, ifi.HardwareAddr, info)
 	if err != nil {
@@ -286,22 +286,58 @@ var sendFrame = func(iface string, info *Info, build func(string, net.HardwareAd
 	return frame, nil
 }
 
-// fastInit counts the frames sent since the link came up: the first
-// txFastInit go out txFastInterval apart, then one every txInterval. A NIC
-// without carrier (frame nil, no error) starts over and is polled at the
-// fast interval, so its first frames go out as soon as the link is up,
-// like networkd after a carrier change.
-type fastInit struct{ sent int }
+// carrier reads the carrier of the NIC and its carrier change count from
+// sysfs. The count grows with every loss and gain of the carrier, so it
+// also shows a flap between two polls. A NIC that is down or gone has no
+// carrier.
+func carrier(iface string) (up bool, changes uint64) {
+	b, err := os.ReadFile(filepath.Join(sysClassNet, iface, "carrier"))
+	up = err == nil && strings.TrimSpace(string(b)) == "1"
+	if b, err := os.ReadFile(filepath.Join(sysClassNet, iface, "carrier_changes")); err == nil {
+		changes, _ = strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+	}
+	return up, changes
+}
 
-func (f *fastInit) next(frame []byte, err error) time.Duration {
-	switch {
-	case err == nil && frame != nil:
-		f.sent++
-	case err == nil:
-		f.sent = 0
+// fastInit is the transmit timer of networkd for one NIC. A carrier gain
+// (link_carrier_gained, link_lldp_emit_start in systemd 249) starts the
+// fast start again: the next txFastInit frames go out txFastInterval
+// apart, then one every txInterval. Without carrier networkd stops the
+// timer (link_carrier_lost), so no frame counts. The emitter polls the
+// carrier every txFastInterval; a change of the carrier change count is a
+// carrier gain even when the poll did not see the loss.
+type fastInit struct {
+	count   int       // frames since the carrier came up
+	changes uint64    // carrier change count at the last poll
+	next    time.Time // the next frame is due
+}
+
+// due notes the carrier state of a poll and reports whether a frame is
+// due.
+func (f *fastInit) due(now time.Time, up bool, changes uint64) bool {
+	if !up || changes != f.changes {
+		f.count, f.next = 0, now
 	}
-	if f.sent < txFastInit {
-		return txFastInterval
+	f.changes = changes
+	return up && !now.Before(f.next)
+}
+
+// sent counts a frame and schedules the next one. A failed send counts
+// too, like in networkd.
+func (f *fastInit) sent(now time.Time) {
+	f.count++
+	if f.count < txFastInit {
+		f.next = now.Add(txFastInterval)
+	} else {
+		f.next = now.Add(txInterval)
 	}
-	return txInterval
+}
+
+// wait is the time to the next poll: at most txFastInterval, so a carrier
+// gain is seen within it.
+func (f *fastInit) wait(now time.Time) time.Duration {
+	if d := f.next.Sub(now); d > 0 && d < txFastInterval {
+		return d
+	}
+	return txFastInterval
 }

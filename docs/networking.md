@@ -738,7 +738,16 @@ provisioned OS), port ID the interface name, TTL 120 s, system name the
 hostname, and the capabilities station, bridge and router (station
 enabled). When the sending stops, BOOTy sends a shutdown LLDPDU (TTL 0,
 IEEE 802.1AB), so the switch drops BOOTy at once instead of after 120 s;
-networkd does not send one. An `emit-lldp: true` on a netplan match block
+networkd does not send one. The timing is that of networkd 249: when a NIC gets carrier,
+4 frames 1 s apart (txFastInit 4, msgFastTx 1 s of IEEE 802.1AB), then one
+every 30 s (msgTxInterval). A NIC without carrier gets no frames, and they
+do not count; each carrier gain starts the 4 fast frames again, like
+networkd (`link_carrier_gained`, `link_lldp_emit_start`), in every profile.
+BOOTy checks the carrier every second in sysfs (`carrier`,
+`carrier_changes`), so the first frame goes out within 1 s of the link
+coming up (networkd: about 1 s, with up to 0.4 s jitter that BOOTy does not
+add), and a flap between two checks also starts the fast frames again.
+An `emit-lldp: true` on a netplan match block
 without `set-name` (the legacy L2 netplan has `all-en` with `name: "en*"`)
 sends on every NIC the block selects. BOOTy sends in every network mode,
 like networkd, which sends whatever the addressing (DHCP, static, FRR).
