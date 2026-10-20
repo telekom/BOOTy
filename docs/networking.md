@@ -166,7 +166,10 @@ same resolution:
   port while another link-local neighbor does, moves to that address
   (the switch came back with another MAC). A switch that does not answer
   at setup gets its peer on a placeholder address that moves the same
-  way. Deviation: this adds 3 to 4 s (the 3 s grace and the 1 s round) to
+  way. A moved peer takes the route-maps and the `bgp
+  ebgp-requires-policy` reject of its own session only, also when a peer
+  on another port has the same address: GoBGP neighbor sets have no
+  zone, and all placeholders are one address. Deviation: this adds 3 to 4 s (the 3 s grace and the 1 s round) to
   the recovery after such a change; FRR follows the RA at once (lab: FRR
   1.5 to 2.8 s, BOOTy 5.3 to 6.6 s after a 95 s outage with a new MAC).
 - `neighbor X allowas-in [N]` (native `allowASIn`, FRR's default N is 3)
