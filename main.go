@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"os"
 	"os/signal"
@@ -1575,20 +1576,67 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 	return netCfg
 }
 
-// frrVersionBelow reports whether the "frr version" v is below
-// major.minor, like the match_version of FRR's FRR_CFG_DEFAULT_*. An empty
-// or unparsable version is the running FRR, so it is not below.
-func frrVersionBelow(v string, major, minor int) bool {
-	f := strings.SplitN(v, ".", 3)
-	if len(f) < 2 {
-		return false
+// frrVersionBelow reports whether the "frr version" v is below spec, like
+// FRR's match_version "< spec". An empty version (no "frr version" line)
+// is the running FRR, so it is not below.
+func frrVersionBelow(v, spec string) bool {
+	return v != "" && frrVersionCmp(v, spec) < 0
+}
+
+// frrVersionCmp is FRR's frr_version_cmp (lib/defaults.c): runs of digits
+// compare as numbers, other characters by versionValue.
+func frrVersionCmp(a, b string) int {
+	isDigit := func(s string) bool { return s != "" && s[0] >= '0' && s[0] <= '9' }
+	for a != "" || b != "" {
+		if isDigit(a) && isDigit(b) {
+			av, ar := leadingNumber(a)
+			bv, br := leadingNumber(b)
+			if c := cmp.Compare(av, bv); c != 0 {
+				return c
+			}
+			a, b = ar, br
+			continue
+		}
+		if c := cmp.Compare(versionValue(a), versionValue(b)); c != 0 {
+			return c
+		}
+		// Equal values: both strings have a next character (the end
+		// differs from every character).
+		a, b = a[1:], b[1:]
 	}
-	ma, err1 := strconv.Atoi(f[0])
-	mi, err2 := strconv.Atoi(f[1])
-	if err1 != nil || err2 != nil {
-		return false
+	return 0
+}
+
+// versionValue is FRR's version_value of the first character of s; the
+// end of s is '\0'.
+func versionValue(s string) int {
+	if s == "" {
+		return 1
 	}
-	return ma < major || ma == major && mi < minor
+	switch c := s[0]; {
+	case c >= 128:
+		return 2 // non-ASCII
+	case c == '~':
+		return 0 // "~foo" sorts older than nothing
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+		return 0x100 + int(c|0x20)
+	default:
+		return 0x200 + int(c) // punctuation and digits
+	}
+}
+
+// leadingNumber returns the value of the leading digits of s, like
+// strtoul (saturated), and the rest.
+func leadingNumber(s string) (n uint64, rest string) {
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	n, err := strconv.ParseUint(s[:i], 10, 64)
+	if err != nil {
+		n = math.MaxUint64
+	}
+	return n, s[i:]
 }
 
 // applyBGPOptions applies the BGP options that frr.conf can also set. With
@@ -1617,7 +1665,7 @@ func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 		GracefulRestart:     gr,
 		GracefulRestartTime: cmp.Or(o.GracefulRestartTime, 120),
 		// FRR BGP_GRACEFUL_NOTIFICATION: off for "frr version" < 8.3.
-		GracefulNotification: gr && boolOr(o.GracefulNotification, !frrVersionBelow(n.BGPFRRVersion, 8, 3)),
+		GracefulNotification: gr && boolOr(o.GracefulNotification, !frrVersionBelow(n.BGPFRRVersion, "8.3")),
 		AddPathReceive:       boolOr(o.AddPathReceive, true),
 		// FRR 10.3 BGP_SOFT_VERSION_CAPABILITY: on for every peer with
 		// datacenter, iBGP only otherwise.
