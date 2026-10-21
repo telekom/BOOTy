@@ -356,15 +356,12 @@ behaviour.
   `set-name` alone. A NIC that appears after the network setup keeps its
   kernel name (#780).
 - New failure codes for ramdisk payloads (docs/proposal-ramdisk-split.md):
-  `BOOTY-PAY-001` when the vars need FRR, `qemu-img` or `ipmitool` and the
-  ramdisk lacks it, and `BOOTY-PAY-002` when a payload archive is from
-  another build. A qcow2 image without `qemu-img` still fails before the
-  disk wipe, now with `BOOTY-PAY-001`. A split build lists the payloads it
-  left out in `/etc/booty/payloads/split`; on such a ramdisk FRR mode
-  without the FRR archive and `WATCHDOG_IPMI_FALLBACK` without the ipmitool
-  archive fail with `BOOTY-PAY-001` before the network setup or the FRR
-  start. The default, gobgp and slim flavors have no split list and behave
-  as before (#781).
+  `BOOTY-PAY-001` when the vars need FRR and the ramdisk lacks it, and
+  `BOOTY-PAY-002` when a payload archive is from another build. A split
+  build lists the payloads it left out in `/etc/booty/payloads/split`; on
+  such a ramdisk FRR mode without the FRR archive fails with
+  `BOOTY-PAY-001` before the network setup or the FRR start. The default,
+  gobgp and slim flavors have no split list and behave as before (#781).
 - DHCP mode: a NIC that appears after the network setup (a late driver)
   gets a DHCP client too, like systemd-networkd (#788).
 - DHCP mode has its own DHCPv4 client (`pkg/network/dhcp4`) instead of
@@ -374,12 +371,8 @@ behaviour.
   rapid commit, INIT-REBOOT (called on carrier return, #793),
   DHCPRELEASE at stop, the reply checks of networkd. Replies with option
   overload (52) are dropped (#790).
-- Standby rejects a provision or deprovision command that needs a ramdisk
-  payload the split ramdisk lacks (a qcow2 image without the qemu-img
-  archive, the IPMI watchdog fallback without the ipmitool archive) with a
-  failed ACK `[BOOTY-PAY-001]` and stays in standby. A payload manifest
-  also carries `arch=`, and BOOTy refuses a payload of another
-  architecture with `BOOTY-PAY-002` (#791).
+- A payload manifest also carries `arch=`, and BOOTy refuses a payload of
+  another architecture with `BOOTY-PAY-002` (#791).
 - DHCP mode: a NIC whose carrier returns confirms its lease with an
   INIT-REBOOT request at once, like systemd-networkd. Unlike networkd the
   lease stays while the carrier is gone (it still ends at its expiry), so
@@ -572,8 +565,8 @@ behaviour.
   and an image whose virtual size is larger than the target disk now fail
   before anything is written. The `split` build has no `qemu-img.cpio.zst`
   payload any more: remove it from the initrd list of the boot loader. A
-  qcow2 image never needs a payload, so `BOOTY-PAY-001` covers only FRR and
-  ipmitool. `qemu-img` is gone from the rescue shell too (#815).
+  qcow2 image never needs a payload, so `BOOTY-PAY-001` covers only FRR.
+  `qemu-img` is gone from the rescue shell too (#815).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 
@@ -859,8 +852,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - dhcp: DHCPv6 on every DHCP NIC, started by router advertisements ([#795](https://github.com/telekom/BOOTy/pull/795))
 - gobgp: set NTF_ROUTER on IPv6 Type-2 neighbor entries like zebra ([#798](https://github.com/telekom/BOOTy/pull/798))
 - New build target `split`: the default ramdisk as `base.cpio.zst` plus
-  `frr.cpio.zst`, `qemu-img.cpio.zst` and `ipmitool.cpio.zst`, the
-  `vmlinuz` of the same build and `SHA256SUMS` over all of them
+  `frr.cpio.zst`, the `vmlinuz` of the same build and `SHA256SUMS` over all of them
   (`hack/split-initramfs.sh`, docs/proposal-ramdisk-split.md). The base has
   no payload executables and none of the libraries only they load; each
   payload carries its manifest with the build ID. PR artifacts
@@ -875,7 +867,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   names it); a selected target disk fails the run, and so does a failed check
   (#667)
 - qcow2 images with a backing file or an external data file are rejected before
-  `qemu-img convert` (#609)
+  the conversion to raw (#609)
 - CAPRF transport errors carry only scheme, host, path and a fixed cause (#624)
 - The FRR connectivity wait redacts the target URL; each `vtysh` dump has a 10 s
   timeout (#627)
