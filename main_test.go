@@ -3052,6 +3052,7 @@ func TestLLDPWatchErrors(t *testing.T) {
 func TestFRRVersionBelow(t *testing.T) {
 	for v, want := range map[string]bool{
 		"8": true, "8.2-dev": true, "8.3~rc1": true, "8.2.2": true, "7.5.1": true, "git": true,
+		"GIT": true, "8.\xff": true, "8.3\xff": false, "99999999999999999999": false,
 		"8.3": false, "8.3.1": false, "8.3.0~rc1": false, "8.9": false, "8.10": false, "10.2.1": false, "9": false,
 		"": false,
 	} {
