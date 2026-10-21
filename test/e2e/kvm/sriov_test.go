@@ -126,7 +126,7 @@ func TestSRIOVIgbProvisionQEMU(t *testing.T) {
 		"-device", "pcie-root-port,id=rp1,chassis=1,slot=1",
 		"-netdev", "user,id=n1,restrict=on",
 		"-device", "igb,bus=rp1,netdev=n1,mac=52:54:00:00:01:00",
-		"-append", "console=ttyS0 panic=1 net.ifnames=0",
+		"-append", runnerKernelCmdline + " net.ifnames=0",
 	)
 	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
 	out, _ := exec.CommandContext(ctx, "qemu-system-x86_64", args...).CombinedOutput()
