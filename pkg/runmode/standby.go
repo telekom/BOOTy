@@ -8,14 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/rescue"
 )
@@ -77,7 +76,7 @@ func (m *StandbyMode) Run(ctx context.Context) error {
 
 	// The ramdisk runs from RAM only (CAPRF may eject the ISO): the RAM in
 	// use is the footprint of kernel, unpacked initramfs and BOOTy.
-	total, available := memInfoMiB(procMemInfo)
+	total, available := health.MemInfoMiB(procMemInfo)
 	slog.Info("entering standby mode", "memTotalMiB", total, "memAvailableMiB", available)
 	if err := m.deps.Client.ReportStatus(ctx, config.StatusInit, "standby"); err != nil {
 		return fmt.Errorf("standby status readiness: %w", err)
@@ -487,29 +486,3 @@ func (m *StandbyMode) deprovisioner(cfg *config.MachineConfig) standbyDeprovisio
 
 // procMemInfo is /proc/meminfo; tests replace it.
 var procMemInfo = "/proc/meminfo"
-
-// memInfoMiB returns MemTotal and MemAvailable of a meminfo file in MiB,
-// or zeros when it can not be read.
-func memInfoMiB(path string) (total, available int64) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0, 0
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		kb, err := strconv.ParseInt(fields[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		switch fields[0] {
-		case "MemTotal:":
-			total = kb / 1024
-		case "MemAvailable:":
-			available = kb / 1024
-		}
-	}
-	return total, available
-}

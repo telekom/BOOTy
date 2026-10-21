@@ -243,20 +243,20 @@ func streamRawToDevice(rawPath, device string, opt StreamOpts) error {
 	stopProgress()
 	if err != nil {
 		slog.Error("qcow2 write failed: wiping partial image", "device", device, "error", err)
-		wipeLeadingSectors(device)
+		wipeImageTarget(device)
 		return fmt.Errorf("writing raw to device: %w", err)
 	}
 
 	if err := verifyChecksum(h, opt); err != nil {
 		slog.Error("checksum mismatch: wiping partition table to prevent booting corrupt image",
 			"device", device, "error", err)
-		wipeLeadingSectors(device)
+		wipeImageTarget(device)
 		return err
 	}
 
 	if err := syncImageTarget(dst, device); err != nil {
 		slog.Error("qcow2 image sync failed: attempting to wipe partial image", "device", device, "error", err)
-		wipeLeadingSectors(device)
+		wipeImageTarget(device)
 		return err
 	}
 

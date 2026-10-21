@@ -4,6 +4,7 @@ package provision
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -52,5 +53,38 @@ func TestImageProbeFailsClosedBeforeTheWipe(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// IMAGE_STREAM fails a qcow2 source before the wipe, with a permanent code;
+// without it the qcow2 is staged as before.
+func TestImageProbeRejectsQCOW2WithImageStream(t *testing.T) {
+	orig := validateStreamingPrerequisites
+	t.Cleanup(func() { validateStreamingPrerequisites = orig })
+	validateStreamingPrerequisites = func(context.Context, string) (image.Format, error) {
+		return image.FormatQCOW2, nil
+	}
+	for _, stream := range []bool{false, true} {
+		cfg := &config.MachineConfig{}
+		cfg.Provision.Image.Stream = stream
+		o := newTestOrchestrator(t, cfg, &mockProvider{})
+		o.bestImageURL = "https://img.example/os.qcow2"
+		err := o.validateImageStreamingPrerequisites(context.Background(), []string{o.bestImageURL})
+		if !stream {
+			if err != nil {
+				t.Fatalf("without IMAGE_STREAM: %v", err)
+			}
+			continue
+		}
+		if !errors.Is(err, image.ErrStagingForbidden) {
+			t.Fatalf("with IMAGE_STREAM: err = %v, want ErrStagingForbidden", err)
+		}
+		if code := CodeOf(WithCode("validate-provision-inputs", err)); code != codeFormatProbe {
+			t.Fatalf("code = %q, want %s", code, codeFormatProbe)
+		}
+		var permanent *PermanentError
+		if !errors.As(classifyImageStreamError("https://img.example/os.qcow2", err), &permanent) {
+			t.Fatal("a staging error of stream-image is retried")
+		}
 	}
 }

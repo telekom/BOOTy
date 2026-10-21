@@ -32,6 +32,9 @@ func StreamPartitions(ctx context.Context, url, device string, opts ...StreamOpt
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
+	if opt.StreamOnly {
+		return fmt.Errorf("%w: partition mode copies a staged image; IMAGE_STREAM=true forbids it", ErrStagingForbidden)
+	}
 	opt, err := withDownloadChecksum(opt)
 	if err != nil {
 		return err

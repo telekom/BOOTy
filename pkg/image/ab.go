@@ -85,7 +85,7 @@ func invalidateDirtyABTargets(err error) {
 		return
 	}
 	for _, target := range dirty.targets {
-		wipeLeadingSectors(target)
+		wipeImageTarget(target)
 	}
 }
 
@@ -146,6 +146,9 @@ func streamSelectedImagePayload(ctx context.Context, url string, target ABTarget
 		return nil
 	}
 	defer cleanup()
+	if opt.StreamOnly {
+		return StagingForbiddenError(format)
+	}
 	return streamABViaRamdisk(ctx, src, target, opt)
 }
 

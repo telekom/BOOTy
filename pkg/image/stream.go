@@ -46,6 +46,9 @@ type StreamOpts struct {
 	// ChecksumScope is ChecksumScopeDownload (default) or
 	// ChecksumScopeDecompressed.
 	ChecksumScope string
+	// StreamOnly forbids staging the image in RAM (IMAGE_STREAM): a qcow2
+	// image fails with ErrStagingForbidden before anything is written.
+	StreamOnly bool
 
 	// download is set by withDownloadChecksum.
 	download *downloadChecksum
@@ -72,12 +75,14 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 		return err
 	}
 
+	defer cleanup()
 	// qcow2 images require download → convert → stream via ramdisk.
 	if format == FormatQCOW2 {
-		defer cleanup()
+		if opt.StreamOnly {
+			return StagingForbiddenError(format)
+		}
 		return convertQCOW2Hook(ctx, decompressed, url, device, opt)
 	}
-	defer cleanup()
 
 	out, err := os.OpenFile(device, os.O_WRONLY, 0) //nolint:gosec // device path from config
 	if err != nil {
@@ -100,25 +105,25 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	if errors.Is(err, ErrChecksumMismatch) {
 		slog.Error("checksum mismatch: wiping partition table to prevent booting corrupt image",
 			"device", device, "error", err)
-		wipeLeadingSectors(device)
+		wipeImageTarget(device)
 		return err //nolint:wrapcheck // ErrChecksumMismatch from verifyAtEOF, already descriptive
 	}
 	if err != nil {
 		slog.Error("image write failed: wiping partial image", "device", device, "error", err)
-		wipeLeadingSectors(device)
+		wipeImageTarget(device)
 		return fmt.Errorf("writing to device: %w", err)
 	}
 
 	if err := verifyChecksum(h, opt); err != nil {
 		slog.Error("checksum mismatch: wiping partition table to prevent booting corrupt image",
 			"device", device, "error", err)
-		wipeLeadingSectors(device)
+		wipeImageTarget(device)
 		return err
 	}
 
 	if err := syncImageTarget(out, device); err != nil {
 		slog.Error("image sync failed: attempting to wipe partial image", "device", device, "error", err)
-		wipeLeadingSectors(device)
+		wipeImageTarget(device)
 		return err
 	}
 
@@ -143,20 +148,28 @@ var syncImageTarget = func(out fileSyncer, device string) error {
 	return nil
 }
 
-// wipeLeadingSectors zeroes the first 1 MiB of a device to invalidate the
-// partition table and filesystem superblocks after a failed checksum
-// verification. This is best-effort — errors are logged but not returned
-// because the real error (checksum mismatch) is already being propagated.
-func wipeLeadingSectors(device string) {
+// wipeImageTarget zeroes the first and the last 1 MiB of a device after a
+// failed write or checksum verification: the start holds the partition table
+// and filesystem superblocks, the end a backup GPT or an md 1.0 superblock that
+// could make a partial image or an older install bootable again. This is
+// best-effort: errors are logged but not returned because the real error is
+// already being propagated.
+func wipeImageTarget(device string) {
 	f, err := os.OpenFile(device, os.O_WRONLY, 0) //nolint:gosec // trusted config value
 	if err != nil {
 		slog.Warn("failed to open device for wipe", "device", device, "error", err)
 		return
 	}
 	defer f.Close() //nolint:errcheck // best-effort close
-	if _, err := f.Write(make([]byte, 1<<20)); err != nil {
+	zeros := make([]byte, 1<<20)
+	if _, err := f.Write(zeros); err != nil {
 		slog.Warn("failed to wipe partition table", "device", device, "error", err)
 		return
+	}
+	if end, err := f.Seek(0, io.SeekEnd); err == nil && end >= 2*int64(len(zeros)) {
+		if _, err := f.WriteAt(zeros, end-int64(len(zeros))); err != nil {
+			slog.Warn("failed to wipe the end of the device", "device", device, "error", err)
+		}
 	}
 	if err := f.Sync(); err != nil {
 		slog.Warn("failed to sync wipe", "device", device, "error", err)
@@ -230,6 +243,16 @@ func wrapChecksum(r io.Reader, opt StreamOpts) (io.Reader, hash.Hash, error) {
 		return nil, nil, err
 	}
 	return io.TeeReader(r, h), h, nil
+}
+
+// ErrStagingForbidden is the error of an image that only a RAM (tmpfs)
+// staging can write while StreamOpts.StreamOnly (IMAGE_STREAM) forbids it.
+var ErrStagingForbidden = errors.New("image needs staging in RAM")
+
+// StagingForbiddenError returns the ErrStagingForbidden error of format f.
+func StagingForbiddenError(f Format) error {
+	return fmt.Errorf("%w: a %s image cannot be streamed and IMAGE_STREAM=true forbids staging it; "+
+		"use the raw or compressed raw image (for example .raw.lz4) or unset IMAGE_STREAM", ErrStagingForbidden, f)
 }
 
 // ErrChecksumMismatch is the error of an IMAGE_CHECKSUM that does not match.

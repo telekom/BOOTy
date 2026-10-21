@@ -5,8 +5,6 @@ package runmode
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -75,20 +73,6 @@ func TestNextPollDelay(t *testing.T) {
 	// A server that answers at once: keep the interval.
 	if d := nextPollDelay(time.Now(), false); d < 9*time.Second {
 		t.Errorf("after a short poll: delay = %v, want about 10s", d)
-	}
-}
-
-func TestMemInfoMiB(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "meminfo")
-	data := "MemTotal:        2048000 kB\nMemFree:          100000 kB\nMemAvailable:    1024000 kB\n"
-	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if total, available := memInfoMiB(path); total != 2000 || available != 1000 {
-		t.Fatalf("memInfoMiB = %d, %d, want 2000, 1000", total, available)
-	}
-	if total, available := memInfoMiB(filepath.Join(t.TempDir(), "missing")); total != 0 || available != 0 {
-		t.Fatalf("missing file: %d, %d, want zeros", total, available)
 	}
 }
 

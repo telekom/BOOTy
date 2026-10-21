@@ -81,8 +81,14 @@ func ProbeOCIReference(ctx context.Context, reference string) error {
 	return nil
 }
 
+// tcaasRawImageMediaType prefixes the media type of the raw image layer that
+// the T-CaaS image builder pushes (+raw.lz4, +raw.zst) next to its
+// ansible facts and an optional +qcow2 layer.
+const tcaasRawImageMediaType = "application/vnd.tcaas.node-image+raw"
+
 func selectDefaultOCILayer(layers []v1.Layer) (v1.Layer, error) {
 	var payloadLayer v1.Layer
+	var rawImageLayers []v1.Layer
 	payloadCount := 0
 	for _, layer := range layers {
 		mediaType, err := layer.MediaType()
@@ -96,15 +102,21 @@ func selectDefaultOCILayer(layers []v1.Layer) (v1.Layer, error) {
 		if payloadLayer == nil {
 			payloadLayer = layer
 		}
+		if strings.HasPrefix(string(mediaType), tcaasRawImageMediaType) {
+			rawImageLayers = append(rawImageLayers, layer)
+		}
 	}
 
-	switch payloadCount {
-	case 0:
+	switch {
+	case payloadCount == 0:
 		return nil, fmt.Errorf("oci image has no non-text layers")
-	case 1:
+	case payloadCount == 1:
 		return payloadLayer, nil
+	case len(rawImageLayers) == 1:
+		return rawImageLayers[0], nil
 	default:
-		return nil, fmt.Errorf("oci image has %d non-text layers; expected exactly one payload layer", payloadCount)
+		return nil, fmt.Errorf("oci image has %d non-text layers; expected exactly one payload layer or one %s* layer",
+			payloadCount, tcaasRawImageMediaType)
 	}
 }
 

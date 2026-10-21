@@ -160,6 +160,7 @@ var sentinelCodes = []struct {
 	{context.DeadlineExceeded, CodeCanceled},
 	{image.ErrChecksumMismatch, codeChecksumMismatch},
 	{image.ErrFormatProbe, codeFormatProbe},
+	{image.ErrStagingForbidden, codeFormatProbe},
 	{disk.ErrAllDisksInUse, codeDiskInUse},
 	{disk.ErrInUseCheck, codeDiskInUse},
 	{disk.ErrAmbiguousRootPartition, codeAmbiguousRoot},

@@ -1150,6 +1150,10 @@ func (o *Orchestrator) validateImageStreamingPrerequisites(ctx context.Context, 
 	if err != nil {
 		return fmt.Errorf("validating image prerequisites before destructive storage: %w", err)
 	}
+	if o.cfg.Provision.Image.Stream && format == image.FormatQCOW2 {
+		return fmt.Errorf("validating image prerequisites before destructive storage: %w",
+			image.StagingForbiddenError(format))
+	}
 	o.log.Info("image prerequisites validated", "url", image.RedactURL(bestURL), "format", format)
 	return nil
 }
@@ -1753,13 +1757,15 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	}
 
 	var opts []image.StreamOpts
-	if o.cfg.Provision.Image.Checksum != "" {
+	if o.cfg.Provision.Image.Checksum != "" || o.cfg.Provision.Image.Stream {
 		opts = append(opts, image.StreamOpts{
 			Checksum:      o.cfg.Provision.Image.Checksum,
 			ChecksumType:  o.cfg.Provision.Image.ChecksumType,
 			ChecksumScope: o.cfg.Provision.Image.ChecksumScope,
+			StreamOnly:    o.cfg.Provision.Image.Stream,
 		})
 	}
+	defer startMemoryPeak(o.log)()
 
 	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
 		return o.streamPartitionLayoutRootImage(ctx, bestURL, opts)
@@ -1816,7 +1822,7 @@ func classifyImageStreamError(imageURL string, err error) error {
 		msg: fmt.Sprintf("streaming %s: %s", image.RedactURL(imageURL), image.RedactSourceError(err, imageURL)),
 		err: err,
 	}
-	if strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
+	if errors.Is(err, image.ErrStagingForbidden) || strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
 		return &PermanentError{Err: wrapped}
 	}
 	return wrapped

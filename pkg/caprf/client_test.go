@@ -2499,6 +2499,19 @@ func TestParseVarsImageChecksumScope(t *testing.T) {
 	}
 }
 
+func TestParseVarsImageStream(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("IMAGE_STREAM=true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Provision.Image.Stream {
+		t.Fatal("IMAGE_STREAM=true did not set provision.image.stream")
+	}
+	if _, err := ParseVars(strings.NewReader("IMAGE_STREAM=true\nIMAGE_MODE=partition\n")); err == nil {
+		t.Fatal("ParseVars accepted IMAGE_STREAM=true with IMAGE_MODE=partition")
+	}
+}
+
 func TestParseVarsDiskSettleTimeout(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader("DISK_SETTLE_TIMEOUT_SEC=0\n"))
 	if err != nil {
