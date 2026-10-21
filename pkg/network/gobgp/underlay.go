@@ -179,16 +179,13 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 		return fmt.Errorf("start BGP server: %w", err)
 	}
 
-	// RAs from before the peers are discovered, like zebra, which
-	// advertises as soon as bgpd has an unnumbered peer: the leaf learns
-	// the BOOTy link-local address and connects, so the address
-	// resolution of that connection puts the leaf into the neighbor
-	// table as well, before its own next RA.
-	if u.needsNICs() && len(u.nics) > 0 {
-		u.startPeriodicRA()
-	}
+	u.startRAs()
 	if err := u.setupBGP(ctx); err != nil {
 		u.stopPeriodicRA()
+		if u.bfd != nil {
+			u.bfd.Close()
+			u.bfd = nil
+		}
 		return err
 	}
 
@@ -205,6 +202,19 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// startRAs opens the BFD receive sockets and then starts the RAs from
+// before the peers are discovered, like zebra, which advertises as soon
+// as bgpd has an unnumbered peer: the leaf learns the BOOTy link-local
+// address and connects, so the address resolution of that connection
+// puts the leaf into the neighbor table as well, before its own next RA.
+// The leaf also starts BFD on that RA, so BOOTy listens first.
+func (u *UnderlayTier) startRAs() {
+	u.listenBFD()
+	if u.needsNICs() && len(u.nics) > 0 {
+		u.startPeriodicRA()
+	}
 }
 
 func (u *UnderlayTier) setupNICs(ctx context.Context) error {

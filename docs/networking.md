@@ -1070,6 +1070,14 @@ the BOOTy link-local address:
   `RTADV_FAST_REXMIT_PERIOD`) and then its first regular RA. After that,
   one RA goes out every 10 s (bgpd `BGP_UNNUM_DEFAULT_RA_INTERVAL`) with
   router lifetime 30 s (the zebra default for that interval).
+- The BFD receive sockets of the peers with BFD (UDP 3784 on each fabric
+  NIC, and the sockets of the numbered peers) open before the first RA
+  and before the BGP peers. The leaf starts BFD as soon as an RA shows it
+  BOOTy; FRR bfdd listens from its start, so its first BFD packet gets no
+  ICMP port unreachable. The sessions start after the peers are found and
+  use these sockets. In FRR mode BOOTy starts `bfdd` before `bgpd` for the
+  same reason: `bgpd` reads `frr.conf` at its start and has zebra send the
+  RAs at once.
 - The source of each RA is the link-local address of the NIC (RFC 4861
   section 6.2.8), never a global or a tentative address. An RA does not
   go out without carrier or while the link-local address is tentative

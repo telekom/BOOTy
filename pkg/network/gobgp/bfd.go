@@ -23,12 +23,58 @@ func (u *UnderlayTier) startBFD() {
 	if len(peers) == 0 {
 		return
 	}
-	u.bfd = bfd.NewManager(u.log.With("component", "bfd"), u.bfdChanged)
+	if u.bfd == nil {
+		u.bfd = bfd.NewManager(u.log.With("component", "bfd"), u.bfdChanged)
+	}
 	for i := range peers {
 		p := &peers[i]
 		if err := u.bfd.Add(p); err != nil {
 			// FRR keeps the BGP session when its BFD session fails.
 			u.log.Warn("BFD session not started; the BGP session runs without it", "peer", p.Name, "error", err)
+		}
+	}
+}
+
+// listenBFD opens the BFD receive sockets of the sessions that startBFD
+// adds later, before the RAs and the BGP connections, which make the
+// peers send BFD: an unnumbered leaf starts BFD as soon as an RA shows it
+// BOOTy. FRR bfdd listens from its start, so the first BFD packet of the
+// leaf never gets an ICMP port unreachable.
+func (u *UnderlayTier) listenBFD() {
+	var peers []bfd.Peer
+	// The address of an unnumbered peer is not known yet; only its
+	// family and the NIC select the socket.
+	iface := func(nic string) {
+		peers = append(peers, bfd.Peer{Name: nic, Addr: netip.IPv6Unspecified(), Device: nic})
+	}
+	if len(u.cfg.Sessions) > 0 {
+		for i := range u.cfg.Sessions {
+			s := &u.cfg.Sessions[i]
+			switch {
+			case !s.BFD:
+			case s.Interface:
+				iface(s.Name)
+			default:
+				peers = u.appendNumberedPeer(peers, s.Name, sessionVRF(s), s.Internal, bfd.Timers{})
+			}
+		}
+	} else if u.cfg.BFDTransmitMS != 0 {
+		if u.needsNICs() {
+			for _, nic := range u.nics {
+				iface(nic)
+			}
+		}
+		for _, addr := range u.cfg.NeighborAddrs {
+			peers = u.appendNumberedPeer(peers, addr, u.cfg.NeighborVRF, u.cfg.IsiBGP(), bfd.Timers{})
+		}
+	}
+	if len(peers) == 0 {
+		return
+	}
+	u.bfd = bfd.NewManager(u.log.With("component", "bfd"), u.bfdChanged)
+	for i := range peers {
+		if err := u.bfd.Listen(&peers[i]); err != nil {
+			u.log.Warn("BFD does not listen before the peer starts it", "peer", peers[i].Name, "error", err)
 		}
 	}
 }

@@ -4,6 +4,7 @@ package gobgp
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -868,4 +870,61 @@ func TestBFDDownWhenPeerGetsOurKeepaliveIncoming(t *testing.T) {
 		_ = conn.Close()
 	}
 	t.Logf("ListPeer states when the peer got our KEEPALIVE: %v", states)
+}
+
+// The BFD port of an unnumbered peer is open when the first RA goes out:
+// the leaf starts BFD on that RA, and a closed port answers its first
+// packet with ICMP port unreachable (kindmetal EVPN parity, 1 of 4 boots).
+// FRR bfdd listens from its start. The RA hook probes the port from ::1 on
+// lo: a connected UDP socket reads ECONNREFUSED when the port is closed.
+func TestBFDListensBeforeFirstRA(t *testing.T) {
+	if _, err := net.InterfaceByName("lo"); err != nil {
+		t.Skip("no lo:", err)
+	}
+	probe := func() error {
+		var d net.Dialer
+		c, err := d.DialContext(context.Background(), "udp6", "[::1]:3784")
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+		if _, err := c.Write([]byte("probe")); err != nil {
+			return err
+		}
+		_ = c.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+		_, err = c.Read(make([]byte, 64))
+		return err
+	}
+	first := make(chan error, 1)
+	orig := raSend
+	t.Cleanup(func() { raSend = orig })
+	raSend = func(string, uint16) bool {
+		select {
+		case first <- probe():
+		default:
+		}
+		return true
+	}
+	u := &UnderlayTier{log: slog.Default(), nics: []string{"lo"}, cfg: &Config{Sessions: []network.BGPSession{
+		{Name: "lo", Interface: true, BFD: true, BFDTransmitMS: 150, BFDReceiveMS: 150},
+	}}}
+	u.startRAs()
+	defer func() {
+		u.stopPeriodicRA()
+		if u.bfd != nil {
+			u.bfd.Close()
+		}
+	}()
+	select {
+	case err := <-first:
+		if errors.Is(err, syscall.ECONNREFUSED) {
+			t.Fatal("first RA sent while the BFD port 3784 on lo was closed")
+		}
+		var ne net.Error
+		if !errors.As(err, &ne) || !ne.Timeout() {
+			t.Fatalf("probe of the BFD port: %v, want no answer", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no RA")
+	}
 }
