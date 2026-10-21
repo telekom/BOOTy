@@ -4,6 +4,7 @@ package bfd
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/netip"
@@ -172,6 +173,64 @@ func TestManagerReplace(t *testing.T) {
 			}
 		case <-deadline:
 			t.Fatal("the replaced session did not come Up")
+		}
+	}
+}
+
+// Listen opens the socket that Add uses: the session added later shares
+// it instead of failing to bind the port a second time.
+func TestManagerListenThenAddSharesSocket(t *testing.T) {
+	m := NewManager(slog.Default(), nil)
+	t.Cleanup(func() { closeWithin(t, m) })
+	p := &Peer{Name: "self", Addr: netip.MustParseAddr("127.0.0.1"),
+		Timers: Timers{DesiredMinTx: time.Second, RequiredMinRx: time.Second, DetectMult: 3}}
+	if err := m.Listen(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Add(p); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.listeners) != 1 {
+		t.Fatalf("%d receive sockets, want 1", len(m.listeners))
+	}
+	for _, l := range m.listeners {
+		if len(l.runs) != 1 {
+			t.Fatalf("%d sessions on the receive socket, want 1", len(l.runs))
+		}
+	}
+}
+
+// A socket opened by Listen, without a session, drops the packets of the
+// peer: no BFD answer and no ICMP port unreachable, like FRR bfdd for an
+// unknown session.
+func TestManagerListenDropsUnknownSessions(t *testing.T) {
+	m := NewManager(slog.Default(), nil)
+	t.Cleanup(func() { closeWithin(t, m) })
+	if err := m.Listen(&Peer{Name: "leaf", Addr: netip.MustParseAddr("127.0.0.1")}); err != nil {
+		t.Fatal(err)
+	}
+	var d net.Dialer
+	conn, err := d.DialContext(context.Background(), "udp4", "127.0.0.1:3784")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := ipv4.NewConn(conn).SetTTL(255); err != nil {
+		t.Fatal(err)
+	}
+	for _, your := range []uint32{0, 42} { // by address, by discriminator
+		p := Packet{State: StateDown, DetectMult: 3, MyDiscriminator: 7, YourDiscriminator: your,
+			DesiredMinTxUS: 1000000, RequiredMinRxUS: 1000000}
+		if _, err := conn.Write(p.Marshal()); err != nil {
+			t.Fatal(err)
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		n, err := conn.Read(make([]byte, 64))
+		var ne net.Error
+		if !errors.As(err, &ne) || !ne.Timeout() {
+			t.Fatalf("Your Discriminator %d: read %d bytes, %v; want no answer", your, n, err)
 		}
 	}
 }

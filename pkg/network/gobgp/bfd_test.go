@@ -872,59 +872,116 @@ func TestBFDDownWhenPeerGetsOurKeepaliveIncoming(t *testing.T) {
 	t.Logf("ListPeer states when the peer got our KEEPALIVE: %v", states)
 }
 
+// probeBFD sends a datagram from ::1 to [::1]:port. A closed port answers
+// with ICMP port unreachable, which a connected UDP socket reads as
+// ECONNREFUSED; an open BFD port drops the datagram (hop limit not 255)
+// and the read times out.
+func probeBFD(port int) error {
+	var d net.Dialer
+	c, err := d.DialContext(context.Background(), "udp6", net.JoinHostPort("::1", strconv.Itoa(port)))
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	if _, err := c.Write([]byte("probe")); err != nil {
+		return err
+	}
+	_ = c.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	_, err = c.Read(make([]byte, 64))
+	return err
+}
+
+// checkBFDOpen fails unless the probe result of port shows a listener.
+func checkBFDOpen(t *testing.T, port int, err error) {
+	t.Helper()
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		t.Fatalf("BFD port %d on lo is closed", port)
+	}
+	var ne net.Error
+	if !errors.As(err, &ne) || !ne.Timeout() {
+		t.Fatalf("probe of BFD port %d: %v, want no answer", port, err)
+	}
+}
+
+// stopRAsAndBFD ends what startRAs started.
+func stopRAsAndBFD(u *UnderlayTier) {
+	u.stopPeriodicRA()
+	if u.bfd != nil {
+		u.bfd.Close()
+	}
+}
+
 // The BFD port of an unnumbered peer is open when the first RA goes out:
 // the leaf starts BFD on that RA, and a closed port answers its first
 // packet with ICMP port unreachable (kindmetal EVPN parity, 1 of 4 boots).
-// FRR bfdd listens from its start. The RA hook probes the port from ::1 on
-// lo: a connected UDP socket reads ECONNREFUSED when the port is closed.
+// FRR bfdd listens from its start. The RA hook probes the port.
 func TestBFDListensBeforeFirstRA(t *testing.T) {
 	if _, err := net.InterfaceByName("lo"); err != nil {
 		t.Skip("no lo:", err)
 	}
-	probe := func() error {
-		var d net.Dialer
-		c, err := d.DialContext(context.Background(), "udp6", "[::1]:3784")
-		if err != nil {
-			return err
-		}
-		defer c.Close()
-		if _, err := c.Write([]byte("probe")); err != nil {
-			return err
-		}
-		_ = c.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-		_, err = c.Read(make([]byte, 64))
-		return err
+	for _, tt := range []struct {
+		name string
+		cfg  Config
+	}{
+		{"frr.conf interface session", Config{Sessions: []network.BGPSession{
+			{Name: "lo", Interface: true, BFD: true, BFDTransmitMS: 150, BFDReceiveMS: 150},
+		}}},
+		{"native unnumbered", Config{PeerMode: network.PeerModeUnnumbered, BFDTransmitMS: 150, BFDReceiveMS: 150}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			first := make(chan error, 1)
+			orig := raSend
+			t.Cleanup(func() { raSend = orig })
+			raSend = func(string, uint16) bool {
+				select {
+				case first <- probeBFD(3784):
+				default:
+				}
+				return true
+			}
+			u := &UnderlayTier{log: slog.Default(), nics: []string{"lo"}, cfg: &tt.cfg}
+			u.startRAs()
+			defer stopRAsAndBFD(u)
+			select {
+			case err := <-first:
+				checkBFDOpen(t, 3784, err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("no RA")
+			}
+		})
 	}
-	first := make(chan error, 1)
-	orig := raSend
-	t.Cleanup(func() { raSend = orig })
-	raSend = func(string, uint16) bool {
-		select {
-		case first <- probe():
-		default:
-		}
-		return true
+}
+
+// The BFD ports of numbered peers are open before the BGP peers are added:
+// single-hop 3784 for an eBGP peer, multihop 4784 for an iBGP peer that is
+// not on a connected network. The VRF of the peers is lo here.
+func TestBFDListensForNumberedPeers(t *testing.T) {
+	if _, err := net.InterfaceByName("lo"); err != nil {
+		t.Skip("no lo:", err)
 	}
-	u := &UnderlayTier{log: slog.Default(), nics: []string{"lo"}, cfg: &Config{Sessions: []network.BGPSession{
-		{Name: "lo", Interface: true, BFD: true, BFDTransmitMS: 150, BFDReceiveMS: 150},
-	}}}
-	u.startRAs()
-	defer func() {
-		u.stopPeriodicRA()
-		if u.bfd != nil {
-			u.bfd.Close()
-		}
-	}()
-	select {
-	case err := <-first:
-		if errors.Is(err, syscall.ECONNREFUSED) {
-			t.Fatal("first RA sent while the BFD port 3784 on lo was closed")
-		}
-		var ne net.Error
-		if !errors.As(err, &ne) || !ne.Timeout() {
-			t.Fatalf("probe of the BFD port: %v, want no answer", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("no RA")
+	session := func(name string, internal bool) network.BGPSession {
+		return network.BGPSession{Name: name, VRF: "lo", Internal: internal, BFD: true, BFDTransmitMS: 150, BFDReceiveMS: 150}
+	}
+	for _, tt := range []struct {
+		name  string
+		cfg   Config
+		ports []int
+	}{
+		{"frr.conf sessions", Config{RouterID: "192.0.2.17", Sessions: []network.BGPSession{
+			session("2001:db8::1", false), session("2001:db8::2", true),
+		}}, []int{3784, 4784}},
+		{"native eBGP peers", Config{PeerMode: network.PeerModeNumbered, ASN: 65000, RemoteASN: 65100,
+			BFDTransmitMS: 150, BFDReceiveMS: 150, NeighborAddrs: []string{"2001:db8::1"}, NeighborVRF: "lo"}, []int{3784}},
+		{"native iBGP peers", Config{PeerMode: network.PeerModeNumbered, ASN: 65000, RouterID: "192.0.2.17",
+			BFDTransmitMS: 150, BFDReceiveMS: 150, NeighborAddrs: []string{"2001:db8::2"}, NeighborVRF: "lo"}, []int{4784}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			u := &UnderlayTier{log: slog.Default(), cfg: &tt.cfg, connected: func(netip.Addr, string) bool { return false }}
+			u.startRAs()
+			defer stopRAsAndBFD(u)
+			for _, port := range tt.ports {
+				checkBFDOpen(t, port, probeBFD(port))
+			}
+		})
 	}
 }
