@@ -94,6 +94,33 @@ func TestProvisionImageStreamQEMU(t *testing.T) {
 	})
 }
 
+// TestProvisionQCOW2LargerThanStagingQEMU stages a qcow2 image that is larger
+// than the staging tmpfs (3/4 of MemAvailable of the 1024 MiB guest): the run
+// must fail once with a clear error, without an out-of-memory kill and
+// without stream-image retries.
+func TestProvisionQCOW2LargerThanStagingQEMU(t *testing.T) {
+	requireRoot(t)
+	qemuAvailable(t)
+	requireProvisionTools(t)
+	requireDiskInspectTools(t)
+
+	rawDisk := createTestDiskImage(t, 1024)
+	addRandomRootPayload(t, rawDisk, 750)
+	qcow2Image := filepath.Join(t.TempDir(), "image.qcow2")
+	run(t, "convert image to qcow2", "qemu-img", "convert", "-f", "raw", "-O", "qcow2", rawDisk, qcow2Image)
+
+	output, _ := provisionImageQEMU(t, qcow2Image, "stream-qcow2-too-large", false)
+	if !strings.Contains(string(output), "staged image does not fit (tmpfs") {
+		t.Fatalf("no staging-full error; tail:\n%s", tail(output, 3000))
+	}
+	if n := strings.Count(string(output), "qcow2 image detected, writing to ramdisk"); n != 1 {
+		t.Fatalf("staged %d times, want 1 (no retry); tail:\n%s", n, tail(output, 3000))
+	}
+	if strings.Contains(string(output), "Out of memory") {
+		t.Fatalf("the guest ran out of memory; tail:\n%s", tail(output, 3000))
+	}
+}
+
 // provisionImageQEMU provisions a fresh 2 GiB target from image and returns
 // the QEMU output and the target disk.
 func provisionImageQEMU(t *testing.T, image, hostname string, stream bool) (output []byte, targetDisk string) {

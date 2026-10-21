@@ -4,20 +4,57 @@ package image
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"github.com/telekom/BOOTy/pkg/health"
 )
 
 const (
 	// ramdiskPath is the tmpfs mount point for qcow2 conversion scratch space.
 	ramdiskPath = "/tmp/booty-ramdisk"
-	// ramdiskSizeOpt is the tmpfs size option — bounded to avoid OOM.
-	ramdiskSizeOpt = "size=4G"
+	// ramdiskFallbackMiB is the tmpfs size when MemAvailable is unknown.
+	ramdiskFallbackMiB = 4096
 )
+
+// ramdiskMemInfo is /proc/meminfo; tests replace it.
+var ramdiskMemInfo = "/proc/meminfo"
+
+// stagingLimit is the size of the staging tmpfs and the MemAvailable it was
+// derived from (0: unknown).
+type stagingLimit struct {
+	tmpfsMiB, availableMiB int64
+}
+
+// newStagingLimit sizes the staging tmpfs at 3/4 of MemAvailable, so that a
+// staged image that does not fit fails with ENOSPC instead of exhausting the
+// RAM of the ramdisk, which has no swap.
+func newStagingLimit() stagingLimit {
+	_, available := health.MemInfoMiB(ramdiskMemInfo)
+	if available <= 0 {
+		return stagingLimit{tmpfsMiB: ramdiskFallbackMiB}
+	}
+	return stagingLimit{tmpfsMiB: max(available*3/4, 1), availableMiB: available}
+}
+
+// check turns a full staging tmpfs (ENOSPC) into ErrStagingFull, which
+// stream-image does not retry: the same image does not fit the next time.
+func (l stagingLimit) check(err error) error {
+	if err == nil || !errors.Is(err, syscall.ENOSPC) {
+		return err
+	}
+	available := "unknown"
+	if l.availableMiB > 0 {
+		available = fmt.Sprintf("%d MiB", l.availableMiB)
+	}
+	return fmt.Errorf("%w (tmpfs %d MiB, MemAvailable %s); use a .raw.lz4 image or IMAGE_STREAM: %w",
+		ErrStagingFull, l.tmpfsMiB, available, err)
+}
 
 func init() {
 	convertQCOW2Hook = func(ctx context.Context, src io.Reader, sourceName, device string, opt StreamOpts) error {
@@ -59,7 +96,8 @@ func ConvertQCOW2FromReader(ctx context.Context, src io.Reader, sourceName, devi
 		opt = opts[0]
 	}
 
-	if err := setupRamdisk(); err != nil {
+	limit, err := setupRamdisk()
+	if err != nil {
 		return fmt.Errorf("setting up ramdisk: %w", err)
 	}
 	defer cleanupRamdisk()
@@ -68,14 +106,14 @@ func ConvertQCOW2FromReader(ctx context.Context, src io.Reader, sourceName, devi
 	rawPath := filepath.Join(ramdiskPath, "image.raw")
 
 	if err := writeImageToFile(src, qcow2Path); err != nil {
-		return fmt.Errorf("writing qcow2 image: %w", err)
+		return limit.check(fmt.Errorf("writing qcow2 image: %w", err))
 	}
 
 	if err := checkQCOW2FitsDevice(qcow2Path, device); err != nil {
 		return err
 	}
 	if err := convertQCOW2ToRaw(ctx, qcow2Path, rawPath); err != nil {
-		return fmt.Errorf("converting qcow2 to raw: %w", err)
+		return limit.check(fmt.Errorf("converting qcow2 to raw: %w", err))
 	}
 
 	// Remove qcow2 to free ramdisk space before streaming.
@@ -92,16 +130,18 @@ func redactQCOW2SourceForLog(sourceName string) string {
 	return RedactURL(sourceName)
 }
 
-// setupRamdisk creates and mounts a tmpfs at ramdiskPath.
-func setupRamdisk() error {
+// setupRamdisk creates and mounts a tmpfs at ramdiskPath, sized by
+// newStagingLimit.
+func setupRamdisk() (stagingLimit, error) {
+	limit := newStagingLimit()
 	if err := os.MkdirAll(ramdiskPath, 0o700); err != nil {
-		return fmt.Errorf("creating ramdisk dir: %w", err)
+		return limit, fmt.Errorf("creating ramdisk dir: %w", err)
 	}
-	if err := syscall.Mount("tmpfs", ramdiskPath, "tmpfs", 0, ramdiskSizeOpt); err != nil {
-		return fmt.Errorf("mounting tmpfs at %s: %w", ramdiskPath, err)
+	if err := syscall.Mount("tmpfs", ramdiskPath, "tmpfs", 0, fmt.Sprintf("size=%dm", limit.tmpfsMiB)); err != nil {
+		return limit, fmt.Errorf("mounting tmpfs at %s: %w", ramdiskPath, err)
 	}
-	slog.Info("ramdisk mounted", "path", ramdiskPath)
-	return nil
+	slog.Info("ramdisk mounted", "path", ramdiskPath, "size_mib", limit.tmpfsMiB, "mem_available_mib", limit.availableMiB)
+	return limit, nil
 }
 
 // cleanupRamdisk unmounts and removes the tmpfs ramdisk.

@@ -40,14 +40,15 @@ func StreamPartitions(ctx context.Context, url, device string, opts ...StreamOpt
 		return err
 	}
 
-	if err := setupRamdisk(); err != nil {
+	limit, err := setupRamdisk()
+	if err != nil {
 		return fmt.Errorf("setting up ramdisk: %w", err)
 	}
 	defer cleanupRamdisk()
 
 	rawPath, err := downloadAndPrepareRaw(ctx, url, opt.download)
 	if err != nil {
-		return err
+		return limit.check(err)
 	}
 
 	if err := verifyRawImageChecksum(rawPath, opt); err != nil {

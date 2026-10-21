@@ -99,8 +99,8 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 		return err
 	}
 
-	buf := make([]byte, imageCopyBufferSize)
-	written, err := io.CopyBuffer(out, io.TeeReader(src, counter), buf)
+	// *os.File implements io.ReaderFrom, which ignores a CopyBuffer buffer.
+	written, err := io.Copy(out, io.TeeReader(src, counter))
 	stopProgress()
 	if errors.Is(err, ErrChecksumMismatch) {
 		slog.Error("checksum mismatch: wiping partition table to prevent booting corrupt image",
@@ -249,6 +249,10 @@ func wrapChecksum(r io.Reader, opt StreamOpts) (io.Reader, hash.Hash, error) {
 // staging can write while StreamOpts.StreamOnly (IMAGE_STREAM) forbids it.
 var ErrStagingForbidden = errors.New("image needs staging in RAM")
 
+// ErrStagingFull is the error of a staged image that does not fit in the
+// staging tmpfs.
+var ErrStagingFull = errors.New("staged image does not fit")
+
 // StagingForbiddenError returns the ErrStagingForbidden error of format f.
 func StagingForbiddenError(f Format) error {
 	return fmt.Errorf("%w: a %s image cannot be streamed and IMAGE_STREAM=true forbids staging it; "+
@@ -360,7 +364,7 @@ func openSource(ctx context.Context, url string) (io.ReadCloser, error) {
 	if IsOCIReference(url) {
 		ref := TrimOCIScheme(url)
 		slog.Info("pulling OCI image", "ref", RedactOCIRef(ref))
-		return FetchOCILayerWithRetry(ctx, ref)
+		return FetchOCIImageBlobWithRetry(ctx, ref)
 	}
 
 	return httpGetWithRetry(ctx, url)
@@ -475,15 +479,16 @@ func (b *idleTimeoutBody) Close() error {
 	return err //nolint:wrapcheck // plain body close error
 }
 
-// FetchOCILayerWithRetry retries OCI layer fetch with exponential backoff.
-func FetchOCILayerWithRetry(ctx context.Context, ref string) (io.ReadCloser, error) {
+// FetchOCIImageBlobWithRetry retries FetchOCIImageBlob with exponential
+// backoff.
+func FetchOCIImageBlobWithRetry(ctx context.Context, ref string) (io.ReadCloser, error) {
 	const maxRetries = 3
 	backoff := retryBackoffBase
 	redactedRef := RedactOCIRef(ref)
 
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		rc, err := FetchOCILayer(ctx, ref)
+		rc, err := FetchOCIImageBlob(ctx, ref)
 		if err == nil {
 			return rc, nil
 		}

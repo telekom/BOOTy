@@ -17,11 +17,49 @@ import (
 // systemd-sysext images.
 const SystemdSysextMediaType types.MediaType = "application/vnd.systemd.sysext.image.v1+raw"
 
-// FetchOCILayer pulls a single-layer OCI image and returns its content as
-// a streaming io.ReadCloser. The reference should be a standard image ref
+// FetchOCILayer pulls the payload layer of an OCI image (selectDefaultOCILayer)
+// and returns its content as a streaming io.ReadCloser, decompressed by
+// go-containerregistry. The reference should be a standard image ref
 // (e.g. "ghcr.io/org/image:tag"). Auth uses the default Docker keychain
 // (~/.docker/config.json).
 func FetchOCILayer(ctx context.Context, reference string) (io.ReadCloser, error) {
+	layer, err := selectOCIImageLayer(ctx, reference)
+	if err != nil {
+		return nil, err
+	}
+	rc, err := layer.Uncompressed()
+	if err != nil {
+		return nil, fmt.Errorf("uncompress layer for %q: %w", RedactOCIRef(reference), wrapRedactedOCIRefError(err, reference))
+	}
+	return rc, nil
+}
+
+// FetchOCIImageBlob returns the payload layer of an OCI image as stored in
+// the registry, verified against the layer digest while it is read. BOOTy
+// detects and decompresses the blob itself, so a download-scope
+// IMAGE_CHECKSUM covers the published file (.raw.lz4, .raw.zst), like for
+// an HTTP source.
+func FetchOCIImageBlob(ctx context.Context, reference string) (io.ReadCloser, error) {
+	layer, err := selectOCIImageLayer(ctx, reference)
+	if err != nil {
+		return nil, err
+	}
+	rc, err := layer.Compressed()
+	if err != nil {
+		return nil, fmt.Errorf("fetch layer blob for %q: %w", RedactOCIRef(reference), wrapRedactedOCIRefError(err, reference))
+	}
+	return rc, nil
+}
+
+// ProbeOCIReference verifies that an OCI image reference resolves and has a
+// usable payload layer without downloading the layer content.
+func ProbeOCIReference(ctx context.Context, reference string) error {
+	_, err := selectOCIImageLayer(ctx, reference)
+	return err
+}
+
+// selectOCIImageLayer resolves an OCI image and selects its payload layer.
+func selectOCIImageLayer(ctx context.Context, reference string) (v1.Layer, error) {
 	redactedRef := RedactOCIRef(reference)
 	ref, err := name.ParseReference(reference)
 	if err != nil {
@@ -45,40 +83,7 @@ func FetchOCILayer(ctx context.Context, reference string) (io.ReadCloser, error)
 	if err != nil {
 		return nil, fmt.Errorf("select content layer for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
-
-	rc, err := layer.Uncompressed()
-	if err != nil {
-		return nil, fmt.Errorf("uncompress layer for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
-	}
-	return rc, nil
-}
-
-// ProbeOCIReference verifies that an OCI image reference resolves and has a
-// usable payload layer without downloading the layer content.
-func ProbeOCIReference(ctx context.Context, reference string) error {
-	redactedRef := RedactOCIRef(reference)
-	ref, err := name.ParseReference(reference)
-	if err != nil {
-		return fmt.Errorf("parse OCI reference %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
-	}
-
-	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
-	if err != nil {
-		return fmt.Errorf("resolve OCI image %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
-	}
-
-	layers, err := img.Layers()
-	if err != nil {
-		return fmt.Errorf("get layers for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
-	}
-	if len(layers) == 0 {
-		return fmt.Errorf("OCI image %q has no layers", redactedRef)
-	}
-
-	if _, err := selectDefaultOCILayer(layers); err != nil {
-		return fmt.Errorf("select content layer for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
-	}
-	return nil
+	return layer, nil
 }
 
 // tcaasRawImageMediaType prefixes the media type of the raw image layer that

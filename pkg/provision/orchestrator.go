@@ -1118,7 +1118,10 @@ func (o *Orchestrator) validateImageStreamingPrerequisites(ctx context.Context, 
 		}
 		o.bestImageURL = bestURL
 	}
-	if image.IsOCIReference(bestURL) {
+	// verify-image probes the manifest of an OCI source. With IMAGE_STREAM
+	// the magic of its layer blob must be read too: a qcow2 layer fails here,
+	// before the wipe.
+	if image.IsOCIReference(bestURL) && !o.cfg.Provision.Image.Stream {
 		return nil
 	}
 	// Fail closed: an image source that cannot be read is found before the
@@ -1150,11 +1153,20 @@ func (o *Orchestrator) validateImageStreamingPrerequisites(ctx context.Context, 
 	if err != nil {
 		return fmt.Errorf("validating image prerequisites before destructive storage: %w", err)
 	}
+	if err := o.checkImageStreamFormat(format); err != nil {
+		return err
+	}
+	o.log.Info("image prerequisites validated", "url", image.RedactURL(bestURL), "format", format)
+	return nil
+}
+
+// checkImageStreamFormat fails, with IMAGE_STREAM, for a format that only a
+// RAM staging can write.
+func (o *Orchestrator) checkImageStreamFormat(format image.Format) error {
 	if o.cfg.Provision.Image.Stream && format == image.FormatQCOW2 {
 		return fmt.Errorf("validating image prerequisites before destructive storage: %w",
 			image.StagingForbiddenError(format))
 	}
-	o.log.Info("image prerequisites validated", "url", image.RedactURL(bestURL), "format", format)
 	return nil
 }
 
@@ -1822,7 +1834,7 @@ func classifyImageStreamError(imageURL string, err error) error {
 		msg: fmt.Sprintf("streaming %s: %s", image.RedactURL(imageURL), image.RedactSourceError(err, imageURL)),
 		err: err,
 	}
-	if errors.Is(err, image.ErrStagingForbidden) || strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
+	if errors.Is(err, image.ErrStagingForbidden) || errors.Is(err, image.ErrStagingFull) || strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
 		return &PermanentError{Err: wrapped}
 	}
 	return wrapped

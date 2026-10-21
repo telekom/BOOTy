@@ -650,6 +650,10 @@ An `oci://` source must have one layer that is not `text/plain`. An artifact
 of the T-CaaS image builder has more (the image, its ansible facts and an
 optional QCOW2): BOOTy then takes the one
 `application/vnd.tcaas.node-image+raw*` layer (`+raw.lz4` or `+raw.zst`).
+Two such layers fail the pull. BOOTy downloads the layer blob as it was
+pushed, checks it against the layer digest and decompresses it itself, like
+an HTTP download: a `download` scope `IMAGE_CHECKSUM` is the digest of the
+pushed `.raw.lz4` or `.raw.zst` file.
 
 ### Streaming and Staging
 
@@ -661,23 +665,28 @@ in every image mode: whole-disk, `ab`, a `PARTITION_LAYOUT` root and disk
 mirroring (BOOTy writes the first disk and builds the RAID1 afterwards, see
 [Disk Mirroring](#disk-mirroring)).
 
-**Staging** keeps the image in a tmpfs at `/tmp/booty-ramdisk` (at most
-4 GiB), which is RAM. Two cases need it:
+**Staging** keeps the image in a tmpfs at `/tmp/booty-ramdisk`, which is RAM.
+Two cases need it:
 
 - A QCOW2 image: its tables point anywhere in the file, so BOOTy downloads it,
   converts it to a sparse raw file in the same tmpfs and writes that.
 - `IMAGE_MODE=partition`: BOOTy downloads and decompresses the whole image and
   attaches it to a loop device.
 
-The staged image must fit in the free RAM of the machine. If it does not, the
-kernel kills processes or panics, because the ramdisk has no swap.
+The ramdisk has no swap, so the staged image must fit in the free RAM. BOOTy
+sizes the tmpfs at 3/4 of `MemAvailable` (4 GiB when `/proc/meminfo` cannot be
+read). For a QCOW2 image the tmpfs holds the QCOW2 file and the allocated part
+of the converted raw file at the same time. An image that does not fit fails
+with `staged image does not fit (tmpfs N MiB, MemAvailable M MiB); use a
+.raw.lz4 image or IMAGE_STREAM`, without a retry, instead of exhausting the
+RAM.
 
 `IMAGE_STREAM=true` (YAML `provision.image.stream`) forbids staging:
 
 | Case | With `IMAGE_STREAM=true` |
 | --- | --- |
 | Raw or compressed raw image | No change: it streams. |
-| QCOW2 image | The run fails with `BOOTY-IMG-004` before the disk wipe, when the pre-wipe probe finds the QCOW2 (an `http(s)://` source). An `oci://` source is not probed: `stream-image` fails before it writes. Use the `.raw.lz4` image. |
+| QCOW2 image | The run fails with `BOOTY-IMG-004` before the disk wipe: the pre-wipe probe reads the first bytes of the image, of an `http(s)://` source and, only with `IMAGE_STREAM=true`, of the selected `oci://` layer. Use the `.raw.lz4` image. |
 | `IMAGE_MODE=partition` | The config is invalid. Use `whole-disk`. |
 
 `IMAGE_STREAM` is off by default; then QCOW2 images and partition mode stage
