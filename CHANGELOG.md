@@ -15,6 +15,8 @@ notes and the history of each tag.
 
 ## [Unreleased]
 
+## [0.2.0-rc.16] - 2026-10-21
+
 Changes merged after `v0.2.0-rc.15`. Without `CAPRF_LEGACY_COMPAT` and without
 the new keys, only the items under "Behaviour changes in all modes" change
 behaviour.
@@ -30,6 +32,12 @@ behaviour.
 - New deprovision mode `MODE=decommission` (CAPRF `force-clean`) (#586).
 - EVPN: the L3VNI provisioning network advertises Type-5 routes only, and every
   host gets its own router MAC (#582, #583).
+- `make check-iso` builds `booty-check.iso`, one generic ISO for the bm4x
+  cable check (#727): links mode (IPv6 link-local only), the bm4x-cablecheck
+  LLDP identity on every NIC, a wait of up to 90 s for the LLDP neighbors, the
+  health and cabling checks (`CHECK_PROFILES=health,cabling`, #731), and
+  `CHECK_HOLD=until-poweroff`. It boots with BIOS and UEFI, also with Secure
+  Boot.
 
 ### Behaviour changes in all modes
 
@@ -262,6 +270,303 @@ behaviour.
   `BGP_GRACEFUL_NOTIFICATION` (YAML `network.bgp.gracefulNotification`).
   `TestOpenCapabilitiesMatchFRR` compares the OPEN of GoBGP on the wire
   with FRR 10.2.1 and 10.3.1 captures (#744).
+- BOOTy stops the firmware LLDP agent of Intel NICs (i40e `disable-fw-lldp`
+  on, ice `fw-lldp-agent` off) by default in every mode and does not put it
+  back; ice keeps the flag in the NVM, so the agent and its firmware DCBX stay
+  off for the installed OS too. The agent consumes the switch's LLDP frames,
+  so the switch never sees the host. The legacy ramdisk never touches the
+  flag. `LLDP_DISABLE_FW_AGENT=false` (YAML
+  `network.lldp.disableFirmwareAgent: false`) leaves it alone, and an SR-IOV
+  profile that sets `firmware.fwLLDPAgent` owns the flag of its ports (#708).
+- GoBGP mode originates its EVPN routes with FRR's route distinguisher
+  `<router-id>:<n>` instead of `asn_server:provision_vni` on every host, and
+  with MED 0 on the underlay `/32` and the Type-5 routes, like FRR. BFD
+  advertises Required Min Echo RX 50 ms like FRR bfdd. New key `EVPN_RD`
+  (YAML `network.evpn.rd`); `frr.conf` `rd` in the VRF's `address-family
+  l2vpn evpn` is accepted (#710).
+- GoBGP mode: a received EVPN Type-5 route that RFC 9136 says not to use is
+  now treated as a withdraw of its route key, like FRR: an invalid or
+  non-unicast router MAC, an ESI together with a gateway IP, or a zero label
+  without a gateway IP. Before, BOOTy installed such routes (#747).
+- DHCP mode runs a client on every physical NIC for the whole run, and every
+  NIC keeps its own lease address plus a default route with metric 100 and
+  `proto dhcp`, like systemd-networkd with the legacy netplan; before, the
+  first lease won and the other NICs stayed without an address. Without a
+  lease within 15 s the clients keep sending until the network is torn down
+  (#750).
+- DHCP mode: when a lease expires or the server answers DHCPNAK, BOOTy
+  removes its address and default route, and after an expiry the client of
+  the NIC starts over with a DHCPDISCOVER (RFC 2131). A lease without a
+  lifetime or a server identifier is not applied, like systemd-networkd
+  (#751).
+- DHCP mode uses the DNS servers and domain (search) of the leases in
+  resolv.conf and sets the lease MTU on the NIC, clamped like
+  systemd-networkd (at least 576, 1280 with IPv6, at most the NIC maximum),
+  like systemd-networkd and systemd-resolved in the legacy ramdisk (#753).
+- BOOTy sends LLDP on the NICs that a netplan match block with
+  `emit-lldp: true` selects (the legacy L2 netplan `all-en`, `all-eth`),
+  and in every network mode, like systemd-networkd (a NIC that appears
+  later too, except in GoBGP mode, whose underlay sends on the NICs of
+  the setup); before, only the GoBGP underlay sent and took the
+  block ID as an interface name (#756).
+- BOOTy loads the kernel modules in dependency order (the `depends` and
+  `softdep` fields of each module) and in parallel, instead of retrying
+  failed loads up to five times: the module phase takes 0.9 s instead of
+  2.5 s on a 4-CPU VM, and the kernel no longer prints about 500
+  `Unknown symbol` lines (35 KB, about 3 s on a 115200 baud serial
+  console). NIC drivers keep their former load order, so the NIC names do
+  not change. One line `loaded kernel modules count=... modules="..."`
+  replaces the line per module; a module that fails still logs a warning
+  (#758).
+- The LLDP receive finds its NICs in the background. With one NIC the NIC
+  detection waits 3 s for more NICs, and the connectivity check waited for
+  it: a single-NIC host reaches the network 3 s sooner. The inventory
+  report still listens for neighbors for one transmit interval after the
+  receive sockets open, and does not wait when no NIC was found (#760).
+- GoBGP mode: in L3VNI (Type-5 only) mode a Type-5 route with another VNI
+  is not installed, like FRR on a classic VXLAN device (RFC 8365). With an
+  explicit `EVPN_TYPE5_ONLY=true` and a `provision_vni` that differs from
+  the VNI of the fabric L3VNI, the fabric Type-5 routes are now dropped;
+  set `provision_vni` to the L3VNI (#773).
+- GoBGP mode compares `frr version` like FRR's `frr_version_cmp`, so the
+  default N bit is now off for `frr version 8`, `8.3~rc1` and other versions
+  below 8.3 that the old compare treated as the running FRR (#774).
+- DHCP mode sends the DHCP options of systemd-networkd (client identifier,
+  its parameter request list, maximum message size) and applies the
+  classless static routes (option 121), the static routes (option 33) and
+  the domain search list (option 119) like networkd; a 0.0.0.0 router no
+  longer gives an on-link default route (#776).
+- The published ISOs boot with `loglevel=4`: the console shows only kernel
+  errors. On x86 this removes about 30 KB of kernel console output before
+  BOOTy starts (about 2.6 s on a 115200 baud BMC serial console; 63.7 KB,
+  5.5 s, together with the `Unknown symbol` lines that #758 removes).
+  BOOTy logs the kernel's Secure Boot and lockdown messages in one line
+  (`kernel security state`), adds `uptime` (seconds since the kernel start)
+  to `starting BOOTy`, sends the whole kernel log once to `DEBUG_URL` when
+  it is set (never to `LOG_URL`, whose lines CAPRF classifies), and puts
+  the whole `dmesg` in the crash metadata. Log redaction also hides signed
+  URL signatures (`X-Amz-Signature=`, `signature=`, `sig=`). ISOs that
+  CAPRF builds itself need `loglevel=4` on their own kernel command line
+  for the same gain (#777).
+- With provisioner netplan files (the input of the legacy ramdisk), every
+  physical NIC gets its predictable (udev) name, like in the legacy
+  ramdisk, also those that the network config does not name: interface
+  names in logs and the LLDP port IDs change from `eth0` to, for example,
+  `enp1s0`. These extra renames are best effort and leave the NICs of netplan
+  `set-name` alone. A NIC that appears after the network setup keeps its
+  kernel name (#780).
+- New failure codes for ramdisk payloads (docs/proposal-ramdisk-split.md):
+  `BOOTY-PAY-001` when the vars need FRR and the ramdisk lacks it, and
+  `BOOTY-PAY-002` when a payload archive is from another build. A split
+  build lists the payloads it left out in `/etc/booty/payloads/split`; on
+  such a ramdisk FRR mode without the FRR archive fails with
+  `BOOTY-PAY-001` before the network setup or the FRR start. The default,
+  gobgp and slim flavors have no split list and behave as before (#781).
+- DHCP mode: a NIC that appears after the network setup (a late driver)
+  gets a DHCP client too, like systemd-networkd (#788).
+- DHCP mode has its own DHCPv4 client (`pkg/network/dhcp4`) instead of
+  `github.com/digineo/go-dhclient`, which is GPL-3.0 and so could not be
+  linked into the Apache-2.0 BOOTy binary. The client follows
+  systemd-networkd: backoff 2 to 64 s, unicast renewal, broadcast rebind,
+  rapid commit, INIT-REBOOT (called on carrier return, #793),
+  DHCPRELEASE at stop, the reply checks of networkd. Replies with option
+  overload (52) are dropped (#790).
+- A payload manifest also carries `arch=`, and BOOTy refuses a payload of
+  another architecture with `BOOTY-PAY-002` (#791).
+- DHCP mode: a NIC whose carrier returns confirms its lease with an
+  INIT-REBOOT request at once, like systemd-networkd. Unlike networkd the
+  lease stays while the carrier is gone (it still ends at its expiry), so
+  an image stream from its address resumes (#793).
+- DHCP mode runs DHCPv6 on every DHCP NIC, started by the M or O flag of a
+  router advertisement, with the messages of systemd-networkd; the leased
+  address goes on the NIC as /128 and its DNS servers into resolv.conf
+  (#795).
+- GoBGP mode: a BFD reset of a BGP session sends Cease/BFD Down (subcode 10,
+  RFC 9384) like FRR, instead of Cease/Administrative Reset (subcode 4). The
+  peer logs the new reason (#811).
+- GoBGP mode: new option `BGP_CONNECT_AT_ONCE` (YAML
+  `network.bgp.connectAtOnce`), off by default: a peer connects at once when
+  it leaves Idle, like FRR, instead of after a random 1.5 to 2 s. It is off
+  because after a carrier loss GoBGP and the leaf then connect at the same
+  time, and about one collision in ten still ended with a second session in
+  the production template lab. Retries wait the connect timer, except after
+  a connection that failed in OpenSent: then the next connect comes after
+  1.5 to 2 s, whatever the timer is (#811).
+- GoBGP mode: the OPEN message also has the Enhanced Route Refresh (RFC 7313)
+  and Paths-Limit capabilities, like FRR (#811).
+- GoBGP mode: GoBGP is pinned to the fork tag v4.10.0-booty.10. When BOOTy
+  and the leaf connect at the same time, GoBGP keeps the connection that
+  survives the collision instead of waiting 5 s in Idle. After a short
+  carrier flap, a BFD reset shortens the running 5 s Idle hold to the 1 s
+  idle hold after reset, so the leaf's connection is no longer refused
+  (#811).
+- GoBGP mode: after a carrier loss the session comes back once. GoBGP closes
+  the leaf's losing connection of a collision only when the leaf's OPEN
+  arrives on it; before, the leaf connected again and with graceful restart
+  the session went down a second time. A NOTIFICATION from the leaf on its
+  connection no longer holds the session 5 s in Idle (#811).
+- The ramdisks no longer ship `lldpd` and `lldpcli`. BOOTy sends and
+  receives LLDP itself; in the rescue shell, `booty lldp neighbors` shows
+  the neighbor of each NIC (like `lldpcli show neighbors detail`) and
+  `booty lldp status` what BOOTy sends (like `lldpcli show interfaces`),
+  both with `--json` (#812).
+- BOOTy no longer queries the NTP servers of the DHCP leases (option 42) by
+  default, like the legacy ramdisk, which has no NTP client. Set
+  `TIME_DHCP_NTP=true` (YAML `time.dhcpNTP`) to query them after
+  `NTP_SERVERS` (#819).
+- In DHCP mode a DNS lookup goes at once to the current server of every
+  link (the configured servers, each NIC with a lease; with search
+  domains only the NICs with one), and the first positive answer counts,
+  like systemd-resolved (#819).
+- DHCP mode adds a routing rule per NIC: packets from the lease address of
+  a NIC use a table with the routes of that NIC (table 10000 plus the
+  interface index, rule priority 10000). A connection keeps its NIC when
+  the kernel moves the default route after a link flap. systemd-networkd
+  in the legacy ramdisk has no such rules (#820).
+- DHCPv6 (RFC 8415): the client requests from the ADVERTISE with the
+  highest preference of the first SOLICIT timeout, reads late replies on
+  the socket of the transaction, and answers NoBinding in a RENEW or
+  REBIND REPLY with a REQUEST. An information refresh time of 0 counts
+  as 600 s (#825).
+- DHCP mode: when the link watch fails, the old netlink subscription is
+  closed and the new one lists the links, so a NIC or carrier change whose
+  event was lost is seen; a failed Setup stops the watch, and the close
+  at Teardown or a message of another netlink sender logs no warning. An
+  OFFER or ACK with the server identifier 0.0.0.0 is dropped, like
+  networkd. The first router solicitation after a carrier return waits a
+  random 0.5 s to 1 s (RFC 4861, sd-ndisc) (#825).
+- LLDP for netplan match blocks: when the link watch fails, the old netlink
+  subscription is closed and the matches are resolved again after the new
+  one, so a NIC whose event was lost sends LLDP too (#826).
+- GoBGP mode: GoBGP is pinned to the fork tag v4.10.0-booty.16. With
+  `BGP_CONNECT_AT_ONCE=true`, a session that BOOTy and the leaf open at the
+  same time after a carrier loss no longer waits 5 s in Idle: GoBGP keeps
+  its own connection when the leaf keeps it (RFC 4271 section 6.8), and it
+  does not connect again while the session goes on with the leaf's
+  connection. `BGP_CONNECT_AT_ONCE` stays off by default. GoBGP also sends
+  IPv4 VPN multicast routes and routes with an IPv4-mapped IPv6 next hop
+  to a peer only when the peer has the extended next hop capability
+  (RFC 8950) (#831).
+- LLDP is decoded with a fork of github.com/gopacket/gopacket v1.7.4
+  (was github.com/google/gopacket v1.1.19) that returns an error instead
+  of panicking on short TLVs and checks the order of the mandatory TLVs.
+  A malformed 802.1, 802.3 or LLDP-MED TLV now leaves the fields of its
+  group empty; before, BOOTy skipped only the bad TLV. netlink v1.3.1 is
+  replaced by a fork that closes the subscription socket after a receive
+  error. See docs/dependency-forks.md (#833).
+- DHCP mode encodes and decodes DHCPv4 and DHCPv6 messages with
+  `github.com/insomniacslk/dhcp` (BSD-3-Clause, through the fork
+  `MaxRink/dhcp`, see `docs/dependency-forks.md`); the clients and the
+  bytes they send do not change. Replies are read like networkd 255: a
+  DHCPv4 option whose length does not fit its type and a DHCPv6 DNS
+  option whose length is not a multiple of 16 are ignored, a repeated
+  option 119 counts with its last copy, a truncated DHCPv6 option drops
+  the message, IA or address, a malformed DHCPv6 option 24 is ignored as
+  a whole, and a search list (option 119) with chained compression
+  pointers is read (#835).
+- LLDP for netplan match blocks: the link watch logs no warning when the
+  run ends, and a netlink message of another sender only at debug level
+  (#836).
+- The root partition can have a root type of the Discoverable Partitions
+  Specification (x86-64 or arm64), as in the Ubuntu 26.04 cloud image.
+  Before, BOOTy only accepted the Linux filesystem type, so it did not find
+  the root partition of such an image, and `ROOT_PARTITION_NUMBER` or
+  `ROOT_PARTITION_LABEL` rejected it as "non-Linux" (#842).
+- With `DISK_MIRRORING_MODE=raid-1`, BOOTy also writes
+  `/etc/dracut.conf.d/90-booty-mirror.conf` with `rd.md.uuid` for the
+  mirror arrays. Images that use dracut (Ubuntu 26.04) otherwise build an
+  initramfs that does not assemble the arrays, and the installed system
+  waits for its root device forever (#842).
+- In GoBGP mode, an unnumbered BGP session waits 1 s in Idle when the
+  carrier of its uplink returns, and then connects after a random 1.5 to
+  2 s. Before, it waited 5 s when BFD went down before the carrier, and
+  it refused the leaf's connection in that time (#844).
+- LLDP sending follows the carrier in every profile with the timing of
+  systemd-networkd 249 (#845). BOOTy watches the carrier with netlink link
+  updates. On a carrier gain the first frame goes out 0.8 s plus a random
+  jitter of 0 to 400 ms later, then 3 more 0.8 s plus jitter apart, then
+  one every 29.8 s plus jitter. Without carrier BOOTy sends nothing, no
+  frame counts, and it sends no shutdown LLDPDU. Before, the default
+  `networkd` profile kept sending into a link without carrier, so after
+  the link came back the next frame went out only at the next 30 s tick,
+  and the frames had no jitter. A missing or renamed NIC is logged once
+  again.
+- GoBGP mode sends the unnumbered RAs like zebra (FRR 10.2): each fabric
+  NIC joins `ff02::2` and answers a Router Solicitation (RFC 4861 section
+  6.2.6: a random delay of up to 0.5 s, at least 3 s after the last RA).
+  The RAs start before the peer discovery with 5 RAs 1 s apart, then one
+  every 10 s, always from the link-local address after DAD. When a NIC
+  gets carrier back, 4 fast RAs start again 1 s later, also without
+  `bgp fast-external-failover`. The relearner sends no RAs of its own, and
+  the peer discovery no longer sends an echo request to `ff02::1` (#846).
+- GoBGP mode uses the GoBGP fork tag v4.10.0-booty.21, which is upstream
+  GoBGP master after 4.10.0 plus the fork patches (#847). After a session
+  ends, GoBGP waits in Idle like FRR 10.2.1 of the legacy ramdisk
+  (`v_start`) instead of a fixed 5 s: 1 s after a TCP close and after an
+  administrative shutdown, doubled up to 120 s for a NOTIFICATION
+  received in OpenConfirm or Established or sent for a message error,
+  back to 1 s for a hold timer expiry and for a NOTIFICATION in OpenSent.
+  A BFD reset still waits 1 s. A new connection from a helper-only
+  graceful restart peer while the session is up no longer ends the
+  session. `EnablePeer` and `DisablePeer` no longer lose a queued
+  request or change anything for the current admin state. A peer
+  without RFC 8950 extended next hop support still gets no IPv4 routes
+  with an IPv6 next hop; this is upstream code now.
+- GoBGP mode: a BFD Down with diag 3 (Neighbor Signaled Session Down) no
+  longer resets a BGP session at once while the session is coming up
+  (Connect to OpenConfirm, or Established in the same or the next second
+  of its uptime). A route reflector with `update-source` re-keys its
+  multihop BFD session then, and BOOTy reset the RR session at the start
+  now and then. BOOTy checks again: once the session is Established, it
+  resets the session if BFD is not Up within multiplier x 1 s of the
+  Down. A path failure (other diags) resets as before (#849).
+- An unnumbered peer that moves to the switch's link-local address takes
+  only the route-maps and the `bgp ebgp-requires-policy` reject of its own
+  session. Before, when two switches did not answer at setup, the moved
+  peer also took the policy of the other port's session, which shared the
+  placeholder address, and could exchange no routes (#850).
+- Unnumbered BGP sessions on different NICs keep their own route-maps and
+  `bgp ebgp-requires-policy` reject also when the switches use the same
+  link-local address (for example `fe80::1` on every port), like the
+  per-interface peers of FRR. Before, one port's reject applied to the
+  other port too, and a session could be Established but exchange no
+  routes. This lifts the last case where a moved peer could take another
+  port's policy (#850). The GoBGP fork tag is now v4.10.0-booty.22 (#851).
+- BOOTy opens its BFD receive sockets before the first IPv6 RA and before
+  the BGP peers, like FRR bfdd. The leaf starts BFD on that RA, and its
+  first BFD packet no longer gets ICMP port unreachable. In FRR mode the
+  direct daemon start runs `bfdd` before `bgpd` (#852).
+- DHCP replies that systemd-networkd 255 drops are dropped too: a DHCPv4
+  message option (56) that is empty, has a NUL before its end or a byte
+  over 127; a DHCPv6 reply with a second client or server identifier, a
+  preference other than 1 byte, a status code under 2 bytes or other
+  than success, or an information refresh time other than 4 bytes
+  (#840).
+- The default, gobgp and slim ramdisks no longer ship `curl` and its
+  libraries (libcurl, Kerberos, LDAP, SASL, libssh2, nghttp2/3, brotli and,
+  in slim, OpenSSL and GnuTLS). BOOTy never ran `curl`: it fetches images,
+  CAPRF callbacks and tokens with Go's `net/http`. In the rescue shell use
+  busybox `wget` (HTTP and HTTPS, `--header` for a bearer token). busybox
+  `wget` does not verify TLS certificates: busybox 1.38 prints "TLS
+  certificate validation not implemented" and connects to any server
+  (#814).
+- `WATCHDOG_IPMI_FALLBACK` sends the BMC watchdog commands (Set and Reset
+  Watchdog Timer) over `/dev/ipmi0` in process, and the ramdisks no longer
+  ship `ipmitool` or `libfreeipmi`. The `split` build has no
+  `ipmitool.cpio.zst` payload any more: remove it from the initrd list of
+  the boot loader. Only FRR is a payload now. The rescue shell has no
+  `ipmitool`: read or change BMC settings over Redfish, the BMC web
+  interface or `ipmitool -I lanplus` from another host (#816).
+- BOOTy converts qcow2 images to raw in process and the ramdisks no longer
+  ship `qemu-img`. qcow2 versions 2 and 3 work, with zlib or zstd compressed
+  clusters, extended L2 entries and snapshots (the active state is written).
+  Images with a backing file, an external data file or encryption fail as
+  before. A truncated image (a table or cluster past the end of the file)
+  and an image whose virtual size is larger than the target disk now fail
+  before anything is written. The `split` build has no `qemu-img.cpio.zst`
+  payload any more: remove it from the initrd list of the boot loader. A
+  qcow2 image never needs a payload, so `BOOTY-PAY-001` covers only FRR.
+  `qemu-img` is gone from the rescue shell too (#815).
 
 ### Behaviour behind `CAPRF_LEGACY_COMPAT=true`
 
@@ -525,6 +830,34 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - Time sync before TLS: `TIME_SYNC` (`off`|`auto`|`require`), `NTP_SERVERS`,
   `TIME_MAX_SKEW_SEC` and `TIME_WRITE_RTC`, YAML `time.*`. See
   [time sync](docs/configuration.md#time-sync) (#713)
+- sriov: report SR-IOV per PF port in the hardware inventory ([#709](https://github.com/telekom/BOOTy/pull/709))
+- sriov: add SR-IOV profiles with strict validation and a drift check ([#717](https://github.com/telekom/BOOTy/pull/717))
+- sriov: apply the runtime SR-IOV settings through kernel interfaces ([#719](https://github.com/telekom/BOOTy/pull/719))
+- provision: name the handoff in the success messages ([#724](https://github.com/telekom/BOOTy/pull/724))
+- gobgp: send the BGP capabilities of FRR 10 and its family set to the RRs ([#697](https://github.com/telekom/BOOTy/pull/697))
+- sriov: add pluggable SR-IOV firmware backends per NIC vendor ([#726](https://github.com/telekom/BOOTy/pull/726))
+- lldp: receive LLDP and compare the frames with systemd-networkd ([#698](https://github.com/telekom/BOOTy/pull/698))
+- lldp: add the bm4x-cablecheck LLDP identity profile ([#702](https://github.com/telekom/BOOTy/pull/702))
+- payload: fail with a code when a run needs a missing ramdisk payload ([#781](https://github.com/telekom/BOOTy/pull/781))
+- nic: disable the Intel firmware LLDP agent over ethtool netlink ([#708](https://github.com/telekom/BOOTy/pull/708))
+- network: add the links network mode ([#712](https://github.com/telekom/BOOTy/pull/712))
+- check: hold after the checks and build a generic cable check ISO ([#727](https://github.com/telekom/BOOTy/pull/727))
+- lldp: report the port subtype, description, management and 802.1/802.3/MED TLVs ([#729](https://github.com/telekom/BOOTy/pull/729))
+- check: host-side cabling, link and transceiver checks with result sinks ([#731](https://github.com/telekom/BOOTy/pull/731))
+- lldp: add the announce levels parity, standard and full ([#734](https://github.com/telekom/BOOTy/pull/734))
+- lldp: add the booty lldp diagnosis command for the rescue shell ([#735](https://github.com/telekom/BOOTy/pull/735))
+- image: convert qcow2 to raw in process and drop qemu-img ([#815](https://github.com/telekom/BOOTy/pull/815))
+- ipmi: drive the BMC watchdog over /dev/ipmi0 and drop ipmitool ([#816](https://github.com/telekom/BOOTy/pull/816))
+- dhcp: own DHCPv4 client like networkd, drop GPL-3.0 go-dhclient ([#790](https://github.com/telekom/BOOTy/pull/790))
+- dhcp: DHCPv6 on every DHCP NIC, started by router advertisements ([#795](https://github.com/telekom/BOOTy/pull/795))
+- gobgp: set NTF_ROUTER on IPv6 Type-2 neighbor entries like zebra ([#798](https://github.com/telekom/BOOTy/pull/798))
+- New build target `split`: the default ramdisk as `base.cpio.zst` plus
+  `frr.cpio.zst`, the `vmlinuz` of the same build and `SHA256SUMS` over all of them
+  (`hack/split-initramfs.sh`, docs/proposal-ramdisk-split.md). The base has
+  no payload executables and none of the libraries only they load; each
+  payload carries its manifest with the build ID. PR artifacts
+  (`booty-pr-split`) and releases (`split-<arch>-*`) publish them. The
+  other targets are unchanged (#782).
 
 ### Security
 
@@ -534,7 +867,7 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   names it); a selected target disk fails the run, and so does a failed check
   (#667)
 - qcow2 images with a backing file or an external data file are rejected before
-  `qemu-img convert` (#609)
+  the conversion to raw (#609)
 - CAPRF transport errors carry only scheme, host, path and a fixed cause (#624)
 - The FRR connectivity wait redacts the target URL; each `vtysh` dump has a 10 s
   timeout (#627)
@@ -595,6 +928,50 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - A kernel module that never loads is logged at WARN (#631)
 - provision: deprovision runs report `deprovisioning started` to `INIT_URL`,
   not `provisioning started` (#663)
+- network: wait for late NICs and repeat interrupted netlink dumps (prodtpl startup flake) ([#733](https://github.com/telekom/BOOTy/pull/733))
+- gobgp: follow a new switch link-local address and stop the BFD flap after recovery ([#703](https://github.com/telekom/BOOTy/pull/703))
+- kexec: kexec the entry that GRUB would boot, or reboot ([#720](https://github.com/telekom/BOOTy/pull/720))
+- gobgp: connected beats a Type-5 route; install Type-5 routes like zebra ([#741](https://github.com/telekom/BOOTy/pull/741))
+- handoff: bound and keep the restored network, test the stop wiring ([#810](https://github.com/telekom/BOOTy/pull/810))
+- payload: check payloads per standby command and the manifest architecture ([#791](https://github.com/telekom/BOOTy/pull/791))
+- gobgp: send the VXLAN encapsulation community with Type-2 and Type-3 routes ([#746](https://github.com/telekom/BOOTy/pull/746))
+- lldp: review follow-ups of the cable check stack ([#813](https://github.com/telekom/BOOTy/pull/813))
+- lldp: send the shutdown LLDPDU of the every-NIC sender before the handoff ([#792](https://github.com/telekom/BOOTy/pull/792))
+- network: give every NIC its udev name with provisioner netplan input ([#780](https://github.com/telekom/BOOTy/pull/780))
+- lldp: send LLDP for netplan match blocks and in every network mode ([#756](https://github.com/telekom/BOOTy/pull/756))
+- init: reboot after a kernel panic instead of hanging ([#765](https://github.com/telekom/BOOTy/pull/765))
+- gobgp: treat unusable Type-5 routes as withdrawn per RFC 9136 ([#747](https://github.com/telekom/BOOTy/pull/747))
+- gobgp: install Type-5 routes only with the local L3VNI in L3VNI mode ([#773](https://github.com/telekom/BOOTy/pull/773))
+- gobgp: FRR route distinguisher, MED 0 and BFD echo RX for EVPN fabric parity ([#710](https://github.com/telekom/BOOTy/pull/710))
+- init: treat sysctl.kernel.panic= on the cmdline as explicit too ([#787](https://github.com/telekom/BOOTy/pull/787))
+- dhcp: keep DHCP on every NIC and apply every lease like networkd ([#750](https://github.com/telekom/BOOTy/pull/750))
+- dhcp: stop using the address when the lease ends ([#751](https://github.com/telekom/BOOTy/pull/751))
+- dhcp: use the DNS servers and the MTU of the DHCP lease ([#753](https://github.com/telekom/BOOTy/pull/753))
+- dhcp: send the options of networkd and apply classless routes ([#776](https://github.com/telekom/BOOTy/pull/776))
+- dhcp: start DHCP on NICs that appear after the setup ([#788](https://github.com/telekom/BOOTy/pull/788))
+- dhcp: keep the lease on carrier loss, INIT-REBOOT when it returns ([#793](https://github.com/telekom/BOOTy/pull/793))
+- dhcp: ask every DNS server at once and use lease NTP only on request ([#819](https://github.com/telekom/BOOTy/pull/819))
+- dhcp: route by source address per NIC ([#820](https://github.com/telekom/BOOTy/pull/820))
+- dhcp6: collect ADVERTISEs, one socket per transaction, NoBinding ([#825](https://github.com/telekom/BOOTy/pull/825))
+- dhcp: drop the replies networkd drops for option 56 and DHCPv6 options ([#840](https://github.com/telekom/BOOTy/pull/840))
+- lldp: close a failed link watch, resolve the matches again ([#826](https://github.com/telekom/BOOTy/pull/826))
+- lldp: quiet link watch errors at the end, test the agent-off call site ([#836](https://github.com/telekom/BOOTy/pull/836))
+- gobgp: skip Type-5 routes for prefixes the underlay FIB owns ([#743](https://github.com/telekom/BOOTy/pull/743))
+- gobgp: ignore EVPN routes whose encapsulation is not VXLAN ([#771](https://github.com/telekom/BOOTy/pull/771))
+- lldp: restart the fast start on every carrier gain ([#845](https://github.com/telekom/BOOTy/pull/845))
+- gobgp: answer router solicitations and fast-start RAs like zebra ([#846](https://github.com/telekom/BOOTy/pull/846))
+- gobgp: wait 1 s, not 5 s, in Idle when the carrier of an uplink returns ([#844](https://github.com/telekom/BOOTy/pull/844))
+- gobgp: keep a starting session on the RR's BFD re-key in every state ([#849](https://github.com/telekom/BOOTy/pull/849))
+- gobgp: move an unnumbered peer only into its own neighbor sets ([#850](https://github.com/telekom/BOOTy/pull/850))
+- gobgp: keep unnumbered peers with the same link-local address apart ([#851](https://github.com/telekom/BOOTy/pull/851))
+- config: compare frr version like FRR's frr_version_cmp ([#774](https://github.com/telekom/BOOTy/pull/774))
+- bfd: listen for BFD before the first RA ([#852](https://github.com/telekom/BOOTy/pull/852))
+
+### Performance
+
+- iso: boot with loglevel=4 and log the Secure Boot state from BOOTy ([#777](https://github.com/telekom/BOOTy/pull/777))
+- init: load the kernel modules in dependency order and in parallel ([#758](https://github.com/telekom/BOOTy/pull/758))
+- lldp: find the NICs for the LLDP receive in the background ([#760](https://github.com/telekom/BOOTy/pull/760))
 
 ### CI, build and tests
 
@@ -638,6 +1015,37 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   minimum devices (#620)
 - `make lint` uses the CI golangci-lint version (#603)
 - Removed dead code: FRR config builder (#615), duplicate grub config parser (#621)
+- e2e: wait for the local-as on the spine session ([#676](https://github.com/telekom/BOOTy/pull/676))
+- cover slots without an address, duplicate names and 0-sector disks ([#685](https://github.com/telekom/BOOTy/pull/685))
+- e2e: run the template lab for one uplink and port two topotests ([#681](https://github.com/telekom/BOOTy/pull/681))
+- shrink the ramdisks (no UPX, prune unused libraries, grpcnotrace) ([#722](https://github.com/telekom/BOOTy/pull/722))
+- kvm: kexec into a provisioned target in the kexec scenario ([#725](https://github.com/telekom/BOOTy/pull/725))
+- kvm: time the deprovision and provision cycle on every PR ([#715](https://github.com/telekom/BOOTy/pull/715))
+- initrd: fail the library prune on ldd errors and verify in a chroot ([#732](https://github.com/telekom/BOOTy/pull/732))
+- gobgp: keep TestRestartPeerReal clear of a GoBGP v3 data race ([#785](https://github.com/telekom/BOOTy/pull/785))
+- lldp: measure the NeighborsWithin wait from the receiver start ([#797](https://github.com/telekom/BOOTy/pull/797))
+- standby: pin the ramdisk file skips and the archive condition, document the agent DNS ([#809](https://github.com/telekom/BOOTy/pull/809))
+- changelog: generate CHANGELOG.md from the PR titles and changes/ fragments ([#806](https://github.com/telekom/BOOTy/pull/806))
+- rescue: log in to the rescue shell over SSH in the default flavor ([#807](https://github.com/telekom/BOOTy/pull/807))
+- e2e: give the vrnetlab VXLAN bridges the jumbo MTU of the fabric ([#796](https://github.com/telekom/BOOTy/pull/796))
+- initrd: build a base ramdisk plus one archive per optional payload ([#782](https://github.com/telekom/BOOTy/pull/782))
+- initrd: drop lldpd and lldpcli from the ramdisks ([#812](https://github.com/telekom/BOOTy/pull/812))
+- init: pin that device drivers load one at a time ([#818](https://github.com/telekom/BOOTy/pull/818))
+- bfd: pin that the peer's Demand bit needs both sides Up ([#768](https://github.com/telekom/BOOTy/pull/768))
+- initrd: drop curl from the ramdisks ([#814](https://github.com/telekom/BOOTy/pull/814))
+- init: lock the module load stub in the efivarfs test ([#822](https://github.com/telekom/BOOTy/pull/822))
+- lldp,gobgp: keep the listen test off the real LLDP state file, fix the mustRD comment ([#834](https://github.com/telekom/BOOTy/pull/834))
+- kvm: provision mirror scenarios with a pinned 6.8 kernel ([#838](https://github.com/telekom/BOOTy/pull/838))
+- pin setup-buildx-action by SHA in check-iso and keep the networkd reference image ([#841](https://github.com/telekom/BOOTy/pull/841))
+- run containers and installed-OS tests on every supported Ubuntu LTS ([#842](https://github.com/telekom/BOOTy/pull/842))
+- gobgp: an unusable update of a resolved gateway IP route withdraws it once ([#799](https://github.com/telekom/BOOTy/pull/799))
+- sriov: avoid the netdevsim VF representor oops of Linux 6.18 to 7.0 ([#843](https://github.com/telekom/BOOTy/pull/843))
+- kvm: turn off kexec handover in the bootloader smoke guest ([#848](https://github.com/telekom/BOOTy/pull/848))
+- sriov: add a KVM matrix scenario with a QEMU igb SR-IOV NIC ([#728](https://github.com/telekom/BOOTy/pull/728))
+- KVM matrix scenario `sriov-igb`: a provision with a QEMU igb NIC with
+  SR-IOV checks the SR-IOV inventory, the VF creation with attributes and the
+  handoff reset. `configure-sriov` logs every compliant setting as
+  "SR-IOV setting" next to the drift warnings (#728).
 
 ### Docs
 
@@ -649,6 +1057,12 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
   targets, systemd-boot, Flatcar, Talos, measured boot for A/B, CAPI, BMC
   boot and out-of-band diagnostics, metrics, logs, SR-IOV and firmware); the
   index has priorities and a "highest impact now" ranking (#700)
+- add CHANGELOG.md with release history ([#661](https://github.com/telekom/BOOTy/pull/661))
+- design the fast deprovision and provision cycle for reused hosts ([#714](https://github.com/telekom/BOOTy/pull/714))
+- size: put the upload model after the variables of the first model ([#783](https://github.com/telekom/BOOTy/pull/783))
+- gobgp: say where the Type-3 tunnel type handling differs from FRR ([#786](https://github.com/telekom/BOOTy/pull/786))
+- size: record the lldpd removal of #812 and pin lldpd absent in gobgp ([#817](https://github.com/telekom/BOOTy/pull/817))
+- kexec: document the kexec handoff and all its limitations ([#705](https://github.com/telekom/BOOTy/pull/705))
 
 ### Dependencies
 
@@ -659,6 +1073,26 @@ default) wins. `SUCCESS_ACTION=poweroff` is rejected with
 - GoBGP 3.37.0 to 4.10.0 (fork tag v4.10.0-booty.2), Go 1.26.6 to 1.27.2, golangci-lint 2.12.2 to 2.14.0,
   govulncheck 1.4.0 to 1.8.0, `docker/setup-buildx-action` 4.4.1,
   `actions/upload-artifact` 7.0.2 everywhere, and indirect modules (#699)
+- bump golang.org/x/text from 0.42.0 to 0.43.0 ([#686](https://github.com/telekom/BOOTy/pull/686))
+- bump actions/download-artifact from 8.0.1 to 8.0.2 ([#691](https://github.com/telekom/BOOTy/pull/691))
+- bump actions/upload-artifact from 7.0.1 to 7.0.2 ([#687](https://github.com/telekom/BOOTy/pull/687))
+- bump golang.org/x/sys from 0.48.0 to 0.49.0 ([#695](https://github.com/telekom/BOOTy/pull/695))
+- bump golang.org/x/net from 0.60.0 to 0.61.0 ([#688](https://github.com/telekom/BOOTy/pull/688))
+- bump github.com/docker/docker-credential-helpers ([#689](https://github.com/telekom/BOOTy/pull/689))
+- bump github.com/klauspost/compress from 1.20.1 to 1.20.3 ([#694](https://github.com/telekom/BOOTy/pull/694))
+- bump github.com/telekom/t-caas-go-library ([#690](https://github.com/telekom/BOOTy/pull/690))
+- bump github.com/docker/cli ([#692](https://github.com/telekom/BOOTy/pull/692))
+- GoBGP fork v4.10.0-booty.4 with Cease/BFD Down and connect at once like FRR ([#811](https://github.com/telekom/BOOTy/pull/811))
+- bump github.com/mdlayher/socket from 0.7.0 to 0.8.0 ([#830](https://github.com/telekom/BOOTy/pull/830))
+- bump github.com/docker/cli ([#828](https://github.com/telekom/BOOTy/pull/828))
+- use gopacket and netlink forks with the BOOTy fixes ([#833](https://github.com/telekom/BOOTy/pull/833))
+- bump github.com/josharian/native from 1.1.0 to 1.2.0 ([#839](https://github.com/telekom/BOOTy/pull/839))
+- pin GoBGP to the fork tag v4.10.0-booty.16 ([#831](https://github.com/telekom/BOOTy/pull/831))
+- move the GoBGP fork onto upstream master (v4.10.0-booty.21) ([#847](https://github.com/telekom/BOOTy/pull/847))
+
+### Maintenance
+
+- dhcp: encode and decode DHCP messages with insomniacslk/dhcp ([#835](https://github.com/telekom/BOOTy/pull/835))
 
 ### Upgrade notes for CAPRF
 
@@ -1611,7 +2045,8 @@ First release: CAPRF provisioning agent with FRR/EVPN and GoBGP networking.
 - gobgp: Extract constants, add tests, update README (#22)
 - Modernize CI, testing, and codebase (#1)
 
-[Unreleased]: https://github.com/telekom/BOOTy/compare/v0.2.0-rc.15...HEAD
+[Unreleased]: https://github.com/telekom/BOOTy/compare/v0.2.0-rc.16...HEAD
+[0.2.0-rc.16]: https://github.com/telekom/BOOTy/releases/tag/v0.2.0-rc.16
 [0.2.0-rc.15]: https://github.com/telekom/BOOTy/releases/tag/v0.2.0-rc.15
 [0.2.0-rc.14]: https://github.com/telekom/BOOTy/releases/tag/v0.2.0-rc.14
 [0.2.0-rc.13]: https://github.com/telekom/BOOTy/releases/tag/v0.2.0-rc.13
