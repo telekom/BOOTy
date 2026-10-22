@@ -15,6 +15,23 @@ notes and the history of each tag.
 
 ## [Unreleased]
 
+## [0.2.0-rc.17] - 2026-10-22
+
+### Highlights
+
+- Check supported manifests daily with GitHub Dependabot only. Tool literals,
+  inline images, source refs, Debian EFI packages, maintained forks, checksums
+  and compatibility fixtures require coordinated manual review.
+- Make vulnerability findings advisory with visible scan warnings and
+  current-head PR reports; keep build, test and lint failures blocking.
+
+### CI, build and tests
+
+- track supplemental dependencies and report security findings
+- verify mixed-case annotation tags are escaped
+- track curated Go fork replacements behind approval
+- keep updates native to GitHub Dependabot
+
 ## [0.2.0-rc.16] - 2026-10-21
 
 Changes merged after `v0.2.0-rc.15`. Without `CAPRF_LEGACY_COMPAT` and without
@@ -2045,7 +2062,8 @@ First release: CAPRF provisioning agent with FRR/EVPN and GoBGP networking.
 - gobgp: Extract constants, add tests, update README (#22)
 - Modernize CI, testing, and codebase (#1)
 
-[Unreleased]: https://github.com/telekom/BOOTy/compare/v0.2.0-rc.16...HEAD
+[Unreleased]: https://github.com/telekom/BOOTy/compare/v0.2.0-rc.17...HEAD
+[0.2.0-rc.17]: https://github.com/telekom/BOOTy/releases/tag/v0.2.0-rc.17
 [0.2.0-rc.16]: https://github.com/telekom/BOOTy/releases/tag/v0.2.0-rc.16
 [0.2.0-rc.15]: https://github.com/telekom/BOOTy/releases/tag/v0.2.0-rc.15
 [0.2.0-rc.14]: https://github.com/telekom/BOOTy/releases/tag/v0.2.0-rc.14
