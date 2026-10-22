@@ -36,7 +36,6 @@ topology:
   nodes:
     leaf01:
       kind: linux
-      # renovate: datasource=docker depName=quay.io/frrouting/frr
       image: quay.io/frrouting/frr:10.3.1
       binds:
         - prodtpl-leaf01.frr.conf:/etc/frr/frr.conf:ro
@@ -47,7 +46,6 @@ topology:
 
     dcgw01:
       kind: linux
-      # renovate: datasource=docker depName=quay.io/frrouting/frr
       image: quay.io/frrouting/frr:10.3.1
       binds:
         - prodtpl-dcgw01.frr.conf:/etc/frr/frr.conf:ro
@@ -66,7 +64,6 @@ topology:
 
     dcgw02:
       kind: linux
-      # renovate: datasource=docker depName=quay.io/frrouting/frr
       image: quay.io/frrouting/frr:10.3.1
       binds:
         - prodtpl-dcgw02.frr.conf:/etc/frr/frr.conf:ro
@@ -77,7 +74,6 @@ topology:
     # FRR with the production template, netplan applied by hand.
     shadow:
       kind: linux
-      # renovate: datasource=docker depName=quay.io/frrouting/frr
       image: quay.io/frrouting/frr:10.3.1
       binds:
         - ${PRODTPL_SHADOW_FRR:=prodtpl-shadow.frr.conf}:/etc/frr/frr.conf:ro
@@ -108,7 +104,6 @@ topology:
     # to 198.18.0.0/24 the best one.
     tester:
       kind: linux
-      # renovate: datasource=docker depName=quay.io/frrouting/frr
       image: quay.io/frrouting/frr:10.3.1
       binds:
         - prodtpl-tester.frr.conf:/etc/frr/frr.conf:ro
@@ -119,7 +114,6 @@ topology:
     # IPv6 CAPRF mock behind the L3VNI gateway.
     caprf6:
       kind: linux
-      # renovate: datasource=docker depName=nginx
       image: nginx:alpine
       binds:
         - caprf6.conf:/etc/nginx/nginx.conf:ro
@@ -157,7 +151,6 @@ topology:
 
     caprf-mock:
       kind: linux
-      # renovate: datasource=docker depName=nginx
       image: nginx:alpine
       mgmt-ipv4: 172.31.250.10
       binds:

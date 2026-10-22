@@ -6,9 +6,7 @@
 # stays up for 10 s after no shutdown. A session that goes Down within 2 s
 # of an Up fails the test. Needs docker.
 set -euo pipefail
-# renovate: datasource=docker depName=quay.io/frrouting/frr
 image=${1:-quay.io/frrouting/frr:10.3.1}
-# renovate: datasource=docker depName=golang
 go_image=golang:1.27.2
 cycles=${CYCLES:-1}
 root=$(cd "$(dirname "$0")/../../.." && pwd)

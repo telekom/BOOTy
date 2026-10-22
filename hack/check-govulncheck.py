@@ -19,7 +19,6 @@ from typing import Any
 GOVULNCHECK = [
     "go",
     "run",
-    # renovate: datasource=go depName=golang.org/x/vuln
     "golang.org/x/vuln/cmd/govulncheck@v1.8.0",
     "-format=json",
     "./...",

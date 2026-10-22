@@ -10,7 +10,6 @@ topology:
   nodes:
     switch:
       kind: linux
-      # renovate: datasource=docker depName=ghcr.io/srl-labs/network-multitool
       image: ghcr.io/srl-labs/network-multitool:v0.5.0
       cmd: sleep infinity
       exec:
@@ -25,7 +24,6 @@ topology:
 
     booty:
       kind: linux
-      # renovate: datasource=docker depName=ghcr.io/srl-labs/network-multitool
       image: ghcr.io/srl-labs/network-multitool:v0.5.0
       cmd: sleep infinity
       exec:

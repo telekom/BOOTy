@@ -24,57 +24,31 @@ updates are grouped by dependency, with major updates separate.
 ContainerLab `*.clab.yml` topologies are not Kubernetes manifests and are not
 updated by Dependabot's Docker ecosystem.
 
-The hosted Renovate companion in `.github/renovate.json` tracks annotated tools,
-inline external images (including floating tags), Debian EFI package versions
-and the util-linux source ref. It does not duplicate native Dependabot Docker,
-Actions or ordinary Go updates. It also patches the Go source floor and workflow
-compiler pins within Go 1.27; changing the supported minor is a human decision.
-There is no OPA frameworks/constraint dependency in this repository.
+GitHub Dependabot is the only dependency updater. Arbitrary tool inputs, inline
+images, Debian EFI package versions, LVM tarballs and util-linux source refs are
+outside its supported manifest formats and require manual review. Compiler pins
+must stay consistent with the supported Go 1.27 source floor.
 
-**Activation prerequisite:** install/authorize the hosted Renovate GitHub App
-for this repository and verify its dashboard and first extraction before relying
-on this coverage. The configuration alone does not activate a bot. No new bot
-secret, self-hosted privileged workflow or automatic merge is introduced.
-
-Annotations immediately precede live pins; repeated datasource/package pairs
-are grouped. The distinct FRR Type-5 fixture requires approval and a coordinated
-update of its exact-version assertions (`gobgp_type5_e2e_test.go`); 10.3.2 is
-the minimum with the encapsulation relay fix. The signed Debian EFI packages
-are grouped behind dashboard approval and require Secure Boot proof.
-
-The LVM manager tracks GitHub **tags**, not nonexistent GitHub releases, and
-converts tag underscores to source-version dots. Its independent `LVM2_SHA256`
-must be verified and updated with the tarball version **before approving any
-update**. Renovate cannot atomically derive that independent checksum.
-Util-linux ref updates also require dashboard approval and boot validation.
-Do not fabricate digests or remove integrity verification.
+The FRR Type-5 fixture requires a coordinated update of its exact-version
+assertions (`gobgp_type5_e2e_test.go`); 10.3.2 is the minimum with the
+encapsulation relay fix. Signed Debian EFI updates require Secure Boot proof.
+Review LVM tags together with their independent `LVM2_SHA256`; util-linux updates
+require boot validation. Do not fabricate digests or remove integrity verification.
 
 Deliberate manual pins are the KVM Ubuntu cloud-image URL/checksum pairs, the
 6.8 kernel package URL/checksum pairs (required for old md superblocks) and FRR GPG
 trust fingerprints. The four maintained Go fork replacements documented in
-`docs/dependency-forks.md` are tracked by narrow native Renovate `gomod` rules
-for their exact replacement package names, behind dashboard approval. Upstream
-alias ignores stay in Dependabot; approve a fork tag only after confirming that
-its curated patches and compatibility are retained. Other replacement modules
-remain disabled in Renovate. Ubuntu Docker LTS matrix tags remain fixed while
+`docs/dependency-forks.md` require explicit fork-tag review. Upstream alias ignores
+stay in Dependabot because bumping those aliases would not change the built
+replacements; approve a fork tag only after confirming its curated patches and
+compatibility are retained. Ubuntu Docker LTS matrix tags remain fixed while
 Dependabot updates their digests. These are compatibility/integrity decisions,
 not uncovered ordinary version strings. Locally built `booty-*` images,
 release-owned `BOOTY_VERSION`/`VERSION`, reproducibility timestamps and example
 registry/checksum fixtures are not external dependencies.
 
 Validate updates with the existing CI and KVM boot matrices before merging.
-PR CI validates the companion with Renovate's pinned real CLI; locally run:
-
-```bash
-npx --yes --package renovate@44.176.3 renovate-config-validator --strict .github/renovate.json
-npx --yes --package renovate@44.176.3 -c 'node --test .github/scripts/renovate-extraction.test.cjs'
-```
-
-The extraction contract invokes the real local-platform CLI and exercises real
-replacement code for image digest pinning, complete Debian revisions, LVM tag
-normalization and raw source refs. It uses project-local scratch directories
-and removes them after each run. Stage a newly added `.github/renovate.json`
-before local extraction: Renovate discovers repository files through Git.
+A green Dependabot run does not establish coverage for the unsupported pins above.
 
 ## Security Reports
 
