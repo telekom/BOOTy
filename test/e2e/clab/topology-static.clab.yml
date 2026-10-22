@@ -4,7 +4,6 @@ topology:
   nodes:
     router:
       kind: linux
-      # renovate: datasource=docker depName=alpine
       image: alpine:3.20
       cmd: sleep infinity
       exec:
@@ -14,7 +13,6 @@ topology:
 
     booty:
       kind: linux
-      # renovate: datasource=docker depName=alpine
       image: alpine:3.20
       cmd: sleep infinity
       exec:

@@ -32,7 +32,6 @@ topology:
   nodes:
     spine01:
       kind: linux
-      # renovate: datasource=docker depName=quay.io/frrouting/frr
       image: quay.io/frrouting/frr:10.3.2
       binds:
         - spine01-type5.frr.conf:/etc/frr/frr.conf:ro
@@ -49,7 +48,6 @@ topology:
 
     leaf01:
       kind: linux
-      # renovate: datasource=docker depName=quay.io/frrouting/frr
       image: quay.io/frrouting/frr:10.3.2
       binds:
         - leaf01-type5.frr.conf:/etc/frr/frr.conf:ro
@@ -67,7 +65,6 @@ topology:
 
     leaf02:
       kind: linux
-      # renovate: datasource=docker depName=quay.io/frrouting/frr
       image: quay.io/frrouting/frr:10.3.2
       binds:
         - leaf02-type5.frr.conf:/etc/frr/frr.conf:ro

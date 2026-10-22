@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# renovate: datasource=github-releases depName=srl-labs/containerlab extractVersion=^v?(?<version>.+)$
 version="${1:-${CONTAINERLAB_VERSION:-0.76.1}}"
 version="${version#v}"
 tag="v${version}"
