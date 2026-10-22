@@ -41,15 +41,38 @@ test('real Renovate extracts live tool, image, full Debian version and source di
       const { extractPackageFile } = await load('modules/manager/custom/regex/index.js');
       const { doAutoReplace } = await load('workers/repository/update/branch/auto-replace.js');
       const { applyPackageRules } = await load('util/package-rules/index.js');
+      const { extractPackageFile: extractGoMod } = await load('modules/manager/gomod/extract.js');
       const config = JSON.parse(fs.readFileSync('.github/renovate.json'));
       const directory = path.resolve(`.renovate-mutation-${process.pid}`);
       fs.mkdirSync(directory);
       GlobalConfig.set({ localDir: directory, cacheDir: directory, platform: 'local' });
       try {
+        const forks = [
+          'github.com/MaxRink/gobgp/v4',
+          'github.com/MaxRink/gopacket',
+          'github.com/MaxRink/netlink',
+          'github.com/MaxRink/dhcp',
+        ];
+        const replacements = extractGoMod(fs.readFileSync('go.mod', 'utf8')).deps
+          .filter(dep => dep.depType === 'replace');
+        assert.deepEqual(replacements.map(dep => dep.depName).sort(), [...forks].sort());
+        for (const dep of replacements) {
+          const resolved = await applyPackageRules({
+            ...dep, packageName: dep.packageName || dep.depName,
+            manager: 'gomod', packageRules: config.packageRules,
+          }, 'curated fork ownership');
+          assert.equal(resolved.enabled, true, dep.depName);
+          assert.equal(resolved.dependencyDashboardApproval, true, dep.depName);
+        }
         for (const [depType, packageName, datasource, enabled] of [
           ['require', 'github.com/spf13/cobra', 'go', false],
           ['indirect', 'google.golang.org/grpc', 'go', false],
           ['golang', 'go', 'golang-version', true],
+          ['replace', 'github.com/example/unowned-fork', 'go', false],
+          ['require', 'github.com/osrg/gobgp/v4', 'go', false],
+          ['require', 'github.com/gopacket/gopacket', 'go', false],
+          ['require', 'github.com/vishvananda/netlink', 'go', false],
+          ['require', 'github.com/insomniacslk/dhcp', 'go', false],
         ]) {
           const resolved = await applyPackageRules({
             packageRules: config.packageRules, manager: 'gomod', depType,

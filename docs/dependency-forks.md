@@ -16,6 +16,12 @@ directive:
 
 Dependabot ignores the forked modules (`.github/dependabot.yml`): an
 upstream bump does not change the build while the `replace` is in place.
+The hosted Renovate companion tracks the four exact `github.com/MaxRink`
+replacement module identities using its native Go module manager, gated by
+dependency dashboard approval. The hosted App must be authorized for this
+repository before that tracking is active. Review each proposed fork tag for
+the curated fixes and run the relevant regression tests before approving it;
+this does not hand upstream alias updates to Renovate or remove the replacements.
 Move a fork to a new upstream release by hand: branch from the new tag,
 pick the fixes that upstream does not have, tag `-booty.1`, and change
 the `replace`. When upstream has the fixes only on its default branch,

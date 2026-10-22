@@ -50,9 +50,13 @@ Util-linux ref updates also require dashboard approval and boot validation.
 Do not fabricate digests or remove integrity verification.
 
 Deliberate manual pins are the KVM Ubuntu cloud-image URL/checksum pairs, the
-6.8 kernel package URL/checksum pairs (required for old md superblocks), FRR GPG
-trust fingerprints, and the four maintained Go fork replacements documented in
-`docs/dependency-forks.md`. Ubuntu Docker LTS matrix tags remain fixed while
+6.8 kernel package URL/checksum pairs (required for old md superblocks) and FRR GPG
+trust fingerprints. The four maintained Go fork replacements documented in
+`docs/dependency-forks.md` are tracked by narrow native Renovate `gomod` rules
+for their exact replacement package names, behind dashboard approval. Upstream
+alias ignores stay in Dependabot; approve a fork tag only after confirming that
+its curated patches and compatibility are retained. Other replacement modules
+remain disabled in Renovate. Ubuntu Docker LTS matrix tags remain fixed while
 Dependabot updates their digests. These are compatibility/integrity decisions,
 not uncovered ordinary version strings. Locally built `booty-*` images,
 release-owned `BOOTY_VERSION`/`VERSION`, reproducibility timestamps and example
