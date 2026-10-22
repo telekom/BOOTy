@@ -17,17 +17,77 @@ Thank you for your interest in contributing! This document covers the developmen
 
 ## Dependency Updates
 
-Dependabot tracks direct and indirect Go modules, workflow actions, and base
-images in all six Dockerfiles through the four configured Docker directories.
+Dependabot checks daily for direct and indirect Go module, workflow action, and
+base image updates in all eight Dockerfiles through the four configured Docker
+directories. Minor/patch Go updates and action updates are grouped; Docker
+updates are grouped by dependency, with major updates separate.
 ContainerLab `*.clab.yml` topologies are not Kubernetes manifests and are not
-updated by Dependabot's Docker ecosystem. Keep their external FRR, Alpine,
-nginx and network-multitool image references synchronized manually.
+updated by Dependabot's Docker ecosystem.
 
-Package pins inside Dockerfile `RUN` instructions, downloaded tool/kernel
-versions, checksums and shell-script image references also need manual updates.
-Locally built `booty-*` images are test artifacts, not upstream dependencies.
-Validate dependency changes with the existing CI and KVM boot matrices before
-merging.
+The hosted Renovate companion in `.github/renovate.json` tracks annotated tools,
+inline external images (including floating tags), Debian EFI package versions
+and the util-linux source ref. It does not duplicate native Dependabot Docker,
+Actions or ordinary Go updates. It also patches the Go source floor and workflow
+compiler pins within Go 1.27; changing the supported minor is a human decision.
+There is no OPA frameworks/constraint dependency in this repository.
+
+**Activation prerequisite:** install/authorize the hosted Renovate GitHub App
+for this repository and verify its dashboard and first extraction before relying
+on this coverage. The configuration alone does not activate a bot. No new bot
+secret, self-hosted privileged workflow or automatic merge is introduced.
+
+Annotations immediately precede live pins; repeated datasource/package pairs
+are grouped. The distinct FRR Type-5 fixture requires approval and a coordinated
+update of its exact-version assertions (`gobgp_type5_e2e_test.go`); 10.3.2 is
+the minimum with the encapsulation relay fix. The signed Debian EFI packages
+are grouped behind dashboard approval and require Secure Boot proof.
+
+The LVM manager tracks GitHub **tags**, not nonexistent GitHub releases, and
+converts tag underscores to source-version dots. Its independent `LVM2_SHA256`
+must be verified and updated with the tarball version **before approving any
+update**. Renovate cannot atomically derive that independent checksum.
+Util-linux ref updates also require dashboard approval and boot validation.
+Do not fabricate digests or remove integrity verification.
+
+Deliberate manual pins are the KVM Ubuntu cloud-image URL/checksum pairs, the
+6.8 kernel package URL/checksum pairs (required for old md superblocks), FRR GPG
+trust fingerprints, and the four maintained Go fork replacements documented in
+`docs/dependency-forks.md`. Ubuntu Docker LTS matrix tags remain fixed while
+Dependabot updates their digests. These are compatibility/integrity decisions,
+not uncovered ordinary version strings. Locally built `booty-*` images,
+release-owned `BOOTY_VERSION`/`VERSION`, reproducibility timestamps and example
+registry/checksum fixtures are not external dependencies.
+
+Validate updates with the existing CI and KVM boot matrices before merging.
+PR CI validates the companion with Renovate's pinned real CLI; locally run:
+
+```bash
+npx --yes --package renovate@44.176.3 renovate-config-validator --strict .github/renovate.json
+npx --yes --package renovate@44.176.3 -c 'node --test .github/scripts/renovate-extraction.test.cjs'
+```
+
+The extraction contract invokes the real local-platform CLI and exercises real
+replacement code for image digest pinning, complete Debian revisions, LVM tag
+normalization and raw source refs. It uses project-local scratch directories
+and removes them after each run. Stage a newly added `.github/renovate.json`
+before local extraction: Renovate discovers repository files through Git.
+
+## Security Reports
+
+The CI govulncheck and nightly/release Trivy steps are advisory: findings and scanner failures remain in
+the logs and emit a `Security scan advisory` warning. Build, test and lint
+failures remain blocking; the scanner script still returns failures when run
+directly.
+
+After PR CI completes, the default-branch `Security report` workflow updates
+one bot comment for the current PR head. It reads check metadata only, never
+executes PR code or downloads PR artifacts with its write-enabled token, and
+ignores stale, closed or mismatched PRs. It starts commenting once this workflow
+is on the default branch. Run its tests locally with:
+
+```bash
+node --test .github/scripts/security-report.test.cjs
+```
 
 ## Building
 

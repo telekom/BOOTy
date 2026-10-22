@@ -2,6 +2,7 @@
 
 # Build LVM2 as an init
 FROM gcc:16 AS lvm
+# renovate: datasource=github-tags depName=lvmteam/lvm2
 ARG LVM2_VERSION=2.03.27
 ARG LVM2_SHA256=3133415905b9b46d152d064865d52f32eee4fcbeb0e8a69e3510caeaae0c56a9
 # One mirror that is down or fails TLS must not fail the whole build: try
@@ -36,6 +37,7 @@ RUN strip --strip-all lvm
 
 # Build scripted fdisk (sfdisk)
 FROM gcc:16 AS sfdisk
+# renovate: datasource=git-refs depName=util-linux/util-linux
 ARG UTIL_LINUX_REF=5305e6c70b274f679329b79c0e1ef5a07e9dc1a6
 RUN apt-get -o Acquire::Retries=5 update -y && apt-get -o Acquire::Retries=5 install -y bison autopoint gettext flex
 RUN set -eu; \
@@ -482,8 +484,11 @@ COPY --from=split-builder /split/ .
 # The manifest records the versions and SHA-256 sums, and the ISO ships it as
 # /boot/efi-manifest.txt. amd64 only, like ISOLINUX.
 FROM debian:trixie-slim AS efi-boot
+# renovate: datasource=deb depName=shim-signed
 ARG SHIM_SIGNED_VERSION=1.51~1+deb13u1+16.1-2~deb13u1
+# renovate: datasource=deb depName=shim-helpers-amd64-signed
 ARG SHIM_HELPERS_VERSION=1+16.1+2~deb13u1
+# renovate: datasource=deb depName=grub-efi-amd64-signed
 ARG GRUB_SIGNED_VERSION=1+2.12+9+deb13u2
 ARG SOURCE_DATE_EPOCH=315532800
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \

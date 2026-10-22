@@ -18,12 +18,38 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # renovate: datasource=github-releases depName=srl-labs/containerlab extractVersion=^v?(?<version>.+)$
   CONTAINERLAB_VERSION: "0.76.1"
 
 permissions:
   contents: read
 
 jobs:
+  dependency-config:
+    name: Dependency updater configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Validate Renovate configuration
+        # renovate: datasource=npm depName=renovate
+        run: npx --yes --package renovate@44.176.3 -c 'renovate-config-validator --strict .github/renovate.json && node --test .github/scripts/renovate-extraction.test.cjs'
+
+  reporter-tests:
+    name: Security report tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: node --test .github/scripts/security-report.test.cjs
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -35,12 +61,14 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
           cache: true
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
+          # renovate: datasource=github-releases depName=golangci/golangci-lint
           version: v2.14.0
 
   test:
@@ -54,6 +82,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
           cache: true
 
@@ -123,11 +152,18 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
           cache: true
 
       - name: Run govulncheck
+        id: scan
+        continue-on-error: true
         run: python3 hack/check-govulncheck.py
+
+      - name: Report scan status
+        if: always() && steps.scan.outcome != 'success'
+        run: echo '::warning title=Security scan advisory::govulncheck reported findings or could not complete. See the scan logs.'
 
   e2e:
     name: E2E Tests
@@ -140,6 +176,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
           cache: true
 
@@ -198,6 +235,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
           cache: true
 
@@ -514,6 +552,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Install QEMU and dependencies
@@ -697,6 +736,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Generate test disk image
@@ -827,6 +867,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Build BOOTy test container image
@@ -953,6 +994,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Install UEFI and ISO dependencies
@@ -1192,6 +1234,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Install disk utilities
@@ -1301,6 +1344,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Build BOOTy test container image
@@ -1423,6 +1467,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Build GoBGP test image
@@ -1561,6 +1606,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Build GoBGP test image
@@ -1710,6 +1756,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Set up Docker Buildx
@@ -1764,6 +1811,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Build GoBGP test image
@@ -1839,6 +1887,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: BGP_CONNECT_AT_ONCE for the lab (manual input)
@@ -1985,6 +2034,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: BGP_CONNECT_AT_ONCE for the lab (manual input)
@@ -2132,6 +2182,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: BGP_CONNECT_AT_ONCE for the lab (manual input)
@@ -2278,6 +2329,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Build BOOTy vrnetlab VM image
@@ -2450,6 +2502,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Build BOOTy vrnetlab VM image

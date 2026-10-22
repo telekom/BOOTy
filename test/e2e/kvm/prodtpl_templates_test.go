@@ -190,6 +190,7 @@ func startProdTplLeaf(t *testing.T) string {
 	run(t, "start FRR leaf", "docker", "run", "-d", "--name", name, "--network", "none", "--privileged",
 		"-v", filepath.Join(dir, "frr.conf")+":/etc/frr/frr.conf:ro",
 		"-v", filepath.Join(dir, "daemons")+":/etc/frr/daemons:ro",
+		// renovate: datasource=docker depName=quay.io/frrouting/frr
 		"quay.io/frrouting/frr:10.3.1")
 	t.Cleanup(func() {
 		if t.Failed() {

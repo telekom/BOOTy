@@ -280,8 +280,11 @@ or security update of shim or GRUB breaks the ISO build until the three pins
 are bumped, and old tags can no longer be rebuilt with their pins. To rebuild
 an old tag, point the `efi-boot` stage at
 [snapshot.debian.org](https://snapshot.debian.org/) for the date of the tag.
-Dependabot (the updater of this repository) does not track Debian package
-versions. The ISO builds of every pull request (`KVM iso-firmware`, PR ISO
+Dependabot does not track Debian package versions. The hosted Renovate
+companion tracks these pins behind dashboard approval once its GitHub App is
+activated; update and boot-test all three together (see
+[Dependency Updates](CONTRIBUTING.md#dependency-updates)).
+The ISO builds of every pull request (`KVM iso-firmware`, PR ISO
 artifacts) fail at the `efi-boot` stage when a pin is gone, which is the
 signal to bump all three together.
 

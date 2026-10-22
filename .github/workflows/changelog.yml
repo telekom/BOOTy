@@ -15,6 +15,7 @@ permissions:
 
 env:
   # Keep in sync with release-v2.yml.
+  # renovate: datasource=github-releases depName=orhun/git-cliff extractVersion=^v?(?<version>.+)$
   GIT_CLIFF_VERSION: "2.14.2"
 
 jobs:
