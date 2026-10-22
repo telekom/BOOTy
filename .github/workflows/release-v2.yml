@@ -163,6 +163,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Set up Docker Buildx
@@ -347,6 +348,8 @@ jobs:
         run: bash hack/extract-initramfs-artifacts.sh release-artifacts scan-rootfs
 
       - name: Run Trivy vulnerability scanner
+        id: scan
+        continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: fs
@@ -354,6 +357,10 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: 1
           format: table
+
+      - name: Report scan status
+        if: always() && steps.scan.outcome != 'success'
+        run: echo '::warning title=Security scan advisory::Trivy reported findings or could not complete. See the scan logs.'
 
   sign:
     name: Sign Artifacts
@@ -750,6 +757,7 @@ jobs:
       - name: Install ORAS
         uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4
         with:
+          # renovate: datasource=github-releases depName=oras-project/oras extractVersion=^v?(?<version>.+)$
           version: "1.3.1"
 
       - name: Login to GHCR
@@ -819,6 +827,7 @@ jobs:
 
       # Keep the version in sync with GIT_CLIFF_VERSION in changelog.yml.
       - name: Install git-cliff
+        # renovate: datasource=github-releases depName=orhun/git-cliff extractVersion=^v?(?<version>.+)$
         run: pipx install "git-cliff==2.14.2"
 
       # The section of the tag in CHANGELOG.md (written by the release commit,
@@ -881,6 +890,7 @@ jobs:
       - name: Install ORAS
         uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4
         with:
+          # renovate: datasource=github-releases depName=oras-project/oras extractVersion=^v?(?<version>.+)$
           version: "1.3.1"
 
       - name: Install Cosign

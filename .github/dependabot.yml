@@ -5,8 +5,12 @@ updates:
     allow:
       - dependency-type: all
     schedule:
-      interval: weekly
+      interval: daily
     open-pull-requests-limit: 10
+    groups:
+      go-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
     ignore:
       # go.mod replaces GoBGP with the fork tag v4.10.0-booty.22, so an
       # upstream bump would not change the build. Move the fork tag by hand:
@@ -26,7 +30,8 @@ updates:
       - /test/e2e/clab/vrnetlab
       - /test/e2e/assets/busybox
     schedule:
-      interval: weekly
+      interval: daily
+    open-pull-requests-limit: 10
     ignore:
       # test/e2e/clab/networkd-test.Dockerfile pins one ubuntu image per LTS
       # release in standard support (22.04, 24.04, 26.04). Dependabot merges
@@ -57,4 +62,8 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
+    open-pull-requests-limit: 10
+    groups:
+      actions:
+        patterns: ["*"]

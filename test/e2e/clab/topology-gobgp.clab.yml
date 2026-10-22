@@ -32,6 +32,7 @@ topology:
     # ── EVPN Fabric (FRR) ──────────────────────────────────────────────
     spine01:
       kind: linux
+      # renovate: datasource=docker depName=quay.io/frrouting/frr
       image: quay.io/frrouting/frr:10.3.1
       binds:
         - spine01-gobgp.frr.conf:/etc/frr/frr.conf:ro
@@ -72,6 +73,7 @@ topology:
 
     leaf01:
       kind: linux
+      # renovate: datasource=docker depName=quay.io/frrouting/frr
       image: quay.io/frrouting/frr:10.3.1
       binds:
         - leaf01.frr.conf:/etc/frr/frr.conf:ro
@@ -91,6 +93,7 @@ topology:
     # ── Route reflector (FRR): iBGP peer for dual mode ─────────────────
     rr01:
       kind: linux
+      # renovate: datasource=docker depName=quay.io/frrouting/frr
       image: quay.io/frrouting/frr:10.3.1
       binds:
         - rr01.frr.conf:/etc/frr/frr.conf:ro
@@ -112,6 +115,7 @@ topology:
     # ── Service containers ─────────────────────────────────────────────
     client:
       kind: linux
+      # renovate: datasource=docker depName=alpine
       image: alpine:3.20
       exec:
         - ip addr add 10.100.0.100/24 dev eth1
@@ -120,6 +124,7 @@ topology:
 
     nginx:
       kind: linux
+      # renovate: datasource=docker depName=nginx
       image: nginx:alpine
       binds:
         - nginx.conf:/etc/nginx/nginx.conf:ro
@@ -131,6 +136,7 @@ topology:
 
     caprf-mock:
       kind: linux
+      # renovate: datasource=docker depName=nginx
       image: nginx:alpine
       binds:
         - caprf-mock.conf:/etc/nginx/nginx.conf:ro

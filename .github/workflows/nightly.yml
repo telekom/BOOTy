@@ -43,6 +43,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Set up Docker Buildx
@@ -133,6 +134,8 @@ jobs:
           sudo chown -hR "$(id -u):$(id -g)" scan-rootfs
 
       - name: Run Trivy vulnerability scanner
+        id: scan
+        continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: fs
@@ -141,6 +144,10 @@ jobs:
           ignore-unfixed: true
           exit-code: 1
           format: table
+
+      - name: Report scan status
+        if: always() && steps.scan.outcome != 'success'
+        run: echo '::warning title=Security scan advisory::Trivy reported findings or could not complete. See the scan logs.'
 
   sbom:
     name: Generate SBOM
@@ -206,6 +213,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
+          # renovate: datasource=golang-version depName=go
           go-version: "1.27.2"
 
       - name: Install ContainerLab

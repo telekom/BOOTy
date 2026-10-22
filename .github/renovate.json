@@ -1,0 +1,145 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["custom.regex", "gomod"],
+  "ignorePaths": ["**/node_modules/**", "**/vendor/**", ".renovate-validation/**"],
+  "automerge": false,
+  "dependencyDashboard": true,
+  "prConcurrentLimit": 5,
+  "labels": ["dependencies"],
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "description": "Dependabot owns ordinary Go module updates",
+      "matchManagers": ["gomod"],
+      "enabled": false
+    },
+    {
+      "description": "Track curated fork replacement tags without discarding local patches automatically",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["replace"],
+      "matchPackageNames": [
+        "github.com/MaxRink/gobgp/v4",
+        "github.com/MaxRink/gopacket",
+        "github.com/MaxRink/netlink",
+        "github.com/MaxRink/dhcp"
+      ],
+      "enabled": true,
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Patch the source compatibility floor and refresh Go artifacts",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang"],
+      "enabled": true,
+      "rangeStrategy": "bump",
+      "allowedVersions": "<1.28.0"
+    },
+    {
+      "description": "Keep workflow Go pins on the supported compiler minor",
+      "matchDatasources": ["golang-version"],
+      "allowedVersions": "<1.28.0",
+      "groupName": "go supplemental pins"
+    },
+    {
+      "matchDatasources": ["docker"],
+      "pinDigests": true
+    },
+    {
+      "description": "Keep all occurrences of each supplemental dependency together",
+      "matchManagers": ["custom.regex"],
+      "groupName": "{{depName}} supplemental pins"
+    },
+    {
+      "description": "Exact Type-5 regression fixture: change with its version assertions",
+      "matchFileNames": ["test/e2e/clab/topology-type5.clab.yml"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "LVM source tag and independent checksum require coordinated integrity review",
+      "matchPackageNames": ["lvmteam/lvm2"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Source ref changes require a reviewed upstream commit and boot proof",
+      "matchDatasources": ["git-refs"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Signed EFI package pins must be reviewed and boot-tested together",
+      "matchDatasources": ["deb"],
+      "groupName": "signed EFI packages",
+      "dependencyDashboardApproval": true
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Annotated semantic tool versions and workflow inputs",
+      "managerFilePatterns": [
+        "/^Makefile$/",
+        "/^initrd\\.Dockerfile$/",
+        "/^\\.github/workflows/.*\\.ya?ml$/",
+        "/^(hack|test)/.*\\.(sh|py|go|ya?ml)$/"
+      ],
+      "matchStrings": [
+        "(?:#|//) renovate: datasource=(?<datasource>go|github-releases|golang-version) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?(?: extractVersion=(?<extractVersion>\\S+))?\\r?\\n[^\\r\\n]*?(?<currentValue>v?\\d+\\.\\d+(?:\\.\\d+)?(?:-[0-9A-Za-z.-]+)?)"
+      ],
+      "versioningTemplate": "{{#if versioning}}{{{versioning}}}{{else}}semver-coerced{{/if}}",
+      "extractVersionTemplate": "{{{extractVersion}}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Annotated external images outside native Dockerfiles, including floating tags",
+      "managerFilePatterns": ["/^test/.*\\.(sh|go|ya?ml)$/"],
+      "matchStrings": [
+        "(?:#|//) renovate: datasource=docker depName=(?<depName>\\S+)\\r?\\n[^\\r\\n]*?(?:[a-z][a-z0-9.-]*/)*[a-z][a-z0-9._-]*:(?<currentValue>[\\w.-]+)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker",
+      "autoReplaceStringTemplate": "{{#if newValue}}{{{replace '[a-zA-Z0-9_.-]+(@sha256:[a-f0-9]{64})?$' newValue replaceString}}}{{else}}{{{replace '@sha256:[a-f0-9]{64}$' '' replaceString}}}{{/if}}{{#if newDigest}}@{{{newDigest}}}{{else}}{{#if currentDigest}}@{{{currentDigest}}}{{/if}}{{/if}}"
+    },
+    {
+      "customType": "regex",
+      "description": "LVM tags use underscores; source download versions use dots and require a separately reviewed checksum",
+      "managerFilePatterns": ["/^initrd\\.Dockerfile$/"],
+      "matchStrings": ["# renovate: datasource=github-tags depName=lvmteam/lvm2\\r?\\nARG LVM2_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "datasourceTemplate": "github-tags",
+      "depNameTemplate": "lvmteam/lvm2",
+      "currentValueTemplate": "{{{replace \"[.]\" \"_\" currentValue}}}",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "versioningTemplate": "regex:^(?<major>\\d+)[._](?<minor>\\d+)[._](?<patch>\\d+)$",
+      "autoReplaceStringTemplate": "# renovate: datasource=github-tags depName=lvmteam/lvm2\nARG LVM2_VERSION={{{replace \"_\" \".\" newValue}}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Debian package versions: capture the complete epoch/revision, never a semver prefix",
+      "managerFilePatterns": ["/^initrd\\.Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=deb depName=(?<depName>\\S+)\\r?\\nARG \\w+=(?<currentValue>[^\\s]+)"
+      ],
+      "datasourceTemplate": "deb",
+      "versioningTemplate": "deb",
+      "registryUrlTemplate": "https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=amd64"
+    },
+    {
+      "customType": "regex",
+      "description": "Reviewed util-linux source branch commit, independent of native image updates",
+      "managerFilePatterns": ["/^initrd\\.Dockerfile$/"],
+      "matchStrings": ["# renovate: datasource=git-refs depName=util-linux/util-linux\\r?\\nARG UTIL_LINUX_REF=(?<currentDigest>[a-f0-9]{40})"],
+      "datasourceTemplate": "git-refs",
+      "depNameTemplate": "https://github.com/util-linux/util-linux",
+      "currentValueTemplate": "master",
+      "versioningTemplate": "git",
+      "autoReplaceStringTemplate": "# renovate: datasource=git-refs depName=util-linux/util-linux\nARG UTIL_LINUX_REF={{{newDigest}}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the validator itself without introducing a package manifest",
+      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
+      "matchStrings": ["# renovate: datasource=npm depName=renovate\\r?\\n[^\\r\\n]*?renovate@(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "datasourceTemplate": "npm",
+      "depNameTemplate": "renovate"
+    }
+  ]
+}

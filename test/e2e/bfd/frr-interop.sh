@@ -6,7 +6,10 @@
 # stays up for 10 s after no shutdown. A session that goes Down within 2 s
 # of an Up fails the test. Needs docker.
 set -euo pipefail
+# renovate: datasource=docker depName=quay.io/frrouting/frr
 image=${1:-quay.io/frrouting/frr:10.3.1}
+# renovate: datasource=docker depName=golang
+go_image=golang:1.27.2
 cycles=${CYCLES:-1}
 root=$(cd "$(dirname "$0")/../../.." && pwd)
 name=booty-bfd-interop-$$
@@ -40,6 +43,6 @@ sleep 5
 ) &
 docker run --rm --network "$net" --ip 172.30.99.3 -v "$root":/src:ro -v "${GOMODCACHE:-$HOME/go/pkg/mod}":/go/pkg/mod -w /src \
 	-e GOFLAGS=-buildvcs=false -e GOTOOLCHAIN=local -e BFD_FRR_PEER=172.30.99.2 -e BFD_FRR_DURATION=$((45 + cycles * 13))s \
-	golang:1.27.2 go test -tags bfd_frr -count=1 -v -run TestFRRInterop ./pkg/network/bfd/
+	"$go_image" go test -tags bfd_frr -count=1 -v -run TestFRRInterop ./pkg/network/bfd/
 wait
 docker exec "$name-frr" vtysh -c 'show bfd peers counters' | grep -E 'peer|Session up|Session down' || true
