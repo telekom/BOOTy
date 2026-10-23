@@ -94,11 +94,11 @@ func TestProvisionImageStreamQEMU(t *testing.T) {
 	})
 }
 
-// TestProvisionQCOW2LargerThanStagingQEMU stages a qcow2 image that is larger
+// TestProvisionImageStreamQCOW2TooLargeQEMU stages a qcow2 image that is larger
 // than the staging tmpfs (3/4 of MemAvailable of the 1024 MiB guest): the run
 // must fail once with a clear error, without an out-of-memory kill and
 // without stream-image retries.
-func TestProvisionQCOW2LargerThanStagingQEMU(t *testing.T) {
+func TestProvisionImageStreamQCOW2TooLargeQEMU(t *testing.T) {
 	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)

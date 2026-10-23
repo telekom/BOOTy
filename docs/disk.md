@@ -650,10 +650,13 @@ An `oci://` source must have one layer that is not `text/plain`. An artifact
 of the T-CaaS image builder has more (the image, its ansible facts and an
 optional QCOW2): BOOTy then takes the one
 `application/vnd.tcaas.node-image+raw*` layer (`+raw.lz4` or `+raw.zst`).
-Two such layers fail the pull. BOOTy downloads the layer blob as it was
-pushed, checks it against the layer digest and decompresses it itself, like
-an HTTP download: a `download` scope `IMAGE_CHECKSUM` is the digest of the
-pushed `.raw.lz4` or `.raw.zst` file.
+Two such layers fail the pull. BOOTy downloads an artifact layer (any media
+type that is not a container layer type) as it was pushed, checks it against
+the layer digest and decompresses it itself, like an HTTP download: a
+`download` scope `IMAGE_CHECKSUM` is the digest of the pushed `.raw.lz4` or
+`.raw.zst` file. A container layer (`application/vnd.oci.image.layer.v1.tar+gzip`
+and the other container types) loses its transport compression first, as
+before.
 
 ### Streaming and Staging
 

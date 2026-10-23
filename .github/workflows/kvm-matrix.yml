@@ -197,7 +197,7 @@ jobs:
           - scenario: image-stream
             qemu_extra: ""
             test_tag: e2e
-            test_regex: "^(TestProvisionImageStreamQEMU|TestProvisionQCOW2LargerThanStagingQEMU)$"
+            test_regex: "^TestProvisionImageStream.*QEMU$"
             privileged: true
             setup: ""
             # Five QEMU runs.

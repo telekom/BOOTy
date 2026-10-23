@@ -4,6 +4,7 @@ package image
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -160,6 +161,33 @@ func TestStreamOCIChecksumScopes(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestStreamOCIContainerLayer pushes a gzip image as a container layer,
+// which gzips it again for transport: BOOTy must remove both.
+func TestStreamOCIContainerLayer(t *testing.T) {
+	data := testImageData()
+	gz := encodeGzipMembers(t, data)
+	var transport bytes.Buffer
+	w := gzip.NewWriter(&transport)
+	if _, err := w.Write(gz); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	source := pushOCIImageBlob(t, transport.Bytes(), string(types.OCILayer))
+	target := filepath.Join(t.TempDir(), "disk")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(gz)
+	if err := Stream(context.Background(), source, target, StreamOpts{Checksum: hex.EncodeToString(sum[:])}); err != nil {
+		t.Fatalf("Stream() = %v", err)
+	}
+	if got, _ := os.ReadFile(target); !bytes.Equal(got, data) {
+		t.Fatalf("target has %d bytes, want the %d image bytes", len(got), len(data))
 	}
 }
 

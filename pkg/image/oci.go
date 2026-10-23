@@ -34,15 +34,30 @@ func FetchOCILayer(ctx context.Context, reference string) (io.ReadCloser, error)
 	return rc, nil
 }
 
-// FetchOCIImageBlob returns the payload layer of an OCI image as stored in
-// the registry, verified against the layer digest while it is read. BOOTy
-// detects and decompresses the blob itself, so a download-scope
-// IMAGE_CHECKSUM covers the published file (.raw.lz4, .raw.zst), like for
-// an HTTP source.
+// FetchOCIImageBlob returns the image in the payload layer of an OCI image.
+// A container layer type (types.MediaType.IsLayer, for example
+// application/vnd.oci.image.layer.v1.tar+gzip) compresses the content for
+// transport: go-containerregistry removes that compression, as before. Any
+// other type is an artifact pushed as a file (oras push
+// image.raw.zst:application/vnd.tcaas.node-image+raw.zst): the blob is
+// returned as pushed, checked against the layer digest while it is read, and
+// BOOTy decompresses it itself, so a download-scope IMAGE_CHECKSUM covers the
+// pushed file like for an HTTP source.
 func FetchOCIImageBlob(ctx context.Context, reference string) (io.ReadCloser, error) {
 	layer, err := selectOCIImageLayer(ctx, reference)
 	if err != nil {
 		return nil, err
+	}
+	mediaType, err := layer.MediaType()
+	if err != nil {
+		return nil, fmt.Errorf("read layer media type for %q: %w", RedactOCIRef(reference), wrapRedactedOCIRefError(err, reference))
+	}
+	if mediaType.IsLayer() {
+		rc, err := layer.Uncompressed()
+		if err != nil {
+			return nil, fmt.Errorf("uncompress layer for %q: %w", RedactOCIRef(reference), wrapRedactedOCIRefError(err, reference))
+		}
+		return rc, nil
 	}
 	rc, err := layer.Compressed()
 	if err != nil {
