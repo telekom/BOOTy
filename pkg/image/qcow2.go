@@ -15,15 +15,16 @@ import (
 	"github.com/telekom/BOOTy/pkg/health"
 )
 
-const (
-	// ramdiskPath is the tmpfs mount point for qcow2 conversion scratch space.
-	ramdiskPath = "/tmp/booty-ramdisk"
-	// ramdiskFallbackMiB is the tmpfs size when MemAvailable is unknown.
-	ramdiskFallbackMiB = 4096
-)
+// ramdiskFallbackMiB is the tmpfs size when MemAvailable is unknown.
+const ramdiskFallbackMiB = 4096
 
-// ramdiskMemInfo is /proc/meminfo; tests replace it.
-var ramdiskMemInfo = "/proc/meminfo"
+// The staging tmpfs: its mount point, the meminfo file that sizes it and the
+// mount call; tests replace them.
+var (
+	ramdiskPath    = "/tmp/booty-ramdisk"
+	ramdiskMemInfo = "/proc/meminfo"
+	mountTmpfs     = syscall.Mount
+)
 
 // stagingLimit is the size of the staging tmpfs and the MemAvailable it was
 // derived from (0: unknown).
@@ -137,7 +138,7 @@ func setupRamdisk() (stagingLimit, error) {
 	if err := os.MkdirAll(ramdiskPath, 0o700); err != nil {
 		return limit, fmt.Errorf("creating ramdisk dir: %w", err)
 	}
-	if err := syscall.Mount("tmpfs", ramdiskPath, "tmpfs", 0, fmt.Sprintf("size=%dm", limit.tmpfsMiB)); err != nil {
+	if err := mountTmpfs("tmpfs", ramdiskPath, "tmpfs", 0, fmt.Sprintf("size=%dm", limit.tmpfsMiB)); err != nil {
 		return limit, fmt.Errorf("mounting tmpfs at %s: %w", ramdiskPath, err)
 	}
 	slog.Info("ramdisk mounted", "path", ramdiskPath, "size_mib", limit.tmpfsMiB, "mem_available_mib", limit.availableMiB)

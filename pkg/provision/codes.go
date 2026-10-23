@@ -71,6 +71,7 @@ var failureCodes = []FailureCode{
 	{"BOOTY-IMG-004", ClassPermanent, AnyStep, "Image format probe failed."},
 	{"BOOTY-IMG-005", ClassTransient, "apply-sysexts", "System extension download or install failed."},
 	{"BOOTY-IMG-006", ClassTransient, "prepare-oci-prepulls", "OCI image pre-pull preparation failed."},
+	{"BOOTY-IMG-007", ClassPermanent, AnyStep, "The staged image does not fit in the staging tmpfs; use a raw or compressed raw image or IMAGE_STREAM."},
 
 	{"BOOTY-DSK-001", ClassEnvironment, "release-stale-mounts", "Stale target mounts could not be released."},
 	{"BOOTY-DSK-002", ClassHardware, "disable-lvm", "Disabling LVM failed."},
@@ -140,6 +141,7 @@ const (
 	CodeCertTime         = timesync.CodeCertTime
 	codeChecksumMismatch = "BOOTY-IMG-003"
 	codeFormatProbe      = "BOOTY-IMG-004"
+	codeStagingFull      = "BOOTY-IMG-007"
 	codeDiskInUse        = "BOOTY-DSK-010"
 	codeAmbiguousRoot    = "BOOTY-DSK-012"
 	codeEFIVars          = "BOOTY-EFI-002"
@@ -161,6 +163,7 @@ var sentinelCodes = []struct {
 	{image.ErrChecksumMismatch, codeChecksumMismatch},
 	{image.ErrFormatProbe, codeFormatProbe},
 	{image.ErrStagingForbidden, codeFormatProbe},
+	{image.ErrStagingFull, codeStagingFull},
 	{disk.ErrAllDisksInUse, codeDiskInUse},
 	{disk.ErrInUseCheck, codeDiskInUse},
 	{disk.ErrAmbiguousRootPartition, codeAmbiguousRoot},

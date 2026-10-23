@@ -137,3 +137,18 @@ func TestStreamImageRetries(t *testing.T) {
 		}
 	}
 }
+
+// A full staging tmpfs reports the permanent BOOTY-IMG-007, not the
+// transient code of stream-image.
+func TestStagingFullFailureCode(t *testing.T) {
+	err := WithCode("stream-image", classifyImageStreamError("https://img.example/os.qcow2",
+		fmt.Errorf("writing qcow2 image: %w", image.ErrStagingFull)))
+	if code := CodeOf(err); code != codeStagingFull {
+		t.Fatalf("code = %q, want %s", code, codeStagingFull)
+	}
+	for _, c := range FailureCodes() {
+		if c.Code == codeStagingFull && c.Class != ClassPermanent {
+			t.Fatalf("%s class = %s, want permanent", c.Code, c.Class)
+		}
+	}
+}

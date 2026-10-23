@@ -681,8 +681,8 @@ sizes the tmpfs at 3/4 of `MemAvailable` (4 GiB when `/proc/meminfo` cannot be
 read). For a QCOW2 image the tmpfs holds the QCOW2 file and the allocated part
 of the converted raw file at the same time. An image that does not fit fails
 with `staged image does not fit (tmpfs N MiB, MemAvailable M MiB); use a
-.raw.lz4 image or IMAGE_STREAM`, without a retry, instead of exhausting the
-RAM.
+.raw.lz4 image or IMAGE_STREAM` and code `BOOTY-IMG-007`, without a retry,
+instead of exhausting the RAM.
 
 `IMAGE_STREAM=true` (YAML `provision.image.stream`) forbids staging:
 

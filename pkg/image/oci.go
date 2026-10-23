@@ -43,7 +43,20 @@ func FetchOCILayer(ctx context.Context, reference string) (io.ReadCloser, error)
 // returned as pushed, checked against the layer digest while it is read, and
 // BOOTy decompresses it itself, so a download-scope IMAGE_CHECKSUM covers the
 // pushed file like for an HTTP source.
+//
+// Like an HTTP download, a read that delivers no data for
+// imageIdleReadTimeout cancels the pull.
 func FetchOCIImageBlob(ctx context.Context, reference string) (io.ReadCloser, error) {
+	reqCtx, cancel := context.WithCancel(ctx)
+	rc, err := fetchOCIImageBlob(reqCtx, reference)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	return newIdleTimeoutBody(rc, cancel, imageIdleReadTimeout), nil
+}
+
+func fetchOCIImageBlob(ctx context.Context, reference string) (io.ReadCloser, error) {
 	layer, err := selectOCIImageLayer(ctx, reference)
 	if err != nil {
 		return nil, err

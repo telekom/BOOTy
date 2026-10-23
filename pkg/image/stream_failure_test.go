@@ -10,16 +10,20 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
@@ -206,17 +210,75 @@ func TestNewStagingLimit(t *testing.T) {
 	orig := ramdiskMemInfo
 	t.Cleanup(func() { ramdiskMemInfo = orig })
 
+	for _, tt := range []struct {
+		name    string
+		meminfo string
+		want    stagingLimit
+	}{
+		{"3/4 of MemAvailable", "MemTotal: 4096000 kB\nMemAvailable: 2048000 kB\n", stagingLimit{tmpfsMiB: 1500, availableMiB: 2000}},
+		{"at least 1 MiB", "MemTotal: 4096000 kB\nMemAvailable: 1024 kB\n", stagingLimit{tmpfsMiB: 1, availableMiB: 1}},
+		{"no meminfo", "", stagingLimit{tmpfsMiB: ramdiskFallbackMiB}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ramdiskMemInfo = filepath.Join(t.TempDir(), "meminfo")
+			if tt.meminfo != "" {
+				if err := os.WriteFile(ramdiskMemInfo, []byte(tt.meminfo), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := newStagingLimit(); got != tt.want {
+				t.Fatalf("newStagingLimit() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// fakeFullStagingTmpfs points the staging tmpfs at a directory whose staged
+// files are /dev/full, so every staging write fails with ENOSPC, and sizes
+// it from a 2000 MiB MemAvailable.
+func fakeFullStagingTmpfs(t *testing.T) {
+	t.Helper()
+	origPath, origMount, origInfo := ramdiskPath, mountTmpfs, ramdiskMemInfo
+	t.Cleanup(func() { ramdiskPath, mountTmpfs, ramdiskMemInfo = origPath, origMount, origInfo })
+	ramdiskPath = t.TempDir()
+	mountTmpfs = func(string, string, string, uintptr, string) error { return nil }
 	ramdiskMemInfo = filepath.Join(t.TempDir(), "meminfo")
-	if err := os.WriteFile(ramdiskMemInfo, []byte("MemTotal: 4096000 kB\nMemAvailable: 2048000 kB\n"), 0o600); err != nil {
+	if err := os.WriteFile(ramdiskMemInfo, []byte("MemAvailable: 2048000 kB\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := newStagingLimit(); got != (stagingLimit{tmpfsMiB: 1500, availableMiB: 2000}) {
-		t.Fatalf("newStagingLimit() = %+v, want 3/4 of 2000 MiB", got)
+	for _, name := range []string{"image.qcow2", "image.download"} {
+		if err := os.Symlink("/dev/full", filepath.Join(ramdiskPath, name)); err != nil {
+			t.Fatal(err)
+		}
 	}
+}
 
-	ramdiskMemInfo = filepath.Join(t.TempDir(), "missing")
-	if got := newStagingLimit(); got != (stagingLimit{tmpfsMiB: ramdiskFallbackMiB}) {
-		t.Fatalf("newStagingLimit() without meminfo = %+v, want the fallback", got)
+// TestStagingFullEveryCaller checks that every staging caller reports a full
+// staging tmpfs as ErrStagingFull.
+func TestStagingFullEveryCaller(t *testing.T) {
+	if _, err := os.Stat("/dev/full"); err != nil {
+		t.Skip("no /dev/full")
+	}
+	qcow2 := append([]byte{0x51, 0x46, 0x49, 0xfb}, make([]byte, 1024)...)
+	target := filepath.Join(t.TempDir(), "disk")
+	for name, stage := range map[string]func() error{
+		"qcow2 whole-disk": func() error {
+			return ConvertQCOW2FromReader(context.Background(), bytes.NewReader(qcow2), "image.qcow2", target)
+		},
+		"qcow2 A/B": func() error {
+			return streamABViaRamdisk(context.Background(), bytes.NewReader(qcow2), ABTargets{RootPartition: target}, StreamOpts{})
+		},
+		"partition mode": func() error {
+			return StreamPartitions(context.Background(), serveBytes(t, qcow2)+"/image", target)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fakeFullStagingTmpfs(t)
+			err := stage()
+			if !errors.Is(err, ErrStagingFull) || !strings.Contains(err.Error(), "tmpfs 1500 MiB, MemAvailable 2000 MiB") {
+				t.Fatalf("err = %v, want ErrStagingFull for a 1500 MiB tmpfs", err)
+			}
+		})
 	}
 }
 
@@ -237,5 +299,70 @@ func TestStagingLimitCheck(t *testing.T) {
 	}
 	if err := limit.check(nil); err != nil {
 		t.Fatalf("check(nil) = %v", err)
+	}
+}
+
+// TestOCIImageBlobAbortsWhenRegistryStalls stalls the layer blob after 4 KiB:
+// the idle read timeout must end the read, like for an HTTP source.
+func TestOCIImageBlobAbortsWhenRegistryStalls(t *testing.T) {
+	orig := imageIdleReadTimeout
+	t.Cleanup(func() { imageIdleReadTimeout = orig })
+	imageIdleReadTimeout = 100 * time.Millisecond
+
+	blob := bytes.Repeat([]byte{0xaa}, 64<<10)
+	layer := static.NewLayer(blob, "application/vnd.tcaas.node-image+raw.lz4")
+	digest, err := layer.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := registry.New()
+	var stall atomic.Bool
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !stall.Load() || r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, digest.String()) {
+			reg.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Length", fmt.Sprint(len(blob)))
+		_, _ = w.Write(blob[:4096])
+		w.(http.Flusher).Flush()
+		select { // stall without closing the connection
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	img, err := mutate.AppendLayers(empty.Image, layer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := name.ParseReference(strings.TrimPrefix(srv.URL, "http://") + "/test/stall:v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatal(err)
+	}
+	stall.Store(true)
+
+	rc, err := FetchOCIImageBlob(context.Background(), ref.String())
+	if err != nil {
+		t.Fatalf("FetchOCIImageBlob() = %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.ReadAll(rc)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "stalled") {
+			t.Fatalf("read error = %v, want a stall error", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stalled OCI blob read did not end")
 	}
 }
