@@ -193,11 +193,10 @@ func (u *UnderlayTier) restartPeer(ctx context.Context, addr string) (bool, erro
 // length depended on the order of BFD loss and carrier loss (1 s or the
 // fixed 5 s). With the GoBGP fork tag v4.10.0-booty.21 an administrative
 // shutdown sets the idle hold time to 1 s, also for a peer that already
-// waits in Idle, like "no neighbor shutdown" in FRR. Since the fork tag
-// booty.23 (upstream 95c43b00) GoBGP ignores a reset of the stopped peer,
-// like FRR peer_clear for a shut down peer, so the reset sends nothing and
-// changes nothing; the wait is the 1 s of the shutdown, equal to BOOTy's
-// IdleHoldTimeAfterReset.
+// waits in Idle, like "no neighbor shutdown" in FRR. That 1 s equals
+// BOOTy's IdleHoldTimeAfterReset. Up to the fork tag booty.22 BOOTy also
+// reset the stopped peer here; since booty.23 GoBGP ignores a ResetPeer of
+// an administratively down peer (upstream 95c43b00), so the reset is gone.
 //
 // The peer is not deleted and added again, which would start it at once:
 // it then connects 0 to 1 s after the carrier, when the leaf (FRR)
@@ -228,9 +227,6 @@ func (u *UnderlayTier) startStoppedPeer(ctx context.Context, addr string) error 
 	}
 	if !stopped {
 		return nil
-	}
-	if err := u.bgp.ResetPeer(ctx, &apipb.ResetPeerRequest{Address: addr}); err != nil {
-		return fmt.Errorf("reset peer %s: %w", addr, err)
 	}
 	if err := u.bgp.EnablePeer(ctx, &apipb.EnablePeerRequest{Address: addr}); err != nil {
 		return fmt.Errorf("enable peer %s: %w", addr, err)

@@ -339,7 +339,7 @@ same resolution:
   default like FRR) stops an unnumbered session as soon as its NIC loses
   carrier. Native sessions without the setting keep a
   `no bgp fast-external-failover` of `frr.conf` in the same VRF. When the
-  carrier returns, BOOTy resets the stopped GoBGP peer and enables it. The
+  carrier returns, BOOTy enables the stopped GoBGP peer. The
   peer waits 1 s in Idle, then connects after a random 0 to 1 s (1.5 to
   2 s up to the fork tag booty.22), and accepts the leaf's connection
   from the end of the 1 s. With GoBGP 4.10.0 the wait
@@ -348,11 +348,11 @@ same resolution:
   went down first, because the peer restarter had added the peer again.
   Since the fork tag v4.10.0-booty.21 an administrative shutdown sets
   the wait to 1 s in every state, like `no neighbor shutdown` in FRR.
-  Since booty.23 GoBGP ignores the reset of an administratively down
-  peer, like upstream 95c43b00 and FRR `peer_clear` for a shut down
-  peer, so the reset sends nothing and changes nothing there; the wait
-  is the 1 s of the shutdown, which equals BOOTy's
-  `IdleHoldTimeAfterReset`. In the
+  That 1 s equals BOOTy's `IdleHoldTimeAfterReset`. Up to the fork tag
+  booty.22 BOOTy also reset the stopped peer before it enabled it; since
+  booty.23 GoBGP ignores a reset of an administratively down peer
+  (upstream 95c43b00), so BOOTy no longer sends it (Idle to Active
+  measured 1.00 s without it). In the
   kindmetal EVPN parity run with both leaves down this delayed one
   uplink by 5 s, and all four sessions were back after 6.8 s against 4.6
   to 5.7 s for FRR. FRR starts the session at once on interface up
@@ -634,7 +634,7 @@ BOOTy's other dependency forks (gopacket, netlink) are listed in
 [Dependency forks](dependency-forks.md).
 
 GoBGP mode embeds GoBGP through a fork tag:
-`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.23`
+`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.10.0-booty.24`
 in `go.mod`. The tag is upstream master 6d26fa29 (2026-10-23, after
 4.10.0; there is no newer release) on the fork branch `booty/master`,
 with the changes below that upstream does not have. The tags
@@ -661,8 +661,8 @@ AS peer is discarded (e7967171).
 
 | Change in the fork | Effect without it |
 |---|---|
-| Idle hold backoff with the rules of `v_start` of FRR 10.2.1 instead of those of upstream 4e70e768; a NOTIFICATION received in OpenConfirm backs off like one in Established; `clear bgp` sets the backoff to 1 s and its NOTIFICATION doubles it, without a session it stays 1 s (booty.19; booty.23 on the upstream reset of 95c43b00) | GoBGP doubles the idle hold time also for a hold timer expiry and for a NOTIFICATION in OpenSent, where FRR goes back to 1 s: a peer that keeps failing in OpenSent waits up to 120 s in Idle, and GoBGP refuses its connections meanwhile. |
-| A reset while the idle hold timer runs shortens it to `IdleHoldTimeAfterReset`, never longer (booty.6; booty.23 on 95c43b00) | Upstream restarts the timer with `IdleHoldTimeAfterReset`, which can make the wait longer than the rest of the running timer. |
+| Idle hold backoff with the rules of `v_start` of FRR 10.2.1 instead of those of upstream 4e70e768; a NOTIFICATION received in OpenConfirm backs off like one in Established ([osrg/gobgp#3791](https://github.com/osrg/gobgp/issues/3791)); `clear bgp` sets the backoff to 1 s and its NOTIFICATION doubles it, without a session it stays 1 s (booty.19; booty.23 on the upstream reset of 95c43b00) | GoBGP doubles the idle hold time also for a hold timer expiry and for a NOTIFICATION in OpenSent, where FRR goes back to 1 s: a peer that keeps failing in OpenSent waits up to 120 s in Idle, and GoBGP refuses its connections meanwhile. |
+| A reset while the idle hold timer runs shortens it to `IdleHoldTimeAfterReset`, never longer (booty.6; booty.23 on 95c43b00) | Upstream restarts the timer with `IdleHoldTimeAfterReset`, which can make the wait longer than the rest of the running timer. FRR `peer_clear` in Idle sets `v_start` to 1 and re-arms the start timer, so it starts 1 s after the reset; the fork deliberately never lengthens the wait, which with BOOTy's 1 s differs from FRR only when less than 1 s remains. |
 | `DisablePeer` of a peer that already waits in Idle sets the idle hold time and the backoff back to 1 s, like `no neighbor shutdown` in FRR (bgpd.c:4941) (booty.21) | `DisablePeer` and `EnablePeer` of a peer that waited a backed-off time in Idle (up to 120 s) waited it again after the carrier returned. |
 | The losing incoming connection of a collision that GoBGP resolves before the leaf's OPEN arrived on it is closed only when that OPEN arrives, with Cease/Connection Collision Resolution (RFC 4271 section 6.8); it answers like OpenSent and its NOTIFICATIONs do not count for the session (booty.9, booty.10; upstream b841cb71 closes it at once) | FRR connected again, and with graceful restart the new connection ended the session a second time (`TestProdTplOneDropPerFault`: two drops per fault). |
 | When the connection that GoBGP kept after a collision fails too, the next idle hold time is at most `IdleHoldTimeAfterReset` (booty.5, booty.17) | Both connections are gone and the peer waits the backed-off idle hold time. |
@@ -670,9 +670,9 @@ AS peer is discarded (e7967171).
 | Take a new connection from a restarting peer (RFC 4724, [osrg/gobgp#3745](https://github.com/osrg/gobgp/issues/3745), open), only from a peer that sent graceful restart AFI/SAFI tuples in the current session (RFC 4724 section 5; FRR `bgp_accept` with `PEER_STATUS_NSF_MODE`) (booty.18, booty.19) | A peer that restarts with graceful restart cannot open a new session while the old one is still up; without the tuple gate a helper-only leaf's late connection ended a session that had just come up. |
 | Discard EVPN NLRIs of unknown route types ([osrg/gobgp#3742](https://github.com/osrg/gobgp/issues/3742), open) | An EVPN route type that GoBGP does not know resets the session instead of being ignored (RFC 7606). |
 | Decode the EVPN ARP/ND extended community (RFC 9047, [osrg/gobgp#3746](https://github.com/osrg/gobgp/issues/3746), open) | The router (R), override (O) and immutable (I) flags of a MAC/IP route, and the proxy flag that FRR sends, are not available to BOOTy. |
-| A neighbor set entry can carry the IPv6 zone (`fe80::1%eth0/128`) and then matches only the neighbor with that zone; an entry without a zone matches every zone as before (booty.22; upstream master has the same gap). BOOTy writes the zone for every link-local peer | Unnumbered peers on different ports whose switches have the same link-local address (`fe80::1` on every port) share all neighbor sets: one port's route-maps and `bgp ebgp-requires-policy` reject apply to the other port too, and a session can be Established but exchange no routes. |
-| `EnablePeer` or `DisablePeer` for the admin state that the peer already has changes nothing, and the latest admin state request wins when the FSM has not taken the one before it (booty.20; also on upstream master 6d26fa29) | The request flipped `State.AdminDown`, so the API reported the wrong admin state, and in Idle it started the idle hold timer again; `DisablePeer`, `EnablePeer`, `DisablePeer` in a row could leave the peer up. |
-| Feature: `ResetPeerRequest.BfdDown` sends Cease/BFD Down (RFC 9384), opt-in, as a reset: `IdleHoldTimeAfterReset` applies; the latest reset replaces one that the FSM has not taken yet (booty.4; booty.23 on the reset channel of 95c43b00); BOOTy sets it for its BFD resets | The peer of a BFD reset gets Cease/Administrative Reset (subcode 4), not BFD Down (subcode 10) like from FRR. Upstream sends BFD Down only from its native BFD (7d11a2c2), with the backed-off idle hold time. |
+| A neighbor set entry can carry the IPv6 zone (`fe80::1%eth0/128`) and then matches only the neighbor with that zone; an entry without a zone matches every zone as before (booty.22; upstream master has the same gap, [osrg/gobgp#3790](https://github.com/osrg/gobgp/issues/3790)). BOOTy writes the zone for every link-local peer | Unnumbered peers on different ports whose switches have the same link-local address (`fe80::1` on every port) share all neighbor sets: one port's route-maps and `bgp ebgp-requires-policy` reject apply to the other port too, and a session can be Established but exchange no routes. |
+| `EnablePeer` or `DisablePeer` for the admin state that the peer already has changes nothing, and the latest admin state request wins when the FSM has not taken the one before it (booty.20; upstream master 6d26fa29 still has both bugs: [osrg/gobgp#3788](https://github.com/osrg/gobgp/issues/3788), [#3789](https://github.com/osrg/gobgp/issues/3789)) | The request flipped `State.AdminDown`, so the API reported the wrong admin state, and in Idle it started the idle hold timer again; `DisablePeer`, `EnablePeer`, `DisablePeer` in a row could leave the peer up. |
+| Feature: `ResetPeerRequest.BfdDown` sends Cease/BFD Down (RFC 9384), opt-in, as a reset: `IdleHoldTimeAfterReset` applies; a later reset replaces one that the FSM has not taken yet and keeps its `BfdDown` (booty.4; booty.23 on the reset channel of 95c43b00; booty.24 keeps `BfdDown`); BOOTy sets it for its BFD resets | The peer of a BFD reset gets Cease/Administrative Reset (subcode 4), not BFD Down (subcode 10) like from FRR. Upstream sends BFD Down only from its native BFD (7d11a2c2), with the backed-off idle hold time. |
 | Feature: `TimersConfig.ConnectAtOnce` starts the first connect after Idle at once, opt-in; BOOTy sets it with `BGP_CONNECT_AT_ONCE` (off by default) | GoBGP waits a random 0 to 1 s before it connects (upstream 2be423ab, [osrg/gobgp#3736](https://github.com/osrg/gobgp/issues/3736) closed); FRR connects when `BGP_Start` runs. |
 | Feature: Enhanced Route Refresh (RFC 7313), always on, with a bound (the graceful restart stale routes time, else 360 s) on the routes that a BoRR without EoRR leaves stale | The OPEN lacks the capability that FRR sends; a refresh from the peer has no begin and end markers, so stale routes are not swept. |
 | Feature: Paths-Limit capability (limit 0, no limit), always sent for the families that receive with ADD-PATH | The OPEN lacks the capability that FRR sends with ADD-PATH. |
@@ -686,7 +686,7 @@ Fork patches that upstream master has, so the fork drops them:
 | Keep unknown EVPN extended community sub-types (RFC 7606 section 7.14) | f1fcae18, the same commit |
 | Cease/BFD Down subcode and names | 93858cae; the `BfdDown` API above stays in the fork |
 | No answer to a NOTIFICATION with a version error in OpenSent | b5630a0b ([osrg/gobgp#3752](https://github.com/osrg/gobgp/issues/3752)) |
-| Apply the idle hold time after reset when `ResetPeer` finds no session (booty.1) | 95c43b00 ([osrg/gobgp#3740](https://github.com/osrg/gobgp/issues/3740)): `ResetPeer` is handled in every state. Difference: a reset of an administratively down peer is ignored, like FRR; the fork applied `IdleHoldTimeAfterReset` at the next start. BOOTy's wait stays 1 s (see `bgp fast-external-failover` above) |
+| Apply the idle hold time after reset when `ResetPeer` finds no session (booty.1) | 95c43b00 ([osrg/gobgp#3740](https://github.com/osrg/gobgp/issues/3740)): `ResetPeer` is handled in every state. Difference: a reset of an administratively down peer is ignored (FRR `peer_clear` skips a peer only when its instance is shut down too, but a peer with `neighbor shutdown` has no running start timer, so the next start waits 1 s either way); the fork applied `IdleHoldTimeAfterReset` at the next start. BOOTy no longer resets a stopped peer; its wait stays 1 s (see `bgp fast-external-failover` above) |
 | Resolve a connection collision in OpenConfirm without Idle (booty.2) | 93580204 ([osrg/gobgp#3741](https://github.com/osrg/gobgp/issues/3741)), with Cease/Connection Collision Resolution on the losing connection (faf661ed) |
 | Keep the surviving connection when GoBGP resolves a collision in OpenSent or OpenConfirm (booty.5) | b841cb71, 93580204 and db3c9280 ([osrg/gobgp#3751](https://github.com/osrg/gobgp/issues/3751)); the cap of the idle hold time when both connections are gone stays in the fork |
 | A NOTIFICATION as the first message on the leaf's connection in OpenSent: go on with BOOTy's own connection (booty.8) | db3c9280: when only the other connection failed, the FSM leaves Idle at once and takes its own connection |
