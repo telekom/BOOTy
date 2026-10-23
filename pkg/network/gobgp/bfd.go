@@ -202,7 +202,7 @@ func bfdTimers(txMS, rxMS, mult uint32) bfd.Timers {
 // also starts a connect at BFD Up; GoBGP has no API for that. With
 // BGP_CONNECT_AT_ONCE (ConnectAtOnce) its Active state connects at once by
 // itself (the outgoingConnManager.run and connectLoop functions of the
-// fork); without it, after 1.5 to 2 s.
+// fork); without it, after a random 0 to 1 s.
 //
 // Like bgpd, a BFD Down does not reset a BGP session that is just coming
 // up: OpenConfirm, Established before GoBGP has set the uptime, or the

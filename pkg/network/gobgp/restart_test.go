@@ -356,9 +356,10 @@ func TestPeerStateEventDropsZone(t *testing.T) {
 // carrier returns, the leaf connects at once (FRR starts the session on
 // interface up). With EnablePeer alone GoBGP 4.10.0 held the first peer
 // 5 s in Idle (holdtimeIdle) and closed the leaf's connection meanwhile;
-// now both wait 1 s and connect 1.5 to 2 s later. Since the fork tag
-// v4.10.0-booty.17 the administrative shutdown leaves 1 s as well, so
-// this test passes with and without the reset in startStoppedPeer.
+// now both wait 1 s (the administrative shutdown, since the fork tag
+// v4.10.0-booty.21) and connect 0 to 1 s later. startStoppedPeer sends no
+// ResetPeer since booty.23: GoBGP ignores it for an administratively down
+// peer.
 func TestCarrierReturnWaitsIdleHoldAfterReset(t *testing.T) {
 	if testing.Short() {
 		t.Skip("takes about 3 s")

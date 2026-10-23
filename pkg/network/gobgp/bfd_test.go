@@ -366,14 +366,10 @@ func TestResetPeerReestablishes(t *testing.T) {
 	wait("Established again", is(apipb.PeerState_SESSION_STATE_ESTABLISHED), 15*time.Second)
 	t.Logf("established again %s after the reset", time.Since(start).Round(100*time.Millisecond))
 
-	// The carrier-loss cases (a reset of a peer without a session, a reset
-	// that shortens a running idle hold timer) are not tested here: BOOTy
-	// sets IdleHoldTimeAfterReset to 1 s, and since the fork tag
-	// v4.10.0-booty.17 an administrative shutdown leaves 1 s as well, so
-	// BOOTy cannot tell the fix from no fix. The fork tests them with other
-	// values: TestResetPeerWhileAdminDownAppliesIdleHoldTimeAfterReset,
-	// TestResetPeerShortensRunningIdleHoldTimer and
-	// TestResetAndEnableOfStoppedPeerSendNothing (pkg/server).
+	// A reset that shortens a running idle hold timer is not tested here:
+	// BOOTy sets IdleHoldTimeAfterReset to 1 s and cannot tell it apart.
+	// The fork tests it with other values:
+	// TestResetPeerShortensRunningIdleHoldTimer (pkg/server).
 }
 
 // The start race of the prodtpl lab, reproduced with a real GoBGP: a peer
