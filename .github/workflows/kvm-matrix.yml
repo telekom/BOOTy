@@ -191,6 +191,17 @@ jobs:
             test_regex: "^TestProvisionQCOW2ImageQEMU$"
             privileged: true
             setup: ""
+          # Peak RAM of a staged qcow2 against IMAGE_STREAM lz4 and zstd
+          # images, the IMAGE_STREAM rejection of a qcow2 and a qcow2
+          # larger than the staging tmpfs.
+          - scenario: image-stream
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestProvisionImageStream.*QEMU$"
+            privileged: true
+            setup: ""
+            # Five QEMU runs.
+            go_timeout: 35m
           - scenario: disk-wipe
             qemu_extra: ""
             test_tag: e2e

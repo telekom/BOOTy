@@ -85,7 +85,7 @@ func invalidateDirtyABTargets(err error) {
 		return
 	}
 	for _, target := range dirty.targets {
-		wipeLeadingSectors(target)
+		wipeImageTarget(target)
 	}
 }
 
@@ -146,11 +146,15 @@ func streamSelectedImagePayload(ctx context.Context, url string, target ABTarget
 		return nil
 	}
 	defer cleanup()
+	if opt.StreamOnly {
+		return StagingForbiddenError(format)
+	}
 	return streamABViaRamdisk(ctx, src, target, opt)
 }
 
 func streamABViaRamdisk(ctx context.Context, src io.Reader, target ABTargets, opt StreamOpts) error {
-	if err := setupRamdisk(); err != nil {
+	limit, err := setupRamdisk()
+	if err != nil {
 		return fmt.Errorf("setting up ramdisk: %w", err)
 	}
 	defer cleanupRamdisk()
@@ -159,10 +163,10 @@ func streamABViaRamdisk(ctx context.Context, src io.Reader, target ABTargets, op
 	rawPath := ramdiskPath + "/image.raw"
 
 	if err := writeImageToFile(src, qcow2Path); err != nil {
-		return fmt.Errorf("writing qcow2 image to ramdisk: %w", err)
+		return limit.check(fmt.Errorf("writing qcow2 image to ramdisk: %w", err))
 	}
 	if err := convertQCOW2ToRaw(ctx, qcow2Path, rawPath); err != nil {
-		return err
+		return limit.check(err)
 	}
 	_ = os.Remove(qcow2Path)
 

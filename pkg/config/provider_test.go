@@ -392,6 +392,8 @@ func TestValidate(t *testing.T) {
 		}},
 		{name: "invalid blank image source root selector", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{SourceRootLabel: "   "}}}, wantErr: "provision.image.sourceRootLabel must not be blank"},
 		{name: "invalid image source root selector conflict", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{SourceRootLabel: "ROOT-A", SourceRootPartition: 2}}}, wantErr: "provision.image.sourceRootLabel and provision.image.sourceRootPartition are mutually exclusive"},
+		{name: "valid image stream", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{Stream: true, Mode: ImageModeAB}}}},
+		{name: "invalid image stream with partition mode", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{Stream: true, Mode: ImageModePartition}}}, wantErr: "provision.image.stream (IMAGE_STREAM) cannot be combined with provision.image.mode partition"},
 		{name: "invalid image source root partition", cfg: Config{Provision: ProvisionConfig{Image: ImageConfig{SourceRootPartition: -1}}}, wantErr: "provision.image.sourceRootPartition must be non-negative"},
 		{name: "valid network mode", cfg: Config{Network: NetworkConfig{Mode: "gobgp"}}},
 		{name: "invalid network mode", cfg: Config{Network: NetworkConfig{Mode: "ospf"}}, wantErr: "invalid network.mode"},

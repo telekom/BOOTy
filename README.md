@@ -552,6 +552,7 @@ root is mounted.
 | `IMAGE_CHECKSUM_TYPE` | — | Checksum algorithm: `sha256` or `sha512` |
 | `IMAGE_CHECKSUM_SCOPE` | `download` | `download` (file as downloaded) or `decompressed` (decompressed image) |
 | `IMAGE_MODE` | `whole-disk` | Image write mode: `whole-disk`, `partition`, or `ab`; with a declarative partition layout, `whole-disk` streams the selected root filesystem into the declared root partition |
+| `IMAGE_STREAM` | `false` | Forbid staging the image in RAM: QCOW2 images, also an `oci://` QCOW2 layer, fail before the disk wipe, `IMAGE_MODE=partition` is invalid; raw and compressed raw images stream anyway ([docs/disk.md](docs/disk.md#streaming-and-staging)) |
 | `IMAGE_SOURCE_ROOT_LABEL` | — | Source-image GPT partition label to stream into a declarative partition layout root |
 | `IMAGE_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number for declarative partition layout root streaming |
 | `OCI_PREPULL_ENABLED` | `false` | Pull configured OCI images during provisioning and install a first-boot runtime importer |

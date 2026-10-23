@@ -319,10 +319,11 @@ does not change.
 ### Failed Image Writes
 
 When a whole-disk or QCOW2 write fails, or the checksum does not match, BOOTy
-writes zeros to the first 1 MiB of the target disk. This removes the partition
-table, so the machine cannot boot a partial image. When BOOTy writes into
-partitions (A/B mode or `PARTITION_LAYOUT`), it writes zeros to the first 1 MiB
-of each target partition that it changed.
+writes zeros to the first and the last 1 MiB of the target disk. This removes
+the partition table and the backup GPT, so the machine cannot boot a partial
+image. When BOOTy writes into partitions (A/B mode or `PARTITION_LAYOUT`), it
+writes zeros to the first and the last 1 MiB of each target partition that it
+changed.
 
 ## Software RAID
 
@@ -622,12 +623,92 @@ It fails for vfat.
 
 ## Image Formats
 
-BOOTy writes raw images, compressed raw images (gzip, zstd, lz4, xz, bzip2) and
-QCOW2 images. It converts a QCOW2 image to raw in process, in a tmpfs ramdisk,
-before it writes the disk; the ramdisk has no `qemu-img`. QCOW2 versions 2 and
-3 work, with zlib or zstd compressed clusters and extended L2 entries. A QCOW2
-image must be self-contained: BOOTy rejects images with a backing file, an
-external data file or encryption, a truncated image (a table or cluster past
-the end of the file), and an image whose virtual size is larger than the
-target disk. See
+BOOTy detects the image format from the magic bytes of the download, not from
+the URL. After a decompression it detects again, so a `.qcow2.lz4` is found
+too. The file name does not matter.
+
+| Format | Magic | Published by T-CaaS | Write |
+| --- | --- | --- | --- |
+| raw | none of the others | image builder `IMAGE_COMPRESSION=none` | stream |
+| lz4 frame (`.lz4`), also without content checksum (`--no-frame-crc`) and with several frames | `04 22 4d 18` | default bare-metal image (`.raw.lz4`) | stream |
+| zstd (`.zst`), also several frames | `28 b5 2f fd` | image builder option (`.raw.zst`) | stream |
+| gzip (`.gz`), also several members (`pigz`) | `1f 8b` | older images and the CAPRF e2e image for old deployers | stream |
+| xz | `fd 37 7a 58 5a 00` | none | stream |
+| bzip2 | `42 5a 68` | none | stream |
+| QCOW2 v2 and v3, also compressed | `QFI\xfb` | next to every `.raw.lz4` | stage in RAM |
+| VMDK, OVA, OVF | | none | rejected |
+
+BOOTy converts a QCOW2 image to raw in process; the ramdisk has no
+`qemu-img`. QCOW2 versions 2 and 3 work, with zlib or zstd compressed clusters
+and extended L2 entries. A QCOW2 image must be self-contained: BOOTy rejects
+images with a backing file, an external data file or encryption, a truncated
+image (a table or cluster past the end of the file), and an image whose
+virtual size is larger than the target disk. See
 [README.md](../README.md#caprf-mode) for the image source rules.
+
+An `oci://` source must have one layer that is not `text/plain`. An artifact
+of the T-CaaS image builder has more (the image, its ansible facts and an
+optional QCOW2): BOOTy then takes the one
+`application/vnd.tcaas.node-image+raw*` layer (`+raw.lz4` or `+raw.zst`).
+Two such layers fail the pull. BOOTy downloads an artifact layer (any media
+type that is not a container layer type) as it was pushed, checks it against
+the layer digest and decompresses it itself, like an HTTP download: a
+`download` scope `IMAGE_CHECKSUM` is the digest of the pushed `.raw.lz4` or
+`.raw.zst` file. A container layer (`application/vnd.oci.image.layer.v1.tar+gzip`
+and the other container types) loses its transport compression first, as
+before.
+
+### Streaming and Staging
+
+A **stream** is one pipeline: download, decompress, write to the target disk.
+It holds only the copy buffer and the window of the decompressor in RAM
+(about 20 MiB for lz4 and gzip, 35 MiB for zstd; `BenchmarkStreamPeakHeap` in
+`pkg/image`), whatever the image size. Raw and compressed raw images stream
+in every image mode: whole-disk, `ab`, a `PARTITION_LAYOUT` root and disk
+mirroring (BOOTy writes the first disk and builds the RAID1 afterwards, see
+[Disk Mirroring](#disk-mirroring)).
+
+**Staging** keeps the image in a tmpfs at `/tmp/booty-ramdisk`, which is RAM.
+Two cases need it:
+
+- A QCOW2 image: its tables point anywhere in the file, so BOOTy downloads it,
+  converts it to a sparse raw file in the same tmpfs and writes that.
+- `IMAGE_MODE=partition`: BOOTy downloads and decompresses the whole image and
+  attaches it to a loop device.
+
+The ramdisk has no swap, so the staged image must fit in the free RAM. BOOTy
+sizes the tmpfs at 3/4 of `MemAvailable` (4 GiB when `/proc/meminfo` cannot be
+read). For a QCOW2 image the tmpfs holds the QCOW2 file and the allocated part
+of the converted raw file at the same time. An image that does not fit fails
+with `staged image does not fit (tmpfs N MiB, MemAvailable M MiB); use a
+.raw.lz4 image or IMAGE_STREAM` and code `BOOTY-IMG-007`, without a retry,
+instead of exhausting the RAM.
+
+`IMAGE_STREAM=true` (YAML `provision.image.stream`) forbids staging:
+
+| Case | With `IMAGE_STREAM=true` |
+| --- | --- |
+| Raw or compressed raw image | No change: it streams. |
+| QCOW2 image | The run fails with `BOOTY-IMG-004` before the disk wipe: the pre-wipe probe reads the first bytes of the image, of an `http(s)://` source and, only with `IMAGE_STREAM=true`, of the selected `oci://` layer. Use the `.raw.lz4` image. |
+| `IMAGE_MODE=partition` | The config is invalid. Use `whole-disk`. |
+
+`IMAGE_STREAM` is off by default; then QCOW2 images and partition mode stage
+as before. Set it in CAPRF with `additionalVars: {IMAGE_STREAM: "true"}`.
+BOOTy logs the RAM high-water mark of the image step as `image step memory`
+(`peak_used_mib`, `min_available_mib`, `total_mib`) in every mode.
+
+Failures of a stream:
+
+- **Checksum**: BOOTy hashes the bytes while it writes them
+  (`IMAGE_CHECKSUM_SCOPE` selects the downloaded or the decompressed bytes).
+  The disk is written before the digest is known: on a mismatch BOOTy zeroes
+  the first and the last MiB of the target (see
+  [Failed Image Writes](#failed-image-writes)) and fails with `BOOTY-IMG-003`,
+  without a retry.
+- **Download or write error**: BOOTy zeroes the first and the last MiB too.
+  `stream-image` retries up to three times, each time with a new download
+  from the first byte. BOOTy never continues a partial download.
+- **Truncated download**: the decompressors fail on a truncated stream. A raw
+  image without `IMAGE_CHECKSUM` is only as complete as the HTTP response
+  (`Content-Length` or chunked end); set `IMAGE_CHECKSUM` to detect a short
+  raw image.

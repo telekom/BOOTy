@@ -41,6 +41,7 @@ and, with `OOB_EFI_VAR`, in the `BootyLastResult` UEFI variable.
 | `BOOTY-IMG-004` | permanent | `*` | Image format probe failed. |
 | `BOOTY-IMG-005` | transient | `apply-sysexts` | System extension download or install failed. |
 | `BOOTY-IMG-006` | transient | `prepare-oci-prepulls` | OCI image pre-pull preparation failed. |
+| `BOOTY-IMG-007` | permanent | `*` | The staged image does not fit in the staging tmpfs; use a raw or compressed raw image or IMAGE_STREAM. |
 | `BOOTY-DSK-001` | environment | `release-stale-mounts` | Stale target mounts could not be released. |
 | `BOOTY-DSK-002` | hardware | `disable-lvm` | Disabling LVM failed. |
 | `BOOTY-DSK-003` | hardware | `stop-raid` | Stopping RAID arrays failed. |

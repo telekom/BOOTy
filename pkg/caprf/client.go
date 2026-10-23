@@ -1656,6 +1656,8 @@ func applyCoreBoolVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Provision.DisableKexec = parseBoolVar(value)
 	case "SECURE_ERASE":
 		cfg.Provision.Disk.SecureErase = parseBoolVar(value)
+	case "IMAGE_STREAM":
+		cfg.Provision.Image.Stream = parseBoolVar(value)
 	case "INVENTORY_ENABLED":
 		cfg.Provision.Inventory.Enabled = parseBoolVar(value)
 	case "FIRMWARE_REPORT":
