@@ -279,7 +279,7 @@ type BGPConfig struct {
 
 	// ConnectAtOnce starts the first connect of a GoBGP peer at once when
 	// it leaves Idle, like FRR when BGP_Start runs, instead of after a
-	// random 1.5 to 2 s. Unset (nil) means off: after a carrier loss both
+	// random 0 to 1 s. Unset (nil) means off: after a carrier loss both
 	// sides then have a connect pending until the link works again, and
 	// the connection collision that follows is resolved per RFC 4271 6.8
 	// but made the production template lab fail now and then (#811).
