@@ -69,6 +69,8 @@ configurations. A bootloader or iPXE script could load a base archive plus
 an optional archive per feature, so a DHCP-only deployment downloads less.
 This changes how operators deliver the ramdisk, so it needs a design for
 the ISO, PXE and CAPRF paths first.
+[proposal-ramdisk-split.md](proposal-ramdisk-split.md) compares the
+options.
 
 ## 4. Release binary build flags
 
