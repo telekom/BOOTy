@@ -58,6 +58,10 @@ updates:
         update-types:
           - minor
           - patch
+      docker-digests:
+        group-by: dependency-name
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
