@@ -14,11 +14,11 @@ require (
 	github.com/osrg/gobgp/v4 v4.10.0
 	github.com/pierrec/lz4/v4 v4.1.33
 	github.com/spf13/cobra v1.10.2
-	github.com/telekom/t-caas-go-library v0.1.1
+	github.com/telekom/t-caas-go-library v0.1.3
 	github.com/ulikunitz/xz v0.5.17
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
-	github.com/zcalusic/sysinfo v1.1.3
+	github.com/zcalusic/sysinfo v1.2.0
 	golang.org/x/net v0.61.0
 	golang.org/x/sys v0.49.0
 	google.golang.org/protobuf v1.36.12
@@ -28,7 +28,7 @@ require (
 require (
 	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da // indirect
 	github.com/docker/cli v29.9.2+incompatible // indirect
-	github.com/docker/docker-credential-helpers v0.9.10 // indirect
+	github.com/docker/docker-credential-helpers v0.9.12 // indirect
 	github.com/eapache/channels v1.1.0 // indirect
 	github.com/eapache/queue v1.1.0 // indirect
 	github.com/gaissmai/bart v0.30.0 // indirect
