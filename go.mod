@@ -14,7 +14,7 @@ require (
 	github.com/osrg/gobgp/v4 v4.11.0
 	github.com/pierrec/lz4/v4 v4.1.33
 	github.com/spf13/cobra v1.10.2
-	github.com/telekom/t-caas-go-library v0.1.3
+	github.com/telekom/t-caas-go-library v0.1.4
 	github.com/ulikunitz/xz v0.5.17
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
@@ -51,7 +51,7 @@ require (
 	github.com/spf13/viper v1.21.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/u-root/uio v0.0.0-20230220225925-ffce2a382923 // indirect
-	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260917231906-eeb232e0883d // indirect
