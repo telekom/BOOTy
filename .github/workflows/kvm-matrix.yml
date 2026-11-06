@@ -122,9 +122,6 @@ jobs:
     timeout-minutes: ${{ matrix.timeout_minutes || 75 }}
     needs: preflight
     strategy:
-      # Per-scenario results matter for diagnosis; one failing VM must not
-      # cancel the others.
-      fail-fast: false
       matrix:
         include:
           - scenario: secureboot-smoke
