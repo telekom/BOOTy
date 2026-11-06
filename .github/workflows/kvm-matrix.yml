@@ -92,7 +92,10 @@ permissions:
 jobs:
   kvm-tests:
     name: KVM ${{ matrix.scenario }}
-    runs-on: ubuntu-latest
+    # Guests are assembled from runner binaries (busybox, kmod, ld-linux),
+    # which are x86-64-v3 builds on ubuntu-26.04 and trap in the guests.
+    # Follow-up: https://github.com/telekom/BOOTy/issues/881
+    runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_minutes || 75 }}
     strategy:
       matrix:
@@ -547,6 +550,7 @@ jobs:
         if: matrix.setup != ''
         run: ${{ matrix.setup }}
 
+      - uses: ./.github/actions/baseline-libc
       - name: Build BOOTy initramfs
         run: |
           set -euo pipefail
