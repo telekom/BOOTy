@@ -89,7 +89,30 @@ permissions:
   # Read the cycle timing report of main as the baseline.
   actions: read
 
+concurrency:
+  group: kvm-matrix-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Fail-fast gate: the ~40 VM jobs only start once the code and the KVM
+  # tests compile and pass go vet (~1 minute).
+  preflight:
+    name: Preflight (go vet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.2"
+          cache: true
+      - name: Vet
+        env:
+          GOOS: linux
+        run: go vet ./... && go vet -tags e2e ./test/e2e/kvm/
+
   kvm-tests:
     name: KVM ${{ matrix.scenario }}
     # Guests are assembled from runner binaries (busybox, kmod, ld-linux),
@@ -97,7 +120,11 @@ jobs:
     # Follow-up: https://github.com/telekom/BOOTy/issues/881
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_minutes || 75 }}
+    needs: preflight
     strategy:
+      # Per-scenario results matter for diagnosis; one failing VM must not
+      # cancel the others.
+      fail-fast: false
       matrix:
         include:
           - scenario: secureboot-smoke

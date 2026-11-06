@@ -148,6 +148,7 @@ jobs:
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
+    needs: [lint]
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -177,11 +178,12 @@ jobs:
 
   build:
     name: Build (${{ matrix.arch }})
-    # No `needs`: the E2E and boot jobs chain off this binary, and waiting for
-    # lint, test and the ~11 minute E2E job first only delayed them. Those jobs
-    # still run and report on every pull request. `security` was already not a
-    # dependency, because a single vulnerability report used to skip the whole
-    # chain and hide unrelated regressions.
+    # Fail-fast gate: only the ~1 minute lint. The E2E and boot jobs chain off
+    # this binary, and also waiting for test and the ~11 minute E2E job only
+    # delayed them; those still run and report on every pull request.
+    # `security` is not a dependency either, because a single vulnerability
+    # report used to skip the whole chain and hide unrelated regressions.
+    needs: [lint]
     timeout-minutes: 20
     strategy:
       matrix:
@@ -1203,6 +1205,7 @@ jobs:
   linux-e2e:
     name: Linux E2E (Privileged)
     runs-on: ubuntu-latest
+    needs: [lint]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1289,6 +1292,7 @@ jobs:
   bfd-frr-interop:
     name: BFD FRR interop (${{ matrix.frr }})
     runs-on: ubuntu-latest
+    needs: [lint]
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1720,7 +1724,8 @@ jobs:
   check-iso:
     name: Cable Check ISO (BIOS, UEFI, Secure Boot)
     runs-on: ubuntu-latest
-    # No `needs`: this job builds its own ISO and does not use the build artifact.
+    # Only the lint gate: this job builds its own ISO, not from the build artifact.
+    needs: [lint]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
