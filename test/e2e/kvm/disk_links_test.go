@@ -69,13 +69,13 @@ func TestDiskLinksRootUUIDSurvivesDiskOrderQEMU(t *testing.T) {
 	buildRootVerifyInitramfs(t, verifyInitrd)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	boot, _ := exec.CommandContext(ctx, "qemu-system-x86_64",
+	boot, _ := exec.CommandContext(ctx, "qemu-system-x86_64", append([]string{
 		"-m", "512", "-nographic", "-no-reboot",
 		"-kernel", kernel, "-initrd", verifyInitrd,
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", extraDisk),
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", targetDisk),
-		"-append", runnerKernelCmdline+" root="+rootParam,
-	).CombinedOutput()
+		"-append", runnerKernelCmdline + " root=" + rootParam,
+	}, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)...).CombinedOutput()
 	if !strings.Contains(string(boot), "ROOT-VERIFY hostname="+diskLinksHostname) {
 		t.Fatalf("root=%s did not mount after the disk order changed. tail:\n%s", rootParam, tail(boot, 3000))
 	}

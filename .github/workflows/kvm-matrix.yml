@@ -692,7 +692,12 @@ jobs:
             exit 1
           fi
         env:
-          QEMU_EXTRA_ARGS: ${{ matrix.qemu_extra }}
+          # Guest root filesystems are assembled from runner binaries and
+          # shared libraries (busybox, kmod, ld-linux). On ubuntu-26.04 those
+          # are amd64v3 builds, so the guest CPU must offer x86-64-v3. The
+          # BOOTy binary's own baseline x86-64 compatibility is covered by the
+          # qemu64 KVM Boot Validation and UEFI ISO jobs in ci.yml.
+          QEMU_EXTRA_ARGS: -cpu max ${{ matrix.qemu_extra }}
           BOOTY_INITRAMFS: ${{ github.workspace }}/test-initramfs.cpio.gz
           BOOTY_KERNEL: ${{ github.workspace }}/vmlinuz
           BOOTY_FLAVOR_INITRAMFS: ${{ github.workspace }}/out-flavor/initramfs.cpio.zst

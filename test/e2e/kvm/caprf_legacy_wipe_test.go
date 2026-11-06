@@ -52,14 +52,14 @@ func testProvisionWipesAllDisks(t *testing.T, varsFor func(*fakeCAPRF) map[strin
 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
-	output, _ := exec.CommandContext(ctx, "qemu-system-x86_64",
+	output, _ := exec.CommandContext(ctx, "qemu-system-x86_64", append([]string{
 		"-m", "1024", "-nographic", "-no-reboot",
 		"-kernel", findKernel(t), "-initrd", initramfs,
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", targetDisk),
 		"-drive", fmt.Sprintf("file=%s,format=qcow2,if=virtio", otherDisk),
 		"-net", "nic,model=virtio,macaddr=52:54:00:12:34:56", "-net", "user",
-		"-append", runnerKernelCmdline+" net.ifnames=0",
-	).CombinedOutput()
+		"-append", runnerKernelCmdline + " net.ifnames=0",
+	}, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)...).CombinedOutput()
 	if ctx.Err() != nil {
 		t.Fatalf("QEMU timed out. tail:\n%s", tail(output, 4000))
 	}

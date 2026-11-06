@@ -26,11 +26,14 @@ runs:
           -o Dir::Etc::SourceList=/etc/apt/sources.list.d/ubuntu.sources
           -o Dir::Etc::SourceParts=-
           -o Acquire::Retries=3
+          -o Acquire::http::Timeout=30
+          -o Acquire::https::Timeout=30
+          -o DPkg::Lock::Timeout=300
         )
         # The static link takes crt*.o and libc.a from libc6-dev, and libgcc.a
         # and crtbeginT.o from the libgcc dev package of the default gcc.
         libgcc_pkg=$(dpkg -S "$(gcc -print-libgcc-file-name)" | cut -d: -f1)
-        sudo apt-get "${apt_opts[@]}" update -qq
+        sudo apt-get "${apt_opts[@]}" update
         sudo DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" install -y -qq \
           --reinstall --no-install-recommends libc6-dev "$libgcc_pkg"
         # Pin the ISA for cgo C code (runtime/cgo, net, os/user) instead of
