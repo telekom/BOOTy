@@ -11,6 +11,8 @@ Related documents:
 - [evpn-e2e-gap-analysis.md](evpn-e2e-gap-analysis.md): history of the GoBGP
   EVPN data-plane fixes and their e2e coverage.
 - [e2e-test-matrix.md](e2e-test-matrix.md): e2e suites and make targets.
+- [rfc-compliance.md](rfc-compliance.md): RFC compliance audit of BGP, BFD,
+  EVPN, VXLAN, LLDP, IPv6 RAs and DHCP, with the open deviations.
 
 ## Sequence
 
