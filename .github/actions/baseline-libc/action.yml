@@ -1,23 +1,24 @@
-name: Use baseline glibc for static builds
+name: Build static binaries for baseline x86-64
 description: >-
-  Reinstall libc6-dev and libgcc from the baseline amd64 archive. Ubuntu 26.04 runners
-  enable apt architecture variants, so the preinstalled C runtime is the
-  amd64v3 build, which uses AVX2. A BOOTy binary linked statically
-  against it dies with SIGILL on CPUs below x86-64-v3 (older servers,
-  hypervisors exposing a baseline CPU model, QEMU's default qemu64 CPU).
+  Ubuntu 26.04 runners enable the amd64v3 apt architecture variant. Its gcc
+  defaults to -march=x86-64-v3 and its libc.a and libgcc.a are built for
+  x86-64-v3, so a statically linked cgo binary uses AVX2 and dies with SIGILL
+  on older CPUs, on hypervisors exposing a baseline CPU model, and in QEMU's
+  default qemu64 guest. Link against the baseline static archives and compile
+  cgo C code for baseline x86-64.
 
 runs:
   using: composite
   steps:
-    - name: Reinstall baseline libc6-dev and libgcc
+    - name: Use baseline x86-64 C runtime and cgo flags
       shell: bash
       run: |
         set -euo pipefail
         [ "$(dpkg --print-architecture)" = amd64 ] || exit 0
         apt-config dump | grep -F 'APT::Architecture-Variants' || true
-        # The image lists the variants, so `-o APT::Architecture-Variants=`
-        # cannot clear them; a #clear directive can. Only refresh the Ubuntu
-        # archive, so optional third-party sources cannot fail this step.
+        # `-o APT::Architecture-Variants=` cannot clear a variant list, a
+        # #clear directive can. Only refresh the Ubuntu archive, so optional
+        # third-party sources cannot fail this step.
         conf="$RUNNER_TEMP/apt-no-variants.conf"
         printf '#clear APT::Architecture-Variants;\n' >"$conf"
         apt_opts=(
@@ -25,11 +26,14 @@ runs:
           -o Dir::Etc::SourceList=/etc/apt/sources.list.d/ubuntu.sources
           -o Dir::Etc::SourceParts=-
           -o Acquire::Retries=3
-          -o Debug::Acquire::Variants=true
         )
-        # Static links take crt*.o and libc.a from libc6-dev, and libgcc.a
+        # The static link takes crt*.o and libc.a from libc6-dev, and libgcc.a
         # and crtbeginT.o from the libgcc dev package of the default gcc.
         libgcc_pkg=$(dpkg -S "$(gcc -print-libgcc-file-name)" | cut -d: -f1)
         sudo apt-get "${apt_opts[@]}" update -qq
         sudo DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" install -y -qq \
           --reinstall --no-install-recommends libc6-dev "$libgcc_pkg"
+        # Pin the ISA for cgo C code (runtime/cgo, net, os/user) instead of
+        # relying on gcc's configured default. The flag is part of the Go build
+        # cache key, so objects cached by an x86-64-v3 compiler are not reused.
+        echo "CGO_CFLAGS=-O2 -g -march=x86-64 -mtune=generic" >>"$GITHUB_ENV"
