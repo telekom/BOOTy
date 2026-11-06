@@ -476,13 +476,13 @@ func writeArchiveFile(archivePath string, manifest *Manifest) error {
 		_ = out.Close()
 		return fmt.Errorf("secure crash archive: %w", err)
 	}
-	defer out.Close() //nolint:errcheck // best-effort close on error path
+	defer out.Close() //nolint:errcheck // best-effort close on error path; checked below on success
 
 	gz := gzip.NewWriter(out)
 	gz.ModTime = manifest.CreatedAt
-	defer gz.Close() //nolint:errcheck // close checked by caller through tar writes
+	defer gz.Close() //nolint:errcheck // best-effort close on error path; checked below on success
 	tw := tar.NewWriter(gz)
-	defer tw.Close() //nolint:errcheck // close checked by caller through tar writes
+	defer tw.Close() //nolint:errcheck // best-effort close on error path; checked below on success
 
 	if err := addJSON(tw, "manifest.json", manifest); err != nil {
 		return err
@@ -494,6 +494,17 @@ func writeArchiveFile(archivePath string, manifest *Manifest) error {
 		if err := addFile(tw, &manifest.Artifacts[i], filepath.Dir(archivePath)); err != nil {
 			slog.Warn("failed to add crash artifact", "path", manifest.Artifacts[i].SourcePath, "error", err)
 		}
+	}
+	// The tar and gzip trailers are only written on Close, and a failed
+	// flush means a truncated archive, so these errors must not be dropped.
+	if err := tw.Close(); err != nil {
+		return fmt.Errorf("finish crash archive tar: %w", err)
+	}
+	if err := gz.Close(); err != nil {
+		return fmt.Errorf("finish crash archive gzip: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close crash archive: %w", err)
 	}
 	return nil
 }

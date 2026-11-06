@@ -160,7 +160,11 @@ func wipeImageTarget(device string) {
 		slog.Warn("failed to open device for wipe", "device", device, "error", err)
 		return
 	}
-	defer f.Close() //nolint:errcheck // best-effort close
+	defer func() {
+		if err := f.Close(); err != nil {
+			slog.Warn("failed to close device after wipe", "device", device, "error", err)
+		}
+	}()
 	zeros := make([]byte, 1<<20)
 	if _, err := f.Write(zeros); err != nil {
 		slog.Warn("failed to wipe partition table", "device", device, "error", err)
