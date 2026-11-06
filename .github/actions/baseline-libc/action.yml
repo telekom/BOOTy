@@ -34,7 +34,9 @@ runs:
         # and crtbeginT.o from the libgcc dev package of the default gcc.
         libgcc_pkg=$(dpkg -S "$(gcc -print-libgcc-file-name)" | cut -d: -f1)
         sudo apt-get "${apt_opts[@]}" update
-        sudo DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" install -y -qq \
+        # needrestart would otherwise restart services such as the runner
+        # agent after libc packages change.
+        sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get "${apt_opts[@]}" install -y \
           --reinstall --no-install-recommends libc6-dev "$libgcc_pkg"
         # Pin the ISA for cgo C code (runtime/cgo, net, os/user) instead of
         # relying on gcc's configured default. The flag is part of the Go build

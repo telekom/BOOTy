@@ -268,7 +268,7 @@ func TestProvisionWithMultipleDisks(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", append(args, splitExtraArgs(envOrDefault("QEMU_EXTRA_ARGS", ""))...)...)
+	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", args...)
 	out, _ := cmd.CombinedOutput()
 	outStr := string(out)
 	t.Logf("Multi-disk provision tail:\n%s", tail(out, 3000))

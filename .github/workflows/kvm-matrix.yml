@@ -92,7 +92,10 @@ permissions:
 jobs:
   kvm-tests:
     name: KVM ${{ matrix.scenario }}
-    runs-on: ubuntu-latest
+    # Guests are assembled from runner binaries (busybox, kmod, ld-linux),
+    # which are x86-64-v3 builds on ubuntu-26.04 and trap in the guests.
+    # Follow-up: https://github.com/telekom/BOOTy/issues/881
+    runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_minutes || 75 }}
     strategy:
       matrix:
@@ -692,12 +695,7 @@ jobs:
             exit 1
           fi
         env:
-          # Guest root filesystems are assembled from runner binaries and
-          # shared libraries (busybox, kmod, ld-linux). On ubuntu-26.04 those
-          # are amd64v3 builds, so the guest CPU must offer x86-64-v3. The
-          # BOOTy binary's own baseline x86-64 compatibility is covered by the
-          # qemu64 KVM Boot Validation and UEFI ISO jobs in ci.yml.
-          QEMU_EXTRA_ARGS: -cpu max ${{ matrix.qemu_extra }}
+          QEMU_EXTRA_ARGS: ${{ matrix.qemu_extra }}
           BOOTY_INITRAMFS: ${{ github.workspace }}/test-initramfs.cpio.gz
           BOOTY_KERNEL: ${{ github.workspace }}/vmlinuz
           BOOTY_FLAVOR_INITRAMFS: ${{ github.workspace }}/out-flavor/initramfs.cpio.zst
