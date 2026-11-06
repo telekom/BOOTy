@@ -217,6 +217,7 @@ jobs:
           go-version: "1.27.2"
           cache: true
 
+      - uses: ./.github/actions/baseline-libc
       - name: Build
         env:
           GOOS: linux
@@ -540,6 +541,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y qemu-system-x86 cpio zstd busybox-static
 
+      - uses: ./.github/actions/baseline-libc
       - name: Build initramfs image
         run: |
           set -euo pipefail
@@ -981,6 +983,7 @@ jobs:
             grub-common mtools cpio zstd busybox-static dosfstools \
             isolinux syslinux-common swtpm swtpm-tools
 
+      - uses: ./.github/actions/baseline-libc
       - name: Build initramfs image
         run: |
           set -euo pipefail

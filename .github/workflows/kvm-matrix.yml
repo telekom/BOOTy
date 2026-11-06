@@ -547,6 +547,7 @@ jobs:
         if: matrix.setup != ''
         run: ${{ matrix.setup }}
 
+      - uses: ./.github/actions/baseline-libc
       - name: Build BOOTy initramfs
         run: |
           set -euo pipefail

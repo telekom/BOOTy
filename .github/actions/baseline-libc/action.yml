@@ -1,0 +1,26 @@
+name: Use baseline glibc for static builds
+description: >-
+  Reinstall libc6-dev from the baseline amd64 archive. Ubuntu 26.04 runners
+  enable apt architecture variants, so the preinstalled libc6-dev is the
+  amd64v3 build and its libc.a uses AVX2. A BOOTy binary linked statically
+  against it dies with SIGILL on CPUs below x86-64-v3 (older servers,
+  hypervisors exposing a baseline CPU model, QEMU's default qemu64 CPU).
+
+runs:
+  using: composite
+  steps:
+    - name: Reinstall baseline libc6-dev
+      shell: bash
+      run: |
+        set -euo pipefail
+        [ "$(dpkg --print-architecture)" = amd64 ] || exit 0
+        # Disable variants for these calls and only refresh the Ubuntu
+        # archive, so optional third-party sources on the runner cannot fail it.
+        apt_opts=(
+          -o APT::Architecture-Variants=
+          -o Dir::Etc::SourceList=/etc/apt/sources.list.d/ubuntu.sources
+          -o Dir::Etc::SourceParts=-
+          -o Acquire::Retries=3
+        )
+        sudo apt-get "${apt_opts[@]}" update -qq
+        sudo DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" install -y -qq --reinstall --no-install-recommends libc6-dev
