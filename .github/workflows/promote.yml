@@ -26,8 +26,10 @@ jobs:
     if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
     steps:
       - name: Reject promotion from non-default ref
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          echo "::error::Release promotion must be dispatched from refs/heads/${{ github.event.repository.default_branch }}; got ${GITHUB_REF}"
+          echo "::error::Release promotion must be dispatched from refs/heads/${DEFAULT_BRANCH}; got ${GITHUB_REF}"
           exit 1
 
   promote:
@@ -112,10 +114,10 @@ jobs:
       - name: Create promoted tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          NEW_TAG="${{ steps.tag.outputs.tag }}"
           if git rev-parse --verify --quiet "refs/tags/${NEW_TAG}" >/dev/null; then
             echo "::error::Tag $NEW_TAG already exists"
             exit 1
@@ -131,10 +133,12 @@ jobs:
             git push "https://github.com/${GITHUB_REPOSITORY}.git" "$NEW_TAG"
 
       - name: Summary
+        env:
+          NEW_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           {
             echo "## Promotion Complete"
             echo "- Source: \`$SOURCE_VERSION\`"
-            echo "- Target: \`${{ steps.tag.outputs.tag }}\` ($TARGET_CHANNEL)"
+            echo "- Target: \`${NEW_TAG}\` ($TARGET_CHANNEL)"
             echo "- The release-v2 workflow will now build artifacts for this tag."
           } >> "$GITHUB_STEP_SUMMARY"
