@@ -13,9 +13,10 @@ import (
 
 // TestRFC5880PacketFields is the evidence of docs/rfc-compliance.md for
 // the fields RFC 5880 section 6.8.7 fixes in every transmitted packet:
-// version 1, C, A, D and M clear, Length 24 without authentication, Required
-// Min Echo RX Interval zero without echo support, and the slow transmit
-// interval of at least one second before Up (section 6.8.3).
+// version 1, C, A, D and M clear, Length 24 without authentication, and the
+// slow transmit interval of at least one second before Up (section 6.8.3). Required Min
+// Echo RX is 50 ms like FRR bfdd (#710), not the zero of section 4.1 for a
+// system that does not loop echo packets back: a documented deviation.
 func TestRFC5880PacketFields(t *testing.T) {
 	s := NewSession(Timers{DesiredMinTx: 300 * time.Millisecond, RequiredMinRx: 300 * time.Millisecond, DetectMult: 3}, 7)
 	p := s.Packet()
@@ -29,8 +30,8 @@ func TestRFC5880PacketFields(t *testing.T) {
 	if b[3] != 24 || len(b) != 24 {
 		t.Errorf("length = %d (%d bytes), want 24", b[3], len(b))
 	}
-	if p.RequiredMinEchoRxUS != 0 {
-		t.Errorf("Required Min Echo RX = %d, want 0 (no echo)", p.RequiredMinEchoRxUS)
+	if p.RequiredMinEchoRxUS != 50_000 {
+		t.Errorf("Required Min Echo RX = %d us, want 50000 (FRR bfdd default)", p.RequiredMinEchoRxUS)
 	}
 	if p.DesiredMinTxUS < 1_000_000 {
 		t.Errorf("Desired Min TX before Up = %d us, want at least 1 s", p.DesiredMinTxUS)

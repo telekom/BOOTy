@@ -48,7 +48,28 @@ func wirePath(t *testing.T, nlri *apipb.NLRI, pattrs []*apipb.Attribute) (*bgp.E
 	return evpn, attrs
 }
 
-func wireRD() *apipb.RouteDistinguisher { return buildRouteDistinguisher(wireASN, wireVNI) }
+// wireRD is FRR's automatic RD <router-id>:<n> that BOOTy derives for the
+// bm4x template (n = 2), see docs/networking.md "Routes BOOTy originates".
+func wireRD(t *testing.T) *apipb.RouteDistinguisher {
+	t.Helper()
+	rd, err := parseRouteDistinguisher(wireRouterID + ":2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rd
+}
+
+// checkWireRD checks the 8-octet RD at the start of an EVPN NLRI body:
+// RFC 4364 section 4.2 type 1 (IPv4 address administrator, 2-octet
+// assigned number), here the router ID and 2, unique per host.
+func checkWireRD(t *testing.T, body []byte) {
+	t.Helper()
+	want := append([]byte{0, 1}, net.ParseIP(wireRouterID).To4()...)
+	want = append(want, 0, 2)
+	if !bytes.Equal(body[:8], want) {
+		t.Errorf("RD = %x, want %x (type 1, %s:2)", body[:8], want, wireRouterID)
+	}
+}
 
 // wireLabel is the 3-octet label field that carries the VNI: RFC 8365
 // section 5.1.3 puts the whole 24-bit VNI in it, not a 20-bit MPLS label.
@@ -123,7 +144,7 @@ func mpReachNextHop(t *testing.T, attrs []bgp.PathAttributeInterface) net.IP {
 // extended communities of RFC 9135 section 8.1 and RFC 9012 (VXLAN tunnel
 // type 8).
 func TestRFCWireType5(t *testing.T) {
-	nlri, err := buildEVPNType5NLRI(wireRD(), "198.51.100.10/32", type5DirectGateway, wireVNI)
+	nlri, err := buildEVPNType5NLRI(wireRD(t), "198.51.100.10/32", type5DirectGateway, wireVNI)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +162,7 @@ func TestRFCWireType5(t *testing.T) {
 		t.Fatalf("type/length = %d/%d (%d bytes), want 5/34", b[0], b[1], len(b))
 	}
 	body := b[2:]
+	checkWireRD(t, body)
 	esi, etag := body[8:18], body[18:22]
 	if !bytes.Equal(esi, make([]byte, 10)) {
 		t.Errorf("ESI = %x, want all zero (no ESI overlay index)", esi)
@@ -199,7 +221,7 @@ func TestRFCWireType5(t *testing.T) {
 // ingress replication, Leaf Information Required zero, tunnel identifier
 // the VTEP, and the VNI as 24 bits in the label field.
 func TestRFCWireType3(t *testing.T) {
-	nlri := buildEVPNType3NLRI(wireRD(), wireRouterID)
+	nlri := buildEVPNType3NLRI(wireRD(t), wireRouterID)
 	pattrs, err := buildType3PathAttrs(nlri, wireRouterID, wireASN, wireVNI, "")
 	if err != nil {
 		t.Fatal(err)
@@ -214,6 +236,7 @@ func TestRFCWireType3(t *testing.T) {
 		t.Fatalf("type/length = %d/%d, want 3/17", b[0], b[1])
 	}
 	body := b[2:]
+	checkWireRD(t, body)
 	if !bytes.Equal(body[8:12], make([]byte, 4)) {
 		t.Errorf("Ethernet Tag = %x, want 0 (RFC 8365 section 5.1.3, VLAN-based service)", body[8:12])
 	}
@@ -255,7 +278,7 @@ func TestRFCWireType3(t *testing.T) {
 // 37 with one label, no Label2 for asymmetric IRB), the VNI in Label1 and
 // the VXLAN encapsulation community of RFC 8365 section 5.1.3 (#746).
 func TestRFCWireType2(t *testing.T) {
-	nlri := buildEVPNType2NLRI(wireRD(), wireMAC, "198.51.100.10", wireVNI)
+	nlri := buildEVPNType2NLRI(wireRD(t), wireMAC, "198.51.100.10", wireVNI)
 	pattrs, err := buildType2PathAttrs(nlri, wireRouterID, wireASN, wireVNI, "")
 	if err != nil {
 		t.Fatal(err)
@@ -269,6 +292,7 @@ func TestRFCWireType2(t *testing.T) {
 		t.Fatalf("type/length = %d/%d, want 2/37 (RFC 9135 section 6.1)", b[0], b[1])
 	}
 	body := b[2:]
+	checkWireRD(t, body)
 	if !bytes.Equal(body[8:18], make([]byte, 10)) || !bytes.Equal(body[18:22], make([]byte, 4)) {
 		t.Errorf("ESI/Ethernet Tag = %x/%x, want zero (single-homed, VLAN-based service)", body[8:18], body[18:22])
 	}
