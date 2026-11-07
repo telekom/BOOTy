@@ -1,212 +1,111 @@
-# Proposal: Split FRR, qemu-img and ipmitool out of the Main Ramdisk
+# Decision record: Split optional payloads out of the main ramdisk
 
 ## Status
 
-Proposal. Nothing is implemented. The user approves an option before any
-implementation starts.
+Implemented: option 2 (a second initrd), #782. FRR is the only split
+payload today, see [Since then](#since-then).
 
-## Priority
+## Context
 
-P2. The gain is boot time over slow virtual media and RAM on small hosts;
-no function is missing today.
+At the time of the decision, three tool sets in the default ramdisk served
+only some runs: FRR, `qemu-img` and `ipmitool`. They cost boot time over
+slow virtual media and RAM on small hosts. No function was missing.
 
-## Summary
-
-Three tool sets in the default ramdisk serve only some runs:
+Sizes at the time of the decision (historical, from
+[proposal-artifact-size.md](proposal-artifact-size.md), `zstd -19 --long`,
+linux/amd64):
 
 | Payload | Needed when | zstd size | Unpacked (RAM) |
 |---|---|---:|---:|
-| FRR (`bgpd`, `zebra`, `bfdd`, `vtysh`, `watchfrr`, `libfrr`) | FRR network mode (`asn_server` with `underlay_ip` or `underlay_subnet`) | 4,245,549 | 26,752,616 |
-| `qemu-img` with glib and gnutls | a qcow2 image (`pkg/image`, checked before the disk wipe) | 2,303,788 | 7,037,160 |
+| FRR (`bgpd`, `zebra`, `bfdd`, `vtysh`, `watchfrr`, `libfrr`) | FRR network mode | 4,245,549 | 26,752,616 |
+| `qemu-img` with glib and gnutls | a qcow2 image | 2,303,788 | 7,037,160 |
 | `ipmitool` with libfreeipmi | `WATCHDOG_IPMI_FALLBACK=true` without a watchdog device | 1,286,081 | 6,444,512 |
 | **Total** | | **7,835,418** | **40,234,288** |
 
-Sizes from [proposal-artifact-size.md](proposal-artifact-size.md)
-(`zstd -19 --long`, linux/amd64). #757 packs with `-22` and groups files
-by kind, so the real numbers differ by a few percent. An implementation
-measures them again.
+The boot time model is in
+[size-optimization.md](size-optimization.md#boot-time): a BMC that reads
+blocks reads only the files it boots, and a BMC that uploads first (for
+example Lenovo XCC "mount from web") copies the whole ISO. At an assumed,
+not measured, 2 to 10 MB/s, 7.8 MB is 0.8 to 3.9 s per boot.
 
-The `gobgp` flavour already has no FRR. It keeps `qemu-img` and
-`ipmitool`. The `slim` flavour has none of the three, and it has no BGP.
+## Options considered
 
-This proposal compares three ways to deliver the payloads only when a
-run needs them, and recommends one.
+1. **One ISO flavour per mode** (for example `gobgp-lean`, `frr-lean`).
+   The bytes leave the ISO on every BMC kind, but the flavour count
+   doubles (build time, the KVM matrix, release artifacts, digest pins),
+   and CAPRF must map each machine to a flavour.
+2. **A second initrd that the boot loader loads only for some modes.**
+   One build makes a base archive plus one cpio per payload. The kernel
+   unpacks every initrd that the boot loader passes, one after the other.
+   CAPRF already passes `deploy.cpio` as a second initrd
+   ([agent-fast-cycle.md](agent-fast-cycle.md)), so it can add only the
+   payloads that the vars need. One build and one test matrix; Secure Boot
+   is unchanged, because no stage verifies the initrd in any option.
+3. **Fetch the payload over HTTP after the network is up.** FRR cannot
+   use this, because FRR mode needs FRR to bring the network up. BOOTy
+   would also have to verify code that was not on the boot medium
+   (pinned checksum and signature), and air-gapped sites need a mirror.
 
-## Boot time model
+## Decision
 
-From [size-optimization.md](size-optimization.md#boot-time). There are
-two kinds of BMC:
+Option 2. It moves FRR, which option 3 cannot; it reuses a mechanism that
+CAPRF already runs; it keeps one build, unlike option 1; and it adds no
+new trust path, unlike option 3.
 
-- **Block read** (iDRAC remote file share, iLO, Supermicro over HTTP, NFS
-  or CIFS): the firmware reads only the files it boots. Time = bytes read
-  / `B`.
-- **Upload first** (for example Lenovo XCC "mount from web"): the whole
-  ISO goes to the BMC before the boot. Time = ISO bytes / `B_up`, plus a
-  fast local read.
+Two parts were needed in every option and came with it:
 
-**Assumption, not measured:** `B` and `B_up` are 2 to 10 MB/s. In-kernel
-decompression of 7.8 MB of zstd takes well under 0.1 s, so it is left out.
+- a preflight error when a run needs a missing payload, and
+- a build ID in each payload manifest, checked at start.
 
-Time saved per boot when a run does not need a payload:
+## What #782 and #781 built
 
-| Payload left out | Bytes | 2 MB/s | 5 MB/s | 10 MB/s |
-|---|---:|---:|---:|---:|
-| all three | 7.8 MB | 3.9 s | 1.6 s | 0.8 s |
-| FRR only | 4.2 MB | 2.1 s | 0.85 s | 0.4 s |
-| qemu-img and ipmitool | 3.6 MB | 1.8 s | 0.7 s | 0.4 s |
+- `initrd.Dockerfile --target split` writes `base.cpio.zst`,
+  `frr.cpio.zst`, the `vmlinuz` of the same build and `SHA256SUMS`
+  (`hack/split-initramfs.sh`). The base has no payload executables and
+  none of the libraries that only they load. The other targets are
+  unchanged: the default, gobgp and slim ramdisks and the ISOs still ship
+  everything built in.
+- Each payload carries `/etc/booty/payloads/<name>` with `build=` and
+  `arch=`. The base lists the payloads it left out in
+  `/etc/booty/payloads/split` (`pkg/payload`).
+- `BOOTY-PAY-001`: the vars need FRR and the boot loader did not load
+  `frr.cpio.zst`. It fails before the network setup.
+  `BOOTY-PAY-002`: a payload is from another build or architecture
+  ([failure-codes.md](failure-codes.md)).
+- PR artifacts (`booty-pr-split`) and releases (`split-<arch>-*`) publish
+  the archives. `test/e2e/kvm/split_ramdisk_test.go` boots base + frr +
+  vars and base + vars.
+- How to load the archives is in the [README](../README.md) (`split`
+  target).
 
-Whether a saving applies depends on the option and on the BMC kind. The
-"Boot time" row of each option says which bytes leave the boot path.
+## Since then
 
-## Option 1: one ISO flavour per mode
+#815 converts qcow2 to raw inside BOOTy, and #816 drives the BMC watchdog
+over `/dev/ipmi0`. The ramdisk no longer ships `qemu-img` or `ipmitool` in
+any flavour, so they are no longer payloads. FRR is the only split payload.
 
-Build more flavours. For example, `gobgp-lean`: GoBGP without FRR,
-`qemu-img` or `ipmitool`. Or `frr-lean`: FRR without `qemu-img` or
-`ipmitool`. CAPRF selects the flavour per machine.
+Sizes in v0.2.0-rc.19 (release assets):
 
-- **Boot time:** the bytes are not in the ISO at all, so the saving above
-  applies on both BMC kinds. `gobgp` against the default flavour already
-  saves the FRR row today.
-- **Secure Boot:** no change. shim and GRUB verify the kernel; no stage
-  verifies the initrd, in any option. Every flavour uses the same signed
-  kernel.
-- **CAPRF contract:** CAPRF must map each machine to a flavour from its
-  vars (network mode, image format, watchdog fallback) and know every
-  flavour's artifact. Each new flavour adds a release artifact and a
-  digest pin.
-- **Failure modes and fallback:**
-  - A qcow2 image on a flavour without `qemu-img` fails before the disk
-    wipe (`ValidateStreamingPrerequisites`), so no data is lost.
-  - FRR mode on a flavour without FRR falls back to DHCP (networking.md,
-    stack order). On an EVPN-only fabric, DHCP then fails late and the
-    cause is unclear. This needs a new preflight error: "FRR mode
-    requested, FRR not in this ramdisk".
-  - `WATCHDOG_IPMI_FALLBACK` without `ipmitool` leaves the host without a
-    watchdog. This must also fail or warn with a code.
-  - The fallback is that CAPRF boots the full flavour again. That is one
-    more cold cycle.
-- **Ops impact:** the flavour count doubles (build time, the KVM matrix,
-  release size, docs). Operators must know which flavour a host got, and
-  each flavour is a variant to debug.
+| Asset | amd64 | arm64 |
+|---|---:|---:|
+| `default` ramdisk (FRR built in) | 38,446,564 | 35,507,504 |
+| `split` `base.cpio.zst` | 33,693,932 | 30,806,631 |
+| `split` `frr.cpio.zst` | 4,827,857 | 4,756,433 |
+| `gobgp` ramdisk (no FRR) | 33,676,587 | 30,806,237 |
 
-## Option 2: a second initrd that the boot loader loads only for some modes
+A run without FRR on the split build reads 4.75 MB (amd64) less than on
+the default ramdisk. The base is about the size of the gobgp flavour, as
+expected.
 
-The base ramdisk ships without the payloads. Each payload is its own cpio
-(`frr.cpio.zst`, `qemu-img.cpio.zst`, `ipmitool.cpio.zst`) from the same
-build. The kernel unpacks every initrd that the boot loader passes, one
-after the other:
+## Open questions, answered
 
-- ISOLINUX: `initrd=/boot/initrd.img,/boot/frr.cpio.zst`
-- GRUB: `initrd /boot/initrd.img /boot/frr.cpio.zst`
-- iPXE: one `initrd` line per file
-
-CAPRF already uses this. Its ISO builder adds `deploy.cpio` (the
-`/deploy` vars) as a second initrd (agent-fast-cycle.md, "Running from
-RAM"). It writes the boot loader config per machine, so it can add only
-the payloads that the vars need.
-
-- **Boot time:**
-  - Block read: only the listed files are read, so the saving applies even
-    when the ISO holds every payload.
-  - Upload first: the saving applies only when CAPRF leaves the unused
-    payload files out of the per-machine ISO. CAPRF builds a per-machine
-    ISO already, so this is a file list, not a new step. The published
-    all-in-one ISO does not gain on these BMCs.
-- **Secure Boot:** no change. Like the main initrd, the payload cpios are
-  not verified by shim or GRUB, and the kernel lockdown does not cover
-  userspace binaries. The trust is the same as today: whoever can change
-  the ISO can change the initrd.
-- **CAPRF contract:**
-  - The release publishes the base initrd plus one cpio per payload, with
-    digests.
-  - The CAPRF ISO builder adds the payload initrds from the vars, with the
-    same mapping as option 1 but per file, not per flavour.
-  - The published BOOTy ISO lists all payloads, so it works without CAPRF.
-- **Failure modes and fallback:**
-  - A missing payload has the failure modes of option 1, with the same
-    preflight errors.
-  - A payload from another build has an ABI mismatch with the base
-    libraries. Each payload carries a manifest with the build ID; BOOTy
-    checks it at start and fails with a code on a mismatch, before the
-    network setup.
-  - The fallback is that CAPRF rebuilds the ISO with every payload. This
-    is also the safe default for unknown vars.
-- **Ops impact:**
-  - One build and one test matrix: the KVM tests boot base plus all
-    payloads, and a few cases boot without.
-  - The release gains three small artifacts.
-  - Debugging is the same: `ls /deploy`, and the manifest is in the debug
-    dump.
-
-## Option 3: fetch the payload over HTTP after the network is up
-
-The base ramdisk ships without the payloads. When a run needs one, BOOTy
-downloads it from CAPRF or the image server, checks it and unpacks it.
-
-- **FRR cannot use this option.** FRR mode needs FRR to bring the network
-  up, so FRR would stay in the base. Only `qemu-img` and `ipmitool` (3.6
-  MB) move.
-- **Boot time:** the saving for 3.6 MB applies on both BMC kinds. The
-  download goes over the data network, at about 100 MB/s or more, which
-  takes well under 0.1 s. It does not go over virtual media.
-- **Secure Boot:** BOOTy runs code that was not on the boot medium, so it
-  must check the code itself:
-  - a SHA-256 per payload, pinned in the BOOTy build;
-  - and a detached signature with a key embedded in BOOTy (`gpgv` is
-    already in the ramdisk).
-  - Lockdown does not help here. Without the pinned checksum, the server
-    could inject code.
-- **CAPRF contract:** a new var for the payload base URL (or a fixed path
-  next to the image), and CAPRF or the artifact mirror serves the
-  payloads of every BOOTy release in use.
-- **Failure modes and fallback:**
-  - The server cannot be reached, or a proxy blocks it. BOOTy retries,
-    then fails with a code before the disk wipe.
-  - A wrong checksum or signature fails closed with a code.
-  - The IPMI watchdog fallback is armed before the network is up today. It
-    would be armed only after the download, so the early boot has no
-    watchdog.
-  - Air-gapped sites need a mirror. There is no fallback without one.
-- **Ops impact:** a new artifact host per site, versioned with the
-  ramdisk, plus the mirror and proxy setup and one more download per run
-  to monitor.
-
-## Comparison
-
-| | Option 1: flavours | Option 2: second initrd | Option 3: HTTP fetch |
-|---|---|---|---|
-| Bytes off the boot path | up to 7.8 MB | up to 7.8 MB | 3.6 MB (FRR stays) |
-| Upload-first BMC (XCC) | gains | gains when CAPRF omits unused files | gains |
-| Secure Boot | no change | no change | new: checksum and signature in BOOTy |
-| CAPRF change | flavour mapping, more artifacts | payload list in the ISO builder | payload URL, hosting |
-| Wrong selection | full extra cycle | rebuild ISO, full extra cycle | none, the download is per run |
-| New failure mode | none | build mismatch (manifest check) | network, proxy, mirror |
-| Build and test cost | doubles | small | small |
-
-## Recommendation
-
-Option 2: one build, a base initrd and one cpio per payload, selected by
-the CAPRF ISO builder from the vars.
-
-- It moves all 7.8 MB, including FRR, which option 3 cannot.
-- It uses a mechanism that CAPRF already runs for `deploy.cpio`.
-- It keeps one build and one test matrix, unlike option 1.
-- It adds no new trust path for Secure Boot, unlike option 3.
-
-Two parts are needed in every option and should come first:
-
-1. Preflight errors with codes when a run needs a missing tool: FRR mode
-   without FRR, qcow2 without `qemu-img` (exists), the IPMI watchdog
-   fallback without `ipmitool`.
-2. A build ID in each payload manifest, checked at start.
-
-Open questions before an implementation:
-
-- Which flavour and network mode does production use per site? If it is
-  only GoBGP, the `gobgp` flavour already removes FRR, and only 3.6 MB
-  remain to split.
-- How many production hosts use qcow2 images or the IPMI watchdog
-  fallback? If none do, dropping `qemu-img` and `ipmitool` from one
-  production flavour could be enough.
-- Which BMCs in production upload the whole ISO first? Their share
-  decides how much the CAPRF file list matters.
+- *Is GoBGP the only production mode, so that the gobgp flavour already
+  removes FRR?* The split still pays off for any site that runs both modes
+  from one build. Which mode each site runs is a CAPRF deployment choice
+  and not recorded here.
+- *How many hosts use qcow2 or the IPMI watchdog fallback?* No longer
+  relevant: #815 and #816 removed the tools, and both functions work
+  without them.
+- *Which BMCs upload the whole ISO first?* Not measured. On those BMCs the
+  split saves time only when the ISO leaves out `frr.cpio.zst`; the
+  published `iso` target still has FRR built in.
