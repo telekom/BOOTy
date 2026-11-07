@@ -12,10 +12,10 @@ release; older releases are not patched, so upgrade to the latest release.
 **Do not** open a public GitHub issue, pull request, or discussion for
 security vulnerabilities.
 
-Report suspected vulnerabilities privately by email to
-[opensource@telekom.de](mailto:opensource@telekom.de) with "BOOTy security" in
-the subject. GitHub private vulnerability reporting is not enabled for this
-repository.
+Report suspected vulnerabilities privately through GitHub's
+[private vulnerability reporting](https://github.com/telekom/BOOTy/security/advisories/new),
+or by email to [opensource@telekom.de](mailto:opensource@telekom.de) with
+"BOOTy security" in the subject.
 
 ## What to Include
 
