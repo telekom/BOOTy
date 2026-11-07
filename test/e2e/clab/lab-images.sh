@@ -13,7 +13,9 @@
 booty_lab_images_export() {
 	local dir lines line
 	dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/labimages"
+	# Strip CR like the Go reader, which splits on any whitespace.
 	lines=$(awk '
+		{ sub(/\r$/, "") }
 		/^FROM / {
 			if (NF != 4 || toupper($3) != "AS" || $2 !~ /@sha256:/) {
 				printf "%s:%d: want FROM <image>:<tag>@sha256:<digest> AS <stage>\n", FILENAME, FNR > "/dev/stderr"
@@ -28,7 +30,7 @@ booty_lab_images_export() {
 		END { if (bad || n == 0) exit 1 }
 	' "$dir/Dockerfile" "$dir"/*/Dockerfile) || return 1
 	while IFS= read -r line; do
-		export "${line?}"
+		export "${line?}" || return 1
 	done <<<"$lines"
 }
 
