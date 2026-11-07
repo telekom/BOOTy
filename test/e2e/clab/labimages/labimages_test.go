@@ -61,7 +61,7 @@ func TestShellHelperMatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command("bash", "../lab-images.sh", "env").Output()
+	out, err := exec.CommandContext(t.Context(), "bash", "../lab-images.sh", "env").Output()
 	if err != nil {
 		t.Fatalf("lab-images.sh: %v", err)
 	}
