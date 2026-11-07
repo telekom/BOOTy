@@ -1137,18 +1137,27 @@ Results (CAPRF jobs, all `success`):
 CAPRF !292 to !315 are closed: !292 moved into !291, and the others were
 runs that pin a BOOTy build, not meant to merge. In the !303 pipeline the
 L2 job `e2e-kindmetal-booty` failed (407660711); the cause is not recorded
-here, and it passes in the !315 pipeline.
+here, and it passes in the !315 pipeline. In the !315 pipeline 410563941
+is the retry of 410510528, which the runner lost (`remote command exited
+without exit status`), not a test failure.
 
 The parity runs found the route distinguisher, MED, BFD echo RX, the
 capability set, the unnumbered session that did not come back after a
 60 s leaf outage, and the BFD flap after a recovery. #697, #703 and #710
 fixed them; see [Routes BOOTy originates](#routes-booty-originates),
 [BGP capabilities and LLDP](#bgp-capabilities-and-lldp) and
-[BGP sessions](#bgp-sessions). The differences that remain are the
-deviation table in [BGP capabilities and LLDP](#bgp-capabilities-and-lldp)
-(dynamic capability, graceful restart R bit, long-lived graceful restart
-tuples, software version) and BOOTy's own additions: LLDP receive, the
-shutdown LLDPDU and the firmware LLDP agent switch.
+[BGP sessions](#bgp-sessions). The `parity-allowlist.yaml` of the !315
+run still accepts two rows of the deviation table in
+[BGP capabilities and LLDP](#bgp-capabilities-and-lldp), the graceful
+restart R bit and the software version; dynamic capability is no
+difference here, because FRR does not send it with `frr defaults
+traditional`. It also accepts the neighbor discovery that goes with BOOTy
+leaving the first connect to the leaf (`BGP_CONNECT_AT_ONCE` off, see
+[configuration.md](configuration.md)), and entries that change from run to
+run (the uplink that ECMP picks for a multihop session, the Router flag in
+the leaf's neighbor cache). BOOTy also adds what the legacy ramdisk does
+not have: LLDP receive, the shutdown LLDPDU and the firmware LLDP agent
+switch.
 
 ## GoBGP peer modes
 
