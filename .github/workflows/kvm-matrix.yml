@@ -716,7 +716,9 @@ jobs:
             exit 1
           fi
           if [ "${{ matrix.privileged }}" = "true" ] || [ "${{ matrix.scenario }}" = "luks-verify" ]; then
-            test_cmd=(sudo -E env "PATH=$PATH:/usr/sbin:/sbin" go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -count=1 -v -timeout ${{ matrix.go_timeout || '15m' }} ./test/e2e/kvm/...)
+            # sudo-rs (ubuntu-26.04) ignores -E, so pass the environment explicitly.
+            mapfile -d '' runner_env < <(env -0)
+            test_cmd=(sudo env "${runner_env[@]}" "PATH=$PATH:/usr/sbin:/sbin" go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -count=1 -v -timeout ${{ matrix.go_timeout || '15m' }} ./test/e2e/kvm/...)
           else
             test_cmd=(go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -count=1 -v -timeout ${{ matrix.go_timeout || '15m' }} ./test/e2e/kvm/...)
           fi
