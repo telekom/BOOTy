@@ -28,12 +28,12 @@ updates:
       - /
       - /test/e2e/clab
       - /test/e2e/clab/vrnetlab
-      - /test/e2e/assets/busybox
       # Lab images of the containerlab topologies, never built. Own directories
       # so their FROM lines do not merge with same-named images elsewhere:
       # test/e2e/clab/labimages/Dockerfile explains why.
       - /test/e2e/clab/labimages
       - /test/e2e/clab/labimages/frr-type5
+      - /test/e2e/assets/busybox
     schedule:
       interval: daily
     open-pull-requests-limit: 10
