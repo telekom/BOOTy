@@ -462,6 +462,8 @@ func TestSecureBootEnforcementReachesInit(t *testing.T) {
 		args = append(args, "-drive", "if=pflash,format=raw,file="+varsCopy)
 	}
 
+	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
+
 	out := runQEMUSmoke(t, args, 2*time.Minute, "secureboot-enforcement", false)
 	outStr := string(out)
 
@@ -527,6 +529,8 @@ func TestLUKSEncryptionDetection(t *testing.T) {
 		"-append", runnerKernelCmdline,
 	}
 
+	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
+
 	out := runQEMUSmoke(t, args, 2*time.Minute, "luks-detection", true)
 	outStr := string(out)
 	t.Logf("LUKS detection output tail:\n%s", tail(out, 2000))
@@ -591,6 +595,8 @@ func TestTPMDetectionAndPCRRead(t *testing.T) {
 		"-initrd", initramfs,
 		"-append", runnerKernelCmdline,
 	}
+
+	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
 
 	out := runQEMUSmoke(t, args, 2*time.Minute, "tpm-detection", true)
 	outStr := string(out)
@@ -763,13 +769,13 @@ func TestFirmwareCollectionInQEMU(t *testing.T) {
 	kernel := findKernel(t)
 	requireKVMAssets(t, initramfs, kernel)
 
-	out := runQEMUSmoke(t, []string{
+	out := runQEMUSmoke(t, append([]string{
 		"-m", "512", "-nographic", "-no-reboot",
 		"-kernel", kernel,
 		"-initrd", initramfs,
 		"-append", runnerKernelCmdline,
 		"-smbios", "type=0,vendor=TestVendor,version=1.2.3",
-	}, 2*time.Minute, "firmware-collection", true)
+	}, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...), 2*time.Minute, "firmware-collection", true)
 
 	outStr := string(out)
 	t.Logf("Firmware output tail:\n%s", tail(out, 2000))
