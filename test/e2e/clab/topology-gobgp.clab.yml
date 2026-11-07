@@ -120,7 +120,7 @@ topology:
 
     nginx:
       kind: linux
-      image: nginx:alpine
+      image: nginx:1.31.8-alpine
       binds:
         - nginx.conf:/etc/nginx/nginx.conf:ro
         - html:/usr/share/nginx/html:ro
@@ -131,7 +131,7 @@ topology:
 
     caprf-mock:
       kind: linux
-      image: nginx:alpine
+      image: nginx:1.31.8-alpine
       binds:
         - caprf-mock.conf:/etc/nginx/nginx.conf:ro
         - images:/srv/images:ro

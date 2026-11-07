@@ -87,7 +87,7 @@ topology:
 
     nginx:
       kind: linux
-      image: nginx:alpine
+      image: nginx:1.31.8-alpine
       cmd: sh -c "rm -f /var/log/nginx/access.log && touch /var/log/nginx/access.log && nginx -g 'daemon off;'"
       binds:
         - nginx.conf:/etc/nginx/nginx.conf:ro
@@ -99,7 +99,7 @@ topology:
 
     caprf-mock:
       kind: linux
-      image: nginx:alpine
+      image: nginx:1.31.8-alpine
       cmd: sh -c "rm -f /var/log/nginx/access.log && touch /var/log/nginx/access.log && nginx -g 'daemon off;'"
       binds:
         - caprf-mock.conf:/etc/nginx/nginx.conf:ro
