@@ -245,7 +245,7 @@ func boundDHCPv6(t *testing.T) (*dhcp6Stub, *DHCPMode, *dhcp6.Lease) {
 }
 
 // The address goes before Stop sends the RELEASE: the client must stop
-// using it when the RELEASE starts (RFC 8415 18.2.7).
+// using it before the Release exchange begins (RFC 8415 18.2.7).
 func TestDHCPv6DropsAddressBeforeRelease(t *testing.T) {
 	s, d, _ := boundDHCPv6(t)
 	var deletedAtStop []string
@@ -264,6 +264,21 @@ func TestDHCPv6IgnoresLeaseWhileStopping(t *testing.T) {
 	d.stop6(1, false)
 	if len(s.added) != 1 || !slices.Equal(s.deleted, []string{"fd00:10::1a4/128"}) {
 		t.Fatalf("added %d, deleted %v: want the late lease ignored", len(s.added), s.deleted)
+	}
+}
+
+// The callbacks of a stopped client leave the state of the next client
+// alone: a late expiry does not remove its address, a late lease does not
+// add the released one.
+func TestDHCPv6OldClientLeavesNextAlone(t *testing.T) {
+	s, d, l := boundDHCPv6(t)
+	d.stop6(1, false)
+	s.watching()(true, false)
+	s.clients[1].OnBound(&dhcp6.Lease{Addr: net.ParseIP("fd00:10::2b5"), Valid: time.Minute})
+	s.clients[0].OnExpire(l)
+	s.clients[0].OnBound(l)
+	if len(s.added) != 2 || !slices.Equal(s.deleted, []string{"fd00:10::1a4/128"}) {
+		t.Fatalf("added %d, deleted %v: want the old client ignored", len(s.added), s.deleted)
 	}
 }
 
