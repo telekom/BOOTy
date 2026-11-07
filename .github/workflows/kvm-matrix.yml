@@ -89,8 +89,11 @@ permissions:
   # Read the cycle timing report of main as the baseline.
   actions: read
 
+# A new push to a PR cancels its superseded run. Every other run (main
+# pushes, dispatches) gets a group of its own: in a shared group a third
+# queued run cancels the pending one even without cancel-in-progress.
 concurrency:
-  group: kvm-matrix-${{ github.event.pull_request.number || github.ref }}
+  group: kvm-matrix-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.ref, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
