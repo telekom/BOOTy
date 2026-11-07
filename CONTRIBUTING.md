@@ -24,6 +24,10 @@ updates are grouped by dependency, with major updates separate.
 ContainerLab `*.clab.yml` topologies are not Kubernetes manifests and are not
 updated by Dependabot's Docker ecosystem.
 
+The `CI Gate` workflow merges a Dependabot PR once every other check on it has
+passed, then dispatches the main-branch workflows a merge would normally start.
+Semver-major updates other than GitHub Actions wait for a maintainer.
+
 GitHub Dependabot is the only dependency updater. Arbitrary tool inputs, inline
 images, Debian EFI package versions, LVM tarballs and util-linux source refs are
 outside its supported manifest formats and require manual review. Compiler pins
