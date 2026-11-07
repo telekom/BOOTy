@@ -644,7 +644,7 @@ BOOTy's other dependency forks (gopacket, netlink) are listed in
 [Dependency forks](dependency-forks.md).
 
 GoBGP mode embeds GoBGP through a fork tag:
-`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.11.0-booty.5.0.20261107014801-ea78e3a5e69a`
+`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.11.0-booty.6`
 in `go.mod` (v4.11.0-booty.5 plus the collision fix below, branch
 `fix/openconfirm-collision-follow-peer`). The tag is upstream master 629e5ae8 (2026-11-01, after
 v4.11.0) on the fork branch `booty/master`, with the changes below that
