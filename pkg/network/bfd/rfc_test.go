@@ -51,7 +51,7 @@ func TestRFC5881SourcePortAndTTL(t *testing.T) {
 			t.Fatal(err)
 		}
 		port := conn.LocalAddr().(*net.UDPAddr).Port
-		if port < srcPortMin || port > srcPortMax {
+		if port < 49152 || port > 65535 {
 			t.Errorf("multihop=%v: source port %d, want 49152-65535", mh, port)
 		}
 		raw, err := conn.(*net.UDPConn).SyscallConn()

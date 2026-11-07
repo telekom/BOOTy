@@ -120,7 +120,7 @@ func checkVXLANEncap(t *testing.T, attrs []bgp.PathAttributeInterface) {
 			types = append(types, binary.BigEndian.Uint16(eb[6:8]))
 		}
 	}
-	if len(types) != 1 || types[0] != vxlanTunnelType {
+	if len(types) != 1 || types[0] != 8 {
 		t.Errorf("encapsulation tunnel types %v, want exactly [8] (VXLAN)", types)
 	}
 }
@@ -200,7 +200,7 @@ func TestRFCWireType5(t *testing.T) {
 			}
 		case eb[0] == 0x03 && eb[1] == 0x0c:
 			encap++
-			if got := binary.BigEndian.Uint16(eb[6:8]); got != vxlanTunnelType {
+			if got := binary.BigEndian.Uint16(eb[6:8]); got != 8 {
 				t.Errorf("encapsulation tunnel type = %d, want 8 (VXLAN)", got)
 			}
 		case eb[0] == 0x06 && eb[1] == 0x03:
@@ -261,7 +261,7 @@ func TestRFCWireType3(t *testing.T) {
 	if v[0] != 0 {
 		t.Errorf("PMSI flags = %#x, want 0 (Leaf Information Required MUST be zero)", v[0])
 	}
-	if v[1] != pmsiTunnelTypeIngressReplication {
+	if v[1] != 6 {
 		t.Errorf("PMSI tunnel type = %d, want 6 (ingress replication)", v[1])
 	}
 	if !bytes.Equal(v[2:5], wireLabel(wireVNI)) {

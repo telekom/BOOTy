@@ -206,7 +206,7 @@ ranked: the legacy FRR profile has none either.
 | 4271-18 | 8 | FSM: ConnectRetryTimer, IdleHoldTimer, states and events | GoBGP, BOOTy | GOBGP: COMPLIANT | connect retry and idle hold from BOOTy (`families.go:32`, idle hold after reset 1 s like FRR, `families.go:29`). [#745] (merged) restarts a peer at once after a session end. Idle hold: 4271-33; start: 4271-34 | reading |
 | 4271-19 | 9 | Adj-RIB-In / Loc-RIB / Adj-RIB-Out processing | GoBGP | GOBGP: COMPLIANT | GoBGP RIB | reading |
 | 4271-20 | 9.1.2.1 | A route with an unresolvable NEXT_HOP SHOULD be excluded from the decision process | GoBGP, BOOTy | GOBGP: DEVIATION | RFC4271-NH-RESOLVE: GoBGP has no next hop tracking. BOOTy's FIB writer resolves each next hop and skips unresolvable ones (`pkg/network/gobgp/fib.go:349`), but a resolvable second-best path is not used then. Impact low | reading |
-| 4271-21 | 9.1.2.2 | Decision process tie breaking | GoBGP, BOOTy | GOBGP: COMPLIANT | GoBGP best path; BOOTy's FIB multipath uses the FRR rules (`fibselect.go:94`), tests `fibselect_test.go` | reading |
+| 4271-21 | 9.1.2.2 | Decision process tie breaking | GoBGP, BOOTy | GOBGP: COMPLIANT | GoBGP best path; BOOTy's FIB multipath uses the FRR rules (`fibselect.go:156` `equalCost`, `:177` `better`), tests `fibselect_test.go` | reading |
 | 4271-22 | 9.1.3 | Only the best route is advertised (without add-path send) | GoBGP | GOBGP: COMPLIANT | GoBGP default | reading |
 | 4271-23 | 9.2 | Routes with own AS in AS_PATH: loop detection | GoBGP | GOBGP: COMPLIANT | `gobgp@v4.11.0-booty.6/pkg/server/peer.go:806` with `allowas-in` (`families.go:55`); lab `TestProdTplLocalASLoopCheck` | lab |
 | 4271-24 | 9.2.1.1 | MinRouteAdvertisementIntervalTimer | GoBGP | GOBGP: COMPLIANT | 0 in GoBGP and in FRR for these peers (documented in `docs/networking.md`) | reading |
@@ -260,7 +260,7 @@ ranked: the legacy FRR profile has none either.
 | 7911-4 | 5 | Send multiple paths only if both sides negotiated (2/3 and 1/3) | GoBGP, BOOTy | GOBGP: COMPLIANT | BOOTy configures receive only (`families.go:215`); lab `TestProdTplOpenCapabilities` (`addPath`) | lab |
 | 7911-5 | 5 | Withdraw of an unknown Path Identifier SHOULD be ignored | GoBGP | GOBGP: COMPLIANT | GoBGP adj-in lookup by (prefix, id) | reading |
 | 7911-6 | 5 | SHOULD include the best route when advertising several | GoBGP | N/A | BOOTy does not send add-path | reading |
-| 7911-7 | n/a | Received paths installed with ECMP | BOOTy | COMPLIANT | FIB writer takes equal-cost paths of a destination (`fibselect.go:101`), `TestSelectRoutes*` | test |
+| 7911-7 | n/a | Received paths installed with ECMP | BOOTy | COMPLIANT | FIB writer takes equal-cost paths of a destination (`fibselect.go:109`), `TestSelectRoutes*` | test |
 | 7911-8 | draft | Paths-Limit capability (draft-abraitis-idr-addpath-paths-limit, not an RFC): the most paths per prefix a receiver wants, 0 for no limit | GoBGP | GOBGP: COMPLIANT | the fork sends limit 0 for the families that receive with ADD-PATH, like FRR (`fsm.go:1731`). Received limits are not applied to ADD-PATH send, which BOOTy does not use. GoBGP tests `TestCapPathsLimit`, `TestCapabilitiesPathsLimit` | GoBGP test |
 
 ### RFC 8950 (and RFC 5549): IPv4 NLRI with an IPv6 next hop
@@ -348,7 +348,7 @@ ranked: the legacy FRR profile has none either.
 | 7606-6 | 5.4 | Routes with unrecognized NLRI types of a typed family (EVPN) MUST be discarded | GoBGP | GOBGP: COMPLIANT | RFC7606-TYPED-NLRI at the first audit (an unknown EVPN route type disabled L2VPN EVPN on the session, in 3.37.0 and 4.10.0). Upstream v4.11.0 skips the NLRI by its length (`bgp.go:3582`; 97833030, [osrg/gobgp#3742](https://github.com/osrg/gobgp/issues/3742)); GoBGP tests `Test_EVPNUnknownRouteTypeIsDiscarded`, `TestProcessMessageEVPNUnknownRouteTypeOnly` | GoBGP test |
 | 7606-7 | n/a | BOOTy's own route processing does not fail on bad input | BOOTy | COMPLIANT | `processRouteUpdate` skips undecodable NLRIs and attributes (`overlay.go:870`), `TestProcessRouteUpdateGuardAndL2Branches`, `TestRouterMACInCommunitiesIgnoresUnmarshalFailures` | test |
 | 7606-8 | 8 | Errors SHOULD be logged | GoBGP, BOOTy | COMPLIANT | GoBGP logs "treated as withdraw" (`fsm.go` `handlingError`); BOOTy logs skipped routes | reading |
-| 7606-9 | 7.14 | An unrecognized Extended Community type or sub-type MUST NOT be treated as an error | GoBGP | GOBGP: COMPLIANT | GoBGP 4.10.0 treated an unknown EVPN sub-type as malformed (treat-as-withdraw): FRR's MAC/IP routes with the ARP/ND community (sub-type 0x08) were withdrawn. Upstream v4.11.0 keeps it as `UnknownExtended` (`bgp.go:15164`, f1fcae18) and decodes the ARP/ND community (9047-1, 40650d96); GoBGP test `Test_UnknownEvpnExtended_RoundTrip` | GoBGP test |
+| 7606-9 | 7.14 | An unrecognized Extended Community type or sub-type MUST NOT be treated as an error | GoBGP | GOBGP: COMPLIANT | GoBGP 4.10.0 treated an unknown EVPN sub-type as malformed (treat-as-withdraw): FRR's MAC/IP routes with the ARP/ND community (sub-type 0x08) were withdrawn. Upstream v4.11.0 keeps it as `UnknownExtended` (`bgp.go:15164`, f1fcae18); the fork also decodes the ARP/ND community (9047-1; 40650d96, on upstream master after v4.11.0, [osrg/gobgp#3746](https://github.com/osrg/gobgp/issues/3746)); GoBGP test `Test_UnknownEvpnExtended_RoundTrip` | GoBGP test |
 
 ### RFC 9384: Cease NOTIFICATION subcode for BFD
 
@@ -365,8 +365,6 @@ advertises Required Min Echo RX 50 ms ([#710]), but it loops back no echo
 packets itself: only kernel IP forwarding returns them (5880-8). Since
 [#852] the receive sockets are open before the first RA and BGP
 connection; a packet for no session is dropped.
-
-### RFC 5880: BFD
 
 ### RFC 5880: BFD
 
@@ -779,8 +777,8 @@ ramdisk ([#753], [#776], [#790], [#819], [#820]).
 | 8415-4 | 18.2.2 | REQUEST up to REQ_MAX_RC (10) times | BOOTy | COMPLIANT | [#795] `dhcp6/client.go:203` `request`; `TestRequestRetriesAndAdvertiseStatus` | test |
 | 8415-5 | 18.2.4, 18.2.5, 18.2.10.1 | RENEW at T1, REBIND at T2, stop using the address at the end of its valid lifetime; NoBinding in a REPLY to RENEW or REBIND: REQUEST | BOOTy | COMPLIANT | [#795], [#825] `dhcp6/client.go:232` `extend`, `:263` `phase`; the address goes at expiry (`dhcp6_mode.go:249` `onExpire6`); `TestRenewRebindExpire`, `TestRenewNeedsAddress`, `TestRenewNoBindingRequests` | test |
 | 8415-6 | 18.2.6, 21.23 | INFORMATION-REQUEST (O flag); refresh after the Information Refresh Time, at least IRT_MINIMUM (600 s), default 86400 s | BOOTy | COMPLIANT | [#795] `dhcp6/client.go:309` `information`, `:300` `infoRefresh`, `dhcp6/message.go:191`; `TestInformationRequest`, `TestInfoRefresh`, `TestInformationWaitsRefreshTime` | test |
-| 8415-7 | 18.2.7 | RELEASE of a bound address, wait for the REPLY; the address MUST be removed from the interface before the RELEASE | BOOTy | DEVIATION | [#795] releases at stop and waits up to REL_TIMEOUT (1 s) for the REPLY, without retransmission (allowed: MAY terminate early) (`dhcp6/client.go:366` `release`); `TestAdvertiseRequestAndRelease`. But `stop6` removes the address only after the RELEASE (`dhcp6_mode.go:293` `c.Stop()`, then `:296` `dropAddr6`). Impact very low: the RELEASE goes from the link-local address and the handoff follows. Fix: `dropAddr6` before `Stop` | reading |
-| 8415-8 | 18.2.10.1 | Duplicate address after the REPLY: send DECLINE (SHOULD) | BOOTy | DEVIATION | [#795] adds the address with kernel DAD (`dhcp6_mode.go:227`) but sends no DECLINE when DAD fails (no DECLINE in `pkg/network/dhcp6`). Impact very low | reading |
+| 8415-7 | 18.2.7 | RELEASE of a bound address, wait for the REPLY; the address MUST be removed from the interface before the RELEASE | BOOTy | DEVIATION | [#795] releases at stop and waits up to REL_TIMEOUT (1 s) for the REPLY, without retransmission (the RFC says SHOULD retransmit one or more times but MAY terminate early, e.g. on power down; BOOTy stops before the handoff) (`dhcp6/client.go:366` `release`); `TestAdvertiseRequestAndRelease`. But `stop6` removes the address only after the RELEASE (`dhcp6_mode.go:293` `c.Stop()`, then `:296` `dropAddr6`). Impact very low: the RELEASE goes from the link-local address and the handoff follows. Fix: `dropAddr6` before `Stop` | reading |
+| 8415-8 | 18.2.10.1, 18.2.8 | DAD on each received address before use; an address found in use is declined with a DECLINE (no keyword: "the client sends a Decline message") | BOOTy | DEVIATION | [#795] adds the address with kernel DAD (`dhcp6_mode.go:227`) but sends no DECLINE when DAD fails (no DECLINE in `pkg/network/dhcp6`). Impact very low | reading |
 | 8415-9 | 21.24, RFC 3646 | DNS servers (option 23) and domain list (option 24) used | BOOTy | COMPLIANT | [#795] adds them after the DHCPv4 servers, a link-local server with its zone (`dhcp6_mode.go:216` `onBound6`, `:240`; `dhcp.go:665` `writeResolvers`); `TestDomainList`, `TestDHCPv6LinkLocalDNSAndDomains` | test |
 
 ## Fix PRs and fork tags
