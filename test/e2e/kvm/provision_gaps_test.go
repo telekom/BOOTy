@@ -401,7 +401,7 @@ func TestUEFIBootloaderInstallAndNativeBoot(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", args...)
+	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)...)
 	out, _ := cmd.CombinedOutput()
 	t.Logf("UEFI provision tail:\n%s", tail(out, 2000))
 
@@ -654,7 +654,7 @@ func TestEFIBootEntryManagementOVMF(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", args...)
+	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)...)
 	out, _ := cmd.CombinedOutput()
 	outStr := string(out)
 	t.Logf("EFI boot entry output tail:\n%s", tail(out, 2000))
@@ -827,7 +827,7 @@ func TestISOBootProvisioning(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", args...)
+	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)...)
 	out, _ := cmd.CombinedOutput()
 	outStr := string(out)
 	t.Logf("ISO provision output tail:\n%s", tail(out, 3000))
