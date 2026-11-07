@@ -62,10 +62,12 @@
           ],
           "AdvertiseAllVNI": false,
           "AdvertiseDefaultGW": false,
+          "ResolveOverlayIndex": false,
           "AdvertiseIPv4Unicast": false,
           "AdvertiseIPv6Unicast": false,
           "RouteTargetImport": null,
           "RouteTargetExport": null,
+          "RD": "",
           "L2VNIs": null,
           "Line": 11
         },
@@ -86,10 +88,12 @@
           ],
           "AdvertiseAllVNI": true,
           "AdvertiseDefaultGW": false,
+          "ResolveOverlayIndex": false,
           "AdvertiseIPv4Unicast": false,
           "AdvertiseIPv6Unicast": false,
           "RouteTargetImport": null,
           "RouteTargetExport": null,
+          "RD": "",
           "L2VNIs": null,
           "Line": 16
         }
@@ -115,10 +119,12 @@
           "Neighbors": null,
           "AdvertiseAllVNI": false,
           "AdvertiseDefaultGW": false,
+          "ResolveOverlayIndex": false,
           "AdvertiseIPv4Unicast": false,
           "AdvertiseIPv6Unicast": false,
           "RouteTargetImport": null,
           "RouteTargetExport": null,
+          "RD": "",
           "L2VNIs": null,
           "Line": 24
         },
@@ -130,6 +136,7 @@
           "Neighbors": null,
           "AdvertiseAllVNI": false,
           "AdvertiseDefaultGW": false,
+          "ResolveOverlayIndex": false,
           "AdvertiseIPv4Unicast": true,
           "AdvertiseIPv6Unicast": false,
           "RouteTargetImport": [
@@ -138,6 +145,7 @@
           "RouteTargetExport": [
             "65000:1000"
           ],
+          "RD": "",
           "L2VNIs": null,
           "Line": 28
         }

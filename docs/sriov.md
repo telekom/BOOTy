@@ -103,7 +103,7 @@ provision:
 | `firmware.sriovEnabled` | SR-IOV in the NIC firmware. Active value: `sriovCapable`. `true` with `maxVFs: 0` fails validation. |
 | `firmware.maxVFs` | VF limit, 0 to 65535. Active value: `sriovTotalVFs`. |
 | `firmware.linkType` | `eth` or `ib` (VPI adapters). Active value: `linkType`. |
-| `firmware.fwLLDPAgent` | Intel firmware LLDP/DCBX agent; `false` lets the host run LLDP and DCBX. |
+| `firmware.fwLLDPAgent` | Intel firmware LLDP/DCBX agent; `false` lets the host run LLDP and DCBX. A profile that sets it owns the flag of its ports: BOOTy's default of stopping the agent (`LLDP_DISABLE_FW_AGENT`, [networking](networking.md#bgp-capabilities-and-lldp)) leaves them alone in every mode. In a mode without the `configure-sriov` step (for example `MODE=check`), nothing applies the profile either, so those ports keep the value they have. |
 | `firmware.nvConfig` | More NVIDIA/Mellanox NV parameters as `{name, value}` with the `mstconfig` names. `SRIOV_EN`, `NUM_OF_VFS` and `LINK_TYPE_P<n>` are rejected: use the fields above. |
 | `firmware.devlinkParams` | devlink parameters in the permanent (NIC-stored) mode as `{name, value}`. |
 | `runtime.numVFs` | `sriov_numvfs`; not above `firmware.maxVFs`. |
@@ -413,6 +413,18 @@ the PF netdev; those fail with the driver error.
 
 `provision.sriov` is always decoded strictly: an unknown key fails even
 when the rest of the YAML or JSON config is not loaded strictly.
+
+## Tests
+
+| Layer | What | Where |
+|-------|------|-------|
+| Unit | Report, profile validation (one mutation per rule), drift statuses, firmware backends with fixtures (`mstconfig -e` tables, bnxt_en devlink parameters, ice and i40e private flags), runtime apply order and handoff with a kernel-like fake | `pkg/sriov/*_test.go` |
+| Mutation | Each stored or active value of a compliant port, and each line of the ConnectX fixture, changed one at a time: exactly that setting must leave `ok` | `TestFirmwareDriftMutations`, `TestMstconfigFixtureMutations` |
+| netdevsim (privileged CI job `Linux E2E`) | Discovery, eSwitch and devlink info, VF attributes through rtnetlink, switchdev and the handoff reset, devlink parameter modes, against the runner kernel | `pkg/sriov/netdevsim_e2e_test.go` (`-tags linux_e2e`) |
+| KVM matrix `sriov-igb` | A full provision on q35 with a QEMU igb (82576) NIC with SR-IOV behind a PCIe root port: the inventory (7 VFs), two VFs with trust, spoof check, MAC, VLAN and QoS, and the handoff reset | `test/e2e/kvm/sriov_test.go` |
+
+QEMU 8.0 and later has the igb device with SR-IOV (`sriov_totalvfs` 7). The
+VFs appear at device 0x10 of the bus behind the root port.
 
 ## Handoff contract
 

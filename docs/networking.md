@@ -35,6 +35,7 @@ BOOTy selects one stack. The first match wins:
 
 | Order | Stack | Condition | Setup failure |
 |---|---|---|---|
+| 0 | Links | `NETWORK_MODE=links` (case-insensitive) | Fatal. No DHCP fallback. |
 | 1 | GoBGP | `NETWORK_MODE=gobgp` (case-insensitive), or netplan with an ASN and a VXLAN VNI | Fatal. No DHCP fallback. |
 | 2 | FRR | `asn_server` > 0 and `underlay_ip` or `underlay_subnet` is set | Fall back to DHCP |
 | 3 | Static | `STATIC_IP` is set | Tear down, then fall back to DHCP |
@@ -42,8 +43,9 @@ BOOTy selects one stack. The first match wins:
 
 Notes:
 
-- `NETWORK_MODE` accepts `gobgp`, `frr`, `static` and `dhcp`. Config
-  validation rejects other values. Only `gobgp` changes the selection. The
+- `NETWORK_MODE` accepts `gobgp`, `frr`, `static`, `dhcp` and `links`.
+  Config validation rejects other values. Only `links` and `gobgp` change
+  the selection. The
   values `frr`, `static` and `dhcp` do not force a stack. For example,
   `NETWORK_MODE=dhcp` with `asn_server` and `underlay_ip` still selects FRR.
 - Bond and VLAN are not stacks. They are link layers below the stack (see
@@ -164,9 +166,13 @@ same resolution:
   port while another link-local neighbor does, moves to that address
   (the switch came back with another MAC). A switch that does not answer
   at setup gets its peer on a placeholder address that moves the same
-  way. Deviation: this adds 3 to 4 s (the 3 s grace and the 1 s round) to
-  the recovery after such a change; FRR follows the RA at once (lab: FRR
-  1.5 to 2.8 s, BOOTy 5.3 to 6.6 s after a 95 s outage with a new MAC).
+  way. A moved peer takes only the route-maps and the `bgp
+  ebgp-requires-policy` reject of its own session, also when a peer on
+  another port has the same address (the placeholder, or a switch with
+  the same link-local address). Deviation: this adds 3 to 4 s (the 3 s
+  grace and the 1 s round) to the recovery after such a change; FRR
+  follows the RA at once (lab: FRR 1.5 to 2.8 s, BOOTy 5.3 to 6.6 s after
+  a 95 s outage with a new MAC).
 - `neighbor X allowas-in [N]` (native `allowASIn`, FRR's default N is 3)
   accepts paths with the own AS up to N times. GoBGP has one count per
   session, so a session uses the highest count of its families.
@@ -188,6 +194,11 @@ same resolution:
   route-map that a session names but that is not defined stops the setup
   (fail-fast); FRR instead denies all routes of that peer in that
   direction. A community-list `deny` entry stops the setup too.
+  The route-maps and the `bgp ebgp-requires-policy` reject of an
+  unnumbered session match its link-local address with the interface, so
+  sessions on different ports keep their own policy also when the switches
+  use the same link-local address (`fe80::1` on every port), like the
+  per-interface peers of FRR.
 - Route-map coverage: the production template (bm4x-operator provcfg
   `frr.conf.tpl`) uses `route-map NAME permit|deny SEQ`, `set
   local-preference`, `set community ... additive`, and `match community`
@@ -204,65 +215,132 @@ same resolution:
   60000 ms and a multiplier outside 2 to 255 fail in both forms. Like FRR
   10.3, the session is multihop (RFC 5883) only for an iBGP peer that is
   not on a connected network of its VRF. When BFD goes from Up to Down,
-  BOOTy resets the BGP session. Known deviation: the peer gets
-  Cease/Administrative Reset (subcode 4), not Cease/BFD Down (subcode 10,
-  RFC 9384), because the GoBGP API sends no other subcode. Only the peer
-  log shows it (status: upstream-pending, needs a GoBGP API change). Timing after a
-  session ends, against GoBGP 3.37:
-  - GoBGP waits a fixed 5 s in Idle (`holdtimeIdle`) when the peer ends
-    the session (for example `clear bgp` on the leaf), and refuses
+  BOOTy resets the BGP session with Cease/BFD Down (subcode 10, RFC 9384),
+  like FRR (`bgp_bfd.c`), through `ResetPeerRequest.BfdDown` of the
+  [GoBGP fork](#gobgp-version-and-fork); when the N bit was exchanged, it
+  is sent as a Hard Reset like FRR. Timing after a session ends, against
+  GoBGP 3.37:
+  - GoBGP 4.10.0 waits a fixed 5 s in Idle (`holdtimeIdle`) when the peer
+    ends the session (for example `clear bgp` on the leaf), and refuses
     connections in that time. FRR waits 1 s after a TCP close
     (`BGP_INIT_START_TIMER`) and 2 s after a NOTIFICATION sent or received
     (`v_start` doubles, bgp_fsm.c and bgp_packet.c), and accepts
     connections meanwhile
     ([osrg/gobgp#3735](https://github.com/osrg/gobgp/issues/3735)). In
     the lab a leaf-initiated session to BOOTy took 36 s against 2.3 s for
-    FRR (the leaf then retries after its connect timer). Status: worked
-    around in BOOTy (#745). When a session ends and BOOTy did not stop
+    FRR (the leaf then retries after its connect timer). Status: upstream
+    osrg/gobgp 4e70e768 replaced the fixed 5 s with a backoff (fork tag
+    v4.10.0-booty.17), and since the fork tag v4.10.0-booty.19 the backoff
+    follows `v_start` of FRR 10.2.1, the FRR of the legacy ramdisk (10.3
+    has the same rules): 1 s after Established (`bgp_establish`) and
+    after an administrative shutdown (`no neighbor shutdown`); doubled, up
+    to 120 s, for a NOTIFICATION received in OpenConfirm or Established
+    (`bgp_stop_with_error`) and for a NOTIFICATION that GoBGP sends for a
+    message error, a bad peer AS or BFD Down (`bgp_write_notify`); back
+    to 1 s for a hold timer expiry and for the FSM Error that answers an
+    unexpected message in OpenSent, a NOTIFICATION included
+    (`bgp_stop_with_notify`); kept for a closed or failed TCP connection,
+    an unexpected message in OpenConfirm (`bgp_fsm_exception`) and
+    graceful restart (`bgp_stop`). A reset (`ResetPeer`, also with
+    `BfdDown`) waits `IdleHoldTimeAfterReset` (BOOTy: 1 s), where FRR
+    waits 2 s after `clear bgp` and after BFD Down (`peer_clear` and
+    `bgp_bfd.c` write a NOTIFICATION, which doubles `v_start`); the
+    backoff after the reset is the `v_start` of FRR. GoBGP still refuses
+    connections in Idle (RFC 4271 section 8.2.2, the reason the maintainer
+    gave when closing #3735), so the workaround in BOOTy (#745) stays. When a session ends and BOOTy did not stop
     the peer (carrier loss) and GoBGP keeps no graceful restart routes of
     it, BOOTy deletes the GoBGP peer and adds it again at once. A new
     peer accepts the leaf's connection at once, like FRR in Idle, and
-    connects itself after 1 to 2 s. This also covers the BFD reset, where
+    connects itself (at once with `BGP_CONNECT_AT_ONCE`, below). This also covers the BFD reset, where
     GoBGP refused connections for the 1 s idle hold time.
     `TestProdTplLeafClear` checks that the leaf session is up again within
     5 s. CI (three lab variants): Established again 1.1 to 1.8 s after
     `clear bgp` on the leaf against 2.1 s for the shadow FRR, ECMP back
     after 2.8 to 3.5 s against 3.7 to 3.8 s;
-  - GoBGP waits a random 1 to 2 s before the first connect after Idle
-    ([osrg/gobgp#3736](https://github.com/osrg/gobgp/issues/3736)), where
-    FRR connects when its start timer (1 s, or 2 s after a NOTIFICATION)
-    expires. Status: upstream-pending,
-    needs a GoBGP change; mitigated by the restart above, because the restarted peer
-    accepts the leaf's connection before its own first connect. After a
-    BFD reset BOOTy restored ECMP in 4.0 to 4.4 s against 2.3 to 2.9 s
-    for FRR; with the restart 2.4 to 2.7 s against 2.5 s
-    (`TestProdTplBFDFailover`, CI).
-  BOOTy uses the released GoBGP without a fork.
-  GoBGP v4 (native BFD, Extended Message) has two regressions against
-  3.37 that matter for BOOTy, filed upstream before a move to v4:
-  - `ResetPeer` on a peer without a session (for example a BFD reset of
-    a peer that carrier loss stopped) does not apply
-    `IdleHoldTimeAfterReset`, so the peer
-    waits 5 s in Idle instead of 1 s
-    ([osrg/gobgp#3740](https://github.com/osrg/gobgp/issues/3740));
-  - after a connection collision (BOOTy and the leaf connect at the same
-    time), the FSM goes to Idle for 5 s when the peer closes the incoming
-    connection, instead of using its own completed connection
-    ([osrg/gobgp#3741](https://github.com/osrg/gobgp/issues/3741)).
-- BFD Down while a BGP session starts. Like bgpd, a BFD Down in the
-  second the BGP session came up does not reset it: a route reflector with
+  - GoBGP 4.10.0 waits a random 1.5 to 2 s (GoBGP 3.37: 1 to 2 s;
+    upstream master since 2be423ab and the fork tag v4.10.0-booty.23: 0 to
+    1 s) before the first connect after Idle
+    ([osrg/gobgp#3736](https://github.com/osrg/gobgp/issues/3736), closed),
+    where
+    FRR connects when `BGP_Start` runs: at the end of its start timer (1 s,
+    or 2 s after a NOTIFICATION), when the next hop becomes valid, and at
+    BFD Up (`bgp_fsm.c`, `bgp_bfd.c`). Status: available in BOOTy as
+    `BGP_CONNECT_AT_ONCE` (`TimersConfig.ConnectAtOnce` of the GoBGP fork),
+    off by default: the first connect after Idle starts at once, and only
+    the retries wait the connect timer. It is off because after a carrier
+    loss both sides then have a connect pending until the link works
+    again, and both connections complete within 100 microseconds (FRR
+    debug trace of the production template lab, #811). FRR and GoBGP
+    both resolve that collision per RFC 4271 section 6.8 and keep BOOTy's
+    connection; until the fork tag booty.11 GoBGP sometimes reset that
+    connection itself (fixed). With booty.12 and the option on, the
+    production template lab passed 12 of 15 jobs (5 manual runs of #831):
+    the two-uplink and native model labs 5 of 5, the one-uplink lab 2 of
+    5. All three failures are a graceful restart false positive: GoBGP is
+    Established on its own connection, the leaf's connection, whose SYN
+    was pending since the outage, completes a millisecond later, and
+    GoBGP takes that TCP connection as a restart of the peer (RFC 4724
+    section 5: a new connection while Established with the graceful
+    restart capability) and ends the new session, so the session comes
+    up twice. RFC 4724 section 5 (Events 16 and 17) and FRR
+    (`bgp_accept` acts only with `PEER_STATUS_NSF_MODE`, set only for a
+    family with `PEER_CAP_RESTART_AF_RCV`) apply that rule only to a peer
+    that sent graceful restart AFI/SAFI tuples. The leaves are
+    helper-only, so since the fork tag booty.18 GoBGP handles their late
+    connection as a collision and closes it. FRR 10.3.1 advertises GR
+    families with the F bit clear and LLGR families with F=1 but stale
+    time zero; upstream v4.11 accepted those tuples and dropped the
+    session again. Since v4.11.0-booty.5 GoBGP reads the new OPEN in the
+    background and requires preserved forwarding state, with the GR F bit
+    winning per family, LLGR counting only for a family that the GR
+    capability does not list and with a nonzero stale time, and only
+    negotiated families and locally advertised capabilities counting. The
+    background read keeps administrative shutdowns from waiting for a
+    slow peer. The production template lab with the option on has not been
+    run again since. Without the option
+    the leaf's connection usually arrives first, and the lab passed 10 of
+    10 jobs. The peer restart above stays:
+    GoBGP still holds a peer in Idle for its idle hold time after the peer
+    ended the session and refuses the leaf meanwhile, which
+    `ConnectAtOnce` does not change.
+  Two more regressions of GoBGP 4.10.0 are fixed on upstream master,
+  which the GoBGP fork is based on since the fork tag v4.10.0-booty.23
+  ([GoBGP version and fork](#gobgp-version-and-fork)):
+  `ResetPeer` on a peer without a session did not apply
+  `IdleHoldTimeAfterReset`, so the peer waited 5 s in Idle
+  ([osrg/gobgp#3740](https://github.com/osrg/gobgp/issues/3740), fixed by
+  95c43b00), and after a connection collision GoBGP went to Idle for 5 s
+  instead of using its own completed connection
+  ([osrg/gobgp#3741](https://github.com/osrg/gobgp/issues/3741) and
+  [#3751](https://github.com/osrg/gobgp/issues/3751), fixed by 93580204,
+  b841cb71 and db3c9280).
+- BFD Down while a BGP session starts. Like bgpd 10.3 and later, a BFD
+  Down in OpenConfirm, in Established before the uptime is set, or in the
+  second the BGP session came up does not reset it
+  (`bfd_session_status_update` resets only when
+  `last_event > peer->uptime`, both in seconds; bgpd 10.2 stops the
+  session on every BFD Up to Down). A route reflector with
   `update-source` re-keys its BFD session when its side of the session
-  comes up (`bgp_peer_bfd_update_source`). Known deviation: BOOTy also does
-  not reset a session in OpenConfirm, or Established before GoBGP has set
-  its uptime. bgpd resets in that case (`bfd_session_status_update` resets
-  whenever `last_event > peer->uptime`), but its BFD Down arrives through
-  zebra, after the RR's KEEPALIVE, so the shadow node does not see it.
-  BOOTy's BFD is in the same process and can see the Down first. When the
-  session is Established, BOOTy checks again: if BFD is not Up within the
-  detection time at the slow 1 s rate (multiplier x 1 s, 3 s by default)
-  after the Down, it resets the session then, so a real failure is not
-  hidden until the hold timer expires. The RR's re-keyed session is Up
-  again after 1 s in the lab. Teardown stops these checks.
+  comes up (`bgp_peer_bfd_update_source`), and BOOTy's multihop session
+  sees the Down with diag 3 (Neighbor Signaled Session Down) within
+  milliseconds. For diag 3 only, BOOTy is more tolerant than bgpd (known
+  deviation): GoBGP's uptime has whole seconds, so a Down in the next
+  second does not reset the session either, and neither does a Down in
+  Connect, Active or OpenSent, because GoBGP sends the KEEPALIVE that
+  brings the RR up before its peer state leaves Active (outgoing
+  connection) or OpenSent (incoming connection). bgpd's BFD Down arrives
+  through zebra, after the RR's KEEPALIVE, so the shadow node does not
+  see this. A diag 3 Down for a peer that GoBGP does not know (BOOTy
+  restarted it) is ignored. Any other diag, for example an expired
+  detection time, is a path failure and gets only bgpd's tolerance. Idle
+  and an older Established session reset at once. Otherwise BOOTy checks
+  again, once per peer and only for the session it saw: if BFD is not Up
+  within the detection time at the slow 1 s rate (multiplier x 1 s, 3 s
+  by default) after the last Down and that session is Established, it
+  resets the session then, so a real failure is not hidden until the hold
+  timer expires. If the peer was restarted meanwhile, the check ends. The
+  RR's re-keyed session is Up again after 1 s in the lab. Teardown stops
+  these checks.
 - `bgp bestpath as-path multipath-relax` (native `network.bgp.multipathRelax`,
   `BGP_MULTIPATH_RELAX`) installs equal-cost paths with different AS paths
   of the same length as one multipath route.
@@ -270,7 +348,43 @@ same resolution:
   `network.bgp.fastExternalFailover`, `BGP_FAST_EXTERNAL_FAILOVER`; on by
   default like FRR) stops an unnumbered session as soon as its NIC loses
   carrier. Native sessions without the setting keep a
-  `no bgp fast-external-failover` of `frr.conf` in the same VRF.
+  `no bgp fast-external-failover` of `frr.conf` in the same VRF. When the
+  carrier returns, BOOTy enables the stopped GoBGP peer. The
+  peer waits 1 s in Idle, then connects after a random 0 to 1 s (1.5 to
+  2 s up to the fork tag booty.22), and accepts the leaf's connection
+  from the end of the 1 s. With GoBGP 4.10.0 the wait
+  without the reset depended on the order of BFD loss and carrier loss:
+  1 s when BFD went down after the carrier loss, the fixed 5 s when it
+  went down first, because the peer restarter had added the peer again.
+  Since the fork tag v4.10.0-booty.21 an administrative shutdown sets
+  the wait to 1 s in every state, like `no neighbor shutdown` in FRR.
+  That 1 s equals BOOTy's `IdleHoldTimeAfterReset`. Up to the fork tag
+  booty.22 BOOTy also reset the stopped peer before it enabled it; since
+  booty.23 GoBGP ignores a reset of an administratively down peer
+  (upstream 95c43b00), so BOOTy no longer sends it (Idle to Active
+  measured 1.00 s without it). In the
+  kindmetal EVPN parity run with both leaves down this delayed one
+  uplink by 5 s, and all four sessions were back after 6.8 s against 4.6
+  to 5.7 s for FRR. FRR starts the session at once on interface up
+  (`bgp_start_interface_nbrs` in `bgp_zebra.c`). BOOTy does not delete
+  and add the peer to start it at once: it then connects at the same
+  time as the leaf. Up to the fork tag booty.17 GoBGP took a leaf
+  connection that completes after the session is up as a graceful
+  restart and ended the session whenever the leaf sent the graceful
+  restart capability; in the production template lab that happened in 4
+  of 11 jobs. Since booty.18 and booty.19 it does that only when the
+  leaf sent address family tuples in the current session, like RFC 4724
+  section 5 and FRR (`bgp_accept`, `PEER_STATUS_NSF_MODE`), so the
+  helper-only leaves are not affected. The peer also keeps the stale routes of a leaf in graceful
+  restart, like FRR for a peer in NSF wait (`bgp_stop` in `bgp_fsm.c`).
+  A peer that the carrier loss did not stop is left alone. BOOTy waits
+  until GoBGP has applied each stop and start (at most 200 ms, a few
+  milliseconds in practice): `DisablePeer` and `EnablePeer` only queue the
+  change. Up to the fork tag booty.19 GoBGP also dropped a change while
+  another one was queued, and without the wait a fast carrier flap left
+  the peer down, or up after down, up, down. Since booty.20 the latest
+  change wins and `EnablePeer` of an enabled peer changes nothing, so the
+  wait is belt and braces.
 
 GoBGP mode installs the learned IPv4 and IPv6 unicast routes like zebra:
 into the table of each session's VRF (the main table without a VRF), with
@@ -380,6 +494,7 @@ rule of every key:
 | `BGP_ROUTE_MAPS`, `BGP_COMMUNITY_LISTS` | `frr.conf` `route-map`, `bgp community-list` | `network.bgp.routeMaps`, `network.bgp.communityLists` | list replaces |
 | `BGP_ROUTE_MAP_IN`, `BGP_ROUTE_MAP_OUT` | session route-maps | `network.bgp.routeMapIn`, `network.bgp.routeMapOut` | native wins, for every session and family |
 | `EVPN_RT_IMPORT`, `EVPN_RT_EXPORT` | `frr.conf` `route-target import\|export` | `network.evpn.importRouteTargets`, `network.evpn.exportRouteTargets` | list replaces |
+| `EVPN_RD` | `frr.conf` `rd` in the L3VNI VRF's `address-family l2vpn evpn` | `network.evpn.rd` | native wins; unset derives `<router-id>:<n>` like FRR |
 | `vpn_rt` | `frr.conf` route targets, else FRR's auto route target of an `frr.conf` L3VNI | `network.evpn.vpnRT` | netplan wins: the `frr.conf` route targets win over `vpn_rt`, as in FRR; `vpn_rt` applies only without them |
 | `BGP_EBGP_REQUIRES_POLICY` | `[no] bgp ebgp-requires-policy` | `network.bgp.ebgpRequiresPolicy` | native wins, for every session; unset is on for sessions, off for `BGP_PEER_MODE` peers |
 | `NETWORK_DEVICES` | the provisioner netplan files | `network.devices` | replaces the netplan files as a whole |
@@ -387,9 +502,12 @@ rule of every key:
 | `BRIDGE_MTU`, `BRIDGE_IPV6_LINK_LOCAL`, `BRIDGE_ACCEPT_RA` | netplan bridge `mtu`, `link-local`, `accept-ra` | `network.overlay.*` | native wins |
 | `BRIDGE_STP` | netplan bridge `parameters` (`stp`, on when the block has no `stp`) | `network.overlay.bridgeSTP` | native wins |
 | `ACCEPT_RA_OFF`, `LLDP_EMIT` | netplan ethernet `accept-ra: false`, `emit-lldp: true` | `network.noAcceptRA`, `network.emitLLDP` | list replaces |
-| `BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`, `BGP_ADDPATH_RX`, `BGP_SOFTWARE_VERSION` | none: `frr.conf` graceful restart and capability statements are rejected | `network.bgp.gracefulRestart`, `gracefulRestartTime`, `addPathReceive`, `softwareVersion` | native only; unset is the FRR default (for `BGP_SOFTWARE_VERSION`, of the `frr defaults` profile) |
+| `BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`, `BGP_GRACEFUL_NOTIFICATION`, `BGP_ADDPATH_RX`, `BGP_SOFTWARE_VERSION` | none: `frr.conf` graceful restart and capability statements are rejected | `network.bgp.gracefulRestart`, `gracefulRestartTime`, `gracefulNotification`, `addPathReceive`, `softwareVersion` | native only; unset is the FRR default (for `BGP_SOFTWARE_VERSION`, of the `frr defaults` profile; for `BGP_GRACEFUL_NOTIFICATION`, of the `frr version`) |
 | `BGP_HOSTNAME` | none: FRR ignores the `frr.conf` `hostname` line and sends the system host name | `network.bgp.hostname` | native only; unset keeps the system host name |
+| `BGP_CONNECT_AT_ONCE` | none: FRR always connects when `BGP_Start` runs | `network.bgp.connectAtOnce` | native only; unset is off |
 | `LLDP_RECEIVE` | none: the legacy ramdisk does not receive LLDP | `network.lldpReceive` | native only; unset is on |
+| `LLDP_DISABLE_FW_AGENT` | none: the legacy ramdisk never touches the flag | `network.lldp.disableFirmwareAgent` | native only; unset is on (a deliberate deviation, see below); `false` leaves the flag alone |
+| `LLDP_PROFILE`, `LLDP_PORT_ID_FORMAT`, `LLDP_EMIT_ALL`, `LLDP_ANNOUNCE` | none | `network.lldp.profile`, `network.lldp.portIDFormat`, `network.lldp.emitAll`, `network.lldp.announce` | native only; unset is the networkd identity and TLVs on the `LLDP_EMIT` NICs |
 | `IP_FORWARDING`, `IPV6_FORWARDING` | `frr.conf` `[no] ip[v6] forwarding` | `network.ipForwarding`, `network.ipv6Forwarding` | native wins |
 
 ### Strict input and the accepted grammar
@@ -488,7 +606,7 @@ and `hostname`. FRR mode passes the file to FRR.
 | `vrf NAME` | `vni N [prefix-routes-only]`, `exit-vrf` or `exit` |
 | `router bgp` | `bgp router-id A.B.C.D`, `[no] bgp ebgp-requires-policy`, `[no] bgp suppress-duplicates`, `[no] bgp default ipv4-unicast`, `bgp bestpath as-path multipath-relax`, `[no] bgp fast-external-failover`, `neighbor NAME peer-group`, `neighbor IFNAME interface [peer-group G \| remote-as R]`, `neighbor ADDR peer-group G`, `neighbor X remote-as ASN\|internal\|external`, `neighbor X local-as N [no-prepend [replace-as]]`, `neighbor X bfd [profile P]`, `neighbor X timers K H`, `neighbor X timers connect N`, `address-family ipv4 [unicast]\|ipv6 [unicast]\|l2vpn evpn`, `exit` (also `end` and the top-level statements, which leave the node) |
 | `address-family ipv4\|ipv6` | `network P`, `redistribute connected`, `neighbor X activate`, `neighbor X soft-reconfiguration inbound`, `neighbor X allowas-in [N]`, `neighbor X route-map NAME in\|out`, `exit-address-family` or `exit` |
-| `address-family l2vpn evpn` | the neighbor statements above, `advertise-all-vni`, `advertise-default-gw`, `advertise ipv4\|ipv6 unicast`, `route-target import\|export\|both RT`, `vni N` (opens an L2VNI block with `rd RD`, `route-target ... RT`, `exit-vni` or `exit`), `exit-address-family` or `exit` |
+| `address-family l2vpn evpn` | the neighbor statements above, `advertise-all-vni`, `advertise-default-gw`, `advertise ipv4\|ipv6 unicast`, `route-target import\|export\|both RT`, `rd RD`, `vni N` (opens an L2VNI block with `rd RD`, `route-target ... RT`, `exit-vni` or `exit`), `exit-address-family` or `exit` |
 | `route-map` | `match community LIST`, `set local-preference N`, `set community AA:NN... [additive]`, `exit` |
 | `bfd` | `profile NAME` (opens a profile with `transmit-interval`, `receive-interval` 10-60000, `detect-multiplier` 2-255), `exit` |
 | `line vty` | `exit` |
@@ -520,6 +638,100 @@ on purpose although they are not in the templates:
 - `ip route` and `ipv6 route` inside a `vrf` block (BOOTy installs static
   routes only in the main table).
 
+## GoBGP version and fork
+
+BOOTy's other dependency forks (gopacket, netlink) are listed in
+[Dependency forks](dependency-forks.md).
+
+GoBGP mode embeds GoBGP through a fork tag:
+`replace github.com/osrg/gobgp/v4 => github.com/MaxRink/gobgp/v4 v4.11.0-booty.6`
+in `go.mod` (v4.11.0-booty.5 plus the collision fix below, branch
+`fix/openconfirm-collision-follow-peer`). The tag is upstream master 629e5ae8 (2026-11-01, after
+v4.11.0) on the fork branch `booty/master`, with the changes below that
+upstream does not have. The tags v4.10.0-booty.23 and booty.24 are on
+upstream master 6d26fa29, v4.10.0-booty.17 to booty.22 on 57fa92f1, and
+the tags up to v4.10.0-booty.16 on v4.10.0 (branch `booty/v4.10`). Do not
+use the tag v4.10.0-booty.7: it stops
+answering a NOTIFICATION in OpenSent, which RFC 4271 section 8.2.2 does
+not allow (booty.8 and later answer it again).
+
+Upstream master since 4.10.0 also changes behaviour that BOOTy sees:
+the idle hold time backs off (4e70e768; the fork changes the rules to
+those of FRR, see [BGP sessions](#bgp-sessions)), `ResetPeer` is handled
+in every FSM state and ignored for an administratively down peer
+(95c43b00), connection collisions are resolved in OpenSent and
+OpenConfirm with Cease/Connection Collision Resolution (faf661ed to
+db3c9280), the first connect after Idle waits a random 0 to 1 s instead
+of 1.5 to 2 s (2be423ab), a connection that arrives while the idle hold
+time is 0 goes to Active instead of being closed at random (bfdd6742,
+[osrg/gobgp#3879](https://github.com/osrg/gobgp/issues/3879)), a new
+connection from a restarting peer ends the old session as a graceful
+restart when the peer preserved forwarding state (3eef7645,
+[osrg/gobgp#3745](https://github.com/osrg/gobgp/issues/3745); the fork
+requires the F bit, v4.11.0-booty.5), the
+graceful restart Helper keeps the stale routes per family (fe21cc5c to
+73cb9c42), the native BFD of GoBGP sends Cease/BFD Down (7d11a2c2) and
+checks TTL 255, the discriminators and multihop (11fa6f23 to 6d26fa29;
+BOOTy uses its own BFD), a Hard Reset is sent for Cease/BFD Down and for
+an Administrative Reset when the N bit was exchanged (95e1ed8b, 6bd78b2a,
+625456d7), an EVPN MAC/IP route with a MAC length other than 48 is
+malformed (bb09f175), a second MP_REACH_NLRI next hop that is not
+link-local is dropped (7491a4e0), the MP_REACH_NLRI next hop is checked
+like NEXT_HOP (93b979d5), NEXT_HOP is checked only when the UPDATE has
+NLRIs that use it (f5881559), AS4_PATH from a four-octet AS peer is
+discarded (e7967171), and RD, RT and community values that do not fit
+are rejected (bc42a8c1, 629e5ae8).
+
+| Change in the fork | Effect without it |
+|---|---|
+| Idle hold backoff with the rules of `v_start` of FRR 10.2.1 instead of those of upstream 4e70e768; a NOTIFICATION received in OpenConfirm backs off like one in Established ([osrg/gobgp#3791](https://github.com/osrg/gobgp/issues/3791)); `clear bgp` sets the backoff to 1 s and its NOTIFICATION doubles it, without a session it stays 1 s (booty.19; booty.23 on the upstream reset of 95c43b00; kept in v4.11.0-booty.5) | GoBGP doubles the idle hold time also for a hold timer expiry and for a NOTIFICATION in OpenSent, where FRR goes back to 1 s: a peer that keeps failing in OpenSent waits up to 120 s in Idle, and GoBGP refuses its connections meanwhile. |
+| A reset while the idle hold timer runs shortens it to `IdleHoldTimeAfterReset`, never longer (booty.6; booty.23 on 95c43b00) | Upstream restarts the timer with `IdleHoldTimeAfterReset`, which can make the wait longer than the rest of the running timer. FRR `peer_clear` in Idle sets `v_start` to 1 and re-arms the start timer, so it starts 1 s after the reset; the fork deliberately never lengthens the wait, which with BOOTy's 1 s differs from FRR only when less than 1 s remains. |
+| `DisablePeer` of a peer that already waits in Idle sets the idle hold time and the backoff back to 1 s, like `no neighbor shutdown` in FRR (bgpd.c:4941) (booty.21) | `DisablePeer` and `EnablePeer` of a peer that waited a backed-off time in Idle (up to 120 s) waited it again after the carrier returned. |
+| An administrative shutdown keeps the graceful restart stale routes of a restarting peer; upstream `setAdminState` aborts the restart and removes them (v4.11.0-booty.5; [osrg/gobgp#3897](https://github.com/osrg/gobgp/issues/3897)) | BOOTy disables a peer when the carrier of its interface goes down. If the session ended first and GoBGP kept the peer's routes as stale, `DisablePeer` dropped them before the carrier returned. FRR keeps them in NSF wait across interface down and up (`bgp_stop` in `bgp_fsm.c`); the restart timer still removes them when it expires. |
+| A new connection while the session is established ends the session as a graceful restart only when the new OPEN says that the peer preserved forwarding state. The GR F bit wins per family; an LLGR tuple counts only for a family that the GR capability does not list and only with a nonzero stale time; only negotiated families and locally advertised GR/LLGR capabilities count (v4.11.0-booty.5; [osrg/gobgp#3894](https://github.com/osrg/gobgp/issues/3894)). A helper-only FRR leaf advertises GR F=0, LLGR F=1 and stale time zero, so its late connection is a collision | FRR leaves are helper-only and the upstream v4.11 gate accepts any graceful restart tuple, so the leaf's late connection after a carrier fault ended the just-recovered session a second time (`TestProdTplOneDropPerFault`: leaf counters 2/2 against the shadow 1/1). The established session's F bit is not used: a peer that started with F=0 can still restart with forwarding preserved. The OPEN is read in the background, so `DisablePeer`/`EnablePeer` are not blocked by a slow peer, and the replayed connection keeps `syscall.Conn` for the socket options. |
+| The losing incoming connection of a collision that GoBGP resolves before the leaf's OPEN arrived on it is closed only when that OPEN arrives, with Cease/Connection Collision Resolution (RFC 4271 section 6.8); it answers like OpenSent and its NOTIFICATIONs do not count for the session (booty.9, booty.10; upstream b841cb71 closes it at once; [osrg/gobgp#3863](https://github.com/osrg/gobgp/issues/3863)) | FRR connected again, and with graceful restart the new connection ended the session a second time (`TestProdTplOneDropPerFault`: two drops per fault). |
+| Connection collisions when GoBGP has the higher BGP Identifier (fix/openconfirm-collision-follow-peer, after booty.5). First, when the peer's OPEN arrives on the peer's connection while GoBGP's OPEN is out on its own one, GoBGP closes the peer's connection at once with Cease/Connection Collision Resolution, like FRR (`bgp_collision_detect` also examines connections in OpenSent), instead of sending its KEEPALIVE there. Second, when GoBGP's OPEN went out only after its KEEPALIVE on the peer's connection, GoBGP keeps both connections and follows the peer: a NOTIFICATION or close on one connection, or the peer's KEEPALIVE on GoBGP's connection, decides. A KEEPALIVE on the peer's connection does not decide, because the peer sends it for GoBGP's OPEN either way. Without a choice within 500 ms, GoBGP behaves as before | The FRR leaf sometimes became Established on its own connection while GoBGP kept the other one. Both connections were gone, and the leaf counted a second session for one carrier fault (`TestProdTplOneDropPerFault`: leaf dropped 2; 14 of 800 carrier recoveries with booty.5 in CI). FRR stops a connection that it closes for a collision only with a queued event (`bgp_write_notify`), so a KEEPALIVE that GoBGP has already sent there can still make it Established. |
+| When the connection that GoBGP kept after a collision fails too, the next idle hold time is at most `IdleHoldTimeAfterReset` (booty.5, booty.17; [osrg/gobgp#3898](https://github.com/osrg/gobgp/issues/3898)) | Both connections are gone and the peer waits the backed-off idle hold time. |
+| A dialed outgoing connection is kept when the leaf's OPEN arrives on the leaf's connection, also when that connection then fails; no connect retry in OpenConfirm and Established (RFC 4271 section 8.2.2) (booty.11 to booty.13; upstream b9438d5e covers the time after the dial; [osrg/gobgp#3898](https://github.com/osrg/gobgp/issues/3898)) | With `BGP_CONNECT_AT_ONCE`, GoBGP reset its own connection while the leaf (lower BGP Identifier) kept it and closed the other one, so the session waited in Idle (packet capture of the production template lab). |
+| Feature: `ResetPeerRequest.BfdDown` sends Cease/BFD Down (RFC 9384), opt-in, as a reset: `IdleHoldTimeAfterReset` applies; a later reset replaces one that the FSM has not taken yet and keeps its `BfdDown` (booty.4; booty.23 on the reset channel of 95c43b00; booty.24 keeps `BfdDown`; [osrg/gobgp#3895](https://github.com/osrg/gobgp/issues/3895)); BOOTy sets it for its BFD resets | The peer of a BFD reset gets Cease/Administrative Reset (subcode 4), not BFD Down (subcode 10) like from FRR. Upstream sends BFD Down only from its native BFD (7d11a2c2), with the backed-off idle hold time. |
+| Feature: `TimersConfig.ConnectAtOnce` starts the first connect after Idle at once, opt-in; BOOTy sets it with `BGP_CONNECT_AT_ONCE` (off by default; [osrg/gobgp#3896](https://github.com/osrg/gobgp/issues/3896)) | GoBGP waits a random 0 to 1 s before it connects (upstream 2be423ab, [osrg/gobgp#3736](https://github.com/osrg/gobgp/issues/3736) closed); FRR connects when `BGP_Start` runs. |
+| Feature: Enhanced Route Refresh (RFC 7313), always on, with a bound (the graceful restart stale routes time, else 360 s) on the routes that a BoRR without EoRR leaves stale | The OPEN lacks the capability that FRR sends; a refresh from the peer has no begin and end markers, so stale routes are not swept. |
+| Feature: Paths-Limit capability (limit 0, no limit), always sent for the families that receive with ADD-PATH | The OPEN lacks the capability that FRR sends with ADD-PATH. |
+
+Fork patches that upstream master has, so the fork drops them:
+
+| Fix (fork tag) | Upstream since |
+|---|---|
+| Send IPv4 routes with an IPv6 next hop only with the extended next hop capability, for all five IPv4 families of RFC 8950 section 4 and with an IPv4-mapped IPv6 next hop counted as IPv6 (booty.15, booty.16) | 2544643c ([osrg/gobgp#3757](https://github.com/osrg/gobgp/pull/3757), fixes [#3743](https://github.com/osrg/gobgp/issues/3743)), same code |
+| Advertise extended next hop only for the IPv4 families of RFC 8950 | ee9c4b73 ([osrg/gobgp#3758](https://github.com/osrg/gobgp/pull/3758), [#3744](https://github.com/osrg/gobgp/issues/3744)), same code |
+| Keep unknown EVPN extended community sub-types (RFC 7606 section 7.14) | f1fcae18, the same commit |
+| Cease/BFD Down subcode and names | 93858cae; the `BfdDown` API above stays in the fork |
+| No answer to a NOTIFICATION with a version error in OpenSent | b5630a0b ([osrg/gobgp#3752](https://github.com/osrg/gobgp/issues/3752)) |
+| Apply the idle hold time after reset when `ResetPeer` finds no session (booty.1) | 95c43b00 ([osrg/gobgp#3740](https://github.com/osrg/gobgp/issues/3740)): `ResetPeer` is handled in every state. Difference: a reset of an administratively down peer is ignored (FRR `peer_clear` skips a peer only when its instance is shut down too, but a peer with `neighbor shutdown` has no running start timer, so the next start waits 1 s either way); the fork applied `IdleHoldTimeAfterReset` at the next start. BOOTy no longer resets a stopped peer; its wait stays 1 s (see `bgp fast-external-failover` above) |
+| Resolve a connection collision in OpenConfirm without Idle (booty.2) | 93580204 ([osrg/gobgp#3741](https://github.com/osrg/gobgp/issues/3741)), with Cease/Connection Collision Resolution on the losing connection (faf661ed) |
+| Keep the surviving connection when GoBGP resolves a collision in OpenSent or OpenConfirm (booty.5) | b841cb71, 93580204 and db3c9280 ([osrg/gobgp#3751](https://github.com/osrg/gobgp/issues/3751)); the cap of the idle hold time when both connections are gone stays in the fork |
+| A NOTIFICATION as the first message on the leaf's connection in OpenSent: go on with BOOTy's own connection (booty.8) | db3c9280: when only the other connection failed, the FSM leaves Idle at once and takes its own connection |
+| The outgoing connection manager is in OpenSent before its OPEN goes out (part of booty.11); it stops when the session is Established (part of booty.12) | b9438d5e and 9be7565d |
+| Take a new connection from a restarting peer, only from a peer that sent graceful restart AFI/SAFI tuples in the current session (booty.18, booty.19) | 3eef7645 ([osrg/gobgp#3745](https://github.com/osrg/gobgp/issues/3745)), with the graceful restart Helper state machine (v4.11.0); the fork adds the F-bit gate above |
+| Discard EVPN NLRIs of unknown route types ([osrg/gobgp#3742](https://github.com/osrg/gobgp/issues/3742)) | 97833030 (v4.11.0), same behaviour |
+| Decode the EVPN ARP/ND extended community (RFC 9047, [osrg/gobgp#3746](https://github.com/osrg/gobgp/issues/3746)) | 40650d96 (after v4.11.0), same API |
+| A neighbor set entry can carry the IPv6 zone (`fe80::1%eth0/128`) and then matches only the neighbor with that zone ([osrg/gobgp#3790](https://github.com/osrg/gobgp/issues/3790)) | cc2d3584 (v4.11.0) |
+| `EnablePeer` or `DisablePeer` for the admin state that the peer already has changes nothing, and back-to-back requests are not dropped ([osrg/gobgp#3788](https://github.com/osrg/gobgp/issues/3788), [#3789](https://github.com/osrg/gobgp/issues/3789)) | 840c7306 and 238fbae2 (v4.11.0); upstream queues the requests in order instead of replacing them |
+| A connection that arrives while the idle hold time is 0 goes to Active instead of being closed at random ([osrg/gobgp#3879](https://github.com/osrg/gobgp/issues/3879); separate fork branch `idle-hand-conn-to-active`) | bfdd6742 (after v4.11.0) |
+| Reject out-of-range RD and RT values ([osrg/gobgp#3869](https://github.com/osrg/gobgp/issues/3869); separate fork branch `rd-rt-reject-out-of-range`) | bc42a8c1 and 629e5ae8 (after v4.11.0) |
+| Listen for BFD on the bind interface of each session ([osrg/gobgp#3862](https://github.com/osrg/gobgp/issues/3862); separate fork branch `bfd-listen-per-bind-interface`) | 400eb145 (after v4.11.0); BOOTy uses its own BFD |
+
+GoBGP 4 is required: GoBGP 3.37 panics on a truncated EVPN NLRI from any
+peer, also on an IPv4-only session, which ends BOOTy (PID 1);
+`TestEVPNDecodeTruncatedNLRIReturnsError` pins that 4.11 returns an error.
+
+Drop the replace when an osrg/gobgp release contains all the changes in
+the first table (for the two opt-in features, with the same API). Then
+check the GO-2026-4736 exception in `hack/check-govulncheck.py`: it names
+`github.com/osrg/gobgp/v4` 4.11.0, which govulncheck does not report while
+the fork module is in the build. Run the production template lab after
+the change.
+
 ## FRR and GoBGP compared
 
 | Feature | FRR | GoBGP |
@@ -528,7 +740,7 @@ on purpose although they are not in the templates:
 | Image flavors | Default and `iso` flavors only (`make iso`, `make docker`, `make dockerx86`). `slim`, `micro`, `gobgp` and `gobgp-iso` ship no FRR binaries | All flavors. The BOOTy binary is the same in every flavor |
 | Peer modes | Unnumbered only, on all detected physical NICs. `BGP_PEER_MODE`, `BGP_INTERFACES` and `BGP_NEIGHBORS` are ignored | With `frr.conf` neighbors or `BGP_SESSIONS`: one session per neighbor (see [BGP sessions](#bgp-sessions)). Otherwise `unnumbered`, `dual`, `numbered` (see [GoBGP peer modes](#gobgp-peer-modes)) |
 | Remote AS | Peer group with `remote-as external` (eBGP only) | Per session: number, `internal` or `external`. Without sessions: unnumbered learns it from the peer OPEN, numbered uses `BGP_REMOTE_ASN` (`0` means iBGP) |
-| BFD | Yes. `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` together create the `datacenter` BFD profile on the fabric peers and the DCGWs | Yes, BOOTy's own BFD (`pkg/network/bfd`): asynchronous mode, RFC 5881 single-hop (IPv4 and IPv6 link-local) and RFC 5883 multihop, Poll/Final, no echo, demand or authentication. `neighbor X bfd` in `frr.conf` with the profile timers (FRR defaults 300/300/3), or `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` for the native peers. BFD down resets the BGP session, which connects again after 1 s like FRR 10.3 bgpd (Cease subcode 4 instead of 10) |
+| BFD | Yes. `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` together create the `datacenter` BFD profile on the fabric peers and the DCGWs | Yes, BOOTy's own BFD (`pkg/network/bfd`): asynchronous mode, RFC 5881 single-hop (IPv4 and IPv6 link-local) and RFC 5883 multihop, Poll/Final, no echo or authentication. BOOTy does not ask for Demand mode itself, but it honours a peer's Demand (D) bit: no periodic packets while both sides are Up and no Poll Sequence runs (RFC 5880 6.8.7). Like FRR bfdd it advertises Required Min Echo RX 50 ms. Echo mode on the leaf is not supported: the 50 ms invites a peer with `echo-mode` to send echo packets, which come back only through IP forwarding, and with `IP_FORWARDING=false` (the bm4x template) the ramdisk drops them, so that peer's echo session fails. For IPv4 the legacy ramdisk (FRR bfdd) has the same exposure; for IPv6 FRR 10.3 bfdd loops the echo packets back in software (`bp_bfd_echo_in`), BOOTy does not. The fabric does not enable echo mode. `neighbor X bfd` in `frr.conf` with the profile timers (FRR defaults 300/300/3), or `BFD_TRANSMIT_MS` and `BFD_RECEIVE_MS` for the native peers. BFD down resets the BGP session with Cease/BFD Down (subcode 10) like FRR, and GoBGP connects again after `IdleHoldTimeAfterReset` (1 s); FRR waits 2 s, because writing the NOTIFICATION doubles `v_start` |
 | Authentication | `BGP_AUTH_PASSWORD` as TCP-MD5 on the fabric peer group and the DCGWs. Whitespace and control characters are rejected | `BGP_AUTH_PASSWORD` as TCP-MD5 on all peers |
 | Timers | `BGP_KEEPALIVE` and `BGP_HOLD` apply only when both are set. Otherwise FRR uses its `datacenter` defaults | Per session from `frr.conf` or `BGP_SESSIONS`, else the `frr defaults` profile. Without sessions: keepalive 3 s, hold 9 s, connect retry 5 s; hold must be 0 or at least 3 and keepalive must not exceed hold / 3 |
 | Peer readiness | Not checked. The connectivity check only polls the target URL | `BGP_MIN_PEERS` established peers (default 1) before the target poll |
@@ -562,9 +774,17 @@ Both stacks:
 
 The OPEN message of GoBGP has the capabilities that FRR 10 sends with the
 bm4x template (`TestProdTplOpenCapabilities` compares the leaf and route
-reflector views of BOOTy and the shadow FRR node):
+reflector views of BOOTy and the shadow FRR node). The FRR lists were
+captured on the wire (tshark) from FRR 10.2.1, the version of the legacy
+ramdisk, and 10.3.1, with the bm4x template (`frr version 8.2.2`, `frr
+defaults traditional`) and the CAPRF config (`frr version 9.1`, `frr
+defaults datacenter`), to an unnumbered eBGP leaf and a numbered iBGP
+route reflector. Both FRR versions send the same capabilities.
+`TestOpenCapabilitiesMatchFRR` captures the OPEN of GoBGP for the same
+sessions and compares it with these lists and the deviations below:
 
-- route refresh, 4-octet AS, extended next hop;
+- route refresh, 4-octet AS, extended next hop (FRR: IPv4 unicast on the
+  unnumbered sessions only);
 - the hostname (FQDN capability, no domain): the system host name, as
   GoBGP takes it from `os.Hostname()`. It is `HOSTNAME` for provisioning
   with `RAMDISK_HOSTNAME=true`, else the host name of the ramdisk.
@@ -580,27 +800,34 @@ reflector views of BOOTy and the shadow FRR node):
   iBGP peers only with `traditional` (the bm4x templates). A set value
   wins;
 - graceful restart as helper with restart time 120 s
-  (`BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`);
+  (`BGP_GRACEFUL_RESTART`, `BGP_GRACEFUL_RESTART_TIME`), without family
+  tuples;
+- the N bit (RFC 8538) of graceful restart like the FRR default of `bgp
+  graceful-restart notification`, which depends on `frr version`: off
+  below 8.3 (the bm4x templates, 8.2.2), on from 8.3 (the CAPRF configs,
+  9.1) and without `frr.conf` (`BGP_GRACEFUL_NOTIFICATION`). With N
+  exchanged, a NOTIFICATION other than Hard Reset keeps the routes of a
+  peer that sends family tuples, as in FRR;
 - long-lived graceful restart (without family tuples in GoBGP helper mode,
   so there is no stale time to set);
-- add-path receive in every address family (`BGP_ADDPATH_RX`).
+- add-path receive in every address family (`BGP_ADDPATH_RX`), with the
+  Paths-Limit capability (limit 0) for those families;
+- enhanced route refresh (RFC 7313);
+- extended message (RFC 8654), which GoBGP sends since 4.7.0.
 
 The minimum route advertisement interval is 0 in both: FRR shows
 `minBtwnAdvertisementRunsTimerMsecs` 0 for these peers, and GoBGP sends
 updates without a timer.
 
-GoBGP 3.37 cannot send the following, so they are known deviations:
+The known deviations, with the fix that closes each of them:
 
-| FRR 10 sends | GoBGP | Fabric impact |
-|---|---|---|
-| Enhanced route refresh (RFC 7313) | Not sent | A peer that refreshes its routes from BOOTy uses plain route refresh, without the begin and end markers. Nothing is lost; stale routes of BOOTy are not swept at the end of a refresh. |
-| Extended message (RFC 8654) | Not sent | Messages stay at 4096 bytes. The few routes of a server fit. |
-| Paths-limit (with add-path) | Not sent | FRR sends limit 0 (no limit), so the peer behaves the same. |
-| Dynamic capability: FRR sends it with `frr defaults datacenter` (`BGP_DYNAMIC_CAPABILITY`), so the CAPRF configs send it and the bm4x templates (`traditional`) do not | Not sent | A capability change needs a session reset. The fabric does not change capabilities at run time. |
-| Graceful restart Restart State (R) bit | Off | The R bit tells the peer that the speaker restarted. BOOTy is only a helper and keeps no forwarding state, so the peer's behaviour does not change. |
-| Long-lived graceful restart family tuples (stale time 0) | Without tuples in helper mode | With stale time 0 neither side keeps routes long-lived. |
-| Software version `FRRouting/10.x` | `GoBGP/3.37.0` | Information only. |
-| No extended next hop for l2vpn evpn | GoBGP also offers it for l2vpn evpn | The route reflectors do not offer it, so it is not negotiated. FRR on the route reflectors logs one capability warning per OPEN for the unexpected l2vpn evpn tuple. |
+| FRR 10 sends | GoBGP | Fabric impact | Status |
+|---|---|---|---|
+| Dynamic capability: FRR sends it with `frr defaults datacenter` (`BGP_DYNAMIC_CAPABILITY`), so the CAPRF configs send it and the bm4x templates (`traditional`) do not | Not sent | A capability change needs a session reset. The fabric does not change capabilities at run time. | Not planned: GoBGP has no CAPABILITY message. |
+| Graceful restart Restart State (R) bit in the first restart time (120 s) after bgpd starts, then off | Off | The R bit tells the peer that the speaker restarted. BOOTy is only a helper and keeps no forwarding state, so the peer's behaviour does not change. GoBGP sets it only for a restarting speaker (`LocalRestarting`), which also holds back BOOTy's own routes until every peer has sent End-of-RIB, so BOOTy does not set it. | Accepted: no effect on the fabric; GoBGP would need an R bit without the restarting speaker procedure. |
+| Long-lived graceful restart family tuples (F bit, stale time 0) | Without tuples in helper mode | With stale time 0 neither side keeps routes long-lived. | Accepted: GoBGP sends the tuples only for a restarting speaker, and FRR's tuples claim preserved forwarding state (F bit). |
+| Software version `FRRouting/10.x` | `GoBGP/4.11.0` | Information only. The capability goes to the same peers as in FRR. | Not planned: GoBGP sends its own name. |
+| Cease/Hard Reset (RFC 8538): around Cease/BFD Down always when the N bit is negotiated, and around Administrative Reset with `bgp hard-administrative-reset` (FRR 8.3 and later) | Same: Hard Reset around Cease/BFD Down and around Administrative Reset when N was exchanged (95e1ed8b, 6bd78b2a, 625456d7) | No effect today: BOOTy sends no family tuples, so a peer keeps no routes of BOOTy as stale after a NOTIFICATION. With tuples, the peer would treat a NOTIFICATION other than Hard Reset as a graceful restart and keep BOOTy's routes after its BFD reset, where FRR's Hard Reset flushes them. | Fixed in GoBGP 4.11.0 (fork tag v4.11.0-booty.5). |
 
 Defaults of `frr defaults`: FRR 10.3.1 has these profile-dependent
 defaults (every `FRR_CFG_DEFAULT_*` with a `match_profile` in bgpd, zebra,
@@ -624,34 +851,71 @@ RIB check, and with the templates they always exist locally (the underlay
 /32 on its dummy, the lo /128 and the blackhole /64). The other
 `FRR_CFG_DEFAULT_*` (suppress-duplicates, graceful-restart notification,
 hard-admin-reset, enforce-first-as) depend on the FRR version, not on the
-profile.
+profile. BOOTy follows `frr version` for graceful-restart notification
+(the N bit above).
 
 Graceful restart and switch failures: as helper, BOOTy keeps the routes
 of a leaf or route reflector that restarts its BGP process with graceful
 restart (forwarding bit set) for the peer's restart time, like FRR, so a
 control plane restart of a switch does not take the server down. A switch
 that fails ends the session through BFD or the carrier with a NOTIFICATION
-and no N bit, so graceful restart does not apply and the routes go at
+without the N bit, or a Hard Reset when N is exchanged, so graceful
+restart does not apply and the routes go at
 once, as in FRR. When BOOTy restarts BGP (BFD down, the end of the run),
 its capability has no address family tuples, so the leaf removes BOOTy's
 routes at once, the same as for the legacy FRR.
 
 LLDP: like systemd-networkd with netplan `emit-lldp: true` (systemd 249,
-`TestProdTplLLDPLikeNetworkd` compares the frames on the same leaf),
+`TestProdTplLLDPLikeNetworkd` compares the frames on the same leaf; CI
+also compares with the networkd of Ubuntu 24.04 (systemd 255), which sends
+the same frame, and 26.04 (systemd 259), which sends an ID derived from
+the machine ID as chassis ID instead of the machine ID),
 BOOTy sends on the `LLDP_EMIT` NICs: chassis ID the machine ID (locally
 assigned; like systemd on the legacy ramdisk, BOOTy creates a random one
 per boot, kept in `/run/booty/machine-id`; it never uses or writes
 `/etc/machine-id`, so no ID is shared by hosts or written into the
 provisioned OS), port ID the interface name, TTL 120 s, system name the
 hostname, and the capabilities station, bridge and router (station
-enabled). With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
+enabled). When the sending stops, BOOTy sends a shutdown LLDPDU (TTL 0,
+IEEE 802.1AB) on each NIC with carrier, so the switch drops BOOTy at once
+instead of after 120 s; networkd does not send one. An `emit-lldp: true` on a netplan match
+block without `set-name` (the legacy L2 netplan has `all-en` with
+`name: "en*"`) sends on every NIC the block selects. BOOTy sends in every
+network mode, like networkd, which sends whatever the addressing (DHCP,
+static, FRR). Outside GoBGP mode a NIC that appears later and a block
+selects sends too (with the firmware LLDP agent turned off first, like at
+the start); the GoBGP underlay sends only on the NICs resolved at the
+setup.
+
+The timing is that of networkd 249 (`networkd-lldp-tx.c`), in every
+profile. Each delay is a base plus a random jitter of 0 to 400 ms:
+
+- A NIC sends only while it has carrier (`link_has_carrier`: operstate
+  up, or operstate unknown with lower up and running and not dormant).
+  BOOTy follows the carrier with netlink link updates, like networkd.
+- Carrier gained (`link_carrier_gained`, `link_lldp_emit_start`): the
+  first frame 0.8 s plus jitter later, then 3 more 0.8 s plus jitter
+  apart (txFastInit 4, msgFastTx 1 s of IEEE 802.1AB), then one every
+  29.8 s plus jitter (msgTxInterval 30 s). The TTL is 120 s.
+- Carrier lost (`link_carrier_lost`, `link_lldp_emit_stop`): no frames,
+  and none counts. The next carrier gain starts the 4 fast frames again.
+  A failed send counts, like in networkd.
+- A start while the timer runs sets the fast frames back to 4 and only
+  lowers the timeout, like `link_lldp_emit_start`.
+- When the link watch loses updates (ENOBUFS), BOOTy subscribes again and
+  reads the carrier again. A NIC that is missing, deleted or renamed gets
+  no frames; BOOTy logs it once and `booty lldp status` shows it.
+
+With `LLDP_RECEIVE` (on by default) BOOTy also listens on every
 physical NIC, logs each new or changed neighbor and adds the current
 neighbors to the hardware inventory report; the legacy ramdisk only
 sends. The receive joins the LLDP multicast groups (01:80:c2:00:00:0e,
 :03 and :00) like networkd and lldpd, which a NIC that is not
 promiscuous needs; the lab veths pass LLDP without them, so the lab does
 not show it (a root test checks the membership). It drops BOOTy's own
-frames that come back (our source MAC or chassis ID). It keeps one
+frames that come back (our source MAC or chassis ID), and LLDPDUs whose
+first three TLVs are not Chassis ID, Port ID and TTL (IEEE 802.1AB); the
+End of LLDPDU TLV is optional. It keeps one
 neighbor per NIC: a second chassis on the same link replaces the first.
 The inventory runs seconds after the receive starts, so while no
 neighbor is known it waits until the receive has run for 30 s, one
@@ -668,6 +932,163 @@ the flag across reboots. An opt-in that turns it off for BOOTy's run and
 back on before the handoff comes with the cable check (one
 implementation in `pkg/firmware/nic`).
 
+### LLDP receive
+
+With `LLDP_RECEIVE` (on by default) BOOTy keeps the latest neighbor of each
+physical NIC until its TTL ends and reports it in the inventory
+(`lldpNeighbors`). It ignores the frames that it sends itself (the packet
+socket also sees them). A neighbor has:
+
+| Field | TLV | Notes |
+|---|---|---|
+| `chassisID`, `chassisIDSubtype` | Chassis ID | A MAC renders as `aa:bb:cc:dd:ee:ff`, a network address as an IP. |
+| `portID`, `portIDSubtype` | Port ID | Junos sends the SNMP ifIndex as `local` port ID by default; the port name is then in `portDescription`. |
+| `portDescription` | Port Description | |
+| `systemName`, `description` | System Name, System Description | |
+| `capabilities`, `enabledCapabilities` | System Capabilities | `bridge`, `router`, `station`, ... |
+| `mgmtAddresses` | Management Address (all of them) | IPv4, IPv6 or MAC |
+| `vlan`, `vlanNames` | 802.1 Port VLAN ID, VLAN Name | |
+| `linkAggregation` | 802.1 or 802.3 Link Aggregation | supported, enabled, aggregated port ID |
+| `macPhy` | 802.3 MAC/PHY Configuration/Status | autonegotiation and the MAU type (RFC 4836) |
+| `maxFrameSize` | 802.3 Maximum Frame Size | |
+| `inventory` | LLDP-MED inventory | hardware, firmware and software revision, serial number, manufacturer, model, asset ID |
+| `firstSeen`, `lastSeen`, `changes` | | When the neighbor appeared and sent last; how often the neighbor of the NIC changed or came back after its TTL ran out. |
+
+Junos caveat: Junos sends the port name in the port description only when
+the interface has no description of its own; with a configured interface
+description, neither TLV names the port. `set protocols lldp
+port-id-subtype interface-name` on the leaf makes the port ID the port
+name.
+
+All strings are sanitized (control characters replaced, at most 255
+bytes). `LLDP_NEIGHBOR_WAIT` (check mode) waits until every NIC with
+carrier has a neighbor.
+
+### LLDP diagnosis in the rescue shell
+
+The BOOTy binary is also the diagnosis command, so the ramdisk needs no
+`lldpd` or `lldpcli`. Every flavor links `/bin/booty` to the BOOTy binary
+`/init`:
+
+| Command | Shows | Like |
+|---|---|---|
+| `booty lldp neighbors` | per NIC: chassis ID and port ID with their subtypes, port description, system name and description, capabilities, management addresses, port VLAN, VLAN names, link aggregation, 802.3 MAC/PHY, maximum frame size, LLDP-MED inventory, the age of the last frame, the TTL and the neighbor changes | `lldpcli show neighbors detail` |
+| `booty lldp status` | per NIC that BOOTy sends on: the profile, the announce level, the number of frames, the time of the last one and its TLVs, or why it was not sent (for example no carrier) | `lldpcli show interfaces`, `show chassis` |
+
+`--json` prints JSON (the inventory form of the neighbors). The running
+BOOTy keeps its LLDP state in `/run/booty/lldp.json` (`--state`); only its
+LLDP senders and receivers write it: at the start, after each sent and
+each received frame (at most once per second) and every 30 s while the
+receiver runs. A capture shows the time of each captured frame. When BOOTy is not running or
+the file is older than 75 s, `neighbors` listens on every physical NIC
+itself for `--capture` (default `35s`; switches send every 30 s) and
+`status` fails. The command runs only when BOOTy is not PID 1, so words on
+the kernel command line never start it. `TestCableCheckDiagnosis` (lab)
+runs both commands against a running BOOTy and the capture after BOOTy
+stopped.
+
+### LLDP identity profiles
+
+`LLDP_PROFILE` (YAML `network.lldp.profile`) selects the identity of the
+sent frames. The default `networkd` sends the frames above, byte for byte
+(`TestFrameNetworkdGolden`).
+
+`bm4x-cablecheck` sends the identity that the bm4x connection check
+matches. The check runs on the switch side: bm4x-api asks NSO for the LLDP
+neighbor tables of the switches and treats a neighbor as a compute port when
+its system name is `bare-minimal` (or none, or `UNKNOWN_DEVICE`) and its
+port ID is a MAC address in the form `aa:bb:cc:dd:ee:ff`
+(`Connection.isToMacAddress`). It then looks the MAC up in NetBox. So the
+profile sends:
+
+| TLV | `networkd` | `bm4x-cablecheck` |
+|---|---|---|
+| Chassis ID | machine ID (subtype 7) | the same |
+| Port ID | interface name (subtype 5) | NIC MAC (subtype 3) |
+| TTL | 120 | the same |
+| Port description | none | interface name, like lldpd |
+| System name | hostname | `bare-minimal` |
+| System description | `PRETTY_HOSTNAME` when set | the same |
+| Capabilities | station, bridge, router; station enabled | the same |
+
+With this profile BOOTy sends on every physical NIC with carrier
+(`LLDP_EMIT_ALL`, YAML `network.lldp.emitAll`, defaults to on), in every
+network mode. `pkg/network/lldp/bm4x_match_test.go` ports the bm4x-api
+matching code to Go (the source lines are in the file) and runs it on
+BOOTy's frames; `TestCableCheckLLDP` (containerlab, an lldpd leaf) checks
+what a switch reports.
+
+Intel 700 and 800 series NICs run an LLDP agent in the firmware. While it
+runs, it consumes the LLDP frames of the switch, so the switch never sees
+the host, and the host's own frames do not go out reliably. BOOTy
+therefore stops it by default, in every mode, through the driver private
+flag over ethtool netlink: i40e `disable-fw-lldp` on, ice `fw-lldp-agent`
+off. It writes the flag only when the agent runs, and before the network
+setup, so a port reset of the driver cannot drop BGP sessions.
+
+This is a deliberate deviation from the legacy ramdisk, which never touches
+the flag. BOOTy does not put the flag back: ice keeps it in the NVM, so the
+agent also stays off for the installed OS. Side effects:
+
+- The firmware agent also runs DCBX. With the agent off the NIC does not
+  negotiate DCB with the switch; an OS that needs DCB then needs software
+  DCBX (for example lldpad), or the opt-out below.
+- `LLDP_DISABLE_FW_AGENT=false` (YAML `network.lldp.disableFirmwareAgent:
+  false`) is the opt-out: BOOTy does not touch the flag at all.
+- An SR-IOV profile that sets `firmware.fwLLDPAgent` owns the flag of the
+  ports it matches ([SR-IOV](sriov.md)). BOOTy's default leaves those ports
+  alone, and the profile's value applies with its drift handling.
+
+### LLDP announce levels
+
+`LLDP_ANNOUNCE` (YAML `network.lldp.announce`) adds TLVs for operators
+(`show lldp neighbors detail` on the switch) and the switch LLDP-MIB. Each
+level has the TLVs of the one before. The identity profile is separate:
+`bm4x-cablecheck` keeps its port ID and system name at every level.
+
+| TLV | `parity` (default) | `standard` | `full` |
+|---|---|---|---|
+| Chassis ID, port ID, TTL, system name, capabilities | as networkd | the same | the same |
+| System description | `PRETTY_HOSTNAME` when set | `BOOTy <version> mode=<mode>` | adds `product=<vendor_product> uuid=<DMI UUID>` |
+| Port description | none (bm4x profile: interface name) | `<interface> <driver> <PCI address>` | the same |
+| Management address | none | up to 4 IPs of the NIC (link-local first) and its MAC, with the ifIndex | the same |
+| 802.3 MAC/PHY configuration/status | none | autonegotiation supported and enabled, as the driver reports it; MAU type 0 (unknown) | the same |
+| 802.3 maximum frame size | none | MTU + 18 | the same |
+| LLDP-MED capabilities and inventory | none | none | endpoint class I; hardware revision (DMI board version), firmware revision (BIOS version), software revision (BOOTy version), serial number, manufacturer, model, asset ID, each at most 32 bytes |
+
+Without an IEEE OUI that Telekom owns, BOOTy sends no organizationally
+specific TLVs of its own; the extra host data goes into the system
+description. `full` sends the DMI serial number to the switch, which the
+check result and the inventory leave out; [cable
+check](cable-check.md#host-identity-what-goes-where) has both decisions. TIA-1057
+has an endpoint send LLDP-MED TLVs only after it heard LLDP-MED from the
+network device. BOOTy sends them at once with `full`, as lldpd does with
+`-M`, so a switch that never starts LLDP-MED still gets the inventory; a
+strict MED switch may ignore them. With every string at its limit, a frame has about
+1.2 KB (`TestFrameBudget`), below the 1500-byte LLDPDU limit.
+`TestCableCheckAnnounce` checks that lldpd decodes the `full` TLVs.
+
+#### Port ID format
+
+The bm4x pattern needs the MAC in the colon form `aa:bb:cc:dd:ee:ff`.
+bm4x-api and network-app pass the port ID string from NSO unchanged, so the
+switch decides the form: for a MAC port ID (subtype 3), lldpd and Junos show
+the colon form, NX-OS shows `aabb.ccdd.eeff`. A locally assigned port ID
+(subtype 7) is a string that the switch shows unchanged.
+`LLDP_PORT_ID_FORMAT` (YAML `network.lldp.portIDFormat`, only with
+`bm4x-cablecheck`) selects the port ID:
+
+| Format | Port ID | bm4x match on lldpd, Junos | bm4x match on NX-OS | Use |
+|---|---|---|---|---|
+| `mac` (default) | NIC MAC, subtype 3 | yes | no, unless NSO converts the form | Junos leaves; a switch or NSO that needs the MAC subtype |
+| `mac-string-colon` | `aa:bb:cc:dd:ee:ff`, subtype 7 | yes | yes | NX-OS leaves, or mixed fabrics |
+| `mac-string-dotted` | `aabb.ccdd.eeff`, subtype 7 | no | no | a consumer that expects the Cisco form |
+| `ifname` | interface name, subtype 5 | no | no | port ID as networkd sends it, with the other bm4x TLVs |
+
+`TestBM4XMatchesPortIDFormats` runs the bm4x matcher on each format, as
+both kinds of switch show it. The NX-OS column assumes that NX-OS shows a
+locally assigned port ID unchanged; check it on a leaf before relying on it.
+
 ## GoBGP peer modes
 
 | Mode | Sessions | Address families | Requirements |
@@ -677,10 +1098,82 @@ implementation in `pkg/firmware/nic`).
 | `numbered` | Numbered sessions to `BGP_NEIGHBORS` | IPv4 unicast, L2VPN EVPN | `BGP_NEIGHBORS` (IPv4). The host must already reach the neighbors |
 
 Fabric NICs are the NICs in `BGP_INTERFACES`, or all detected physical NICs
-when it is empty. BOOTy waits up to 10 s for the listed NICs. In unnumbered
-and dual mode, BOOTy sends an IPv6 Router Advertisement on each fabric NIC
-every 10 s, so that FRR peers learn the BOOTy link-local address. Teardown
-stops these RAs.
+when it is empty. BOOTy waits up to 10 s for the listed NICs.
+
+In unnumbered and dual mode, and on the NICs of interface sessions, BOOTy
+sends IPv6 Router Advertisements on each fabric NIC like zebra does for a
+bgpd unnumbered peer (FRR 10.2 `zebra/rtadv.c`), so that FRR peers learn
+the BOOTy link-local address:
+
+- The RAs start before BOOTy looks for the peers. The first 5 RAs go out
+  1 s apart: the 4 fast retransmits of zebra (`RTADV_NUM_FAST_REXMITS`,
+  `RTADV_FAST_REXMIT_PERIOD`) and then its first regular RA. After that,
+  one RA goes out every 10 s (bgpd `BGP_UNNUM_DEFAULT_RA_INTERVAL`) with
+  router lifetime 30 s (the zebra default for that interval).
+- The BFD receive sockets of the peers with BFD (UDP 3784 on each fabric
+  NIC, and the sockets of the numbered peers) open before the first RA
+  and before the BGP peers. The leaf starts BFD as soon as an RA shows it
+  BOOTy; FRR bfdd listens from its start, so its first BFD packet gets no
+  ICMP port unreachable. The sessions start after the peers are found and
+  use these sockets. In FRR mode BOOTy starts `bfdd` before `bgpd` for the
+  same reason: `bgpd` reads `frr.conf` at its start and has zebra send the
+  RAs at once.
+- The source of each RA is the link-local address of the NIC (RFC 4861
+  section 6.2.8), never a global or a tentative address. An RA does not
+  go out without carrier or while the link-local address is tentative
+  (DAD, also with optimistic DAD); BOOTy then tries again 1 s later. Only an RA that
+  went out counts as one of the 5, so all 5 reach the switch after DAD.
+  Zebra skips such an interface in `rtadv_timer` and does not learn a
+  tentative address (`zebra/if_netlink.c`). The legacy captures show 4
+  or 5 fast RAs: at 0, 1, 2 and 3 s and the next one 10 s later, or a
+  fifth one on the next tick.
+- When a fabric NIC gets carrier back, the 4 fast retransmits start again
+  1 s later, like zebra: `rtadv_if_up` only sets them, and `rtadv_timer`
+  sends them on its next 1 s tick. This also applies without
+  `bgp fast-external-failover`. The next regular RA comes 10 s after the
+  last fast one; zebra goes on with the regular timer where it stopped,
+  which is 0 to 10 s.
+  An FRR unnumbered peer forgets the neighbor address on interface down and
+  accepts a connection again only after an RA.
+- Each fabric NIC joins the all-routers group `ff02::2` (RFC 4861 section
+  6.2.2, zebra `if_join_all_router`) and answers a valid Router
+  Solicitation (section 6.1.1) with a multicast RA. The answer waits a
+  random time of up to 0.5 s (`MAX_RA_DELAY_TIME`), and at least 3 s
+  (`MIN_DELAY_BETWEEN_RAS`) plus that time after the last RA (section
+  6.2.6). When an RA is due earlier, that RA is the answer. The next
+  regular RA comes 10 s after the answer, as in zebra.
+- The relearner sends no RAs of its own, like zebra and the legacy
+  ramdisk: a switch that comes back with another address finds BOOTy from
+  the scheduled RAs, and BOOTy finds the switch from its RAs.
+- Teardown stops the RAs with a final RA with router lifetime 0 (RFC 4861
+  section 6.2.5), so no neighbor keeps BOOTy as a default router, and then
+  leaves `ff02::2`.
+
+RFC 4861 audit of these RAs:
+
+| Section | Rule | BOOTy | Reason |
+|---|---|---|---|
+| 6.1.1 | Validate a received Router Solicitation: hop limit 255, code 0, at least 8 octets, option lengths not 0, no source link-layer address option from `::` (the kernel checks the checksum) | Compliant | |
+| 6.1.2 | Receivers accept only RAs with hop limit 255, code 0, a link-local source and at least 16 octets | Compliant as a sender: hop limit 255, code 0, link-local source, 24 octets | The kernel and zebra on the leaf drop other RAs |
+| 6.2.1 | AdvDefaultLifetime is 0 or between MaxRtrAdvInterval and 9000 s, by default 3 times MaxRtrAdvInterval | Compliant: 30 s, 3 times the 10 s interval | As the zebra default for that interval |
+| 6.2.2 | An advertising interface MUST join the all-routers group | Compliant: each fabric NIC joins `ff02::2` while it sends RAs | As zebra `if_join_all_router` |
+| 6.2.4 | Random interval between MinRtrAdvInterval and MaxRtrAdvInterval; at most `MAX_INITIAL_RTR_ADVERTISEMENTS` (3) initial RAs, with intervals of at most `MAX_INITIAL_RTR_ADVERT_INTERVAL` (16 s) | Deviation: 5 fast RAs 1 s apart, then a fixed 10 s | As zebra (`rtadv_timer`, its FIXME for the fixed interval); FRR unnumbered peering depends on the early RAs |
+| 6.2.5 | When the interface stops advertising, SHOULD send final RAs with router lifetime 0 (at most `MAX_FINAL_RTR_ADVERTISEMENTS`) and leave the all-routers group | Compliant: one final RA, then BOOTy leaves `ff02::2` | |
+| 6.2.6 | Answer a solicitation after a random delay of up to `MAX_RA_DELAY_TIME`, and not before `MIN_DELAY_BETWEEN_RAS` after the last multicast RA | Compliant. Deviation from zebra, which with `ipv6 nd ra-fast-retrans` (on by default) answers at once (`rtadv_process_solicit`) | No Router Solicitation was seen on the fabric (0 of 48 captures of the kindmetal EVPN parity runs), so the delay does not change the boot |
+| 6.2.6 | Consecutive multicast RAs MUST be at least `MIN_DELAY_BETWEEN_RAS` (3 s) apart | Deviation: the 5 fast RAs 1 s apart at the start, the 4 fast RAs 1 s apart after the carrier returns (the first one 1 s after it, which can be less than 3 s after the last RA), and the final RA with lifetime 0, which can come less than 3 s after the last RA | As zebra (fast retransmits in `rtadv_timer`, set by `ipv6_nd_suppress_ra_set` and `rtadv_if_up`, and the RA with lifetime 0 of `ipv6_nd_suppress_ra_set`); the leaf needs the early RAs to accept the unnumbered session |
+| 6.2.8 | The source address of an RA MUST be the link-local address of the interface | Compliant: the socket is bound to the link-local address that finished DAD; without one, no RA goes out | Zebra sends from the link-local address it learned, which excludes tentative addresses |
+
+BOOTy finds the leaf of an unnumbered session in the neighbor table. The
+leaf gets there from its RAs: the kernel adds the source link-layer
+address of an RA also with `accept_ra` 0. The leaf also gets there when
+it connects after an RA of BOOTy, from the address resolution of that
+connection. Like FRR, BOOTy sends no echo request to `ff02::1` to find the
+leaf. In the kindmetal EVPN parity runs, the echo request that BOOTy sent
+before did not go out on the first fabric NIC, because the link-local
+address was still tentative. On the second fabric NIC, the leaf knew the
+BOOTy MAC address from the RA before it, so the leaf answered without an
+address resolution, and only other nodes on the segment got into the
+neighbor table.
 
 With `VRF_NAME`, BOOTy puts the fabric NICs into the VRF. It skips a NIC
 that carries an IPv4 default route, because that NIC is a management NIC.
@@ -718,7 +1211,7 @@ is fatal.
 
 | Mode | `provision_gateway` | Routes BOOTy originates | Routes BOOTy processes |
 |---|---|---|---|
-| L2 | Required | Type-5, Type-3, Type-2 | Type-5, Type-2, Type-3 |
+| L2 | Required | Type-5, Type-3, Type-2 | Type-5, Type-2, Type-3, Type-1 |
 | Type-5 with gateway (default) | Required | Type-5 | Type-5 |
 | Type-5-only | Optional, IPv4 | Type-5 | Type-5 |
 
@@ -729,8 +1222,30 @@ gateway. GoBGP still requires `provision_vni` in every overlay type.
 
 ### Routes BOOTy originates
 
-All routes use the route distinguisher `asn_server:provision_vni` and the
-router ID as next hop. The route target follows the precedence in the
+The route distinguisher is `EVPN_RD`, else the `rd` of the L3VNI VRF in
+`frr.conf`, else FRR's automatic RD `<router-id>:<n>` (bgp_evpn.c
+`bgp_evpn_derive_auto_rd_for_vrf`), so it differs per host. `n` is the
+`vrf_rd_id` of the VRF instance: bgpd gives each `router bgp` instance the
+lowest free id from 1 when it is created, in `frr.conf` order, and an L2VNI
+the next one. With the bm4x template (`router bgp vrf Vrf_underlay`, then
+`router bgp vrf default` with L3VNI 3000) the Type-5 routes get
+`<router-id>:2`, as on the FRR 10.3.1 shadow node in most lab runs. Without
+`frr.conf` the native peers stand for the template: `2` when the neighbor
+VRF differs from the L3VNI VRF, else `1`. The Type-2 and Type-3 routes of
+an L2VNI get the id after the instances. The id depends on the order in
+which bgpd creates instances and VNIs: the shadow node also showed `:3`
+in one lab run, and the kindmetal legacy ramdisk (FRR 10.2.1) `:3`, for
+the same template. BOOTy uses the order of the configuration, so its RD
+is stable. The RD from `EVPN_RD` or the VRF `rd` also applies to the
+Type-2 and Type-3 routes of the L2VNI; FRR uses the VRF `rd` for the
+Type-5 routes only. Peers treat the RD as opaque, so
+only its uniqueness per host matters. Before, every host used
+`asn_server:provision_vni`.
+
+Every route carries the router ID as next hop. Like FRR, which gives a
+`network` route the IGP metric 0 and a redistributed route the zebra
+metric, the underlay `/32` and the Type-5 routes carry MED 0; Type-2 and
+Type-3 routes carry no MED, as in FRR. The route target follows the precedence in the
 `EVPN_RT_IMPORT` row of [Configuration](configuration.md): the native
 `EVPN_RT_IMPORT`/`EVPN_RT_EXPORT` lists, then the `frr.conf` route targets
 or FRR's auto route target of an `frr.conf` L3VNI, then `vpn_rt`, then
@@ -740,8 +1255,8 @@ or FRR's auto route target of an `frr.conf` L3VNI, then `vpn_rt`, then
 |---|---|---|
 | Type-5 (IP prefix) | `/32` of the `provision_ip` host address, gateway `0.0.0.0`, label = VNI, extended communities: route target, VXLAN encapsulation, router MAC | All. Skipped when `provision_ip` is empty |
 | Type-5 (IP prefix) | Each `network` of the L3VNI VRF in `frr.conf` (see [Netplan and FRR config input](#netplan-and-frr-config-input)), gateway `0.0.0.0` or `::`, same label and extended communities. Like the FRR import check, only a prefix that is a `lo` address, the `provision_ip` prefix or a blackhole route is advertised. BOOTy logs the others. | Type-5-only from an L3VNI |
-| Type-3 (IMET) | Router ID, PMSI tunnel type ingress replication | L2 |
-| Type-2 (MAC/IP) | Bridge MAC and `provision_ip` host address | L2 |
+| Type-3 (IMET) | Router ID, PMSI tunnel type ingress replication, extended communities: route target, VXLAN encapsulation | L2 |
+| Type-2 (MAC/IP) | Bridge MAC and `provision_ip` host address, extended communities: route target, VXLAN encapsulation | L2 |
 
 With `asn_server` > 65535, `provision_vni` must be 65535 or lower, because a
 4-octet ASN route target carries only a 16-bit value.
@@ -749,14 +1264,17 @@ With `asn_server` > 65535, `provision_vni` must be 65535 or lower, because a
 ### Routes BOOTy processes
 
 BOOTy accepts a route update only when its route target matches the local
-route target. A withdraw without a route target is accepted. BOOTy ignores
+route target. An update whose BGP Encapsulation communities do not include
+VXLAN (RFC 8365 section 6) is handled as a withdraw of its route; an update
+without the community counts as VXLAN, like FRR. A withdraw without a route target is accepted. BOOTy ignores
 routes whose next hop is its own router ID.
 
 | Route | Action |
 |---|---|
-| Type-5 | Installs an on-link kernel route for the prefix through the route gateway on the provision bridge, in the overlay VRF table when one is set. A gateway of `0.0.0.0` or `::` means the VTEP (next hop). With a router MAC, BOOTy also installs a neighbor entry for the gateway and an FDB entry `router MAC -> VTEP`. A withdraw removes them. Like zebra, every Type-5 route has protocol `bgp` and metric 20. A connected route of the same prefix (metric 0) stays next to it, and the kernel prefers the connected route; the Type-5 route takes over when the address goes away. An IPv6 prefix over an IPv4 VTEP is installed like zebra: gateway `::ffff:<VTEP>` and the neighbor entry `extern_learn NOARP`. BOOTy does not install a route for the prefix of a blackhole route; the static route wins, as in zebra. A withdraw always removes the route BOOTy installed. |
-| Type-2 (L2 only) | Installs the FDB entry `MAC -> VTEP`. A withdraw removes it. |
-| Type-3 (L2 only) | Installs the BUM FDB entry `00:00:00:00:00:00 -> VTEP`. A withdraw removes it. |
+| Type-5 | Installs an on-link kernel route for the prefix through the route gateway on the provision bridge, in the overlay VRF table when one is set. A route with gateway `0.0.0.0` or `::` goes through the VTEP (next hop); with a router MAC, BOOTy also installs a neighbor entry for the VTEP and an FDB entry `router MAC -> VTEP`, and a withdraw removes them. A non-zero gateway IP is an overlay index (RFC 9136 section 3.2). Like FRR, such a route is installed only with `enable-resolve-overlay-index` in `frr.conf` or `EVPN_RESOLVE_OVERLAY_INDEX=true`, in L2 mode, and only while a Type-2 MAC/IP route carries the gateway IP (bgpd `bgp_evpn_is_gateway_ip_resolved`). The route then goes through the gateway IP; its router MAC is ignored, and the neighbor entry of the gateway is the one of the Type-2 route. It is installed and removed as that Type-2 route comes and goes; its withdraw leaves the neighbor entry alone. BOOTy installs it on-link on the bridge; FRR also needs the gateway to be reachable through the SVI subnet, which BOOTy does not check. Behaviour change: before, BOOTy installed such routes in every mode. The legacy ramdisk runs FRR with the host-side `frr.conf` (bm4x and CAPRF), which has no `enable-resolve-overlay-index`, so the legacy ramdisk installs no gateway IP routes either; BOOTy now matches it. Like zebra, every Type-5 route has protocol `bgp` and metric 20. A connected route of the same prefix (metric 0) stays next to it, and the kernel prefers the connected route; the Type-5 route takes over when the address goes away. An IPv6 prefix over an IPv4 VTEP is installed like zebra: gateway `::ffff:<VTEP>` and the neighbor entry `extern_learn NOARP`. BOOTy does not install a route for the prefix of a blackhole route; the static route wins, as in zebra. A withdraw always removes the route BOOTy installed. BOOTy handles an update as a withdraw of its route (RFC 7606), with the rules of FRR `process_type5_route` and zebra: a multicast, broadcast or malformed router MAC (also with a gateway IP), both ESI and gateway IP set, and a zero label without a gateway IP (zebra installs such a route only on a single VXLAN device). A zero router MAC counts as absent, and an ESI overlay index is installed through the BGP next hop, like FRR. In the Type-5-only (L3VNI) mode, a route without a gateway IP must carry the provision VNI (the L3VNI): zebra installs a route with another VNI only on a single VXLAN device, so FRR does not install it, and neither does BOOTy. The other modes do not check the VNI: there the provision VNI is an L2VNI, and FRR imports no Type-5 routes at all. This also applies with an explicit `EVPN_TYPE5_ONLY=true`: when `provision_vni` differs from the VNI of the fabric L3VNI, the fabric Type-5 routes are dropped, so set `provision_vni` to the L3VNI. The withdraw removes what the earlier path of the same route key installed. `docs/rfc-compliance.md` lists where this differs from RFC 9136. |
+| Type-2 (L2 only) | Installs the FDB entry `MAC -> VTEP` of the best live route of the MAC: a route with the sticky (static) flag first, like FRR, then the highest MAC Mobility sequence number (with wrap around), then the lowest VTEP address (RFC 7432 section 15). The entry goes with the last route of the MAC, so the withdraw of a MAC/IP route keeps the entry of the MAC-only route (section 10). Teardown removes the entries. For each IP of a MAC/IP route BOOTy also installs a neighbor entry `IP -> MAC` on the provision bridge (NOARP, `extern_learn`), like zebra on the SVI of an L2VNI (RFC 9135 sections 5.2 and 6.2); it follows the best route of the IP (on a full tie, the lowest MAC) and goes with its last route. When a Type-2 IP is also the gateway of a Type-5 route (its VTEP), both use the same kernel entry: the Type-2 entry wins, a Type-5 withdraw leaves it, and the last Type-2 withdraw puts the Type-5 entry (router MAC) back. Like zebra, an IPv6 entry also gets the `router` flag (NTF_ROUTER) when that route has the router flag of the ARP/ND extended community (RFC 9047 section 3); BOOTy replaces the entry when only the flag changes. A route with a non-reserved ESI (a multihomed MAC) uses the ES instead, see the Type-1 row. |
+| Type-3 (L2 only) | Installs the BUM FDB entry `00:00:00:00:00:00 -> VTEP` (the originating router IP of the route, like FRR) when the PMSI Tunnel attribute has tunnel type ingress replication. A route without the attribute or with another tunnel type gets no entry, like FRR, which disables flooding to that VTEP. An update of the route from ingress replication to another tunnel type removes the entry; here BOOTy differs from FRR, which keeps it because of an inverted check in zebra (`zebra_vxlan.c`, `zebra_vxlan_remote_vtep_add`: it removes the old entry only when the old mode was "flooding disabled"). A withdraw removes the entry. |
+| Type-1 (L2 only) | Like FRR as a VTEP without a local ES (`bgpd/bgp_evpn_mh.c`, `zebra/zebra_evpn_mh.c`): a VTEP is active on an Ethernet segment when BOOTy has both its EAD-per-ES route (Ethernet Tag MAX-ET) and its EAD-per-EVI route. The MACs of the ES are installed through a kernel FDB nexthop group of the active VTEPs (`nhid`, aliasing, RFC 7432 section 14.1.2), and not before a VTEP is active (section 9.2.2). An EAD withdraw takes its VTEP out of the group, so all MACs of the ES move at once (mass withdraw, section 17.3); with no active VTEP left the MACs are removed. A single-active ES (an EAD-per-ES route with the Single-Active flag of the ESI Label community) uses only the primary PE, the VTEP of the MAC route (RFC 7432 sections 8.4 and 14.1.1). FRR aliases there too, but a backup PE drops the traffic, so BOOTy follows the RFC MUST. When the primary PE withdraws its EAD routes, its MACs leave the FDB and flood until their routes move (mass withdraw, section 8.2). When the group cannot be installed (FDB nexthops need Linux 5.8), the MACs use the VTEP of their route. Teardown deletes the nexthops, also those of a failed earlier delete, and routes that arrive after Teardown install nothing. |
 
 ### Kernel state per mode
 
@@ -767,9 +1285,16 @@ routes whose next hop is its own router ID.
 | `/32` route to each remote VTEP from a Type-5 next hop | No | Yes, except with `frr.conf` sessions: then the routes learned from the fabric reach the VTEP | No |
 
 Without an overlay VRF, the underlay routes and the Type-5 routes share
-the main table with protocol `bgp` and metric 20. When the underlay and a
-Type-5 route carry the same prefix, the last route written replaces the
-other one. zebra instead selects one route by administrative distance.
+the main table with protocol `bgp` and metric 20, so one would replace the
+other. One writer owns a prefix: while the underlay FIB writer has a
+route for a prefix in the same table, BOOTy keeps the Type-5 path for it
+without a kernel route and logs a warning. A withdraw meanwhile only
+forgets the path. When the FIB writer removes its route (for example the
+default route after a leaf fault), BOOTy installs the Type-5 route as the
+backup. This also applies when the Type-5 route was installed first and
+the FIB writer replaced it. In FRR both are BGP routes: bgpd best-path
+selection picks one, and no re-evaluation, including gateway IP
+resolution, installs a path that was not selected.
 
 The underlay `/32` routes use a fabric NIC with link scope. With
 `VRF_NAME`, BOOTy uses the first NIC in the VRF and the VRF table. Without
@@ -834,25 +1359,336 @@ BOOTy retries the scan for up to 10 s while names start with `clab`
 
 ## DHCP
 
-DHCP mode probes all physical NICs in parallel. Each probe has a 15 s
-timeout. The first lease wins and BOOTy stops the other probes.
+DHCP mode works like systemd-networkd with the legacy ramdisk's netplan
+(`dhcp4: true` on every `en*` and `eth*` NIC): a DHCP client runs on every
+physical NIC for the whole run, and every lease configures its own NIC.
+Setup sets `promote_secondaries=1` on each NIC (systemd's sysctl default in
+the legacy ramdisk), so a renewal with a new address in the same subnet
+keeps it when the old address goes. Setup returns after the first lease.
+Without a lease on any NIC within 15 s the network setup reports a
+failure, but the clients keep sending, like networkd: a switch port
+without portfast forwards only after 30 to 50 s, and the connectivity wait
+gets the lease. A connectivity retry tears the mode down (Teardown stops
+every client at once) and starts it again.
 
-The client requests the default parameter list: subnet mask, router, time
-server, DNS server, domain name, interface MTU and NTP servers. It sends the
-ramdisk hostname (option 12) when one is set.
+A physical NIC that appears after Setup (a driver that brings up its
+ports late) gets its own client too, like networkd matches a link when udev
+announces it.
 
-On the first lease, BOOTy:
+A NIC that loses carrier keeps its lease state (address, routes, DNS and
+NTP servers). When the carrier is back, the client confirms its address
+with an INIT-REBOOT DHCPREQUEST (requested address only) at once, and the
+ACK applies the lease again, as the legacy ramdisk does (captured in the
+CAPRF L2 fault windows). Without an answer to the INIT-REBOOT request the
+client goes on in INIT, and the kept lease still ends at its expiry
+(address, routes, DNS and NTP servers go). Only a carrier loss after the
+lease was bound leads to an INIT-REBOOT: when a NIC gets its carrier only
+after its client started, the carrier restarts the DISCOVER without the
+backoff, and if the first lease binds meanwhile, the client sends no
+INIT-REBOOT for it (seen in the kindmetal boot window, where networkd sends
+none either).
 
-- adds the leased address with the leased mask to the NIC;
-- adds a default route through the first router from the lease.
+networkd (the legacy ramdisk) drops the lease with the carrier; BOOTy
+keeps it, so nothing has to be restored. Both ways recover the same in the
+CAPRF kindmetal L2 fault runs (5 s link flap, 60 s port down on the NIC
+that carries the image stream):
 
-BOOTy does not apply DNS servers or the MTU from the lease. Set
-`dns_resolver` for DNS.
+| Carrier loss handling (jobs) | Link flap | Port down |
+|---|---|---|
+| legacy ramdisk, networkd drops the lease (407787205, 407821697, 407841673, 407857343) | 24 min, 8 min, 5 s, over 300 s | 77 s, 5 s, 83 s |
+| BOOTy, lease dropped (407821698, 407841674) | 5 s, 130 s | 152 s, 5 s |
+| BOOTy, lease kept (407794667, 407810408, 407857344) | 5 s, 5 s, 130 s | 26 s, 5 s, 6 s |
+
+The long recoveries most likely have one cause in both ramdisks: with two
+default routes of the same metric, the kernel takes the first one whose
+gateway it does not consider dead (`fib_select_default`). The carrier
+loss flushes the neighbour entry of the gateway of the NIC, and the next
+route lookup can move to the default route of the other NIC. The captures
+fit this: in job 407857344 the first connection after the flap leaves
+through the other NIC before the VM asks for its gateway again (ARP), and
+the image connection's FIN later leaves there too, with the source
+address of the first NIC. The image connection,
+bound to the address of the first NIC, then sends through the other NIC
+and stalls until BOOTy's download retry opens a new connection (about
+2 min); the legacy ramdisk has no such retry. BOOTy's source routing
+(below) keeps the connection on its NIC.
+
+### Source routing
+
+BOOTy adds the routes of every lease also to a table of the NIC (10000
+plus the interface index), with the subnet route of the lease address,
+and a rule `from <lease address> lookup <table>` (priority 10000, before
+the main table). A packet from the address of a NIC then leaves through
+that NIC and its gateway, whatever default route the kernel picks for
+new connections. This is an intended difference to networkd, whose
+configuration has no such rules: it fixes the stall of the image stream
+after a link flap (above). Failures to add them are logged; the main
+table routes stay. The end of a lease, a new address and Teardown remove
+them.
+
+The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
+2131 and the behaviour of networkd (systemd 255):
+
+- INIT: DHCPDISCOVER with rapid commit (option 80, RFC 4039; an ACK to the
+  DISCOVER binds at once), retransmitted after 2, 4, 8, 16, 32 and then
+  every 64 s (each +-1 s), for the whole run; then DHCPREQUEST with server
+  identifier and requested address (SELECTING), up to five times, else it
+  starts over.
+- RENEWING at T1: DHCPREQUEST from the lease address to the server (UDP
+  unicast), with `ciaddr` and without 50/54, again after half the time to
+  T2 (at least 60 s).
+- REBINDING at T2: the same DHCPREQUEST as broadcast, until the lease
+  expires. Like every networkd broadcast it has the IP source 0.0.0.0
+  (the lease address is in `ciaddr`), as captured in kindmetal.
+- INIT-REBOOT (`Reboot`): DHCPREQUEST with only the requested address,
+  sent once and at once: `Reboot` ends any wait of the client (a renewal
+  or rebind that cannot reach the server while the NIC has no carrier,
+  the INIT backoff), like networkd restarts its client when the carrier
+  returns; without an answer the client goes to INIT.
+- DHCPRELEASE at stop (Teardown, before kexec or reboot) from the lease
+  address to the server, with the client identifier only, like networkd
+  (`SendRelease=yes`; the legacy ramdisk sends it, captured in kindmetal).
+- The UDP socket on lease-address:68 of an exchange with `ciaddr`
+  (RENEWING and REBINDING) stays open until the reply, and a socket on
+  0.0.0.0:68 of the NIC is open for every exchange (a server answers an
+  INIT-REBOOT unicast to the address the NIC still has), so the kernel
+  does not answer a unicast reply with ICMP port unreachable.
+- A DISCOVER after a lease asks for its address again (option 50, after
+  57), like networkd.
+- T2 defaults to 7/8 and T1 to 1/2 of the lease time; a T2 at or past the
+  lease time and a T1 at or past T2 get the defaults, like networkd.
+- Replies, like networkd: only Ethernet BOOTP (htype 1, hlen 6, at least
+  240 bytes); an OFFER or ACK needs an address, a server identifier (54)
+  and a lease time (51) above 0, a NAK a server identifier. A NAK from
+  another server than that of the offer or lease is ignored. An OFFER or
+  ACK with option overload (52, options in `sname` or `file`) is dropped:
+  BOOTy does not read those fields. The IP header checksum is always
+  checked, the UDP checksum unless the kernel marks the frame as not yet
+  checksummed (`PACKET_AUXDATA`, checksum offload). Replies larger than
+  1500 bytes (jumbo MTU) are read whole.
+- DHCP packets carry the IP TOS of networkd (CS6). Debug logging only, one
+  line per message.
+
+The NTP servers (option 42) of all leases, by NIC and each once, are kept
+for the time sync; a NIC without option 42 does not drop the servers of
+another NIC, and Teardown drops them all. The time sync queries them only
+with `TIME_DHCP_NTP=true`: the legacy ramdisk has no timesyncd and sends
+no NTP request, so by default BOOTy sends none either.
+
+The client sends the options of systemd-networkd (systemd 255, captured
+in the CAPRF L2 parity fixture), in its order after the message type: client
+identifier (61: type 255, an IAID of the NIC and a DUID-EN with the systemd
+enterprise number and a hash of the machine ID of the boot, so new at every
+boot as in the legacy ramdisk), parameter request list (55: 1, 3, 6, 12,
+15, 26, 33, 42, 114, 119, 120, 121), maximum message size (57: MTU less
+28) and the ramdisk hostname (12) when one is set.
+
+On every lease (also renewals and leases on the other NICs), BOOTy:
+
+- adds the leased address with the leased mask to the NIC and removes the
+  address of the previous lease of that NIC;
+- adds the routes of the lease like networkd with netplan: the classless
+  static routes of option 121 (destinations masked to their width), which
+  replace options 3 and 33 (RFC 3442); or else the static routes of option
+  33 (classful masks, RFC 2132) and a default route through the first
+  router that is not 0.0.0.0 (none when all are); first a host route
+  (scope link) to every gateway. A route to localhost or to the lease
+  address is a host route (scope host), like networkd. All have metric 100,
+  `proto dhcp` and the lease address as source, except the route to
+  localhost. A malformed option 33 (length not a multiple of 8) or 119 (a
+  truncated name, a pointer that does not point back, a reserved label
+  type) is ignored as a whole. The routes of all NICs stay next to
+  each other; routes of the previous lease that the new one does not have
+  are removed;
+- sets the lease MTU (option 26) on the NIC, like networkd with netplan's
+  `UseMTU=true`, clamped like networkd: at least 576 (1280 when the NIC
+  has IPv6) and at most the largest MTU of the NIC. The end of the lease
+  and Teardown restore the MTU from before (Teardown again when the
+  restore at the end failed);
+- writes `/etc/resolv.conf` with the configured resolvers (`dns_resolver`,
+  netplan `nameservers`) first and then the DNS servers (option 6) of all
+  leases, like systemd-resolved with `UseDNS=yes`, and the lease domains
+  (option 15, one trailing NUL dropped) and domain search lists (option
+  119) as `search` line, as in the legacy ramdisk's resolv.conf. A lease
+  domain that is not a DNS name (an underscore, an empty label, a label
+  starting or ending with `-`, `localhost`) is left out; the rest is
+  written. A configured resolver that is not an IP address fails the
+  setup. When the last lease ends, its servers leave resolv.conf. With
+  `PROVISIONER_FILES_TARGET=ramdisk` and a provisioner `/etc/resolv.conf`,
+  that file stays, as in the legacy ramdisk.
+
+Lookups work like systemd-resolved, which queries the current DNS server
+of every link at once (the Go resolver alone asks the first resolv.conf
+server and the next only after a timeout). The links are the configured
+servers and every NIC with a lease (its DHCPv4 servers, then its DHCPv6
+ones); when leases have search domains, only the NICs with one, as
+resolved routes a lookup to the links whose domains match. Each UDP query
+goes to the current server of every link: the first positive answer
+counts, a negative one (NXDOMAIN, SERVFAIL, REFUSED) only when every link
+answered and none better (resolved `dns_query_ready`). A link whose server
+fails or does not answer moves on to its next server. A truncated answer
+is asked again over TCP at the server that truncated it. The sockets stay
+open 2 s after the answer, so late answers get no ICMP port unreachable.
+Teardown goes back to the plain Go resolver.
+
+When the lease of a NIC ends (it expires before a renewal or rebind, or the
+server answers with DHCPNAK), BOOTy removes the address, default route,
+DNS and NTP servers of that NIC and restores its MTU (RFC 2131 sections 3.2
+and 4.4.5), like networkd. The client starts over in INIT with a
+DHCPDISCOVER, and its next lease is applied again.
+
+BOOTy does not probe the offered address with ARP and sends no
+DHCPDECLINE (RFC 2131 4.4.1 and RFC 5227 say SHOULD). systemd-networkd 255
+does the same by default: it runs IPv4 ACD on a DHCPv4 address only with
+`[DHCPv4] SendDecline=yes` (`networkd-dhcp4.c`: `duplicate_address_detection
+= dhcp_send_decline`), which defaults to no, and netplan does not set it.
+
+### DHCPv6
+
+Like networkd with the legacy netplan, every NIC with a DHCP client also
+watches router advertisements (the kernel keeps doing SLAAC). Only an RA
+with code 0 and hop limit 255 from a link-local address counts (RFC 4861
+6.1.2). The
+first RA with the M flag starts a stateful DHCPv6 client
+(`pkg/network/dhcp6`), one with only the O flag a stateless one
+(INFORMATION-REQUEST, options 6, 1, 8); a later RA with the M flag
+replaces a stateless client with a stateful one. The stateful client sends the messages of systemd-networkd 255, as
+captured in the CAPRF L2 parity fixture:
+
+- SOLICIT with rapid commit, IA_NA, IA_PD, client FQDN (39, flag S and the
+  hostname), ORO 23, 31, 56, 82, 103, client identifier and elapsed time;
+  REQUEST after an ADVERTISE without rapid commit. During the first
+  retransmission timeout the client collects the ADVERTISEs and requests
+  from the server with the highest preference (option 7); preference 255,
+  or an ADVERTISE after the first timeout, is taken at once (RFC 8415
+  18.2.9, like networkd).
+- One socket per transaction: a reply to an earlier transmission that
+  comes after its timeout is still read.
+- RENEW at T1 and REBIND at T2 with the IA address; RELEASE at stop. A
+  REPLY with NoBinding for the IA leads to a REQUEST for the address to
+  that server (RFC 8415 18.2.10.1); when the server has no binding for
+  that either, the lease ends and the client solicits again (networkd
+  goes straight to SOLICIT).
+- Retransmission as in RFC 8415 section 15 (SOLICIT 1 s, up to 1 h; the
+  first SOLICIT timeout is above 1 s); REQUEST up to ten times, then a new
+  SOLICIT. When the valid lifetime ends without a REPLY, the client
+  solicits again.
+- Replies (RFC 8415): an ADVERTISE or REPLY without a server identifier
+  or with a top-level status other than success is discarded (networkd
+  too; NoBinding in an IA is handled above); an IA_NA with T1 > T2 is discarded, an address with a preferred lifetime
+  over its valid lifetime, a valid lifetime of 0 or an error status is
+  skipped. T1 and T2 of 0 become 0.5 and 0.8 of the preferred lifetime,
+  and T1 <= T2 <= the valid lifetime.
+- The client identifier is the DUID-EN of DHCPv4 option 61 and the IAID
+  that of option 61, as in networkd.
+
+The leased address goes on the NIC as /128 with its preferred and valid
+lifetimes; the DNS servers (option 23, a link-local one with its zone)
+go to `/etc/resolv.conf` after those of DHCPv4, the domain search list
+(option 24) to its `search` line, like networkd. A stateless client asks
+again after the information refresh time (option 32, at least 600 s) or
+a day. When the lease ends, or the NIC loses carrier, the client
+stops and the address and DNS servers go; the next RA starts it again.
+When the carrier returns, BOOTy sends router solicitations (up to three,
+4 s apart, with the source link-layer address) until a client runs, like
+networkd's NDisc client; the kernel sends them only when the link comes
+up. The first one waits a random 0.5 s to 1 s: RFC 4861 6.3.7 asks for a
+random delay of up to 1 s (MAX_RTR_SOLICITATION_DELAY), and sd-ndisc sends
+its first solicitation 0.5 s after the start with 1 s timer accuracy.
+
+When duplicate address detection fails for a DHCPv6 address, BOOTy sends
+no DECLINE (RFC 8415 18.2.8 asks for one). sd-dhcp6-client in systemd 255
+never sends DECLINE either (the message type is only named), and networkd
+does not act on `IFA_F_DADFAILED` of a DHCPv6 address, so this matches the
+legacy ramdisk.
 
 Because `bond*` names are not physical NICs, DHCP does not run on `bond0`.
 
+### Message encoding
+
+Both clients encode and decode their messages with
+`github.com/insomniacslk/dhcp` (packages `dhcpv4`, `dhcpv6` and
+`rfc1035label`, BSD-3-Clause), through a fork with fixes
+([dependency forks](dependency-forks.md)). The state machines are BOOTy's
+own; the clients of the library (`nclient4`, `nclient6`) are not used.
+The bytes on the wire did not change; `testdata/golden.txt` in
+`pkg/network/dhcp4` and `pkg/network/dhcp6` pins every message:
+
+- DHCPv4: the header comes from the library. BOOTy writes the options in
+  networkd's order and pads before End, because the library sorts the
+  options by code and pads after End.
+- DHCPv6: the client and server identifiers go out as received (a DUID is
+  opaque to the client), the client FQDN as a partial name without the
+  root label (the library always adds it), and the elapsed time is cut to
+  10 ms, not rounded.
+
+BOOTy checks the decoded messages like networkd, on top of the library:
+
+- DHCPv4: Ethernet only (htype 1, hlen 6). The options are read like
+  networkd (`parse_options`): to the end of the message also without End,
+  a later copy of an option replaces an earlier one unless networkd
+  rejects it (a wrong length, a malformed search list 119), and the routes
+  of valid copies of 33 and 121 add up. A message type or overload option
+  of another length than 1 drops the message, and so does a message
+  option (56) that is empty, has a NUL before its end or a byte over
+  127. The library would
+  concatenate all copies (RFC 3396), so BOOTy reads the options itself.
+  networkd also ignores a copy of 12 or 15 that is no valid DNS name;
+  BOOTy keeps the last copy and checks the domain name where it uses it.
+  An OFFER or ACK needs an address, a server identifier other than
+  0.0.0.0, a lease time over 0 and no option overload; a NAK needs a
+  server identifier. A malformed option 33 or 119 is ignored as a whole;
+  of option 121 the routes before the error stay, like networkd.
+- DHCPv6: like networkd, a second client or server identifier, a
+  preference other than 1 byte, a top-level status code under 2 bytes or
+  other than success, and an information refresh time other than 4 bytes
+  drop the message. Another malformed option is ignored, not the
+  message, and in an IA_NA a malformed address or status is ignored, not
+  the IA. A truncated option
+  drops the message (in an IA: the IA, in an address: the address).
+  1 to 3 bytes after the last option are ignored. Option 24 is read
+  like networkd's `dhcp6_option_parse_domainname_list` (the last byte is
+  0, labels of at most 63 bytes inside the option); otherwise it is
+  ignored as a whole.
+
+Changes against the decoders before:
+
+- DHCPv4: a repeated option 119 counts with its last copy, like networkd;
+  before, the first copy counted.
+- DHCPv4: an option whose length does not fit its type (a subnet mask
+  other than 4 bytes, a router, DNS, time or NTP server list that is not a
+  multiple of 4 bytes) is ignored, like networkd; before, the client used
+  what fit.
+- Option 119: a pointer must point before the start of its name and
+  before the previous pointer of the name, as in networkd. Before, it had
+  to point before the pointer itself.
+- DHCPv6: a DNS server option whose length is not a multiple of 16 is
+  ignored, and a truncated option or IA option drops the message or the
+  IA, like networkd; before, the client used what fit. A malformed
+  option 24 is ignored as a whole, like networkd; before, the client kept
+  the names before the error.
+
 Planned (#608): handle DHCP leases without a subnet mask and leases on
 retry.
+
+## Links mode
+
+`NETWORK_MODE=links` (YAML `network.mode: links`) is for checks that only
+need the link layer, such as the LLDP cable check. It is never selected
+automatically. It sets every physical NIC up with its IPv6 link-local
+address only: BOOTy writes `accept_ra=0` and `autoconf=0` first and reads
+them back, so no router advertisement adds an address or a route; a failed
+write fails the setup (a NIC with IPv6 off needs none). It runs no DHCP,
+adds no address or route and starts no BGP. A DHCP client would hang on fabric
+ports, which have no DHCP server. Links mode does not wait for
+connectivity (it logs that there is no routed network), so the CAPRF status
+and report URLs are not reachable in this mode. BOOTy still parses and
+validates the netplan files and `frr.conf` (a strict parse error fails),
+applies the netplan `set-name` renames, the predictable NIC names and the
+bonds and VLANs, and parses `VLANS`. It does not use the addressing keys:
+BGP, static addresses, EVPN and DHCP. `TestLinksModeLLDPQEMU`
+checks that the NICs send no IPv4 or ARP frame and no IPv6 frame from a
+non link-local address.
 
 ## Static mode
 

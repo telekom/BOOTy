@@ -3,7 +3,9 @@
 package lldp
 
 import (
+	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"net"
 	"os"
 	"path/filepath"
@@ -11,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
+	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/layers"
 )
 
 // The frame carries what systemd-networkd sends with EmitLLDP=yes
@@ -21,7 +23,7 @@ import (
 // hostname, the pretty hostname and the capabilities.
 func TestFrameLikeNetworkd(t *testing.T) {
 	mac, _ := net.ParseMAC("02:00:00:00:00:01")
-	b, err := Frame("ens1f0np0", mac, Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "host1", PrettyHostname: "Host 1"})
+	b, err := Frame("ens1f0np0", mac, &Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "host1", PrettyHostname: "Host 1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +58,7 @@ func TestFrameLikeNetworkd(t *testing.T) {
 
 	// Without a machine ID the NIC MAC is the chassis ID; without a pretty
 	// hostname there is no system description.
-	b, err = Frame("eth0", mac, Info{SystemName: "host1"})
+	b, err = Frame("eth0", mac, &Info{SystemName: "host1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,5 +109,139 @@ func TestMachineIDPerBoot(t *testing.T) {
 	machineIDPath = t.TempDir() // a directory: the write fails, also as root
 	if got := machineID(); got != "" {
 		t.Fatalf("machine ID %q although it can not be written, want none", got)
+	}
+}
+
+// The networkd profile (the default) sends the bytes that BOOTy sent
+// before the identity profiles existed (#698, e136315e).
+func TestFrameNetworkdGolden(t *testing.T) {
+	mac, _ := net.ParseMAC("02:00:00:00:00:01")
+	for _, tt := range []struct {
+		ifname string
+		info   Info
+		want   string
+	}{
+		{"ens1f0np0", Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "host1", PrettyHostname: "Host 1"},
+			"0180c200000e02000000000188cc0221073031323334353637383961626364656630313233343536373839616263646566040a05656e733166306e7030060200780a05686f7374310c06486f737420310e04009400800000"},
+		{"eth0", Info{SystemName: "host1"},
+			"0180c200000e02000000000188cc02070402000000000104050565746830060200780a05686f7374310e040094008000000000000000000000000000"},
+	} {
+		for _, profile := range []string{"", ProfileNetworkd} {
+			info := tt.info
+			info.Profile = profile
+			info.Announce = map[string]string{"": "", ProfileNetworkd: AnnounceParity}[profile]
+			info.System = testSystem // only standard and full send it
+			b, err := Frame(tt.ifname, mac, &info)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := hex.EncodeToString(b); got != tt.want {
+				t.Errorf("%s profile %q:\n got  %s\n want %s", tt.ifname, profile, got, tt.want)
+			}
+		}
+	}
+}
+
+// The bm4x-cablecheck profile sends the NIC MAC as port ID (subtype 3),
+// the interface name as port description and the system name
+// "bare-minimal"; chassis, TTL and capabilities stay as networkd sends them.
+func TestFrameBM4XCableCheck(t *testing.T) {
+	mac, _ := net.ParseMAC("3c:fd:fe:a1:b2:c3")
+	b, err := Frame("ens1f0np0", mac, &Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "host1", Profile: ProfileBM4XCableCheck})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkt := gopacket.NewPacket(b, layers.LayerTypeEthernet, gopacket.Default)
+	l, _ := pkt.Layer(layers.LayerTypeLinkLayerDiscovery).(*layers.LinkLayerDiscovery)
+	info, _ := pkt.Layer(layers.LayerTypeLinkLayerDiscoveryInfo).(*layers.LinkLayerDiscoveryInfo)
+	if l == nil || info == nil {
+		t.Fatalf("frame does not decode: %v", pkt.ErrorLayer())
+	}
+	if l.PortID.Subtype != layers.LLDPPortIDSubtypeMACAddr || !bytes.Equal(l.PortID.ID, mac) {
+		t.Errorf("port ID = %v %x, want MAC %s", l.PortID.Subtype, l.PortID.ID, mac)
+	}
+	if info.SysName != "bare-minimal" || info.PortDescription != "ens1f0np0" {
+		t.Errorf("system name %q, port description %q", info.SysName, info.PortDescription)
+	}
+	if l.ChassisID.Subtype != layers.LLDPChassisIDSubTypeLocal || l.TTL != 120 {
+		t.Errorf("chassis %v, TTL %d", l.ChassisID.Subtype, l.TTL)
+	}
+}
+
+// network.lldp.portIDFormat selects the port ID of the bm4x-cablecheck
+// profile; "" is "mac" byte for byte.
+func TestFrameBM4XPortIDFormats(t *testing.T) {
+	mac, _ := net.ParseMAC("3c:fd:fe:a1:b2:c3")
+	base := Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "host1", Profile: ProfileBM4XCableCheck}
+	def, err := Frame("ens1f0np0", mac, &base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		format  string
+		subtype layers.LLDPPortIDSubType
+		id      []byte
+	}{
+		{PortIDMAC, layers.LLDPPortIDSubtypeMACAddr, mac},
+		{PortIDMACStringColon, layers.LLDPPortIDSubtypeLocal, []byte("3c:fd:fe:a1:b2:c3")},
+		{PortIDMACStringDotted, layers.LLDPPortIDSubtypeLocal, []byte("3cfd.fea1.b2c3")},
+		{PortIDIfname, layers.LLDPPortIDSubtypeIfaceName, []byte("ens1f0np0")},
+	} {
+		info := base
+		info.PortIDFormat = tt.format
+		b, err := Frame("ens1f0np0", mac, &info)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pkt := gopacket.NewPacket(b, layers.LayerTypeEthernet, gopacket.Default)
+		l, _ := pkt.Layer(layers.LayerTypeLinkLayerDiscovery).(*layers.LinkLayerDiscovery)
+		d, _ := pkt.Layer(layers.LayerTypeLinkLayerDiscoveryInfo).(*layers.LinkLayerDiscoveryInfo)
+		if l == nil || d == nil {
+			t.Fatalf("%s: frame does not decode: %v", tt.format, pkt.ErrorLayer())
+		}
+		if l.PortID.Subtype != tt.subtype || !bytes.Equal(l.PortID.ID, tt.id) {
+			t.Errorf("%s: port ID = %v %q, want %v %q", tt.format, l.PortID.Subtype, l.PortID.ID, tt.subtype, tt.id)
+		}
+		if d.SysName != BM4XSystemName || d.PortDescription != "ens1f0np0" {
+			t.Errorf("%s: system name %q, port description %q", tt.format, d.SysName, d.PortDescription)
+		}
+		if tt.format == PortIDMAC && !bytes.Equal(b, def) {
+			t.Errorf("format mac differs from the default")
+		}
+	}
+}
+
+func TestDottedMAC(t *testing.T) {
+	mac, _ := net.ParseMAC("00:1B:54:C2:00:0A")
+	if got := dottedMAC(mac); got != "001b.54c2.000a" {
+		t.Fatalf("dottedMAC = %q", got)
+	}
+}
+
+// IEEE 802.1AB shutdown LLDPDU: TTL 0 and only the mandatory TLVs.
+func TestShutdownFrame(t *testing.T) {
+	mac, _ := net.ParseMAC("02:00:00:00:00:01")
+	b, err := ShutdownFrame("eth0", mac, &Info{MachineID: "0123456789abcdef0123456789abcdef", SystemName: "host1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkt := gopacket.NewPacket(b, layers.LayerTypeEthernet, gopacket.Default)
+	l, _ := pkt.Layer(layers.LayerTypeLinkLayerDiscovery).(*layers.LinkLayerDiscovery)
+	if l == nil {
+		t.Fatalf("frame does not decode: %v", pkt.ErrorLayer())
+	}
+	if l.TTL != 0 || len(l.Values) != 0 || string(l.PortID.ID) != "eth0" {
+		t.Errorf("shutdown frame TTL %d, %d optional TLVs, port %q; want TTL 0, none, eth0", l.TTL, len(l.Values), l.PortID.ID)
+	}
+	// The shutdown LLDPDU names the same port as the frames before it: the
+	// neighbor keys its entry by chassis and port ID.
+	bm4x := &Info{MachineID: "m", Profile: ProfileBM4XCableCheck}
+	b, err = ShutdownFrame("eth0", mac, bm4x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, _ = gopacket.NewPacket(b, layers.LayerTypeEthernet, gopacket.Default).Layer(layers.LayerTypeLinkLayerDiscovery).(*layers.LinkLayerDiscovery)
+	if l == nil || l.PortID.Subtype != layers.LLDPPortIDSubtypeMACAddr || !bytes.Equal(l.PortID.ID, mac) {
+		t.Errorf("bm4x shutdown frame port ID %+v, want the NIC MAC like its normal frames", l)
 	}
 }

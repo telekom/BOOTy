@@ -15,6 +15,7 @@ import (
 	imageutil "github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frrconf"
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/serialconsole"
 )
@@ -37,7 +38,7 @@ import (
 //   - Provision.FailureDomain and Provision.Region: valid Kubernetes label values
 //   - Provision.Disk.RAID[*]: valid level, unique non-empty name without /dev/ prefix,
 //     minimum device count per RAID level
-//   - Network.Mode: "gobgp", "frr", "static", "dhcp"
+//   - Network.Mode: "gobgp", "frr", "static", "dhcp", "links"
 //   - Network.BGP.PeerMode: "unnumbered", "dual", "numbered"
 //   - Network.BGP.UnderlayAF: "ipv4"
 //   - Network.BGP.OverlayType: "evpn-vxlan", "l3vpn", "none"
@@ -77,6 +78,7 @@ func (c *Config) Validate() error {
 	}
 	errs = append(errs, validateKubeletProvisionFields(&c.Provision)...)
 	errs = append(errs, c.validatePersistence()...)
+	errs = append(errs, c.Check.validate()...)
 
 	errs = append(errs, validateDiskSettle(&c.Provision.Disk)...)
 	if err := validateRAIDConfig(c.Provision.Disk.RAID); err != nil {
@@ -147,8 +149,15 @@ func (c *Config) validatePrimaryEnums() []string {
 			return validateEnum(c.Provision.Image.Mode, "provision.image.mode", ImageModeWholeDisk, ImageModePartition, ImageModeAB)
 		},
 		func() string {
-			return validateEnumLower(c.Network.Mode, "network.mode", "gobgp", "frr", "static", "dhcp")
+			return validateEnumLower(c.Network.Mode, "network.mode", "gobgp", "frr", "static", "dhcp", "links")
 		},
+		func() string {
+			return validateEnum(c.Network.LLDP.Announce, "network.lldp.announce (LLDP_ANNOUNCE)", lldp.AnnounceParity, lldp.AnnounceStandard, lldp.AnnounceFull)
+		},
+		func() string {
+			return validateEnum(c.Network.LLDP.Profile, "network.lldp.profile (LLDP_PROFILE)", lldp.ProfileNetworkd, lldp.ProfileBM4XCableCheck)
+		},
+		func() string { return validateLLDPPortIDFormat(&c.Network.LLDP) },
 		func() string {
 			return validateEnumLower(c.Network.WaitMode, "network.waitMode (NETWORK_WAIT_MODE)", NetworkWaitDefault, NetworkWaitRounds)
 		},
@@ -412,6 +421,9 @@ func validateImageSourceRootSelectors(cfg *ImageConfig) error {
 	}
 	if label != "" && cfg.SourceRootPartition != 0 {
 		return fmt.Errorf("provision.image.sourceRootLabel and provision.image.sourceRootPartition are mutually exclusive")
+	}
+	if cfg.Stream && strings.EqualFold(strings.TrimSpace(cfg.Mode), ImageModePartition) {
+		return fmt.Errorf("provision.image.stream (IMAGE_STREAM) cannot be combined with provision.image.mode partition, which stages the image in RAM")
 	}
 	cfg.SourceRootLabel = label
 	return nil
@@ -1319,4 +1331,19 @@ func (c *Config) validateSessions() []string {
 		}
 	}
 	return errs
+}
+
+// validateLLDPPortIDFormat: a known format, and only with the
+// bm4x-cablecheck profile (the networkd profile always sends the interface
+// name).
+func validateLLDPPortIDFormat(l *LLDPConfig) string {
+	const name = "network.lldp.portIDFormat (LLDP_PORT_ID_FORMAT)"
+	if msg := validateEnum(l.PortIDFormat, name,
+		lldp.PortIDMAC, lldp.PortIDMACStringColon, lldp.PortIDMACStringDotted, lldp.PortIDIfname); msg != "" {
+		return msg
+	}
+	if l.PortIDFormat != "" && l.Profile != lldp.ProfileBM4XCableCheck {
+		return fmt.Sprintf("%s %q needs network.lldp.profile (LLDP_PROFILE) %q", name, l.PortIDFormat, lldp.ProfileBM4XCableCheck)
+	}
+	return ""
 }

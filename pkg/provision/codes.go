@@ -8,6 +8,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/image"
+	"github.com/telekom/BOOTy/pkg/payload"
 	"github.com/telekom/BOOTy/pkg/timesync"
 )
 
@@ -70,6 +71,7 @@ var failureCodes = []FailureCode{
 	{"BOOTY-IMG-004", ClassPermanent, AnyStep, "Image format probe failed."},
 	{"BOOTY-IMG-005", ClassTransient, "apply-sysexts", "System extension download or install failed."},
 	{"BOOTY-IMG-006", ClassTransient, "prepare-oci-prepulls", "OCI image pre-pull preparation failed."},
+	{"BOOTY-IMG-007", ClassPermanent, AnyStep, "The staged image does not fit in the staging tmpfs; use a raw or compressed raw image or IMAGE_STREAM."},
 
 	{"BOOTY-DSK-001", ClassEnvironment, "release-stale-mounts", "Stale target mounts could not be released."},
 	{"BOOTY-DSK-002", ClassHardware, "disable-lvm", "Disabling LVM failed."},
@@ -122,6 +124,9 @@ var failureCodes = []FailureCode{
 	{"BOOTY-OS-015", ClassConfig, "soft-deprovision", "Soft deprovision failed."},
 
 	{"BOOTY-WDT-001", ClassEnvironment, AnyStep, "A step made no progress within its watchdog budget; the hardware watchdog resets the host."},
+
+	{"BOOTY-PAY-001", ClassConfig, AnyStep, "The vars need a ramdisk payload (FRR) that the ramdisk does not have: the boot loader did not load its archive, or the flavor has no such tool."},
+	{"BOOTY-PAY-002", ClassPermanent, "check-payloads", "A ramdisk payload archive is from another BOOTy build or architecture than the base ramdisk."},
 }
 
 // Failure codes used outside the step table.
@@ -136,12 +141,16 @@ const (
 	CodeCertTime         = timesync.CodeCertTime
 	codeChecksumMismatch = "BOOTY-IMG-003"
 	codeFormatProbe      = "BOOTY-IMG-004"
+	codeStagingFull      = "BOOTY-IMG-007"
 	codeDiskInUse        = "BOOTY-DSK-010"
 	codeAmbiguousRoot    = "BOOTY-DSK-012"
 	codeEFIVars          = "BOOTY-EFI-002"
 	codeVerifyReboot     = "BOOTY-HW-006"
 	// CodeStalled is watchdog.CodeStalled (main_watchdog_test.go checks it).
 	CodeStalled = "BOOTY-WDT-001"
+	// CodePayloadMissing marks a run that needs a payload the ramdisk lacks.
+	CodePayloadMissing = "BOOTY-PAY-001"
+	codePayloadBuild   = "BOOTY-PAY-002"
 )
 
 // sentinelCodes maps known errors to a specific code. The first match wins.
@@ -153,6 +162,8 @@ var sentinelCodes = []struct {
 	{context.DeadlineExceeded, CodeCanceled},
 	{image.ErrChecksumMismatch, codeChecksumMismatch},
 	{image.ErrFormatProbe, codeFormatProbe},
+	{image.ErrStagingForbidden, codeFormatProbe},
+	{image.ErrStagingFull, codeStagingFull},
 	{disk.ErrAllDisksInUse, codeDiskInUse},
 	{disk.ErrInUseCheck, codeDiskInUse},
 	{disk.ErrAmbiguousRootPartition, codeAmbiguousRoot},
@@ -160,6 +171,8 @@ var sentinelCodes = []struct {
 	{ErrVerifyRebootUnsupported, codeVerifyReboot},
 	{timesync.ErrNoTime, CodeNoTime},
 	{timesync.ErrClockSkew, CodeCertTime},
+	{payload.ErrMissing, CodePayloadMissing},
+	{payload.ErrBuildMismatch, codePayloadBuild},
 }
 
 // FailureCodes returns a copy of the code catalog.

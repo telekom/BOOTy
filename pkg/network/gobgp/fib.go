@@ -6,12 +6,19 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/netip"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
@@ -45,8 +52,12 @@ type fibWriter struct {
 	log  *slog.Logger
 
 	// installed holds the routes this writer installed, by table and
-	// prefix.
-	installed  map[string]*netlink.Route
+	// prefix. mu guards it against owns, which the overlay calls.
+	mu        sync.Mutex
+	installed map[string]*netlink.Route
+	// onRemove is called, without mu, for each route the writer removed,
+	// so the overlay can install its Type-5 route for the prefix again.
+	onRemove   func(table int, p netip.Prefix)
 	unresolved map[netip.Addr]time.Time
 	resync     time.Duration
 	// resolveViaDefault allows a next hop that only a default route covers,
@@ -54,9 +65,9 @@ type fibWriter struct {
 	resolveViaDefault bool
 }
 
-func newFIBWriter(bgp *server.BgpServer, sel *fibSelector, vrfs map[int]string) *fibWriter {
+func newFIBWriter(srv *server.BgpServer, sel *fibSelector, vrfs map[int]string) *fibWriter {
 	return &fibWriter{
-		bgp:        bgp,
+		bgp:        srv,
 		sel:        sel,
 		nl:         &netlink.Handle{},
 		vrfs:       vrfs,
@@ -78,14 +89,16 @@ func (w *fibWriter) run(ctx context.Context) {
 		default:
 		}
 	}
-	err := w.bgp.WatchEvent(ctx, &apipb.WatchEventRequest{Table: &apipb.WatchEventRequest_Table{
-		// A new equal-cost path does not change the best path, so every
-		// received update triggers a reconcile too.
-		Filters: []*apipb.WatchEventRequest_Table_Filter{
-			{Type: apipb.WatchEventRequest_Table_Filter_BEST, Init: true},
-			{Type: apipb.WatchEventRequest_Table_Filter_ADJIN},
-		},
-	}}, func(*apipb.WatchEventResponse) { notify() })
+	onPaths := func([]*apiutil.Path, time.Time) { notify() }
+	// A new equal-cost path does not change the best path, so every
+	// received update triggers a reconcile too, and so does the drop of
+	// the paths of a peer that went down (a separate stream since GoBGP
+	// v4.8.0, pkg/server/server.go:1286). GoBGP 4.10 also sends a best path
+	// event for that drop when the best path does not change
+	// (pkg/server/server.go:1508); the AdjInWithdraw watch does not depend
+	// on that.
+	err := w.bgp.WatchEvent(ctx, server.WatchEventMessageCallbacks{OnBestPath: onPaths, OnPathUpdate: onPaths},
+		server.WatchBestPath(true), server.WatchUpdate(false, "", ""), server.WatchAdjInWithdraw())
 	if err != nil {
 		w.log.Error("watch best paths", "error", err)
 		return
@@ -176,12 +189,14 @@ func (w *fibWriter) reconcile(ctx context.Context, force bool) error {
 // wanted returns the kernel routes of the current RIB by table and prefix.
 func (w *fibWriter) wanted(ctx context.Context) (map[string]*netlink.Route, error) {
 	want := map[string]*netlink.Route{}
-	for _, afi := range []apipb.Family_Afi{apipb.Family_AFI_IP, apipb.Family_AFI_IP6} {
-		var dests []*apipb.Destination
-		err := w.bgp.ListPath(ctx, &apipb.ListPathRequest{
-			TableType: apipb.TableType_GLOBAL,
-			Family:    &apipb.Family{Afi: afi, Safi: apipb.Family_SAFI_UNICAST},
-		}, func(d *apipb.Destination) { dests = append(dests, d) })
+	for _, family := range []bgp.Family{bgp.RF_IPv4_UC, bgp.RF_IPv6_UC} {
+		var dests []fibDest
+		err := w.bgp.ListPath(apiutil.ListPathRequest{
+			TableType: apipb.TableType_TABLE_TYPE_GLOBAL,
+			Family:    family,
+		}, func(prefix bgp.NLRI, paths []*apiutil.Path) {
+			dests = append(dests, fibDest{prefix: prefix, paths: paths})
+		})
 		if err != nil {
 			return nil, fmt.Errorf("list paths: %w", err)
 		}
@@ -206,6 +221,12 @@ func (w *fibWriter) wanted(ctx context.Context) (map[string]*netlink.Route, erro
 // apply installs the wanted routes that changed (all with force) and
 // removes the installed routes that are no longer wanted.
 func (w *fibWriter) apply(want map[string]*netlink.Route, force bool) {
+	w.notifyRemoved(w.applyLocked(want, force))
+}
+
+func (w *fibWriter) applyLocked(want map[string]*netlink.Route, force bool) (removed []string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	for key, r := range want {
 		if old, ok := w.installed[key]; ok && !force && sameRoute(old, r) {
 			continue
@@ -227,19 +248,50 @@ func (w *fibWriter) apply(want map[string]*netlink.Route, force bool) {
 			w.log.Warn("remove route", "route", key, "error", err)
 		}
 		delete(w.installed, key)
+		removed = append(removed, key)
 		w.log.Info("removed route", "route", key)
+	}
+	return removed
+}
+
+// notifyRemoved calls onRemove for the removed route keys. It runs without
+// mu, because onRemove takes the overlay lock, which is held while the
+// overlay calls owns.
+func (w *fibWriter) notifyRemoved(keys []string) {
+	if w.onRemove == nil {
+		return
+	}
+	for _, key := range keys {
+		t, p, _ := strings.Cut(key, "/")
+		table, err := strconv.Atoi(t)
+		prefix, perr := netip.ParsePrefix(p)
+		if err == nil && perr == nil {
+			w.onRemove(table, prefix)
+		}
 	}
 }
 
 func routeKey(table int, p netip.Prefix) string { return fmt.Sprintf("%d/%s", table, p) }
 
+// owns reports whether the writer installed a route for prefix p in table.
+func (w *fibWriter) owns(table int, p netip.Prefix) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, ok := w.installed[routeKey(table, p)]
+	return ok
+}
+
 func (w *fibWriter) removeAll() {
+	w.mu.Lock()
+	removed := slices.Collect(maps.Keys(w.installed))
 	for key, r := range w.installed {
 		if err := w.nl.RouteDel(r); err != nil {
 			w.log.Debug("remove route", "route", key, "error", err)
 		}
 	}
 	w.installed = map[string]*netlink.Route{}
+	w.mu.Unlock()
+	w.notifyRemoved(removed)
 }
 
 // kernelRoute builds the netlink route with the zebra metric. IPv4

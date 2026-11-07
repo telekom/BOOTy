@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
 	"golang.org/x/sys/unix"
 )
 
@@ -42,6 +40,8 @@ func Listen(ctx context.Context, iface string, timeout time.Duration) (*Neighbor
 
 		neighbor := readNeighbor(fd, buf, iface)
 		if neighbor != nil {
+			neighbor.FirstSeen = time.Now()
+			neighbor.LastSeen = neighbor.FirstSeen
 			slog.Info("LLDP neighbor discovered",
 				"interface", iface,
 				"chassisID", neighbor.ChassisID,
@@ -178,46 +178,6 @@ func DiscoverAll(ctx context.Context, ifaces []string, timeout time.Duration) []
 		}
 	}
 	return neighbors
-}
-
-// parseLLDP extracts LLDP neighbor information from raw LLDP payload.
-func parseLLDP(data []byte, iface string) *Neighbor {
-	pkt := gopacket.NewPacket(data, layers.LayerTypeLinkLayerDiscovery, gopacket.NoCopy)
-
-	lldpLayer := pkt.Layer(layers.LayerTypeLinkLayerDiscovery)
-	if lldpLayer == nil {
-		return nil
-	}
-	lldp, ok := lldpLayer.(*layers.LinkLayerDiscovery)
-	if !ok {
-		return nil
-	}
-
-	n := &Neighbor{
-		Interface: iface,
-		TTL:       lldp.TTL,
-	}
-
-	switch lldp.ChassisID.Subtype {
-	case layers.LLDPChassisIDSubTypeMACAddr:
-		if len(lldp.ChassisID.ID) >= 6 {
-			n.ChassisID = net.HardwareAddr(lldp.ChassisID.ID).String()
-		}
-	default:
-		n.ChassisID = sanitizeLLDP(string(lldp.ChassisID.ID))
-	}
-
-	n.PortID = sanitizeLLDP(string(lldp.PortID.ID))
-
-	infoLayer := pkt.Layer(layers.LayerTypeLinkLayerDiscoveryInfo)
-	if infoLayer != nil {
-		if info, ok := infoLayer.(*layers.LinkLayerDiscoveryInfo); ok {
-			n.SystemName = sanitizeLLDP(info.SysName)
-			n.Description = sanitizeLLDP(info.SysDescription)
-		}
-	}
-
-	return n
 }
 
 const maxLLDPFieldLen = 255

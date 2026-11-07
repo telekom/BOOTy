@@ -8,14 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/rescue"
 )
@@ -77,7 +76,7 @@ func (m *StandbyMode) Run(ctx context.Context) error {
 
 	// The ramdisk runs from RAM only (CAPRF may eject the ISO): the RAM in
 	// use is the footprint of kernel, unpacked initramfs and BOOTy.
-	total, available := memInfoMiB(procMemInfo)
+	total, available := health.MemInfoMiB(procMemInfo)
 	slog.Info("entering standby mode", "memTotalMiB", total, "memAvailableMiB", available)
 	if err := m.deps.Client.ReportStatus(ctx, config.StatusInit, "standby"); err != nil {
 		return fmt.Errorf("standby status readiness: %w", err)
@@ -234,6 +233,18 @@ func (m *StandbyMode) handleCommand(ctx context.Context, cmd config.Command) *co
 	}
 }
 
+// commandFilesApplier is the optional provider capability that swaps the
+// staged files of a deploy archive payload into /deploy, or drops them
+// (caprf.Client.ApplyCommandFiles, DiscardCommandFiles).
+type commandFilesApplier interface {
+	ApplyCommandFiles() (bool, error)
+	DiscardCommandFiles()
+}
+
+// applyProvisionerFiles copies the provisioner files of a command into the
+// ramdisk; tests replace it.
+var applyProvisionerFiles = provision.ApplyCommandProvisionerFilesToRamdisk
+
 // commandConfigProvider is the optional provider capability that merges a
 // command payload over the base vars (caprf.Client.CommandConfig).
 type commandConfigProvider interface {
@@ -246,6 +257,12 @@ type commandConfigProvider interface {
 // log shipping and token renewal read it concurrently. A result of nil means
 // that standby goes on.
 func (m *StandbyMode) handleRunCommand(ctx context.Context, cmd config.Command) *commandResult {
+	applier, hasFiles := m.deps.Client.(commandFilesApplier)
+	if hasFiles {
+		// Every way out of this command drops what it staged; the apply
+		// below consumes it first.
+		defer applier.DiscardCommandFiles()
+	}
 	runCfg, keys, err := m.commandConfig(cmd.Payload)
 	if err != nil {
 		message := fmt.Sprintf("invalid %s payload: %v", cmd.Type, err)
@@ -262,10 +279,34 @@ func (m *StandbyMode) handleRunCommand(ctx context.Context, cmd config.Command) 
 		slog.Info("running command with payload", "id", cmd.ID, "type", cmd.Type,
 			"keys", strings.Join(keys, ","), "hostname", runCfg.Hostname)
 	}
+	// The files of a deploy archive replace the ones in /deploy only now,
+	// after every check of the command: a rejected command leaves /deploy
+	// as it was.
+	if hasFiles {
+		if err := m.applyCommandFiles(ctx, applier, runCfg); err != nil {
+			slog.Error("command not run", "id", cmd.ID, "type", cmd.Type, "error", err)
+			m.ack(ctx, cmd.ID, "failed", fmt.Sprintf("%s command failed: %v", cmd.Type, err))
+			return nil
+		}
+	}
 	if cmd.Type == "provision" {
 		return m.handleProvision(ctx, cmd, runCfg, keys)
 	}
 	return m.handleDeprovision(ctx, cmd, runCfg, keys)
+}
+
+// applyCommandFiles swaps the files of a deploy archive into /deploy and,
+// with PROVISIONER_FILES_TARGET=ramdisk, copies its provisioner files into
+// the ramdisk before the run (a CA bundle or /etc/hosts for the download).
+func (m *StandbyMode) applyCommandFiles(ctx context.Context, applier commandFilesApplier, cfg *config.MachineConfig) error {
+	applied, err := applier.ApplyCommandFiles()
+	if err != nil || !applied || !cfg.ProvisionerFilesInRamdisk() {
+		return err
+	}
+	if err := applyProvisionerFiles(ctx); err != nil {
+		return fmt.Errorf("apply the provisioner files to the ramdisk: %w", err)
+	}
+	return nil
 }
 
 // commandConfig returns a new config for one command. Without payload it is
@@ -445,29 +486,3 @@ func (m *StandbyMode) deprovisioner(cfg *config.MachineConfig) standbyDeprovisio
 
 // procMemInfo is /proc/meminfo; tests replace it.
 var procMemInfo = "/proc/meminfo"
-
-// memInfoMiB returns MemTotal and MemAvailable of a meminfo file in MiB,
-// or zeros when it can not be read.
-func memInfoMiB(path string) (total, available int64) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0, 0
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		kb, err := strconv.ParseInt(fields[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		switch fields[0] {
-		case "MemTotal:":
-			total = kb / 1024
-		case "MemAvailable:":
-			available = kb / 1024
-		}
-	}
-	return total, available
-}

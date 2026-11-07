@@ -222,6 +222,9 @@ network:
     # FRR "timers connect", "local-as N no-prepend replace-as" and
     # "router bgp N vrf NAME". Explicit values also replace frr.conf values.
     connectRetry: 5
+    # connectAtOnce (BGP_CONNECT_AT_ONCE): first connect after Idle at once,
+    # like FRR; default false (connection collisions after a carrier loss)
+    connectAtOnce: true
     localAS: 65501
     neighborVRF: "Vrf_underlay"
     # allowASIn/multipathRelax/installRoutes/fastExternalFailover: unset keeps
@@ -236,11 +239,14 @@ network:
     # OPEN capabilities (GoBGP), unset means the FRR default:
     # gracefulRestart (BGP_GRACEFUL_RESTART): helper, default true
     # gracefulRestartTime (BGP_GRACEFUL_RESTART_TIME): 1 to 4095 s, default 120
+    # gracefulNotification (BGP_GRACEFUL_NOTIFICATION): the N bit; default
+    # off for "frr version" below 8.3 in frr.conf, else on
     # addPathReceive (BGP_ADDPATH_RX): add-path receive, default true
     # softwareVersion (BGP_SOFTWARE_VERSION): also to eBGP peers; default
     # true with "frr defaults datacenter", else iBGP only
     gracefulRestart: true
     gracefulRestartTime: 90
+    gracefulNotification: false
     addPathReceive: false
     softwareVersion: false
     # hostname (BGP_HOSTNAME): the FQDN capability host name; set as the
@@ -259,6 +265,10 @@ network:
 
     # provisionVNI: VXLAN Network Identifier for the provisioning overlay (0 = disabled)
     provisionVNI: 100
+
+    # rd (EVPN_RD): route distinguisher of the EVPN routes, like FRR "rd";
+    # empty derives "<router-id>:<n>" like FRR
+    rd: "192.168.4.11:2"
 
     # provisionIP: IP/CIDR to assign to the provisioning bridge
     provisionIP: "10.100.0.20/24"
@@ -450,6 +460,9 @@ time:
 
   # writeRTC (TIME_WRITE_RTC): write the synced time to the RTC (default: true)
   writeRTC: false
+
+  # dhcpNTP (TIME_DHCP_NTP): also query the DHCP option 42 servers (default: false)
+  dhcpNTP: true
 
 # ---------------------------------------------------------------------------
 # Provision — settings for the provisioning pipeline.

@@ -103,10 +103,7 @@ func (m *Manager) Add(p *Peer) error {
 	if p.Timers.DetectMult == 0 || p.Timers.DesiredMinTx <= 0 || p.Timers.RequiredMinRx <= 0 {
 		return fmt.Errorf("bfd %s: invalid timers %+v", p.Name, p.Timers)
 	}
-	port := portSingleHop
-	if p.Multihop {
-		port = portMultihop
-	}
+	key := keyOf(p)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	discr := m.newDiscriminator()
@@ -118,22 +115,15 @@ func (m *Manager) Add(p *Peer) error {
 		peer: *p,
 		sess: NewSession(p.Timers, discr),
 		tx:   tx,
-		dst:  &net.UDPAddr{IP: p.Addr.AsSlice(), Port: port, Zone: p.Addr.Zone()},
+		dst:  &net.UDPAddr{IP: p.Addr.AsSlice(), Port: key.port, Zone: p.Addr.Zone()},
 		rx:   make(chan Packet, 16),
 		stop: make(chan struct{}),
 		done: make(chan struct{}),
 	}
-	key := listenerKey{device: p.Device, v6: p.Addr.Is6() && !p.Addr.Is4In6(), port: port}
-	l, ok := m.listeners[key]
-	if !ok {
-		l, err = openListener(key)
-		if err != nil {
-			_ = tx.Close()
-			return fmt.Errorf("bfd %s: %w", p.Name, err)
-		}
-		m.listeners[key] = l
-		m.wg.Add(1)
-		go m.receive(key, l)
+	l, err := m.listen(key)
+	if err != nil {
+		_ = tx.Close()
+		return fmt.Errorf("bfd %s: %w", p.Name, err)
 	}
 	l.runs = append(l.runs, r)
 	m.runs[discr] = r
@@ -142,6 +132,46 @@ func (m *Manager) Add(p *Peer) error {
 	m.log.Info("bfd session added", "peer", p.Name, "address", p.Addr, "device", p.Device, "multihop", p.Multihop,
 		"tx", p.Timers.DesiredMinTx, "rx", p.Timers.RequiredMinRx, "multiplier", p.Timers.DetectMult)
 	return nil
+}
+
+// Listen opens the receive socket that Add opens for p, before the
+// session exists. Only the device, the address family and Multihop of p
+// count. Like FRR bfdd, which listens from its start, the port is then
+// open before anything makes the peer send BFD (an RA, a BGP connection),
+// so the first packet of the peer gets no ICMP port unreachable; a packet
+// for no session is dropped.
+func (m *Manager) Listen(p *Peer) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.listen(keyOf(p)); err != nil {
+		return fmt.Errorf("bfd %s: %w", p.Name, err)
+	}
+	return nil
+}
+
+// keyOf is the receive socket of the session of p.
+func keyOf(p *Peer) listenerKey {
+	port := portSingleHop
+	if p.Multihop {
+		port = portMultihop
+	}
+	return listenerKey{device: p.Device, v6: p.Addr.Is6() && !p.Addr.Is4In6(), port: port}
+}
+
+// listen returns the receive socket of key and opens it on first use. The
+// caller holds m.mu.
+func (m *Manager) listen(key listenerKey) (*listener, error) {
+	if l, ok := m.listeners[key]; ok {
+		return l, nil
+	}
+	l, err := openListener(key)
+	if err != nil {
+		return nil, err
+	}
+	m.listeners[key] = l
+	m.wg.Add(1)
+	go m.receive(key, l)
+	return l, nil
 }
 
 // Replace moves the session named old to a new peer name and address,

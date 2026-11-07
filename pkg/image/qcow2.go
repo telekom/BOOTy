@@ -3,9 +3,7 @@
 package image
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -14,15 +12,50 @@ import (
 	"path/filepath"
 	"syscall"
 
-	exec "github.com/telekom/BOOTy/pkg/executil"
+	"github.com/telekom/BOOTy/pkg/health"
 )
 
-const (
-	// ramdiskPath is the tmpfs mount point for qcow2 conversion scratch space.
-	ramdiskPath = "/tmp/booty-ramdisk"
-	// ramdiskSizeOpt is the tmpfs size option — bounded to avoid OOM.
-	ramdiskSizeOpt = "size=4G"
+// ramdiskFallbackMiB is the tmpfs size when MemAvailable is unknown.
+const ramdiskFallbackMiB = 4096
+
+// The staging tmpfs: its mount point, the meminfo file that sizes it and the
+// mount call; tests replace them.
+var (
+	ramdiskPath    = "/tmp/booty-ramdisk"
+	ramdiskMemInfo = "/proc/meminfo"
+	mountTmpfs     = syscall.Mount
 )
+
+// stagingLimit is the size of the staging tmpfs and the MemAvailable it was
+// derived from (0: unknown).
+type stagingLimit struct {
+	tmpfsMiB, availableMiB int64
+}
+
+// newStagingLimit sizes the staging tmpfs at 3/4 of MemAvailable, so that a
+// staged image that does not fit fails with ENOSPC instead of exhausting the
+// RAM of the ramdisk, which has no swap.
+func newStagingLimit() stagingLimit {
+	_, available := health.MemInfoMiB(ramdiskMemInfo)
+	if available <= 0 {
+		return stagingLimit{tmpfsMiB: ramdiskFallbackMiB}
+	}
+	return stagingLimit{tmpfsMiB: max(available*3/4, 1), availableMiB: available}
+}
+
+// check turns a full staging tmpfs (ENOSPC) into ErrStagingFull, which
+// stream-image does not retry: the same image does not fit the next time.
+func (l stagingLimit) check(err error) error {
+	if err == nil || !errors.Is(err, syscall.ENOSPC) {
+		return err
+	}
+	available := "unknown"
+	if l.availableMiB > 0 {
+		available = fmt.Sprintf("%d MiB", l.availableMiB)
+	}
+	return fmt.Errorf("%w (tmpfs %d MiB, MemAvailable %s); use a .raw.lz4 image or IMAGE_STREAM: %w",
+		ErrStagingFull, l.tmpfsMiB, available, err)
+}
 
 func init() {
 	convertQCOW2Hook = func(ctx context.Context, src io.Reader, sourceName, device string, opt StreamOpts) error {
@@ -31,9 +64,9 @@ func init() {
 }
 
 // ConvertQCOW2 downloads a qcow2 image to a tmpfs ramdisk, converts it to raw
-// using qemu-img, and streams the result to the target device.
+// in process, and streams the result to the target device.
 //
-// The flow is: download → tmpfs → qemu-img convert -f qcow2 -O raw → dd to device.
+// The flow is: download → tmpfs → qcow2 to raw → dd to device.
 // The ramdisk is cleaned up after conversion.
 func ConvertQCOW2(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	var opt StreamOpts
@@ -64,7 +97,8 @@ func ConvertQCOW2FromReader(ctx context.Context, src io.Reader, sourceName, devi
 		opt = opts[0]
 	}
 
-	if err := setupRamdisk(); err != nil {
+	limit, err := setupRamdisk()
+	if err != nil {
 		return fmt.Errorf("setting up ramdisk: %w", err)
 	}
 	defer cleanupRamdisk()
@@ -73,11 +107,14 @@ func ConvertQCOW2FromReader(ctx context.Context, src io.Reader, sourceName, devi
 	rawPath := filepath.Join(ramdiskPath, "image.raw")
 
 	if err := writeImageToFile(src, qcow2Path); err != nil {
-		return fmt.Errorf("writing qcow2 image: %w", err)
+		return limit.check(fmt.Errorf("writing qcow2 image: %w", err))
 	}
 
+	if err := checkQCOW2FitsDevice(qcow2Path, device); err != nil {
+		return err
+	}
 	if err := convertQCOW2ToRaw(ctx, qcow2Path, rawPath); err != nil {
-		return fmt.Errorf("converting qcow2 to raw: %w", err)
+		return limit.check(fmt.Errorf("converting qcow2 to raw: %w", err))
 	}
 
 	// Remove qcow2 to free ramdisk space before streaming.
@@ -94,16 +131,18 @@ func redactQCOW2SourceForLog(sourceName string) string {
 	return RedactURL(sourceName)
 }
 
-// setupRamdisk creates and mounts a tmpfs at ramdiskPath.
-func setupRamdisk() error {
+// setupRamdisk creates and mounts a tmpfs at ramdiskPath, sized by
+// newStagingLimit.
+func setupRamdisk() (stagingLimit, error) {
+	limit := newStagingLimit()
 	if err := os.MkdirAll(ramdiskPath, 0o700); err != nil {
-		return fmt.Errorf("creating ramdisk dir: %w", err)
+		return limit, fmt.Errorf("creating ramdisk dir: %w", err)
 	}
-	if err := syscall.Mount("tmpfs", ramdiskPath, "tmpfs", 0, ramdiskSizeOpt); err != nil {
-		return fmt.Errorf("mounting tmpfs at %s: %w", ramdiskPath, err)
+	if err := mountTmpfs("tmpfs", ramdiskPath, "tmpfs", 0, fmt.Sprintf("size=%dm", limit.tmpfsMiB)); err != nil {
+		return limit, fmt.Errorf("mounting tmpfs at %s: %w", ramdiskPath, err)
 	}
-	slog.Info("ramdisk mounted", "path", ramdiskPath)
-	return nil
+	slog.Info("ramdisk mounted", "path", ramdiskPath, "size_mib", limit.tmpfsMiB, "mem_available_mib", limit.availableMiB)
+	return limit, nil
 }
 
 // cleanupRamdisk unmounts and removes the tmpfs ramdisk.
@@ -147,34 +186,60 @@ func writeImageToFile(src io.Reader, dest string) error {
 	return nil
 }
 
-func requireQCOW2Converter() (string, error) {
-	qemuImg, err := exec.LookPath("qemu-img")
+// convertQCOW2ToRaw converts the qcow2 image src to the raw file dst in
+// process (qcow2raw.go), like `qemu-img convert -f qcow2 -O raw`.
+func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
+	slog.Info("converting qcow2 to raw", "src", src, "dst", dst)
+	in, err := os.Open(src) //nolint:gosec // controlled ramdisk path
 	if err != nil {
-		return "", fmt.Errorf("qemu-img not found (install qemu-utils): %w", err)
+		return fmt.Errorf("open qcow2 image: %w", err)
 	}
-	return qemuImg, nil
+	defer func() { _ = in.Close() }()
+	out, err := os.Create(dst) //nolint:gosec // controlled ramdisk path
+	if err != nil {
+		return fmt.Errorf("create raw image: %w", err)
+	}
+	if err := qcow2ToRaw(ctx, in, out); err != nil {
+		_ = out.Close()
+		_ = os.Remove(dst)
+		return fmt.Errorf("qcow2 to raw: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close raw image: %w", err)
+	}
+	slog.Info("qcow2 conversion complete")
+	return nil
 }
 
-// convertQCOW2ToRaw runs qemu-img convert to transform qcow2 to raw.
-func convertQCOW2ToRaw(ctx context.Context, src, dst string) error {
-	qemuImg, err := requireQCOW2Converter()
+// checkQCOW2FitsDevice fails, before the conversion, when the virtual size
+// of the qcow2 image is larger than the target device. A regular file as
+// target (tests) has no fixed size and is not checked.
+func checkQCOW2FitsDevice(qcow2Path, device string) error {
+	fi, err := os.Stat(device)
+	if err != nil || fi.Mode()&os.ModeDevice == 0 {
+		return nil //nolint:nilerr // the write reports a missing device
+	}
+	src, err := os.Open(qcow2Path) //nolint:gosec // controlled ramdisk path
+	if err != nil {
+		return fmt.Errorf("open qcow2 image: %w", err)
+	}
+	defer func() { _ = src.Close() }()
+	h, err := readQCOW2Header(src)
 	if err != nil {
 		return err
 	}
-
-	if err := rejectQCOW2ExternalFiles(src); err != nil {
-		return err
+	dev, err := os.Open(device) //nolint:gosec // device from config
+	if err != nil {
+		return fmt.Errorf("open target device %s: %w", device, err)
 	}
-
-	slog.Info("converting qcow2 to raw", "src", src, "dst", dst)
-	cmd := exec.CommandContext(ctx, qemuImg, "convert", "-f", "qcow2", "-O", "raw", src, dst) //nolint:gosec // controlled paths
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("qemu-img convert: %w", err)
+	defer func() { _ = dev.Close() }()
+	size, err := dev.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("size of target device %s: %w", device, err)
 	}
-
-	slog.Info("qcow2 conversion complete")
+	if h.size > uint64(size) { //nolint:gosec // a size is not negative
+		return fmt.Errorf("qcow2 virtual size %d bytes is larger than the target device %s (%d bytes)", h.size, device, size)
+	}
 	return nil
 }
 
@@ -188,44 +253,6 @@ const qcow2HeaderLen = 80
 // qcow2IncompatExternalData is the incompatible feature bit for an external
 // data file.
 const qcow2IncompatExternalData = 1 << 2
-
-// rejectQCOW2ExternalFiles reads the qcow2 header and fails for an image
-// that names a backing file or an external data file. qemu-img convert, and
-// qemu-img info in the QEMU that BOOTy ships, would open that file from the
-// initramfs or the network and copy it into the raw image. The header is
-// parsed in process, so nothing is opened before the check.
-func rejectQCOW2ExternalFiles(path string) error {
-	f, err := os.Open(path) //nolint:gosec // controlled ramdisk path
-	if err != nil {
-		return fmt.Errorf("open qcow2 image: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	header := make([]byte, qcow2HeaderLen)
-	n, err := io.ReadFull(f, header)
-	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return fmt.Errorf("read qcow2 header: %w", err)
-	}
-	return checkQCOW2Header(header[:n])
-}
-
-func checkQCOW2Header(header []byte) error {
-	if len(header) < 72 || !bytes.Equal(header[:4], qcow2Magic) {
-		return fmt.Errorf("not a valid qcow2 header")
-	}
-	if binary.BigEndian.Uint64(header[8:16]) != 0 {
-		return fmt.Errorf("qcow2 image has a backing file; only self-contained images are supported")
-	}
-	if binary.BigEndian.Uint32(header[4:8]) >= 3 {
-		if len(header) < qcow2HeaderLen {
-			return fmt.Errorf("qcow2 v3 header is truncated")
-		}
-		if binary.BigEndian.Uint64(header[72:80])&qcow2IncompatExternalData != 0 {
-			return fmt.Errorf("qcow2 image has an external data file; only self-contained images are supported")
-		}
-	}
-	return nil
-}
 
 // streamRawToDevice streams a raw image file to a block device.
 func streamRawToDevice(rawPath, device string, opt StreamOpts) error {
@@ -257,20 +284,20 @@ func streamRawToDevice(rawPath, device string, opt StreamOpts) error {
 	stopProgress()
 	if err != nil {
 		slog.Error("qcow2 write failed: wiping partial image", "device", device, "error", err)
-		wipeLeadingSectors(device)
+		wipeImageTarget(device)
 		return fmt.Errorf("writing raw to device: %w", err)
 	}
 
 	if err := verifyChecksum(h, opt); err != nil {
 		slog.Error("checksum mismatch: wiping partition table to prevent booting corrupt image",
 			"device", device, "error", err)
-		wipeLeadingSectors(device)
+		wipeImageTarget(device)
 		return err
 	}
 
 	if err := syncImageTarget(dst, device); err != nil {
 		slog.Error("qcow2 image sync failed: attempting to wipe partial image", "device", device, "error", err)
-		wipeLeadingSectors(device)
+		wipeImageTarget(device)
 		return err
 	}
 

@@ -22,6 +22,8 @@ type FRRParams struct {
 	NumberedPeersV6 []string // IPv6 addresses from "neighbor X remote-as" lines.
 	EVPN            bool     // True if "address-family l2vpn evpn" found.
 	AdvertiseAllVNI bool     // True if "advertise-all-vni" found.
+	// ResolveOverlayIndex is true if "enable-resolve-overlay-index" found.
+	ResolveOverlayIndex bool
 	// L3VNIs lists VNIs mapped to a VRF ("vni N" at top level for the default
 	// VRF or inside a "vrf" block). FRR advertises only Type-5 routes for them;
 	// advertise-all-vni produces Type-2/Type-3 routes for L2VNIs only.
@@ -80,6 +82,7 @@ func ParseFRRConfigBytesWith(data []byte, name string, strict bool) (*FRRParams,
 			if af.SAFI == "evpn" {
 				params.EVPN = true
 				params.AdvertiseAllVNI = params.AdvertiseAllVNI || af.AdvertiseAllVNI
+				params.ResolveOverlayIndex = params.ResolveOverlayIndex || af.ResolveOverlayIndex
 			}
 		}
 	}
@@ -273,6 +276,51 @@ func l3vniRouteTargets(model *frrconf.Config, vni uint32) (imp, exp []string) {
 		exp = []string{auto}
 	}
 	return imp, exp
+}
+
+// l3vniRD returns the RD of the L3VNI vni's EVPN routes: the "rd" of its
+// VRF, else FRR's automatic "<router-id>:<n>" (bgp_evpn.c
+// bgp_evpn_derive_auto_rd_for_vrf), where n is the VRF instance's
+// vrf_rd_id. bgpd gives each "router bgp" instance the lowest free id
+// from 1 when it is created, in frr.conf order (bgpd.c bgp_create); a VRF
+// without a "router bgp" gets an instance when its L3VNI appears, after
+// the configured ones. It returns that n and the number of instances.
+// For a VNI that is not an L3VNI, n is the id of the default VRF instance.
+func l3vniRD(model *frrconf.Config, vni uint32) (rd string, index, instances int) {
+	vrf, ok := "", false
+	for _, v := range model.VRFVNIs {
+		if v.VNI == vni {
+			vrf, ok = v.VRF, true
+		}
+	}
+	var seen []string
+	for i := range model.Routers {
+		r := &model.Routers[i]
+		v := routerVRF(r.VRF)
+		if !slices.Contains(seen, v) {
+			seen = append(seen, v)
+		}
+		if !ok || v != vrf {
+			continue
+		}
+		index = slices.Index(seen, v) + 1
+		for k := range r.AddressFamilies {
+			if af := &r.AddressFamilies[k]; af.SAFI == "evpn" && af.RD != "" {
+				rd = af.RD
+			}
+		}
+	}
+	instances = len(seen)
+	switch {
+	case ok && index == 0:
+		instances++
+		index = instances
+	case !ok:
+		// An L2VNI: BOOTy's Type-5 route of the provision address is in
+		// the default VRF.
+		index = max(slices.Index(seen, "")+1, 1)
+	}
+	return rd, index, instances
 }
 
 // type5Networks returns the "network" prefixes that FRR originates as EVPN

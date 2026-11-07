@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
+	apipb "github.com/osrg/gobgp/v4/api"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/proto"
@@ -25,7 +25,8 @@ const (
 	relearnInterval = time.Second
 	// relearnGrace is how long an unnumbered peer with carrier may stay
 	// down before BOOTy looks for a new link-local address of the
-	// switch. GoBGP reconnects within 1 to 2 s on its own.
+	// switch. GoBGP reconnects on its own after 0 to 1 s (at once with
+	// BGP_CONNECT_AT_ONCE), and after the connect timer when that fails.
 	relearnGrace = 3 * time.Second
 )
 
@@ -116,7 +117,7 @@ func (u *UnderlayTier) startRelearn() {
 func (u *UnderlayTier) peerEstablished(ctx context.Context, addr string) bool {
 	up := false
 	_ = u.bgp.ListPeer(ctx, &apipb.ListPeerRequest{Address: addr}, func(p *apipb.Peer) {
-		up = p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED
+		up = p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_ESTABLISHED
 	})
 	return up
 }
@@ -128,7 +129,8 @@ func hasCarrier(iface string) bool {
 
 // movedPeer returns another link-local neighbor on iface that answers on
 // the BGP port, when the old address does not. A switch that connects
-// from its new address leaves it in the neighbor table; the RA asks it to.
+// from its new address leaves it in the neighbor table, and so do its
+// RAs. Like zebra, BOOTy sends no RA for this beyond the scheduled ones.
 func movedPeer(ctx context.Context, iface, old string) string {
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {
@@ -136,7 +138,6 @@ func movedPeer(ctx context.Context, iface, old string) string {
 	}
 	cands := slices.DeleteFunc(findLinkLocalNeighbors(ifi, iface), func(a string) bool { return a == old })
 	if len(cands) == 0 {
-		sendRouterAdvertisement(iface)
 		return ""
 	}
 	return chooseMoved(ctx, old, cands)
@@ -165,7 +166,11 @@ func (u *UnderlayTier) replaceInterfacePeer(ctx context.Context, iface, old, add
 	if conf == nil {
 		return fmt.Errorf("no peer configuration for %s", iface)
 	}
-	if err := u.moveNeighborSets(ctx, old, addr, !shared); err != nil {
+	// addr joins the neighbor sets before the peer moves, so the new
+	// session never runs without its policy; old leaves them after the
+	// move, so a failed move keeps the old peer's policy.
+	leave, err := u.joinNeighborSets(ctx, old, addr)
+	if err != nil {
 		return err
 	}
 	peer, _ := proto.Clone(conf).(*apipb.Peer)
@@ -175,6 +180,9 @@ func (u *UnderlayTier) replaceInterfacePeer(ctx context.Context, iface, old, add
 	}
 	if err := u.movePeer(ctx, old, peer); err != nil {
 		return err
+	}
+	if err := u.leaveNeighborSets(ctx, old, leave); err != nil {
+		u.log.Warn("old peer address stays in its neighbor sets", "peer", old, "error", err)
 	}
 	u.peerMu.Lock()
 	u.ifacePeerConfs[iface] = peer
@@ -216,34 +224,45 @@ func (u *UnderlayTier) movePeer(ctx context.Context, old string, peer *apipb.Pee
 	return nil
 }
 
-// moveNeighborSets puts addr into every neighbor set that holds old, so
-// the route-maps and checks of the peer stay; old leaves them unless
-// another interface peer has the same address.
-func (u *UnderlayTier) moveNeighborSets(ctx context.Context, old, addr string, drop bool) error {
+// joinNeighborSets puts addr into every neighbor set that holds old, so
+// the route-maps and checks of the peer stay, and returns those sets for
+// leaveNeighborSets. The entries carry the zone, so old is the entry of
+// this peer only: a peer with the same address on another interface (the
+// placeholder, or a switch with the same link-local address) has its own.
+func (u *UnderlayTier) joinNeighborSets(ctx context.Context, old, addr string) ([]string, error) {
 	oldIP, err1 := netip.ParseAddr(old)
 	newIP, err2 := netip.ParseAddr(addr)
 	if err := errors.Join(err1, err2); err != nil {
-		return fmt.Errorf("peer address: %w", err)
+		return nil, fmt.Errorf("peer address: %w", err)
 	}
 	from, to := hostPrefix(oldIP), hostPrefix(newIP)
 	var names []string
-	if err := u.bgp.ListDefinedSet(ctx, &apipb.ListDefinedSetRequest{DefinedType: apipb.DefinedType_NEIGHBOR},
+	if err := u.bgp.ListDefinedSet(ctx, &apipb.ListDefinedSetRequest{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR},
 		func(d *apipb.DefinedSet) {
 			if slices.Contains(d.GetList(), from) {
 				names = append(names, d.GetName())
 			}
 		}); err != nil {
-		return fmt.Errorf("list neighbor sets: %w", err)
+		return nil, fmt.Errorf("list neighbor sets: %w", err)
 	}
 	for _, name := range names {
-		set := &apipb.DefinedSet{DefinedType: apipb.DefinedType_NEIGHBOR, Name: name, List: []string{to}}
+		set := &apipb.DefinedSet{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR, Name: name, List: []string{to}}
 		if err := u.bgp.AddDefinedSet(ctx, &apipb.AddDefinedSetRequest{DefinedSet: set}); err != nil {
-			return fmt.Errorf("add %s to neighbor set %s: %w", to, name, err)
+			return nil, fmt.Errorf("add %s to neighbor set %s: %w", to, name, err)
 		}
-		if !drop {
-			continue
-		}
-		set = &apipb.DefinedSet{DefinedType: apipb.DefinedType_NEIGHBOR, Name: name, List: []string{from}}
+	}
+	return names, nil
+}
+
+// leaveNeighborSets removes old from the neighbor sets names.
+func (u *UnderlayTier) leaveNeighborSets(ctx context.Context, old string, names []string) error {
+	ip, err := netip.ParseAddr(old)
+	if err != nil {
+		return fmt.Errorf("peer address: %w", err)
+	}
+	from := hostPrefix(ip)
+	for _, name := range names {
+		set := &apipb.DefinedSet{DefinedType: apipb.DefinedType_DEFINED_TYPE_NEIGHBOR, Name: name, List: []string{from}}
 		if err := u.bgp.DeleteDefinedSet(ctx, &apipb.DeleteDefinedSetRequest{DefinedSet: set}); err != nil {
 			return fmt.Errorf("remove %s from neighbor set %s: %w", from, name, err)
 		}

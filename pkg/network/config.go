@@ -49,6 +49,9 @@ type Config struct {
 	ProvisionIP      string // IP/mask to assign to provision bridge (e.g. "10.100.0.20/24")
 	ProvisionGateway string // Gateway VTEP IP for VXLAN BUM flooding
 	DNSResolvers     string // Comma-separated DNS servers
+	// KeepResolvConf leaves the provisioner resolv.conf alone: DHCP does not
+	// write the lease DNS servers.
+	KeepResolvConf bool
 
 	// Optional FRR onefabric mode fields.
 	DCGWIPs          string // Data Center Gateway IPs (comma-sep)
@@ -71,6 +74,10 @@ type Config struct {
 	// NICWait is the longest wait for configured NICs that do not exist
 	// yet (NIC_WAIT_SECONDS).
 	NICWait time.Duration
+	// UdevNames gives every other physical NIC its predictable name too,
+	// like udev in the legacy ramdisk: set for provisioner netplan input,
+	// the input the legacy ramdisk reads.
+	UdevNames bool
 
 	// InterfaceNames are the interface names that the netplan files
 	// (ethernet IDs without a match block) and frr.conf ("neighbor X
@@ -112,6 +119,9 @@ type Config struct {
 	// profile of the legacy daemons file). It selects the FRR 10.3
 	// defaults that depend on it (bgpd/bgp_vty.c FRR_CFG_DEFAULT_*).
 	BGPDefaults string
+	// BGPFRRVersion is the "frr version" of frr.conf, empty without it. It
+	// selects the FRR defaults that depend on the version.
+	BGPFRRVersion string
 	// BGPHostname is BGP_HOSTNAME: when set, the ramdisk host name before
 	// BGP starts, because GoBGP sends the system host name as the FQDN
 	// capability.
@@ -133,6 +143,9 @@ type Config struct {
 	// BGPConnectRetry is the connect retry timer of the native peers in
 	// seconds; 0 keeps the GoBGP default.
 	BGPConnectRetry uint32
+	// BGPConnectAtOnce starts the first connect of a GoBGP peer at once
+	// when it leaves Idle (ConnectAtOnce of the GoBGP fork); off by default.
+	BGPConnectAtOnce bool
 	// BGPAllowASIn is the allowas-in count of the native peers.
 	BGPAllowASIn uint32
 	// BGPInstallRoutes installs the learned unicast routes into the kernel.
@@ -159,6 +172,10 @@ type Config struct {
 	EVPNType5Only bool
 	// EVPNType5OnlySet is true when EVPN_TYPE5_ONLY was given explicitly.
 	EVPNType5OnlySet bool
+	// EVPNResolveOverlayIndex installs Type-5 routes with a gateway IP
+	// overlay index once a Type-2 route resolves the gateway, like FRR
+	// "enable-resolve-overlay-index" (off by default).
+	EVPNResolveOverlayIndex bool
 	// EVPNL3VNIs lists the VNIs that the provisioner FRR config maps to a VRF.
 	// Set from netplan input only; an L3VNI provision VNI keeps Type-5 only.
 	EVPNL3VNIs []uint32
@@ -174,6 +191,14 @@ type Config struct {
 	// vpn_rt or the derived route target.
 	EVPNImportRTs []string
 	EVPNExportRTs []string
+	// EVPNRD is the RD of the EVPN routes (EVPN_RD, else the frr.conf
+	// "rd" of the L3VNI VRF); empty derives it like FRR from the router ID
+	// and EVPNRDIndex, the vrf_rd_id of the L3VNI VRF instance.
+	// BGPInstances is the number of FRR "router bgp" instances; an L2VNI
+	// gets the next id. Both are 0 without frr.conf.
+	EVPNRD       string
+	EVPNRDIndex  int
+	BGPInstances int
 	// Type5Networks are the FRR "network" prefixes of the provision L3VNI
 	// VRF that "advertise ipv4|ipv6 unicast" originates as EVPN Type-5.
 	Type5Networks []string
@@ -185,6 +210,16 @@ type Config struct {
 	NoAcceptRA []string
 	// EmitLLDP lists the NICs with netplan "emit-lldp: true".
 	EmitLLDP []string
+	// LLDPProfile is the identity of the sent LLDP frames (lldp.Profile*).
+	// LLDPEmitAll sends on every physical NIC; the caller starts that
+	// sender, so the network stacks then send nothing themselves.
+	LLDPProfile      string
+	LLDPPortIDFormat string
+	LLDPAnnounce     string
+	LLDPEmitAll      bool
+	// EmitLLDPMatches are netplan match blocks (without set-name) with
+	// "emit-lldp: true"; every NIC they select sends LLDP.
+	EmitLLDPMatches []LinkMatch
 	// IPForwarding and IPv6Forwarding set the forwarding sysctls; nil keeps
 	// the GoBGP default: IPv4 on, IPv6 off (the kernel default the legacy
 	// ramdisk keeps). frr.conf "[no] ip[v6] forwarding" sets them.
@@ -317,6 +352,9 @@ type BGPCapabilities struct {
 	GracefulRestart bool
 	// GracefulRestartTime is the restart time in seconds (FRR 120).
 	GracefulRestartTime uint32
+	// GracefulNotification is the N bit of the graceful restart capability
+	// (RFC 8538), FRR "bgp graceful-restart notification".
+	GracefulNotification bool
 	// AddPathReceive is the add-path capability (RFC 7911) with receive in
 	// every address family, like FRR.
 	AddPathReceive bool
@@ -371,6 +409,57 @@ func ConfigureResolvers(resolvers string) error {
 	if err != nil {
 		return err
 	}
+	return writeResolvConf(lines)
+}
+
+// ConfigureResolvConf writes nameserver lines and, with search domains, a
+// search line, like the stub resolv.conf of systemd-resolved. A search
+// domain that is not a DNS name is left out (a lease can carry one). With
+// no servers it writes a resolv.conf without servers.
+func ConfigureResolvConf(servers, search []string) error {
+	lines, err := ResolverLines(strings.Join(servers, ","))
+	if err != nil {
+		return err
+	}
+	var domains []string
+	for _, d := range search {
+		if validSearchDomain(d) {
+			domains = append(domains, d)
+		}
+	}
+	if len(lines) == 0 {
+		return writeResolvConf([]string{"# no DNS servers"})
+	}
+	if len(domains) > 0 {
+		lines = append(lines, "search "+strings.Join(domains, " "))
+	}
+	return writeResolvConf(lines)
+}
+
+// validSearchDomain accepts a DNS name of letters, digits, hyphens and dots.
+// Like systemd's dns_name_normalize it rejects an empty label ("a..b"), a
+// label that starts or ends with a hyphen, and localhost (is_localhost).
+func validSearchDomain(d string) bool {
+	const nameChars = ".-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	d = strings.TrimSuffix(d, ".")
+	if d == "" || len(d) > 253 || strings.Trim(d, nameChars) != "" {
+		return false
+	}
+	lower := strings.ToLower(d)
+	if lower == "localhost" || strings.HasSuffix(lower, ".localhost") {
+		return false
+	}
+	for _, label := range strings.Split(d, ".") {
+		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+	}
+	return true
+}
+
+// writeResolvConf replaces resolv.conf (also a symlink) with the lines; no
+// lines leave it alone.
+func writeResolvConf(lines []string) error {
 	if len(lines) == 0 {
 		return nil
 	}
@@ -529,6 +618,11 @@ func splitVLANEntry(entry string) ([]string, error) {
 	}
 	fields = append(fields, strings.TrimSpace(field.String()))
 	return fields, nil
+}
+
+// IsLinksMode returns true if links mode (link-local only) is requested.
+func (c *Config) IsLinksMode() bool {
+	return strings.EqualFold(c.NetworkMode, "links")
 }
 
 // IsGoBGPMode returns true if GoBGP mode is explicitly requested.

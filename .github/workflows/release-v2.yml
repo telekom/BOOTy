@@ -119,6 +119,9 @@ jobs:
           - arch: amd64
             flavor: micro
             runner: ubuntu-latest
+          - arch: amd64
+            flavor: split
+            runner: ubuntu-latest
           - arch: arm64
             flavor: default
             runner: ubuntu-24.04-arm
@@ -130,6 +133,9 @@ jobs:
             runner: ubuntu-24.04-arm
           - arch: arm64
             flavor: micro
+            runner: ubuntu-24.04-arm
+          - arch: arm64
+            flavor: split
             runner: ubuntu-24.04-arm
       fail-fast: false
     runs-on: ${{ matrix.runner }}
@@ -153,15 +159,20 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
+          # Release builds must not restore a Go cache written by another run.
+          cache: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      - uses: ./.github/actions/baseline-libc
+        if: matrix.flavor == 'default'
       - name: Build binary
         if: matrix.flavor == 'default'
         run: |
@@ -178,7 +189,7 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           BUILD_FLAVOR="${{ matrix.flavor }}"
-          if [ "${BUILD_FLAVOR}" = "default" ]; then
+          if [ "${BUILD_FLAVOR}" = "default" ] || [ "${BUILD_FLAVOR}" = "split" ]; then
             BUILD_FLAVOR="full"
           fi
           TARGET_ARG=""
@@ -200,7 +211,18 @@ jobs:
           if [ -f booty-${{ matrix.arch }} ]; then
             sha256sum booty-${{ matrix.arch }} > booty-${{ matrix.arch }}.sha256
           fi
-          if [ -f out-${{ matrix.flavor }}/initramfs.cpio.zst ]; then
+          if [ "${{ matrix.flavor }}" = "split" ]; then
+            # Base ramdisk plus one archive per payload (pkg/payload).
+            # SHA256SUMS lists the unprefixed names; it pins the whole set.
+            (cd out-split && sha256sum -c --quiet SHA256SUMS)
+            for part in base frr; do
+              cp "out-split/${part}.cpio.zst" "split-${{ matrix.arch }}-${part}.cpio.zst"
+              sha256sum "split-${{ matrix.arch }}-${part}.cpio.zst" > "split-${{ matrix.arch }}-${part}.cpio.zst.sha256"
+            done
+            cp out-split/vmlinuz "split-${{ matrix.arch }}-vmlinuz"
+            sha256sum "split-${{ matrix.arch }}-vmlinuz" > "split-${{ matrix.arch }}-vmlinuz.sha256"
+            cp out-split/SHA256SUMS "split-${{ matrix.arch }}-SHA256SUMS"
+          elif [ -f out-${{ matrix.flavor }}/initramfs.cpio.zst ]; then
             cp out-${{ matrix.flavor }}/initramfs.cpio.zst ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst
             sha256sum ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst > ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst.sha256
           elif [ -f out-${{ matrix.flavor }}/initramfs.cpio.gz ]; then
@@ -223,6 +245,11 @@ jobs:
             ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.gz.sha256
             ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst
             ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst.sha256
+            split-${{ matrix.arch }}-*.cpio.zst
+            split-${{ matrix.arch }}-*.cpio.zst.sha256
+            split-${{ matrix.arch }}-vmlinuz
+            split-${{ matrix.arch }}-vmlinuz.sha256
+            split-${{ matrix.arch }}-SHA256SUMS
           if-no-files-found: ignore
 
   sbom:
@@ -308,6 +335,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Download release artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -325,6 +354,8 @@ jobs:
         run: bash hack/extract-initramfs-artifacts.sh release-artifacts scan-rootfs
 
       - name: Run Trivy vulnerability scanner
+        id: scan
+        continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: fs
@@ -332,6 +363,10 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: 1
           format: table
+
+      - name: Report scan status
+        if: always() && steps.scan.outcome != 'success'
+        run: echo '::warning title=Security scan advisory::Trivy reported findings or could not complete. See the scan logs.'
 
   sign:
     name: Sign Artifacts
@@ -343,6 +378,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
@@ -401,12 +438,14 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -502,7 +541,7 @@ jobs:
       id-token: write
     steps:
       - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -554,14 +593,14 @@ jobs:
       id-token: write
     steps:
       - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Create and push multi-arch manifest
         run: |
@@ -668,9 +707,11 @@ jobs:
             artifact: booty-gobgp-amd64.iso
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build ISO
         run: |
@@ -726,12 +767,12 @@ jobs:
       id-token: write
     steps:
       - name: Install ORAS
-        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4
+        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63
         with:
           version: "1.3.1"
 
       - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -793,20 +834,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Generate changelog
-        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff
-        with:
-          config: cliff.toml
-          args: --latest --strip header
+      # Keep the version in sync with GIT_CLIFF_VERSION in changelog.yml.
+      - name: Install git-cliff
+        run: pipx install "git-cliff==2.14.2"
+
+      # The section of the tag in CHANGELOG.md (written by the release commit,
+      # see CONTRIBUTING.md#releases), or generated when the tag has none.
+      - name: Generate release notes
+        shell: bash
         env:
-          OUTPUT: CHANGELOG.md
+          TAG: ${{ github.ref_name }}
+        run: python3 -B hack/changelog.py notes "$TAG" | tee release-notes.md
 
       - name: Upload changelog
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: changelog
-          path: CHANGELOG.md
+          path: release-notes.md
           if-no-files-found: error
 
   release:
@@ -825,14 +871,14 @@ jobs:
       - name: Collect release files
         run: |
           mkdir release-files
-          find artifacts -type f \( -name "booty-*" -o -name "*.cpio.gz" -o -name "*.cpio.zst" -o -name "*.iso" -o -name "*.sha256" -o -name "*.sig" -o -name "*.bundle" -o -name "*.spdx.json" \) \
+          find artifacts -type f \( -name "booty-*" -o -name "*.cpio.gz" -o -name "*.cpio.zst" -o -name "*.iso" -o -name "*.sha256" -o -name "*.sig" -o -name "*.bundle" -o -name "*.spdx.json" -o -name "split-*" \) \
             -exec cp {} release-files/ \;
           ls -lh release-files/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
         with:
-          body_path: artifacts/changelog/CHANGELOG.md
+          body_path: artifacts/changelog/release-notes.md
           files: release-files/*
           prerelease: ${{ needs.validate-tag.outputs.prerelease }}
           make_latest: ${{ needs.validate-tag.outputs.make_latest }}
@@ -852,7 +898,7 @@ jobs:
       id-token: write
     steps:
       - name: Install ORAS
-        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4
+        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63
         with:
           version: "1.3.1"
 
@@ -860,7 +906,9 @@ jobs:
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
 
       - name: Login to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GH_TOKEN}" | oras login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
 
       - name: Download build artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333

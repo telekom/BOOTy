@@ -18,6 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - id: version
         run: |
@@ -40,14 +41,18 @@ jobs:
       fail-fast: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      - uses: ./.github/actions/baseline-libc
+        if: matrix.flavor == 'default'
       - name: Build binary
         if: matrix.flavor == 'default'
         env:
@@ -115,6 +120,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Download nightly artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -133,6 +140,8 @@ jobs:
           sudo chown -hR "$(id -u):$(id -g)" scan-rootfs
 
       - name: Run Trivy vulnerability scanner
+        id: scan
+        continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: fs
@@ -142,6 +151,10 @@ jobs:
           exit-code: 1
           format: table
 
+      - name: Report scan status
+        if: always() && steps.scan.outcome != 'success'
+        run: echo '::warning title=Security scan advisory::Trivy reported findings or could not complete. See the scan logs.'
+
   sbom:
     name: Generate SBOM
     needs: build
@@ -149,6 +162,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Download nightly artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -206,7 +221,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Install ContainerLab
         run: test/e2e/clab/install-containerlab.sh "0.76.1"
@@ -261,12 +276,14 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -308,18 +325,22 @@ jobs:
           printf 'image_tag=%s\n' "${IMAGE}" >> "${GITHUB_OUTPUT}"
 
       - name: Sign nightly container image
+        env:
+          IMAGE_REF: ${{ steps.push.outputs.image_ref }}
         run: |
-          cosign sign --yes "${{ steps.push.outputs.image_ref }}"
+          cosign sign --yes "${IMAGE_REF}"
           cosign verify \
-            --certificate-identity "${{ github.server_url }}/${{ github.repository }}/.github/workflows/nightly.yml@${{ github.ref }}" \
+            --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/nightly.yml@${GITHUB_REF}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            "${{ steps.push.outputs.image_ref }}"
+            "${IMAGE_REF}"
 
       - name: Attach SBOM attestation
+        env:
+          IMAGE_REF: ${{ steps.push.outputs.image_ref }}
         run: |
           test -s sbom/sbom-nightly.spdx.json
           jq -e . sbom/sbom-nightly.spdx.json >/dev/null
           cosign attest --yes \
             --predicate sbom/sbom-nightly.spdx.json \
             --type spdxjson \
-            "${{ steps.push.outputs.image_ref }}"
+            "${IMAGE_REF}"

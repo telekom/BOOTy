@@ -11,11 +11,15 @@ import (
 	"time"
 )
 
+// Size budgets in MiB, about 5% above main (default 36.1, gobgp 31.5,
+// slim 23.6, micro 10.3 MiB; micro is 10.9 MiB on main c5a17159, so its
+// budget is 5% above that). Every MB is up to 0.5 s of boot time on slow
+// BMC virtual media; see docs/size-optimization.md.
 const (
-	maxMicroInitramfsMB   = 20.0
-	maxSlimInitramfsMB    = 70.0
-	maxGoBGPInitramfsMB   = 100.0
-	maxDefaultInitramfsMB = 140.0
+	maxMicroInitramfsMB   = 11.4
+	maxSlimInitramfsMB    = 25.0
+	maxGoBGPInitramfsMB   = 33.5
+	maxDefaultInitramfsMB = 38.0
 )
 
 func dockerAvailable(t *testing.T) {
@@ -494,7 +498,9 @@ func TestSlimContainsNetworkToolsE2E(t *testing.T) {
 
 	assertContains(t, files, "bin/ip", "iproute2 ip command")
 	assertContains(t, files, "bin/ethtool", "ethtool")
-	assertContains(t, files, "bin/curl", "curl")
+	// BOOTy fetches with net/http; busybox wget does HTTP and HTTPS in the shell.
+	assertNotContains(t, files, "bin/curl", "curl")
+	assertContains(t, files, "bin/wget", "busybox wget")
 	assertContains(t, files, "etc/ssl/certs/ca-certificates.crt", "CA certificates")
 }
 
@@ -769,7 +775,8 @@ func TestDefaultContainsDiskToolsE2E(t *testing.T) {
 	assertContains(t, files, "bin/partprobe", "partprobe")
 	assertContains(t, files, "bin/partx", "partx online partition updater")
 	assertContains(t, files, "bin/lsblk", "util-linux lsblk")
-	assertContains(t, files, "bin/qemu-img", "qemu-img qcow2 converter")
+	// BOOTy converts qcow2 images in process.
+	assertNotContains(t, files, "bin/qemu-img", "qemu-img")
 	assertContains(t, files, "bin/efibootmgr", "efibootmgr")
 	assertNotContains(t, files, "bin/blkid", "BusyBox blkid applet shadowing util-linux blkid")
 }
@@ -825,11 +832,14 @@ func TestDefaultContainsNetworkAndSSHE2E(t *testing.T) {
 	assertContains(t, files, "bin/ip", "iproute2 ip")
 	assertContains(t, files, "bin/bridge", "iproute2 bridge")
 	assertContains(t, files, "bin/ethtool", "ethtool")
-	assertContains(t, files, "bin/curl", "curl")
+	// BOOTy fetches with net/http; busybox wget does HTTP and HTTPS in the shell.
+	assertNotContains(t, files, "bin/curl", "curl")
+	assertContains(t, files, "bin/wget", "busybox wget")
 	assertContains(t, files, "bin/dropbear", "dropbear SSH")
 	assertContains(t, files, "bin/dropbearkey", "dropbearkey")
-	assertContains(t, files, "bin/lldpcli", "LLDP client")
-	assertContains(t, files, "sbin/lldpd", "LLDP daemon")
+	// LLDP diagnosis is "booty lldp"; lldpd and lldpcli are not shipped.
+	assertNotContains(t, files, "bin/lldpcli", "LLDP client")
+	assertNotContains(t, files, "sbin/lldpd", "LLDP daemon")
 	assertContains(t, files, "etc/ssl/certs/ca-certificates.crt", "CA certificates")
 	assertContains(t, files, "bin/gpgv", "GPG signature verifier")
 }
@@ -907,7 +917,8 @@ func TestGoBGPContainsDiskToolsE2E(t *testing.T) {
 
 	assertContains(t, files, "bin/wipefs", "wipefs")
 	assertContains(t, files, "sbin/mdadm", "mdadm RAID")
-	assertContains(t, files, "bin/qemu-img", "qemu-img qcow2 converter")
+	// BOOTy converts qcow2 images in process.
+	assertNotContains(t, files, "bin/qemu-img", "qemu-img")
 	assertContains(t, files, "bin/efibootmgr", "efibootmgr")
 	assertContains(t, files, "bin/lsblk", "lsblk for rescue mode")
 	assertContains(t, files, "sbin/blkid", "util-linux blkid")
@@ -924,9 +935,12 @@ func TestGoBGPContainsNetworkAndSSHE2E(t *testing.T) {
 	assertContains(t, files, "bin/ip", "iproute2 ip")
 	assertContains(t, files, "bin/bridge", "iproute2 bridge")
 	assertContains(t, files, "bin/ethtool", "ethtool")
-	assertContains(t, files, "bin/curl", "curl")
+	// BOOTy fetches with net/http; busybox wget does HTTP and HTTPS in the shell.
+	assertNotContains(t, files, "bin/curl", "curl")
+	assertContains(t, files, "bin/wget", "busybox wget")
 	assertContains(t, files, "bin/dropbear", "dropbear SSH")
-	assertContains(t, files, "bin/lldpcli", "LLDP client")
+	assertNotContains(t, files, "bin/lldpcli", "LLDP client")
+	assertNotContains(t, files, "sbin/lldpd", "LLDP daemon")
 	assertContains(t, files, "etc/ssl/certs/ca-certificates.crt", "CA certificates")
 	assertContains(t, files, "bin/gpgv", "GPG signature verifier")
 }

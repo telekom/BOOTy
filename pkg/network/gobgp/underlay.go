@@ -15,17 +15,16 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/net/ipv6"
 	"golang.org/x/sys/unix"
-	"google.golang.org/protobuf/types/known/anypb"
 
-	exec "github.com/telekom/BOOTy/pkg/executil"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/bfd"
 	"github.com/telekom/BOOTy/pkg/network/lldp"
@@ -43,7 +42,8 @@ const (
 	// actual BGP speaker when a link has multiple IPv6 link-local neighbors.
 	bgpProbeTimeout = 250 * time.Millisecond
 
-	// raInterval is the period between Router Advertisement bursts.
+	// raInterval is the period between the regular Router Advertisements
+	// (bgpd BGP_UNNUM_DEFAULT_RA_INTERVAL).
 	raInterval = 10 * time.Second
 
 	// raPacketSize is the RA packet capacity: 16-byte header + 8-byte SLLAO.
@@ -55,10 +55,13 @@ const (
 	// defaultHopLimit is the default IPv6 Cur Hop Limit advertised in RAs.
 	defaultHopLimit = 64
 
-	// raLifetimeHi and raLifetimeLo encode the router lifetime of 1800s
-	// in big-endian format (0x0708 = 1800).
-	raLifetimeHi = 0x07
-	raLifetimeLo = 0x08
+	// raLifetime is the router lifetime of the periodic RAs in seconds,
+	// like zebra: without a configured lifetime it sends
+	// MAX(1, 0.003 * MaxRtrAdvInterval in ms) (zebra/rtadv.c), 30 s for the
+	// 10 s interval that bgpd sets for unnumbered peers
+	// (BGP_UNNUM_DEFAULT_RA_INTERVAL). RFC 4861 6.2.1 allows 0 or
+	// MaxRtrAdvInterval to 9000 s.
+	raLifetime = uint16(3 * raInterval / time.Second)
 
 	// mandatedHopLimit is the hop limit mandated by RFC 4861 §6.1.2.
 	// FRR's zebra silently drops RAs with any other value.
@@ -73,8 +76,10 @@ type UnderlayTier struct {
 	cfg          *Config
 	nics         []string
 	log          *slog.Logger
-	stopRA       chan struct{}                                                           // signals the periodic RA goroutine to stop
+	stopRA       chan struct{}                                                           // stops the RA goroutines (startPeriodicRA)
 	stopFIB      context.CancelFunc                                                      // stops the FIB writer
+	fib          atomic.Pointer[fibWriter]                                               // the running FIB writer, for FIBOwns
+	onFIBRemove  func(table int, p netip.Prefix)                                         // called for each route the FIB writer removed
 	fibDone      chan struct{}                                                           // closed when the FIB writer has removed its routes
 	peerDevs     map[string]string                                                       // unnumbered peer address -> interface
 	discoverPeer func(context.Context, string) (string, error)                           // overridable in tests; nil = discoverLinkLocalPeer
@@ -99,18 +104,21 @@ type UnderlayTier struct {
 	relearnDone  chan struct{}                 // closed when the relearner exits
 	stopCarrier  chan struct{}                 // stops the carrier watch
 	carrierDone  <-chan struct{}               // closed when the carrier watch ended
-	raDone       chan struct{}                 // closed when the periodic RA goroutine exits
+	raDone       chan struct{}                 // closed when the RA goroutines exited
+	raUp         map[string]chan struct{}      // per NIC: carrier is back (startPeriodicRA)
 	peerCountFn  func(ctx context.Context) int // overridable in tests; nil = use countEstablishedPeers
 	pollInterval time.Duration                 // overridable in tests; zero = use default (1s)
 	bfd          *bfd.Manager                  // BFD sessions of the peers
 	bfdUp        sync.Map                      // BFD peer name -> bool, the session is Up
 	bfdUpGrace   time.Duration                 // overridable in tests; zero = bfdRecheckGrace
 	// checkCtx, canceled by Teardown, bounds the BFD rechecks of
-	// starting sessions (recheck); checkMu guards it and checks.Add.
+	// starting sessions (recheck); checkMu guards it, checks.Add and
+	// rechecks (the running recheck of each BFD peer).
 	checkMu    sync.Mutex
 	checkCtx   context.Context //nolint:containedctx // canceled by Teardown, like stopRelearn
 	stopChecks context.CancelFunc
 	checks     sync.WaitGroup
+	rechecks   map[string]*bfdRecheck
 	stopLLDP   func() // stops the LLDP senders and waits for them
 }
 
@@ -171,7 +179,13 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 		return fmt.Errorf("start BGP server: %w", err)
 	}
 
+	u.startRAs()
 	if err := u.setupBGP(ctx); err != nil {
+		u.stopPeriodicRA()
+		if u.bfd != nil {
+			u.bfd.Close()
+			u.bfd = nil
+		}
 		return err
 	}
 
@@ -184,16 +198,23 @@ func (u *UnderlayTier) Setup(ctx context.Context) error {
 	}
 	u.startRelearn()
 	if err := u.startRestarter(); err != nil {
-		u.log.Warn("a BGP peer waits 5 s in Idle after its session ends", "error", err)
-	}
-
-	// Start periodic Router Advertisements so FRR's zebra continuously
-	// knows our link-local addresses for BGP unnumbered peering.
-	if u.needsNICs() && len(u.nics) > 0 {
-		u.startPeriodicRA()
+		u.log.Warn("a BGP peer refuses connections in Idle after its session ends", "error", err)
 	}
 
 	return nil
+}
+
+// startRAs opens the BFD receive sockets and then starts the RAs from
+// before the peers are discovered, like zebra, which advertises as soon
+// as bgpd has an unnumbered peer: the leaf learns the BOOTy link-local
+// address and connects, so the address resolution of that connection
+// puts the leaf into the neighbor table as well, before its own next RA.
+// The leaf also starts BFD on that RA, so BOOTy listens first.
+func (u *UnderlayTier) startRAs() {
+	u.listenBFD()
+	if u.needsNICs() && len(u.nics) > 0 {
+		u.startPeriodicRA()
+	}
 }
 
 func (u *UnderlayTier) setupNICs(ctx context.Context) error {
@@ -252,10 +273,7 @@ func (u *UnderlayTier) Ready(ctx context.Context, timeout time.Duration) error {
 
 // Teardown stops the BGP server and removes the underlay dummy interface.
 func (u *UnderlayTier) Teardown(_ context.Context) error {
-	if u.stopRA != nil {
-		close(u.stopRA)
-		u.stopRA = nil
-	}
+	u.stopPeriodicRA()
 	if u.stopRestart != nil {
 		u.stopRestart() // no peer restarts after the server stops
 		u.stopRestart = nil
@@ -502,7 +520,9 @@ func (u *UnderlayTier) setNICMTU() {
 }
 
 func (u *UnderlayTier) startBgpServer(ctx context.Context) error {
-	u.bgp = server.NewBgpServer()
+	// GoBGP v4 logs nothing without a logger (v3 logged at info to
+	// stderr), so it logs through BOOTy's handler.
+	u.bgp = server.NewBgpServer(server.LoggerOption(u.log.With("component", "gobgp"), nil))
 	go u.bgp.Serve()
 
 	global := &apipb.Global{
@@ -599,10 +619,18 @@ func (u *UnderlayTier) startFIBWriter() {
 	u.stopFIB = cancel
 	u.fibDone = make(chan struct{})
 	w := u.buildFIBWriter(u.vrfTable)
+	u.fib.Store(w)
 	go func() {
 		defer close(u.fibDone)
 		w.run(ctx)
 	}()
+}
+
+// FIBOwns reports whether the FIB writer installed a route for prefix p in
+// table (unix.RT_TABLE_MAIN without a VRF).
+func (u *UnderlayTier) FIBOwns(table int, p netip.Prefix) bool {
+	w := u.fib.Load()
+	return w != nil && w.owns(table, p)
 }
 
 // buildFIBWriter returns the FIB writer of the sessions, with the zebra
@@ -610,6 +638,7 @@ func (u *UnderlayTier) startFIBWriter() {
 func (u *UnderlayTier) buildFIBWriter(vrfTable func(string) int) *fibWriter {
 	sel, vrfs := u.fibSelector(vrfTable)
 	w := newFIBWriter(u.bgp, sel, vrfs)
+	w.onRemove = u.onFIBRemove
 	w.resolveViaDefault = u.cfg.ResolveViaDefault
 	return w
 }
@@ -759,8 +788,10 @@ func (u *UnderlayTier) startCarrierWatch() {
 // newCarrierWatch returns the carrier watch of the peers; it acts on the
 // current address of each peer, which the relearner may change.
 func (u *UnderlayTier) newCarrierWatch(peers map[string]string) *carrierWatch {
-	w := newCarrierWatch(u.bgp, peers, u.log)
+	w := newCarrierWatch(peers, u.log)
 	w.current = u.ifacePeer
+	w.disable = u.stopPeer
+	w.enable = u.startStoppedPeer
 	// Under peerOps, so the peer restarter cannot delete and add a peer
 	// between the stop and its own check, which would leave it up on a
 	// link without carrier.
@@ -987,7 +1018,7 @@ func (u *UnderlayTier) countEstablishedPeers(ctx context.Context) int {
 	var count int
 
 	fn := func(p *apipb.Peer) {
-		if p.GetState().GetSessionState() == apipb.PeerState_ESTABLISHED {
+		if p.GetState().GetSessionState() == apipb.PeerState_SESSION_STATE_ESTABLISHED {
 			count++
 		}
 	}
@@ -1008,41 +1039,19 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 		return fmt.Errorf("invalid router ID %q", u.cfg.RouterID)
 	}
 
-	nlri, err := anypb.New(&apipb.IPAddressPrefix{
-		PrefixLen: 32,
-		Prefix:    u.cfg.RouterID,
-	})
-	if err != nil {
-		return fmt.Errorf("build NLRI: %w", err)
-	}
-
-	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0}) // IGP
-	if err != nil {
-		return fmt.Errorf("build origin attr: %w", err)
-	}
-
 	// Use 0.0.0.0 as next-hop so GoBGP replaces it with the session's
 	// local address for each peer. For numbered peers this resolves to the
 	// interface IPv4 address; for unnumbered peers GoBGP detects the IPv6
 	// link-local local address and uses RFC 5549 extended next-hop encoding
 	// (MP_REACH_NLRI with IPv6 next-hop for IPv4 unicast).
-	nexthop, err := anypb.New(&apipb.NextHopAttribute{NextHop: "0.0.0.0"})
-	if err != nil {
-		return fmt.Errorf("build nexthop attr: %w", err)
-	}
-
-	aspath, err := anypb.New(&apipb.AsPathAttribute{
-		Segments: []*apipb.AsSegment{},
-	})
-	if err != nil {
-		return fmt.Errorf("build as-path attr: %w", err)
-	}
-
-	_, err = u.bgp.AddPath(ctx, &apipb.AddPathRequest{
-		Path: &apipb.Path{
-			Family: &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST},
-			Nlri:   nlri,
-			Pattrs: []*anypb.Any{origin, nexthop, aspath},
+	err := addPath(u.bgp, &apipb.Path{
+		Family: &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST},
+		Nlri:   &apipb.NLRI{Nlri: &apipb.NLRI_Prefix{Prefix: &apipb.IPAddressPrefix{PrefixLen: 32, Prefix: u.cfg.RouterID}}},
+		Pattrs: []*apipb.Attribute{
+			{Attr: &apipb.Attribute_Origin{Origin: &apipb.OriginAttribute{Origin: 0}}}, // IGP
+			{Attr: &apipb.Attribute_NextHop{NextHop: &apipb.NextHopAttribute{NextHop: "0.0.0.0"}}},
+			{Attr: &apipb.Attribute_AsPath{AsPath: &apipb.AsPathAttribute{}}},
+			localMED(),
 		},
 	})
 	if err != nil {
@@ -1053,108 +1062,88 @@ func (u *UnderlayTier) announceUnderlayRoute(ctx context.Context) error {
 	return nil
 }
 
-// sendRouterAdvertisement sends an ICMPv6 Router Advertisement (type 134) on
-// the interface so that the adjacent FRR switch's zebra learns our link-local
-// address and registers it as the BGP unnumbered peer for the interface.
-// FRR's BGP unnumbered peering requires zebra to receive an RA from the peer.
-// RFC 4861 §6.1.2 mandates Hop Limit = 255; receivers discard RAs with any
-// other value.
-func sendRouterAdvertisement(iface string) {
-	ifi, err := net.InterfaceByName(iface)
-	if err != nil {
-		return
-	}
+// raSend sends one RA with the given router lifetime and reports whether
+// it went out; tests replace it.
+var raSend = sendRA
 
+// sendRA sends an ICMPv6 Router Advertisement (type 134) to ff02::1 on
+// the interface, so that the zebra of the adjacent FRR switch learns our
+// link-local address and registers it as the BGP unnumbered peer of the
+// interface. RFC 4861 section 6.1.2 mandates Hop Limit 255; receivers
+// discard RAs with any other value. The source is the link-local address
+// of the NIC (section 6.2.8). It sends nothing and reports false without
+// carrier, without a link-local address that finished DAD, and when the
+// write fails. Zebra rtadv_timer skips an interface that is not operative
+// or has no link-local address (zebra/rtadv.c), and zebra does not learn a
+// tentative address (zebra/if_netlink.c, IFA_F_TENTATIVE).
+func sendRA(iface string, lifetime uint16) bool {
+	link, err := netlink.LinkByName(iface)
+	if err != nil || link.Attrs().RawFlags&unix.IFF_LOWER_UP == 0 {
+		return false
+	}
+	src := raSource(link)
+	if src == nil {
+		return false
+	}
 	lc := net.ListenConfig{}
-	conn, err := lc.ListenPacket(context.Background(), "ip6:ipv6-icmp", "::"+"%"+iface)
+	conn, err := lc.ListenPacket(context.Background(), "ip6:ipv6-icmp", src.String()+"%"+iface)
 	if err != nil {
-		return
+		return false
 	}
 	defer conn.Close() //nolint:errcheck // best-effort RA
 
-	// Set Hop Limit to 255 as required by RFC 4861 §6.1.2.
-	// FRR's zebra silently drops RAs with any other hop limit.
 	pc := ipv6.NewPacketConn(conn)
 	if err := pc.SetMulticastHopLimit(mandatedHopLimit); err != nil {
 		slog.Warn("failed to set multicast hop limit", "iface", iface, "error", err)
-		return
+		return false
 	}
-	if err := pc.SetHopLimit(mandatedHopLimit); err != nil {
-		slog.Warn("failed to set hop limit", "iface", iface, "error", err)
-		return
+	dst := &net.IPAddr{IP: net.IPv6linklocalallnodes, Zone: iface}
+	_, err = conn.WriteTo(routerAdvertisement(link.Attrs().HardwareAddr, lifetime), dst)
+	return err == nil
+}
+
+// raSource returns the link-local address of link that finished DAD:
+// not tentative or failed. The kernel keeps IFA_F_TENTATIVE on an
+// optimistic address (RFC 4429) until DAD is done.
+func raSource(link netlink.Link) net.IP {
+	addrs, err := network.RetryDump(func() ([]netlink.Addr, error) { return netlink.AddrList(link, netlink.FAMILY_V6) })
+	if err != nil {
+		return nil
 	}
+	for _, a := range addrs {
+		if a.IP.IsLinkLocalUnicast() && a.Flags&(unix.IFA_F_TENTATIVE|unix.IFA_F_DADFAILED) == 0 {
+			return a.IP
+		}
+	}
+	return nil
+}
 
-	mac := ifi.HardwareAddr
-
-	// ICMPv6 Router Advertisement (RFC 4861 §4.2):
-	//   Type:           134
-	//   Code:           0
-	//   Checksum:       0 (kernel fills)
-	//   Cur Hop Limit:  64
-	//   Flags (M|O):    0
-	//   Router Lifetime: 1800s (big-endian: 0x0708)
-	//   Reachable Time: 0
-	//   Retrans Timer:  0
-	// Followed by Source Link-Layer Address option (RFC 4861 §4.6.1):
-	//   Type:   1 (Source Link-Layer Address)
-	//   Length: 1 (in units of 8 octets = 8 bytes total)
-	//   Link-Layer Address: 6 bytes MAC
+// routerAdvertisement builds the ICMPv6 Router Advertisement (RFC 4861
+// §4.2): type 134, code 0, checksum 0 (the kernel fills it), Cur Hop Limit
+// 64, no M or O flag, the router lifetime, reachable time and retrans timer
+// 0, and the Source Link-Layer Address option (§4.6.1: type 1, length 1 in
+// units of 8 octets, the MAC).
+func routerAdvertisement(mac net.HardwareAddr, lifetime uint16) []byte {
 	ra := make([]byte, 0, raPacketSize)
 	ra = append(ra,
 		icmpv6TypeRA, 0, 0, 0, // type, code, checksum (kernel fills)
-		defaultHopLimit,            // cur hop limit
-		0,                          // flags
-		raLifetimeHi, raLifetimeLo, // router lifetime = 1800s
+		defaultHopLimit,                   // cur hop limit
+		0,                                 // flags
+		byte(lifetime>>8), byte(lifetime), // router lifetime
 		0, 0, 0, 0, // reachable time
 		0, 0, 0, 0, // retrans timer
 		// Source Link-Layer Address option
 		1, 1, // type=1, length=1 (8 bytes)
 	)
-	ra = append(ra, mac...)
-
-	dst := &net.IPAddr{IP: net.ParseIP("ff02::1"), Zone: iface} // all-nodes multicast
-	_, _ = conn.WriteTo(ra, dst)
-}
-
-// startPeriodicRA starts the RA goroutine. The goroutine gets the stop
-// channel as an argument, because Teardown clears the field after closing it.
-func (u *UnderlayTier) startPeriodicRA() {
-	u.stopRA = make(chan struct{})
-	u.raDone = make(chan struct{})
-	go func(stop <-chan struct{}, done chan<- struct{}) {
-		defer close(done)
-		u.sendPeriodicRA(stop)
-	}(u.stopRA, u.raDone)
-}
-
-// sendPeriodicRA sends Router Advertisements on all NICs every 10 seconds
-// until the stop channel is closed. This keeps FRR's zebra informed about
-// our link-local addresses so BGP unnumbered sessions can establish and
-// remain active.
-func (u *UnderlayTier) sendPeriodicRA(stop <-chan struct{}) {
-	// Send an initial burst so FRR learns us quickly.
-	for _, nic := range u.nics {
-		sendRouterAdvertisement(nic)
-	}
-
-	ticker := time.NewTicker(raInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-stop:
-			return
-		case <-ticker.C:
-			for _, nic := range u.nics {
-				sendRouterAdvertisement(nic)
-			}
-		}
-	}
+	return append(ra, mac...)
 }
 
 // discoverLinkLocalPeer finds the remote peer's link-local IPv6 address on the
-// given interface by polling the NDP neighbor table. An ICMPv6 ping to the
-// all-nodes multicast group is sent first to trigger neighbor discovery.
+// given interface by polling the NDP neighbor table. The leaf gets there
+// from its own RA (the kernel takes the source link-layer address of an
+// RA into the neighbor table also with accept_ra 0) or from the address
+// resolution when it connects after an RA of BOOTy. Like FRR, BOOTy sends
+// no echo request to find it.
 func discoverLinkLocalPeer(ctx context.Context, iface string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("discover link-local peer canceled: %w", err)
@@ -1167,9 +1156,6 @@ func discoverLinkLocalPeer(ctx context.Context, iface string) (string, error) {
 	discoveryTimeout := nicRetryCount * nicRetryInterval
 	discoveryCtx, cancel := context.WithTimeout(ctx, discoveryTimeout)
 	defer cancel()
-
-	// Trigger NDP by pinging the all-nodes multicast address.
-	go triggerNDP(discoveryCtx, iface)
 
 	var fallback string
 	ticker := time.NewTicker(nicRetryInterval)
@@ -1201,31 +1187,6 @@ func discoverLinkLocalPeer(ctx context.Context, iface string) (string, error) {
 		case <-ticker.C:
 		}
 	}
-}
-
-// triggerNDP sends ICMPv6 packets on the interface to populate the NDP
-// neighbor table and to announce our presence to adjacent FRR switches.
-// It sends both a Router Advertisement (ff02::1) and an echo (ff02::1).
-func triggerNDP(ctx context.Context, iface string) {
-	// Send RA so FRR's zebra learns our link-local for BGP unnumbered.
-	sendRouterAdvertisement(iface)
-
-	// Try raw socket first (requires CAP_NET_RAW).
-	lc := net.ListenConfig{}
-	conn, err := lc.ListenPacket(ctx, "ip6:ipv6-icmp", "::"+"%"+iface)
-	if err != nil {
-		// Fallback: use ping6 to send an ICMPv6 echo to all-nodes multicast.
-		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-		_ = exec.CommandContext(pingCtx, "ping", "-6", "-c1", "-W1", "-I", iface, "ff02::1").Run() //nolint:gosec // constant args
-		return
-	}
-	defer conn.Close() //nolint:errcheck // best-effort NDP solicitation
-
-	dst := &net.IPAddr{IP: net.ParseIP("ff02::1"), Zone: iface}
-	// ICMPv6 echo request: type=128, code=0, checksum=0 (kernel fills), id=0, seq=1
-	msg := []byte{128, 0, 0, 0, 0, 0, 0, 1}
-	_, _ = conn.WriteTo(msg, dst)
 }
 
 func firstReachableBGPPeer(ctx context.Context, addrs []string) string {
@@ -1330,7 +1291,9 @@ func (u *UnderlayTier) startLLDP() {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	wait := lldp.Emit(ctx, u.cfg.EmitLLDP, lldp.SystemInfo(), u.log.With("component", "lldp"))
+	info := lldp.SystemInfo()
+	info.Profile, info.PortIDFormat, info.Announce = u.cfg.LLDPProfile, u.cfg.LLDPPortIDFormat, u.cfg.LLDPAnnounce
+	wait := lldp.Emit(ctx, u.cfg.EmitLLDP, &info, u.log.With("component", "lldp"))
 	u.stopLLDP = func() {
 		cancel()
 		wait()

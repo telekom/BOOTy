@@ -104,19 +104,17 @@ func TestDefaultSharedLibsResolveE2E(t *testing.T) {
 		"sbin/blkid", "bin/losetup",
 		"sbin/mkfs.ext4", "sbin/mkfs.vfat",
 		"sbin/xfs_growfs", "bin/btrfs", "bin/parted", "bin/sgdisk",
-		"bin/partprobe", "bin/partx", "bin/qemu-img",
+		"bin/partprobe", "bin/partx",
 		// EFI
 		"bin/efibootmgr",
 		// System
-		"bin/dmidecode", "bin/ethtool", "bin/curl",
+		"bin/dmidecode", "bin/ethtool",
 		// Network
 		"bin/ip", "bin/bridge",
 		// Secure erase
 		"bin/hdparm", "bin/nvme",
 		// Firmware
 		"bin/mstconfig", "bin/mstflint",
-		// LLDP
-		"bin/lldpcli", "sbin/lldpd",
 		// SSH
 		"bin/dropbear", "bin/dropbearkey",
 		// Rescue/debug mode
@@ -136,19 +134,17 @@ func TestGoBGPSharedLibsResolveE2E(t *testing.T) {
 		"sbin/blkid", "bin/losetup",
 		"sbin/mkfs.ext4", "sbin/mkfs.vfat",
 		"sbin/xfs_growfs", "bin/btrfs", "bin/parted", "bin/sgdisk",
-		"bin/partprobe", "bin/partx", "bin/qemu-img",
+		"bin/partprobe", "bin/partx",
 		// EFI
 		"bin/efibootmgr",
 		// System
-		"bin/dmidecode", "bin/ethtool", "bin/curl",
+		"bin/dmidecode", "bin/ethtool",
 		// Network
 		"bin/ip", "bin/bridge",
 		// Secure erase
 		"bin/hdparm", "bin/nvme",
 		// Firmware
 		"bin/mstconfig", "bin/mstflint",
-		// LLDP
-		"bin/lldpcli", "sbin/lldpd",
 		// SSH
 		"bin/dropbear", "bin/dropbearkey",
 		// Rescue mode
@@ -279,7 +275,7 @@ func TestFullInitramfsDiskProbeToolsUseUtilLinuxE2E(t *testing.T) {
 func TestSlimSharedLibsResolveE2E(t *testing.T) {
 	image := buildStageImage(t, "slim-builder")
 	checkSharedLibs(t, image, []string{
-		"bin/ip", "bin/ethtool", "bin/curl",
+		"bin/ip", "bin/ethtool",
 		"bin/partprobe", "bin/partx", "bin/lsblk", "sbin/e2fsck", "sbin/blkid", "bin/losetup", "sbin/resize2fs",
 		"sbin/mkfs.ext4", "sbin/mkfs.vfat", "sbin/mkfs.xfs",
 		"sbin/xfs_growfs", "sbin/xfs_repair", "bin/btrfs",

@@ -3,10 +3,14 @@
 package gobgp
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,12 +18,14 @@ import (
 	"testing"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 // mockOverlayNetlinkOps records overlay netlink operations for assertion in unit tests.
@@ -39,6 +45,14 @@ type mockOverlayNetlinkOps struct {
 	delErrOnCall    int
 	routeReplaceErr error
 	routeDelErr     error
+	nexthops        []fdbNexthop
+	nexthopDels     []uint32
+	fdbNhids        []string
+	fdbDels         []string
+	nexthopErr      error // NexthopReplace of a group fails
+	nexthopVTEPErr  error // NexthopReplace of a VTEP nexthop fails
+	nexthopDelErr   error
+	fdbNhidErr      error
 }
 
 func (m *mockOverlayNetlinkOps) LinkByName(name string) (netlink.Link, error) {
@@ -82,6 +96,29 @@ func (m *mockOverlayNetlinkOps) RouteReplace(route *netlink.Route) error {
 func (m *mockOverlayNetlinkOps) RouteDel(route *netlink.Route) error {
 	m.routeDels = append(m.routeDels, route)
 	return m.routeDelErr
+}
+
+func (m *mockOverlayNetlinkOps) NexthopReplace(nh fdbNexthop) error {
+	m.nexthops = append(m.nexthops, nh)
+	if nh.vtep == nil {
+		return m.nexthopErr
+	}
+	return m.nexthopVTEPErr
+}
+
+func (m *mockOverlayNetlinkOps) NexthopDel(id uint32) error {
+	m.nexthopDels = append(m.nexthopDels, id)
+	return m.nexthopDelErr
+}
+
+func (m *mockOverlayNetlinkOps) FDBNhidSet(_ int, mac net.HardwareAddr, nhid uint32) error {
+	m.fdbNhids = append(m.fdbNhids, fmt.Sprintf("%s nhid %d", mac, nhid))
+	return m.fdbNhidErr
+}
+
+func (m *mockOverlayNetlinkOps) FDBDel(_ int, mac net.HardwareAddr) error {
+	m.fdbDels = append(m.fdbDels, mac.String())
+	return nil
 }
 
 func TestNewVXLANUsesConfiguredNetplanLink(t *testing.T) {
@@ -218,96 +255,58 @@ func TestHandleType5RouteStopsWhenVTEPRouteCannotBeInstalled(t *testing.T) {
 	}
 }
 
-func TestBuildRouteDistinguisher(t *testing.T) {
-	tests := []struct {
-		name    string
-		asn     uint32
-		vni     uint32
-		wantErr bool
-		check   func(t *testing.T, a *apipb.RouteDistinguisherTwoOctetASN, b *apipb.RouteDistinguisherFourOctetASN)
-	}{
-		{
-			name: "2-byte ASN",
-			asn:  65000,
-			vni:  4000,
-			check: func(t *testing.T, two *apipb.RouteDistinguisherTwoOctetASN, _ *apipb.RouteDistinguisherFourOctetASN) {
-				t.Helper()
-				if two == nil {
-					t.Fatal("expected 2-octet RD")
-				}
-				if two.Admin != 65000 {
-					t.Errorf("Admin = %d, want 65000", two.Admin)
-				}
-				if two.Assigned != 4000 {
-					t.Errorf("Assigned = %d, want 4000", two.Assigned)
-				}
-			},
-		},
-		{
-			name: "4-byte ASN",
-			asn:  70000,
-			vni:  5000,
-			check: func(t *testing.T, _ *apipb.RouteDistinguisherTwoOctetASN, four *apipb.RouteDistinguisherFourOctetASN) {
-				t.Helper()
-				if four == nil {
-					t.Fatal("expected 4-octet RD")
-				}
-				if four.Admin != 70000 {
-					t.Errorf("Admin = %d, want 70000", four.Admin)
-				}
-				// VNI is masked to 16 bits for 4-octet format.
-				if four.Assigned != 5000 {
-					t.Errorf("Assigned = %d, want 5000", four.Assigned)
-				}
-			},
-		},
-		{
-			name: "4-byte ASN truncates large VNI",
-			asn:  100000,
-			vni:  70000,
-			check: func(t *testing.T, _ *apipb.RouteDistinguisherTwoOctetASN, four *apipb.RouteDistinguisherFourOctetASN) {
-				t.Helper()
-				if four == nil {
-					t.Fatal("expected 4-octet RD")
-				}
-				if four.Assigned != 70000&0xFFFF {
-					t.Errorf("Assigned = %d, want %d (truncated)", four.Assigned, 70000&0xFFFF)
-				}
-			},
-		},
+// RDs round-trip unchanged in the RD type FRR uses; values that do not fit
+// are rejected instead of truncated (the fleet ASN 4210000017 became
+// 65535 with bgp.ParseRouteDistinguisher).
+func TestParseRouteDistinguisher(t *testing.T) {
+	two := func(admin, nn uint32) *apipb.RouteDistinguisher {
+		return &apipb.RouteDistinguisher{Rd: &apipb.RouteDistinguisher_TwoOctetAsn{TwoOctetAsn: &apipb.RouteDistinguisherTwoOctetASN{Admin: admin, Assigned: nn}}}
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rd, err := buildRouteDistinguisher(tt.asn, tt.vni)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			msg, err := rd.UnmarshalNew()
-			if err != nil {
-				t.Fatalf("unmarshal RD: %v", err)
-			}
-
-			var gotTwo *apipb.RouteDistinguisherTwoOctetASN
-			var gotFour *apipb.RouteDistinguisherFourOctetASN
-			switch v := msg.(type) {
-			case *apipb.RouteDistinguisherTwoOctetASN:
-				gotTwo = v
-			case *apipb.RouteDistinguisherFourOctetASN:
-				gotFour = v
-			default:
-				t.Fatalf("unexpected RD type: %T", msg)
-			}
-			tt.check(t, gotTwo, gotFour)
-		})
+	four := func(admin, nn uint32) *apipb.RouteDistinguisher {
+		return &apipb.RouteDistinguisher{Rd: &apipb.RouteDistinguisher_FourOctetAsn{FourOctetAsn: &apipb.RouteDistinguisherFourOctetASN{Admin: admin, Assigned: nn}}}
 	}
+	for in, want := range map[string]*apipb.RouteDistinguisher{
+		"65000:4000":       two(65000, 4000),
+		"65000:4294967295": two(65000, 4294967295),
+		"4210000017:9":     four(4210000017, 9),
+		"70000:65535":      four(70000, 65535),
+		"65535:70000":      two(65535, 70000),
+		"65536:1":          four(65536, 1),
+		"192.0.2.17:2":     {Rd: &apipb.RouteDistinguisher_IpAddress{IpAddress: &apipb.RouteDistinguisherIPAddress{Admin: "192.0.2.17", Assigned: 2}}},
+	} {
+		got, err := parseRouteDistinguisher(in)
+		if err != nil {
+			t.Fatalf("%s: %v", in, err)
+		}
+		if !proto.Equal(got, want) {
+			t.Errorf("%s = %v, want %v", in, got, want)
+		}
+	}
+	for _, in := range []string{"4210000017:70000", "1.2.3.4:70000", "65000:5000000000", "4294967296:1",
+		"2001:db8::1:5", "nope", "65000:", ":5", "65000:-1"} {
+		if _, err := parseRouteDistinguisher(in); err == nil {
+			t.Errorf("%s: accepted, want an error", in)
+		}
+	}
+}
+
+// testRD is the RD 65000:n for tests that need distinct RDs.
+func testRD(n uint32) *apipb.RouteDistinguisher {
+	rd, err := parseRouteDistinguisher(fmt.Sprintf("65000:%d", n))
+	if err != nil {
+		panic(err)
+	}
+	return rd
+}
+
+// mustRD marshals an RD for the tests.
+func mustRD(t *testing.T, rd string) *apipb.RouteDistinguisher {
+	t.Helper()
+	a, err := parseRouteDistinguisher(rd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
 }
 
 func TestBuildRouteTarget(t *testing.T) {
@@ -341,10 +340,7 @@ func TestBuildRouteTarget(t *testing.T) {
 }
 
 func TestBuildEVPNType5NLRI(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "65000:4000")
 
 	// Passing a /32 host route (as advertiseType5 now does).
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
@@ -356,7 +352,7 @@ func TestBuildEVPNType5NLRI(t *testing.T) {
 	}
 
 	// Unmarshal and verify fields.
-	msg, err := nlri.UnmarshalNew()
+	msg, err := oneof(nlri)
 	if err != nil {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
@@ -376,10 +372,7 @@ func TestBuildEVPNType5NLRI(t *testing.T) {
 }
 
 func TestBuildType5PathAttrs(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "65000:4000")
 
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
@@ -390,11 +383,14 @@ func TestBuildType5PathAttrs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Expect 3 attributes: origin, mp-reach, ext-communities.
-	if len(pattrs) != 3 {
-		t.Errorf("got %d path attrs, want 3", len(pattrs))
+	// Expect 4 attributes: origin, mp-reach, ext-communities, MED 0.
+	if len(pattrs) != 4 {
+		t.Errorf("got %d path attrs, want 4", len(pattrs))
 	}
 	path := &apipb.Path{Pattrs: pattrs}
+	if med, ok := pathMED(t, path); !ok || med != 0 {
+		t.Fatalf("MED = %d (%v), want 0 like FRR", med, ok)
+	}
 	if got := mustFindEncapTunnelType(t, path); got != vxlanTunnelType {
 		t.Fatalf("encapsulation tunnel type = %d, want %d", got, vxlanTunnelType)
 	}
@@ -410,10 +406,7 @@ func TestBuildType5PathAttrs(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsUsesExplicitVPNRT(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65100, 1000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "65100:1000")
 	nlri, err := buildEVPNType5NLRI(rd, "10.200.0.10/32", "192.168.4.10", 1000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -442,10 +435,7 @@ func TestBuildType5PathAttrsUsesExplicitVPNRT(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsOmitsRouterMACWhenUnset(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "65000:4000")
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -468,10 +458,7 @@ func TestBuildType5PathAttrsOmitsRouterMACWhenUnset(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsRejectsInvalidRouterMAC(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "65000:4000")
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -484,10 +471,7 @@ func TestBuildType5PathAttrsRejectsInvalidRouterMAC(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsRejectsEUI64RouterMAC(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "65000:4000")
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -500,10 +484,7 @@ func TestBuildType5PathAttrsRejectsEUI64RouterMAC(t *testing.T) {
 }
 
 func TestBuildType5PathAttrsRejectsInvalidVPNRT(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "65000:4000")
 	nlri, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", "10.0.0.1", 4000)
 	if err != nil {
 		t.Fatalf("build NLRI: %v", err)
@@ -557,6 +538,8 @@ func TestAdvertiseType5PublishesRouterMAC(t *testing.T) {
 			ProvisionIP:  "10.200.0.10/32",
 			BridgeMAC:    "62:db:b8:c1:80:52",
 			VPNRT:        "65000:1000",
+			RD:           "192.168.4.10:2",
+			L2RD:         "192.168.4.10:3",
 		},
 		log: slog.Default(),
 		bgp: bgp,
@@ -567,19 +550,16 @@ func TestAdvertiseType5PublishesRouterMAC(t *testing.T) {
 	}
 
 	var paths []*apipb.Path
-	err := bgp.ListPath(ctx, &apipb.ListPathRequest{
-		TableType: apipb.TableType_GLOBAL,
-		Family:    &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-	}, func(dst *apipb.Destination) {
-		paths = append(paths, dst.GetPaths()...)
-	})
-	if err != nil {
-		t.Fatalf("list paths: %v", err)
+	for _, ps := range listPaths(t, bgp, &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}) {
+		paths = append(paths, ps...)
 	}
 	if len(paths) != 1 {
 		t.Fatalf("expected 1 advertised Type-5 path, got %d", len(paths))
 	}
 	route := mustFindType5Route(t, paths[0])
+	if got := rdString(t, route.GetRd()); got != "192.168.4.10:2" {
+		t.Fatalf("type-5 RD = %s, want the VRF RD 192.168.4.10:2", got)
+	}
 	if route.GetIpPrefix() != "10.200.0.10" {
 		t.Fatalf("type-5 prefix = %s, want 10.200.0.10", route.GetIpPrefix())
 	}
@@ -647,12 +627,9 @@ func TestAdvertiseType5RejectsInvalidProvisionIP(t *testing.T) {
 }
 
 func TestBuildEVPNType5NLRIInvalidIP(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "65000:4000")
 
-	_, err = buildEVPNType5NLRI(rd, "not-a-cidr", "10.0.0.1", 4000)
+	_, err := buildEVPNType5NLRI(rd, "not-a-cidr", "10.0.0.1", 4000)
 	if err == nil {
 		t.Fatal("expected error for invalid CIDR")
 	}
@@ -662,7 +639,7 @@ func TestBuildEVPNType5NLRIInvalidIP(t *testing.T) {
 // into an apipb.Path for dispatch testing.
 func mustMarshalPath(t *testing.T, nlriMsg interface{ ProtoReflect() protoreflect.Message }, nextHop string, withdraw bool) *apipb.Path {
 	t.Helper()
-	nlri, err := anypb.New(nlriMsg)
+	nlri, err := wrapNLRI(nlriMsg)
 	if err != nil {
 		t.Fatalf("marshal NLRI: %v", err)
 	}
@@ -671,22 +648,22 @@ func mustMarshalPath(t *testing.T, nlriMsg interface{ ProtoReflect() protoreflec
 		IsWithdraw: withdraw,
 	}
 	if nextHop != "" {
-		mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+		mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 			Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 			NextHops: []string{nextHop},
 		})
 		if err != nil {
 			t.Fatalf("marshal MpReachNLRI: %v", err)
 		}
-		p.Pattrs = []*anypb.Any{mp}
+		p.Pattrs = []*apipb.Attribute{mp}
 	}
 	return p
 }
 
 func mustAddRouteTarget(t *testing.T, p *apipb.Path) *apipb.Path {
 	t.Helper()
-	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-		Communities: []*anypb.Any{mustRT2(t, 65000, 4000)},
+	extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+		Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 4000)},
 	})
 	if err != nil {
 		t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
@@ -780,7 +757,7 @@ func TestProcessRouteUpdateGuardAndL2Branches(t *testing.T) {
 	t.Run("invalid NLRI skips dispatch", func(t *testing.T) {
 		overlay, mock := newOverlay()
 		path := mustAddRouteTarget(t, &apipb.Path{
-			Nlri: &anypb.Any{TypeUrl: "type.googleapis.com/invalid.Route", Value: []byte{0xff}},
+			Nlri: &apipb.NLRI{}, // no NLRI type set
 		})
 
 		overlay.processRouteUpdate(path)
@@ -808,6 +785,7 @@ func TestProcessRouteUpdateGuardAndL2Branches(t *testing.T) {
 		path := mustAddRouteTarget(t, mustMarshalPath(t, &apipb.EVPNInclusiveMulticastEthernetTagRoute{
 			IpAddress: "10.0.0.1",
 		}, "10.0.0.1", false))
+		path.Pattrs = append(path.Pattrs, mustPMSI(t, pmsiTunnelTypeIngressReplication))
 
 		overlay.processRouteUpdate(path)
 
@@ -829,23 +807,24 @@ func TestProcessRouteUpdateGuardAndL2Branches(t *testing.T) {
 }
 
 func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
-	nlri, err := anypb.New(&apipb.EVPNIPPrefixRoute{
+	nlri, err := wrapNLRI(&apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
+		GwAddress:   "0.0.0.0",
+		Label:       4000, // the VNI: a zero label without gateway IP is a withdraw
 	})
 	if err != nil {
 		t.Fatalf("marshal NLRI: %v", err)
 	}
-	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+	mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 		NextHops: []string{"192.168.4.1"},
 	})
 	if err != nil {
 		t.Fatalf("marshal MpReachNLRI: %v", err)
 	}
-	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-		Communities: []*anypb.Any{
+	extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+		Communities: []*apipb.ExtendedCommunity{
 			mustRT2(t, 65000, 4000),
 			mustRouterMAC(t, "62:db:b8:c1:80:52"),
 		},
@@ -869,7 +848,7 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 
 	t.Run("install programs permanent neighbor", func(t *testing.T) {
 		mock := &mockOverlayNetlinkOps{}
-		path := &apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, extComm}}
+		path := &apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, extComm}}
 
 		newOverlay(mock).processRouteUpdate(path)
 
@@ -884,7 +863,7 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 		path := &apipb.Path{
 			IsWithdraw: true,
 			Nlri:       nlri,
-			Pattrs:     []*anypb.Any{mp, extComm},
+			Pattrs:     []*apipb.Attribute{mp, extComm},
 		}
 
 		newOverlay(mock).processRouteUpdate(path)
@@ -898,11 +877,11 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 	t.Run("withdraw uses stored router MAC when communities are omitted", func(t *testing.T) {
 		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
-		installPath := &apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, extComm}}
+		installPath := &apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, extComm}}
 		withdrawPath := &apipb.Path{
 			IsWithdraw: true,
 			Nlri:       nlri,
-			Pattrs:     []*anypb.Any{mp},
+			Pattrs:     []*apipb.Attribute{mp},
 		}
 
 		overlay.processRouteUpdate(installPath)
@@ -914,9 +893,9 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 		assertType5GatewayDelete(t, mock.dels, 0, "192.168.4.1", "62:db:b8:c1:80:52")
 	})
 
-	t.Run("invalid router MAC still installs route without neighbor", func(t *testing.T) {
-		badExtComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{
+	t.Run("invalid router MAC is treated as withdraw, like FRR", func(t *testing.T) {
+		badExtComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*apipb.ExtendedCommunity{
 				mustRT2(t, 65000, 4000),
 				mustRouterMAC(t, "not-a-mac"),
 			},
@@ -926,19 +905,16 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 		}
 		mock := &mockOverlayNetlinkOps{}
 
-		newOverlay(mock).processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, badExtComm}})
+		newOverlay(mock).processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, badExtComm}})
 
-		if len(mock.routeReplaces) != 1 {
-			t.Fatalf("expected 1 route replace, got %d", len(mock.routeReplaces))
-		}
-		if len(mock.sets) != 0 {
-			t.Fatalf("expected no neighbor set for invalid router MAC, got %d", len(mock.sets))
+		if len(mock.routeReplaces) != 0 || len(mock.sets) != 0 {
+			t.Fatalf("got %d route replaces and %d neighbor sets, want none", len(mock.routeReplaces), len(mock.sets))
 		}
 	})
 
-	t.Run("invalid router MAC preserves existing neighbor", func(t *testing.T) {
-		badExtComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{
+	t.Run("invalid router MAC withdraws the installed route and neighbor", func(t *testing.T) {
+		badExtComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*apipb.ExtendedCommunity{
 				mustRT2(t, 65000, 4000),
 				mustRouterMAC(t, "not-a-mac"),
 			},
@@ -949,30 +925,27 @@ func TestProcessRouteUpdateType5RouterMACNeighbor(t *testing.T) {
 		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
 
-		overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, extComm}})
-		overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, badExtComm}})
+		overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, extComm}})
+		overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, badExtComm}})
 
-		if len(mock.routeReplaces) != 2 {
-			t.Fatalf("expected 2 route replaces, got %d", len(mock.routeReplaces))
+		if len(mock.routeReplaces) != 1 || len(mock.routeDels) != 1 {
+			t.Fatalf("got %d route replaces and %d deletes, want the first install and one delete", len(mock.routeReplaces), len(mock.routeDels))
 		}
-		if len(mock.sets) != 2 {
-			t.Fatalf("expected only initial gateway neighbor and FDB set, got %d sets", len(mock.sets))
+		if len(mock.dels) != 2 {
+			t.Fatalf("got %d neighbor/FDB deletes, want the gateway neighbor and the FDB entry", len(mock.dels))
 		}
-		if len(mock.dels) != 0 {
-			t.Fatalf("invalid router MAC should preserve existing neighbor, got %d deletes", len(mock.dels))
-		}
-		ref, ok := overlay.loadType5GatewayRef("10.100.0.0/24")
-		if !ok {
-			t.Fatal("invalid router MAC should preserve stored Type-5 gateway ref")
-		}
-		if ref.gateway != "192.168.4.1" || ref.routerMAC.String() != "62:db:b8:c1:80:52" {
-			t.Fatalf("stored gateway ref = %+v, want gateway 192.168.4.1 and MAC 62:db:b8:c1:80:52", ref)
+		assertType5GatewayDelete(t, mock.dels, 0, "192.168.4.1", "62:db:b8:c1:80:52")
+		if _, ok := overlay.loadType5GatewayRef("10.100.0.0/24"); ok {
+			t.Fatal("gateway ref kept after the withdraw")
 		}
 	})
 }
 
-func TestProcessRouteUpdateType5FDBUsesNextHopNotGateway(t *testing.T) {
-	nlri, err := anypb.New(&apipb.EVPNIPPrefixRoute{
+// Like FRR, a Type-5 route with a gateway IP overlay index is not installed
+// without enable-resolve-overlay-index, and its withdraw leaves the
+// neighbor entries alone.
+func TestProcessRouteUpdateType5GatewayIPNotInstalledByDefault(t *testing.T) {
+	nlri, err := wrapNLRI(&apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
 		GwAddress:   "10.255.0.1",
@@ -980,15 +953,15 @@ func TestProcessRouteUpdateType5FDBUsesNextHopNotGateway(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal NLRI: %v", err)
 	}
-	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+	mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 		NextHops: []string{"192.168.4.1"},
 	})
 	if err != nil {
 		t.Fatalf("marshal MpReachNLRI: %v", err)
 	}
-	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-		Communities: []*anypb.Any{
+	extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+		Communities: []*apipb.ExtendedCommunity{
 			mustRT2(t, 65000, 4000),
 			mustRouterMAC(t, "62:db:b8:c1:80:52"),
 		},
@@ -1008,21 +981,15 @@ func TestProcessRouteUpdateType5FDBUsesNextHopNotGateway(t *testing.T) {
 		netlinkOps: mock,
 	}
 
-	overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*anypb.Any{mp, extComm}})
-
-	if len(mock.sets) != 2 {
-		t.Fatalf("expected gateway neighbor and FDB set, got %d sets", len(mock.sets))
+	overlay.processRouteUpdate(&apipb.Path{Nlri: nlri, Pattrs: []*apipb.Attribute{mp, extComm}})
+	if len(mock.routeReplaces) != 0 || len(mock.sets) != 0 {
+		t.Fatalf("route %v, neighbor sets %v; want nothing without enable-resolve-overlay-index", mock.routeReplaces, mock.sets)
 	}
-	assertType5GatewayNeighbor(t, mock.sets[0], "10.255.0.1", "62:db:b8:c1:80:52")
-	assertType5GatewayFDB(t, mock.sets[1], "192.168.4.1", "62:db:b8:c1:80:52")
 
-	overlay.processRouteUpdate(&apipb.Path{IsWithdraw: true, Nlri: nlri, Pattrs: []*anypb.Any{mp}})
-
-	if len(mock.dels) != 2 {
-		t.Fatalf("expected gateway neighbor and FDB delete, got %d deletes", len(mock.dels))
+	overlay.processRouteUpdate(&apipb.Path{IsWithdraw: true, Nlri: nlri, Pattrs: []*apipb.Attribute{mp, extComm}})
+	if len(mock.dels) != 0 {
+		t.Fatalf("the withdraw deleted neighbor or FDB entries %v; the gateway neighbor belongs to its Type-2 route", mock.dels)
 	}
-	assertType5GatewayNeighbor(t, mock.dels[0], "10.255.0.1", "62:db:b8:c1:80:52")
-	assertType5GatewayFDB(t, mock.dels[1], "192.168.4.1", "62:db:b8:c1:80:52")
 }
 
 func TestExtractNextHop(t *testing.T) {
@@ -1035,14 +1002,14 @@ func TestExtractNextHop(t *testing.T) {
 			name: "with MpReach next-hop",
 			buildPath: func(t *testing.T) *apipb.Path {
 				t.Helper()
-				mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+				mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 					Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 					NextHops: []string{"10.0.0.1"},
 				})
 				if err != nil {
-					t.Fatalf("anypb.New MpReachNLRIAttribute: %v", err)
+					t.Fatalf("wrap MpReachNLRIAttribute: %v", err)
 				}
-				return &apipb.Path{Pattrs: []*anypb.Any{mp}}
+				return &apipb.Path{Pattrs: []*apipb.Attribute{mp}}
 			},
 			want: "10.0.0.1",
 		},
@@ -1058,13 +1025,13 @@ func TestExtractNextHop(t *testing.T) {
 			name: "MpReach with empty next-hops",
 			buildPath: func(t *testing.T) *apipb.Path {
 				t.Helper()
-				mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+				mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 					Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 				})
 				if err != nil {
-					t.Fatalf("anypb.New MpReachNLRIAttribute: %v", err)
+					t.Fatalf("wrap MpReachNLRIAttribute: %v", err)
 				}
-				return &apipb.Path{Pattrs: []*anypb.Any{mp}}
+				return &apipb.Path{Pattrs: []*apipb.Attribute{mp}}
 			},
 			want: "",
 		},
@@ -1072,14 +1039,14 @@ func TestExtractNextHop(t *testing.T) {
 			name: "multiple next-hops returns first",
 			buildPath: func(t *testing.T) *apipb.Path {
 				t.Helper()
-				mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+				mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 					Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 					NextHops: []string{"10.0.0.2", "10.0.0.3"},
 				})
 				if err != nil {
-					t.Fatalf("anypb.New MpReachNLRIAttribute: %v", err)
+					t.Fatalf("wrap MpReachNLRIAttribute: %v", err)
 				}
-				return &apipb.Path{Pattrs: []*anypb.Any{mp}}
+				return &apipb.Path{Pattrs: []*apipb.Attribute{mp}}
 			},
 			want: "10.0.0.2",
 		},
@@ -1098,18 +1065,18 @@ func TestExtractNextHop(t *testing.T) {
 
 func TestExtractNextHopMixedAttrs(t *testing.T) {
 	// MpReach buried among other attributes.
-	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0})
+	origin, err := wrapAttr(&apipb.OriginAttribute{Origin: 0})
 	if err != nil {
 		t.Fatalf("marshal origin attribute: %v", err)
 	}
-	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+	mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 		NextHops: []string{"10.0.0.5"},
 	})
 	if err != nil {
 		t.Fatalf("marshal mp reach attribute: %v", err)
 	}
-	path := &apipb.Path{Pattrs: []*anypb.Any{origin, mp}}
+	path := &apipb.Path{Pattrs: []*apipb.Attribute{origin, mp}}
 
 	got := extractNextHop(path)
 	if got != "10.0.0.5" {
@@ -1343,7 +1310,7 @@ func TestHandleType5RouteInstallsOnlinkGatewayRoute(t *testing.T) {
 	route := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
+		GwAddress:   "0.0.0.0",
 	}
 
 	routerMAC := mustParseMAC(t, "62:db:b8:c1:80:52")
@@ -1390,7 +1357,7 @@ func TestHandleType5RouteWithdrawDeletesOnlinkGatewayRoute(t *testing.T) {
 	route := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
+		GwAddress:   "0.0.0.0",
 	}
 
 	routerMAC := mustParseMAC(t, "62:db:b8:c1:80:52")
@@ -1428,7 +1395,7 @@ func TestHandleType5RouteWithdrawUsesStoredRouterMAC(t *testing.T) {
 	route := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
+		GwAddress:   "0.0.0.0",
 	}
 
 	overlay.handleType5Route(route, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
@@ -1456,12 +1423,12 @@ func TestHandleType5RouteKeepsSharedGatewayNeighborUntilLastPrefixWithdraw(t *te
 	routeA := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
+		GwAddress:   "0.0.0.0",
 	}
 	routeB := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.200.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
+		GwAddress:   "0.0.0.0",
 	}
 	routerMAC := mustParseMAC(t, "62:db:b8:c1:80:52")
 
@@ -1497,12 +1464,12 @@ func TestHandleType5RouteMovesPrefixToNewGateway(t *testing.T) {
 	oldRoute := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
+		GwAddress:   "0.0.0.0",
 	}
 	newRoute := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.2",
+		GwAddress:   "0.0.0.0",
 	}
 
 	overlay.handleType5Route(oldRoute, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
@@ -1537,12 +1504,12 @@ func TestHandleType5RouteInvalidRouterMACMovesPrefixWithoutNewNeighbor(t *testin
 	oldRoute := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
+		GwAddress:   "0.0.0.0",
 	}
 	newRoute := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.2",
+		GwAddress:   "0.0.0.0",
 	}
 
 	overlay.handleType5Route(oldRoute, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
@@ -1559,10 +1526,10 @@ func TestHandleType5RouteInvalidRouterMACMovesPrefixWithoutNewNeighbor(t *testin
 	if !ok {
 		t.Fatal("invalid-RMAC gateway move should keep prefix ref for future cleanup")
 	}
-	if ref.gateway != "192.168.4.2" || ref.vtep != "192.168.4.22" || len(ref.routerMAC) != 0 {
-		t.Fatalf("stored gateway ref = %+v, want gateway 192.168.4.2, vtep 192.168.4.22, and no router MAC", ref)
+	if ref.gateway != "192.168.4.22" || ref.vtep != "192.168.4.22" || len(ref.routerMAC) != 0 {
+		t.Fatalf("stored gateway ref = %+v, want gateway 192.168.4.22, vtep 192.168.4.22, and no router MAC", ref)
 	}
-	if _, ok := overlay.type5GatewayMAC.Load("192.168.4.2"); ok {
+	if _, ok := overlay.type5GatewayMAC.Load("192.168.4.22"); ok {
 		t.Fatal("invalid-RMAC gateway move should not overwrite router MAC cache for new gateway")
 	}
 }
@@ -1583,12 +1550,12 @@ func TestHandleType5RouteInvalidRouterMACRestoresOldRefOnDeleteFailure(t *testin
 	oldRoute := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
+		GwAddress:   "0.0.0.0",
 	}
 	newRoute := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.2",
+		GwAddress:   "0.0.0.0",
 	}
 
 	overlay.handleType5Route(oldRoute, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
@@ -1623,17 +1590,17 @@ func TestHandleType5RouteKeepsOldGatewayWhenAnotherPrefixStillUsesIt(t *testing.
 	routeA := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
+		GwAddress:   "0.0.0.0",
 	}
 	routeAMoved := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.2",
+		GwAddress:   "0.0.0.0",
 	}
 	routeB := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.200.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
+		GwAddress:   "0.0.0.0",
 	}
 	oldMAC := mustParseMAC(t, "62:db:b8:c1:80:52")
 
@@ -1653,85 +1620,6 @@ func TestHandleType5RouteKeepsOldGatewayWhenAnotherPrefixStillUsesIt(t *testing.
 	assertType5GatewayDelete(t, mock.dels, 0, "192.168.4.1", "62:db:b8:c1:80:52")
 }
 
-func TestHandleType5RouteReplacesFDBWhenGatewayReusesDifferentVTEP(t *testing.T) {
-	mock := &mockOverlayNetlinkOps{}
-	overlay := &OverlayTier{
-		cfg: &Config{
-			RouterID:          "192.168.4.10",
-			ProvisionVNI:      1000,
-			BridgeName:        "br.provision",
-			OverlayVRFName:    "Vrf_overlay",
-			OverlayVRFTableID: 20,
-		},
-		log:        slog.Default(),
-		netlinkOps: mock,
-	}
-	route := &apipb.EVPNIPPrefixRoute{
-		IpPrefix:    "10.100.0.0",
-		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
-	}
-
-	overlay.handleType5Route(route, "192.168.4.11", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
-	overlay.handleType5Route(route, "192.168.4.12", mustParseMAC(t, "62:db:b8:c1:80:53"), false)
-
-	if len(mock.dels) != 1 {
-		t.Fatalf("expected only the old FDB to be deleted, got %d deletes", len(mock.dels))
-	}
-	assertType5GatewayFDB(t, mock.dels[0], "192.168.4.11", "62:db:b8:c1:80:52")
-
-	overlay.handleType5Route(route, "192.168.4.12", nil, true)
-
-	if len(mock.dels) != 3 {
-		t.Fatalf("expected new gateway neighbor and FDB delete after withdraw, got %d deletes", len(mock.dels))
-	}
-	assertType5GatewayNeighbor(t, mock.dels[1], "192.168.4.1", "62:db:b8:c1:80:53")
-	assertType5GatewayFDB(t, mock.dels[2], "192.168.4.12", "62:db:b8:c1:80:53")
-}
-
-func TestHandleType5RouteKeepsSharedFDBUntilLastGatewayWithdraws(t *testing.T) {
-	mock := &mockOverlayNetlinkOps{}
-	overlay := &OverlayTier{
-		cfg: &Config{
-			RouterID:          "192.168.4.10",
-			ProvisionVNI:      1000,
-			BridgeName:        "br.provision",
-			OverlayVRFName:    "Vrf_overlay",
-			OverlayVRFTableID: 20,
-		},
-		log:        slog.Default(),
-		netlinkOps: mock,
-	}
-	routeA := &apipb.EVPNIPPrefixRoute{
-		IpPrefix:    "10.100.0.0",
-		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
-	}
-	routeB := &apipb.EVPNIPPrefixRoute{
-		IpPrefix:    "10.200.0.0",
-		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.2",
-	}
-	routerMAC := mustParseMAC(t, "62:db:b8:c1:80:52")
-
-	overlay.handleType5Route(routeA, "192.168.4.11", routerMAC, false)
-	overlay.handleType5Route(routeB, "192.168.4.11", routerMAC, false)
-	overlay.handleType5Route(routeA, "192.168.4.11", nil, true)
-
-	if len(mock.dels) != 1 {
-		t.Fatalf("expected only gateway A neighbor delete while FDB is shared, got %d deletes", len(mock.dels))
-	}
-	assertType5GatewayNeighbor(t, mock.dels[0], "192.168.4.1", "62:db:b8:c1:80:52")
-
-	overlay.handleType5Route(routeB, "192.168.4.11", nil, true)
-
-	if len(mock.dels) != 3 {
-		t.Fatalf("expected gateway B neighbor and shared FDB delete after last withdraw, got %d deletes", len(mock.dels))
-	}
-	assertType5GatewayNeighbor(t, mock.dels[1], "192.168.4.2", "62:db:b8:c1:80:52")
-	assertType5GatewayFDB(t, mock.dels[2], "192.168.4.11", "62:db:b8:c1:80:52")
-}
-
 func TestHandleType5RouteClearsStoredNeighborWhenRouteUpdateHasNoRouterMAC(t *testing.T) {
 	mock := &mockOverlayNetlinkOps{}
 	overlay := &OverlayTier{
@@ -1748,7 +1636,7 @@ func TestHandleType5RouteClearsStoredNeighborWhenRouteUpdateHasNoRouterMAC(t *te
 	route := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
+		GwAddress:   "0.0.0.0",
 	}
 
 	overlay.handleType5Route(route, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
@@ -1884,7 +1772,7 @@ func TestHandleType5RouteKeepsNeighborWhenWithdrawRouteDeleteFails(t *testing.T)
 	route := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
+		GwAddress:   "0.0.0.0",
 	}
 
 	overlay.handleType5Route(route, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
@@ -2346,8 +2234,8 @@ func TestHasType5GatewayFDBRefSkipsEmptyRouterMAC(t *testing.T) {
 }
 
 func TestRouterMACInCommunitiesIgnoresUnmarshalFailures(t *testing.T) {
-	mac, err := routerMACInCommunities([]*anypb.Any{
-		{TypeUrl: "type.googleapis.com/invalid", Value: []byte{0xff}},
+	mac, err := routerMACInCommunities([]*apipb.ExtendedCommunity{
+		{}, // no extended community type set
 		mustRouterMAC(t, "62:db:b8:c1:80:52"),
 	})
 
@@ -2360,7 +2248,7 @@ func TestRouterMACInCommunitiesIgnoresUnmarshalFailures(t *testing.T) {
 }
 
 func TestRouterMACInCommunitiesRejectsEUI64(t *testing.T) {
-	_, err := routerMACInCommunities([]*anypb.Any{mustRouterMAC(t, "02:00:00:ff:fe:00:00:10")})
+	_, err := routerMACInCommunities([]*apipb.ExtendedCommunity{mustRouterMAC(t, "02:00:00:ff:fe:00:00:10")})
 
 	if err == nil {
 		t.Fatal("expected EUI-64 router MAC error")
@@ -2368,19 +2256,19 @@ func TestRouterMACInCommunitiesRejectsEUI64(t *testing.T) {
 }
 
 func TestExtractRouterMACIgnoresMalformedAndIrrelevantAttributes(t *testing.T) {
-	origin, err := anypb.New(&apipb.OriginAttribute{Origin: 0})
+	origin, err := wrapAttr(&apipb.OriginAttribute{Origin: 0})
 	if err != nil {
 		t.Fatalf("marshal OriginAttribute: %v", err)
 	}
-	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-		Communities: []*anypb.Any{mustRouterMAC(t, "62:db:b8:c1:80:52")},
+	extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+		Communities: []*apipb.ExtendedCommunity{mustRouterMAC(t, "62:db:b8:c1:80:52")},
 	})
 	if err != nil {
 		t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
 	}
 
-	mac, err := extractRouterMAC(&apipb.Path{Pattrs: []*anypb.Any{
-		{TypeUrl: "type.googleapis.com/invalid.Attribute", Value: []byte{0xff}},
+	mac, err := extractRouterMAC(&apipb.Path{Pattrs: []*apipb.Attribute{
+		{}, // no attribute type set
 		origin,
 		extComm,
 	}})
@@ -2406,7 +2294,7 @@ func TestHandleType5RouteSkipsWhenBridgeMissing(t *testing.T) {
 	route := &apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "192.168.4.1",
+		GwAddress:   "0.0.0.0",
 	}
 
 	overlay.handleType5Route(route, "192.168.4.1", nil, false)
@@ -2559,7 +2447,7 @@ func TestHandleType2RouteInstallsFDB(t *testing.T) {
 	route := &apipb.EVPNMACIPAdvertisementRoute{
 		MacAddress: "aa:bb:cc:dd:ee:ff",
 	}
-	overlay.handleType2Route(route, "10.0.0.1", false)
+	overlay.handleType2Route(route, "10.0.0.1", 0, false)
 
 	if len(mock.sets) != 1 {
 		t.Fatalf("expected 1 NeighSet call, got %d", len(mock.sets))
@@ -2570,8 +2458,8 @@ func TestHandleType2RouteInstallsFDB(t *testing.T) {
 	if !mock.sets[0].IP.Equal(net.ParseIP("10.0.0.1")) {
 		t.Errorf("VTEP IP = %s, want 10.0.0.1", mock.sets[0].IP)
 	}
-	if got, ok := overlay.macVTEP.Load("aa:bb:cc:dd:ee:ff"); !ok || got != "10.0.0.1" {
-		t.Errorf("macVTEP not tracked")
+	if got := overlay.type2FDB["aa:bb:cc:dd:ee:ff"]; got != "10.0.0.1" {
+		t.Errorf("installed FDB VTEP = %q, want 10.0.0.1", got)
 	}
 }
 
@@ -2584,7 +2472,7 @@ func TestHandleType2RouteSelfSkipped(t *testing.T) {
 	}
 
 	route := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
-	overlay.handleType2Route(route, "10.0.0.99", false)
+	overlay.handleType2Route(route, "10.0.0.99", 0, false)
 
 	if len(mock.sets) != 0 {
 		t.Error("self-originated type-2 route should be skipped")
@@ -2598,16 +2486,16 @@ func TestHandleType2RouteWithdraw(t *testing.T) {
 		log:        slog.Default(),
 		netlinkOps: mock,
 	}
-	overlay.macVTEP.Store("aa:bb:cc:dd:ee:ff", "10.0.0.1")
-
 	route := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
-	overlay.handleType2Route(route, "", true)
+	overlay.handleType2Route(route, "10.0.0.1", 0, false)
+	// A withdraw may come without next hop.
+	overlay.handleType2Route(route, "", 0, true)
 
-	if len(mock.dels) != 1 {
-		t.Fatalf("expected 1 NeighDel call, got %d", len(mock.dels))
+	if len(mock.dels) != 1 || !mock.dels[0].IP.Equal(net.ParseIP("10.0.0.1")) {
+		t.Fatalf("expected 1 NeighDel call for 10.0.0.1, got %v", mock.dels)
 	}
-	if _, ok := overlay.macVTEP.Load("aa:bb:cc:dd:ee:ff"); ok {
-		t.Error("macVTEP entry should be removed on withdraw")
+	if _, ok := overlay.type2FDB["aa:bb:cc:dd:ee:ff"]; ok {
+		t.Error("installed FDB entry should be forgotten on withdraw")
 	}
 }
 
@@ -2620,7 +2508,7 @@ func TestHandleType2RouteInvalidMAC(t *testing.T) {
 	}
 
 	route := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "not-a-mac"}
-	overlay.handleType2Route(route, "10.0.0.1", false)
+	overlay.handleType2Route(route, "10.0.0.1", 0, false)
 
 	if len(mock.sets) != 0 {
 		t.Error("invalid MAC should be skipped")
@@ -2702,17 +2590,11 @@ func TestHandleType3RouteNoVTEP(t *testing.T) {
 // --- Type-3 NLRI builder tests -----------------------------------------------
 
 func TestBuildEVPNType3NLRI(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "65000:4000")
 
-	nlri, err := buildEVPNType3NLRI(rd, "10.0.0.1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	nlri := buildEVPNType3NLRI(rd, "10.0.0.1")
 
-	msg, err := nlri.UnmarshalNew()
+	msg, err := oneof(nlri)
 	if err != nil {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
@@ -2729,15 +2611,9 @@ func TestBuildEVPNType3NLRI(t *testing.T) {
 }
 
 func TestBuildType3PathAttrs(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "65000:4000")
 
-	nlri, err := buildEVPNType3NLRI(rd, "10.0.0.1")
-	if err != nil {
-		t.Fatalf("build NLRI: %v", err)
-	}
+	nlri := buildEVPNType3NLRI(rd, "10.0.0.1")
 
 	pattrs, err := buildType3PathAttrs(nlri, "10.0.0.1", 65000, 4000, "")
 	if err != nil {
@@ -2751,7 +2627,7 @@ func TestBuildType3PathAttrs(t *testing.T) {
 	// Verify PMSI tunnel attribute is present and correct.
 	pmsiFound := false
 	for _, attr := range pattrs {
-		msg, err := attr.UnmarshalNew()
+		msg, err := oneof(attr)
 		if err != nil {
 			continue
 		}
@@ -2771,15 +2647,9 @@ func TestBuildType3PathAttrs(t *testing.T) {
 }
 
 func TestBuildType3PathAttrs4ByteASN(t *testing.T) {
-	rd, err := buildRouteDistinguisher(70000, 5000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "70000:5000")
 
-	nlri, err := buildEVPNType3NLRI(rd, "10.0.0.1")
-	if err != nil {
-		t.Fatalf("build NLRI: %v", err)
-	}
+	nlri := buildEVPNType3NLRI(rd, "10.0.0.1")
 
 	pattrs, err := buildType3PathAttrs(nlri, "10.0.0.1", 70000, 5000, "")
 	if err != nil {
@@ -2793,17 +2663,11 @@ func TestBuildType3PathAttrs4ByteASN(t *testing.T) {
 // --- Type-2 NLRI builder tests -----------------------------------------------
 
 func TestBuildEVPNType2NLRI(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "65000:4000")
 
-	nlri, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	nlri := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
 
-	msg, err := nlri.UnmarshalNew()
+	msg, err := oneof(nlri)
 	if err != nil {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
@@ -2826,17 +2690,11 @@ func TestBuildEVPNType2NLRI(t *testing.T) {
 }
 
 func TestBuildEVPNType2NLRINoIP(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "65000:4000")
 
-	nlri, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "", 4000)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	nlri := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "", 4000)
 
-	msg, err := nlri.UnmarshalNew()
+	msg, err := oneof(nlri)
 	if err != nil {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
@@ -2850,15 +2708,9 @@ func TestBuildEVPNType2NLRINoIP(t *testing.T) {
 }
 
 func TestBuildType2PathAttrs(t *testing.T) {
-	rd, err := buildRouteDistinguisher(65000, 4000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "65000:4000")
 
-	nlri, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
-	if err != nil {
-		t.Fatalf("build NLRI: %v", err)
-	}
+	nlri := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
 
 	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 65000, 4000, "")
 	if err != nil {
@@ -2871,7 +2723,7 @@ func TestBuildType2PathAttrs(t *testing.T) {
 
 	// Verify MpReach next-hop is RouterID.
 	for _, attr := range pattrs {
-		msg, err := attr.UnmarshalNew()
+		msg, err := oneof(attr)
 		if err != nil {
 			continue
 		}
@@ -2884,15 +2736,9 @@ func TestBuildType2PathAttrs(t *testing.T) {
 }
 
 func TestBuildType2PathAttrs4ByteASN(t *testing.T) {
-	rd, err := buildRouteDistinguisher(70000, 5000)
-	if err != nil {
-		t.Fatalf("build RD: %v", err)
-	}
+	rd := mustRD(t, "70000:5000")
 
-	nlri, err := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 5000)
-	if err != nil {
-		t.Fatalf("build NLRI: %v", err)
-	}
+	nlri := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 5000)
 
 	pattrs, err := buildType2PathAttrs(nlri, "10.0.0.1", 70000, 5000, "")
 	if err != nil {
@@ -3039,20 +2885,20 @@ func TestUnderlaySetupRejectsUnimplementedAF(t *testing.T) {
 	}
 }
 
-func mustPathWithRT(t *testing.T, rts ...*anypb.Any) *apipb.Path {
+func mustPathWithRT(t *testing.T, rts ...*apipb.ExtendedCommunity) *apipb.Path {
 	t.Helper()
-	extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
+	extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
 		Communities: rts,
 	})
 	if err != nil {
 		t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
 	}
-	return &apipb.Path{Pattrs: []*anypb.Any{extComm}}
+	return &apipb.Path{Pattrs: []*apipb.Attribute{extComm}}
 }
 
-func mustRouterMAC(t *testing.T, mac string) *anypb.Any {
+func mustRouterMAC(t *testing.T, mac string) *apipb.ExtendedCommunity {
 	t.Helper()
-	a, err := anypb.New(&apipb.RouterMacExtended{Mac: mac})
+	a, err := wrapExt(&apipb.RouterMacExtended{Mac: mac})
 	if err != nil {
 		t.Fatalf("marshal RouterMacExtended: %v", err)
 	}
@@ -3144,7 +2990,7 @@ func assertType5GatewayDelete(t *testing.T, dels []*netlink.Neigh, index int, gw
 func mustFindRouterMAC(t *testing.T, path *apipb.Path) string {
 	t.Helper()
 	for _, attr := range path.GetPattrs() {
-		msg, err := attr.UnmarshalNew()
+		msg, err := oneof(attr)
 		if err != nil {
 			continue
 		}
@@ -3153,7 +2999,7 @@ func mustFindRouterMAC(t *testing.T, path *apipb.Path) string {
 			continue
 		}
 		for _, community := range extComm.GetCommunities() {
-			msg, err := community.UnmarshalNew()
+			msg, err := oneof(community)
 			if err != nil {
 				continue
 			}
@@ -3172,7 +3018,7 @@ func mustFindType5Route(t *testing.T, path *apipb.Path) *apipb.EVPNIPPrefixRoute
 	if nlri == nil {
 		t.Fatal("Type-5 NLRI not found")
 	}
-	msg, err := nlri.UnmarshalNew()
+	msg, err := oneof(nlri)
 	if err != nil {
 		t.Fatalf("unmarshal Type-5 NLRI: %v", err)
 	}
@@ -3186,7 +3032,7 @@ func mustFindType5Route(t *testing.T, path *apipb.Path) *apipb.EVPNIPPrefixRoute
 func mustFindEncapTunnelType(t *testing.T, path *apipb.Path) uint32 {
 	t.Helper()
 	for _, attr := range path.GetPattrs() {
-		msg, err := attr.UnmarshalNew()
+		msg, err := oneof(attr)
 		if err != nil {
 			continue
 		}
@@ -3195,7 +3041,7 @@ func mustFindEncapTunnelType(t *testing.T, path *apipb.Path) uint32 {
 			continue
 		}
 		for _, community := range extComm.GetCommunities() {
-			msg, err := community.UnmarshalNew()
+			msg, err := oneof(community)
 			if err != nil {
 				continue
 			}
@@ -3211,7 +3057,7 @@ func mustFindEncapTunnelType(t *testing.T, path *apipb.Path) uint32 {
 func countExtendedCommunities(t *testing.T, path *apipb.Path) int {
 	t.Helper()
 	for _, attr := range path.GetPattrs() {
-		msg, err := attr.UnmarshalNew()
+		msg, err := oneof(attr)
 		if err != nil {
 			continue
 		}
@@ -3225,9 +3071,9 @@ func countExtendedCommunities(t *testing.T, path *apipb.Path) int {
 	return 0
 }
 
-func mustRT2(t *testing.T, asn, vni uint32) *anypb.Any {
+func mustRT2(t *testing.T, asn, vni uint32) *apipb.ExtendedCommunity {
 	t.Helper()
-	a, err := anypb.New(&apipb.TwoOctetAsSpecificExtended{
+	a, err := wrapExt(&apipb.TwoOctetAsSpecificExtended{
 		IsTransitive: true,
 		SubType:      0x02,
 		Asn:          asn,
@@ -3239,9 +3085,9 @@ func mustRT2(t *testing.T, asn, vni uint32) *anypb.Any {
 	return a
 }
 
-func mustRT4(t *testing.T, asn, vni uint32) *anypb.Any {
+func mustRT4(t *testing.T, asn, vni uint32) *apipb.ExtendedCommunity {
 	t.Helper()
-	a, err := anypb.New(&apipb.FourOctetAsSpecificExtended{
+	a, err := wrapExt(&apipb.FourOctetAsSpecificExtended{
 		IsTransitive: true,
 		SubType:      0x02,
 		Asn:          asn,
@@ -3253,9 +3099,9 @@ func mustRT4(t *testing.T, asn, vni uint32) *anypb.Any {
 	return a
 }
 
-func mustRTIPv4(t *testing.T, address string, localAdmin uint32) *anypb.Any {
+func mustRTIPv4(t *testing.T, address string, localAdmin uint32) *apipb.ExtendedCommunity {
 	t.Helper()
-	a, err := anypb.New(&apipb.IPv4AddressSpecificExtended{
+	a, err := wrapExt(&apipb.IPv4AddressSpecificExtended{
 		IsTransitive: true,
 		SubType:      0x02,
 		Address:      address,
@@ -3267,9 +3113,9 @@ func mustRTIPv4(t *testing.T, address string, localAdmin uint32) *anypb.Any {
 	return a
 }
 
-func mustRawRT(t *testing.T, typ uint32) *anypb.Any {
+func mustRawRT(t *testing.T, typ uint32) *apipb.ExtendedCommunity {
 	t.Helper()
-	a, err := anypb.New(&apipb.UnknownExtended{
+	a, err := wrapExt(&apipb.UnknownExtended{
 		Type:  typ,
 		Value: []byte{0x02, 0, 0, 0, 0, 0, 0},
 	})
@@ -3364,6 +3210,10 @@ func TestRouteTargetMatchStateDetectsForeignRouteTargets(t *testing.T) {
 			path: mustPathWithRT(t, mustRTIPv4(t, "192.0.2.10", 4000)),
 		},
 		{
+			name: "4-octet AS specific RT",
+			path: mustPathWithRT(t, mustRT4(t, 70000, 4000)),
+		},
+		{
 			name: "raw unknown RT",
 			path: mustPathWithRT(t, mustRawRT(t, 0x01)),
 		},
@@ -3419,16 +3269,17 @@ func TestConfigImportRouteTarget(t *testing.T) {
 }
 
 func TestProcessRouteUpdateRTFilter(t *testing.T) {
-	nlri, err := anypb.New(&apipb.EVPNIPPrefixRoute{
+	nlri, err := wrapNLRI(&apipb.EVPNIPPrefixRoute{
 		IpPrefix:    "10.100.0.0",
 		IpPrefixLen: 24,
-		GwAddress:   "10.0.0.1",
+		GwAddress:   "0.0.0.0",
+		Label:       4000, // the VNI: a zero label without gateway IP is a withdraw
 	})
 	if err != nil {
 		t.Fatalf("marshal NLRI: %v", err)
 	}
 
-	mp, err := anypb.New(&apipb.MpReachNLRIAttribute{
+	mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
 		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
 		NextHops: []string{"10.0.0.1"},
 	})
@@ -3452,15 +3303,15 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 	t.Run("route with matching RT is dispatched to FDB", func(t *testing.T) {
 		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
-		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{mustRT2(t, 65000, 4000)},
+		extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 4000)},
 		})
 		if err != nil {
 			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
 		}
 		path := &apipb.Path{
 			Nlri:   nlri,
-			Pattrs: []*anypb.Any{mp, extComm},
+			Pattrs: []*apipb.Attribute{mp, extComm},
 		}
 		overlay.processRouteUpdate(path)
 		// Matching RT must reach FDB dispatch (LinkByName is called for Type-5 installs).
@@ -3475,15 +3326,15 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		overlay.cfg.ASN = 65100
 		overlay.cfg.ProvisionVNI = 1000
 		overlay.cfg.VPNRT = "65000:1000"
-		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{mustRT2(t, 65000, 1000)},
+		extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 1000)},
 		})
 		if err != nil {
 			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
 		}
 		path := &apipb.Path{
 			Nlri:   nlri,
-			Pattrs: []*anypb.Any{mp, extComm},
+			Pattrs: []*apipb.Attribute{mp, extComm},
 		}
 		overlay.processRouteUpdate(path)
 		if mock.linkName == "" {
@@ -3497,15 +3348,15 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		overlay.cfg.ASN = 65100
 		overlay.cfg.ProvisionVNI = 1000
 		overlay.cfg.VPNRT = "65000:1000"
-		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{mustRT2(t, 65000, 1000)},
+		extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 1000)},
 		})
 		if err != nil {
 			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
 		}
 		path := &apipb.Path{
 			Nlri:   nlri,
-			Pattrs: []*anypb.Any{mp, extComm},
+			Pattrs: []*apipb.Attribute{mp, extComm},
 		}
 
 		overlay.processRouteUpdate(path)
@@ -3524,15 +3375,15 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 	t.Run("route with non-matching RT is skipped", func(t *testing.T) {
 		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
-		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{mustRT2(t, 65001, 1111)},
+		extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65001, 1111)},
 		})
 		if err != nil {
 			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
 		}
 		path := &apipb.Path{
 			Nlri:   nlri,
-			Pattrs: []*anypb.Any{extComm},
+			Pattrs: []*apipb.Attribute{extComm},
 		}
 		overlay.processRouteUpdate(path)
 		// Non-matching RT must not reach FDB dispatch.
@@ -3544,8 +3395,8 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 	t.Run("withdrawal with non-matching RT is skipped", func(t *testing.T) {
 		mock := &mockOverlayNetlinkOps{}
 		overlay := newOverlay(mock)
-		extComm, err := anypb.New(&apipb.ExtendedCommunitiesAttribute{
-			Communities: []*anypb.Any{mustRT2(t, 65001, 1111)},
+		extComm, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{
+			Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65001, 1111)},
 		})
 		if err != nil {
 			t.Fatalf("marshal ExtendedCommunitiesAttribute: %v", err)
@@ -3554,7 +3405,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		path := &apipb.Path{
 			IsWithdraw: true,
 			Nlri:       nlri,
-			Pattrs:     []*anypb.Any{extComm},
+			Pattrs:     []*apipb.Attribute{extComm},
 		}
 		overlay.processRouteUpdate(path)
 		if mock.linkName != "" {
@@ -3568,6 +3419,7 @@ func TestProcessRouteUpdateRTFilter(t *testing.T) {
 		path := &apipb.Path{
 			IsWithdraw: true,
 			Nlri:       nlri,
+			Pattrs:     []*apipb.Attribute{mp},
 		}
 		overlay.processRouteUpdate(path)
 		if mock.linkName == "" {
@@ -3589,15 +3441,15 @@ func TestHandleType5RouteKeepsRouteWhileAnotherGatewayAdvertisesIt(t *testing.T)
 		log:        slog.Default(),
 		netlinkOps: mock,
 	}
-	routeVia := func(rdAdmin uint32, gw string) *apipb.EVPNIPPrefixRoute {
+	routeVia := func(rdAdmin uint32) *apipb.EVPNIPPrefixRoute {
 		t.Helper()
-		rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
+		rd, err := wrapRD(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
 		if err != nil {
-			t.Fatalf("anypb.New: %v", err)
+			t.Fatalf("wrap: %v", err)
 		}
-		return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0, GwAddress: gw}
+		return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0}
 	}
-	routeA, routeB := routeVia(1, "192.168.4.1"), routeVia(2, "192.168.4.2")
+	routeA, routeB := routeVia(1), routeVia(2)
 	macA, macB := mustParseMAC(t, "62:db:b8:c1:80:01"), mustParseMAC(t, "62:db:b8:c1:80:02")
 
 	overlay.handleType5Route(routeA, "192.168.4.1", macA, false)
@@ -3633,15 +3485,15 @@ func TestHandleType5RouteDeletesWithdrawnRouteWhenFallbackFails(t *testing.T) {
 		log:        slog.Default(),
 		netlinkOps: mock,
 	}
-	routeVia := func(rdAdmin uint32, gw string) *apipb.EVPNIPPrefixRoute {
+	routeVia := func(rdAdmin uint32) *apipb.EVPNIPPrefixRoute {
 		t.Helper()
-		rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
+		rd, err := wrapRD(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
 		if err != nil {
-			t.Fatalf("anypb.New: %v", err)
+			t.Fatalf("wrap: %v", err)
 		}
-		return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0, GwAddress: gw}
+		return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0}
 	}
-	routeA, routeB := routeVia(1, "192.168.4.1"), routeVia(2, "192.168.4.2")
+	routeA, routeB := routeVia(1), routeVia(2)
 
 	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
 	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
@@ -3690,15 +3542,15 @@ func TestHandleType5RouteFallsBackToPathWhoseInstallFailed(t *testing.T) {
 		log:        slog.Default(),
 		netlinkOps: mock,
 	}
-	routeVia := func(rdAdmin uint32, gw string) *apipb.EVPNIPPrefixRoute {
+	routeVia := func(rdAdmin uint32) *apipb.EVPNIPPrefixRoute {
 		t.Helper()
-		rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
+		rd, err := wrapRD(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
 		if err != nil {
-			t.Fatalf("anypb.New: %v", err)
+			t.Fatalf("wrap: %v", err)
 		}
-		return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0, GwAddress: gw}
+		return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0}
 	}
-	routeA, routeB := routeVia(1, "192.168.4.1"), routeVia(2, "192.168.4.2")
+	routeA, routeB := routeVia(1), routeVia(2)
 
 	mock.routeReplaceErr = errors.New("transient")
 	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
@@ -3727,15 +3579,15 @@ func TestHandleType5RouteTriesEveryRemainingPath(t *testing.T) {
 		log:        slog.Default(),
 		netlinkOps: mock,
 	}
-	routeVia := func(rdAdmin uint32, gw string) *apipb.EVPNIPPrefixRoute {
+	routeVia := func(rdAdmin uint32) *apipb.EVPNIPPrefixRoute {
 		t.Helper()
-		rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
+		rd, err := wrapRD(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAdmin})
 		if err != nil {
-			t.Fatalf("anypb.New: %v", err)
+			t.Fatalf("wrap: %v", err)
 		}
-		return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0, GwAddress: gw}
+		return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0}
 	}
-	routeA, routeB, routeC := routeVia(1, "192.168.4.1"), routeVia(2, "192.168.4.2"), routeVia(3, "192.168.4.3")
+	routeA, routeB, routeC := routeVia(1), routeVia(2), routeVia(3)
 
 	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
 	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
@@ -3774,7 +3626,7 @@ func TestHandleType5RouteRetriesVTEPRouteForFallbackPath(t *testing.T) {
 		}
 		return nil
 	}
-	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+	routeA, routeB := type5FailoverRoute(t, 1), type5FailoverRoute(t, 2)
 
 	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
 	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
@@ -3792,9 +3644,9 @@ func TestHandleType5RouteRetriesVTEPRouteForFallbackPath(t *testing.T) {
 func TestHandleType5RouteSkipsFallbackWithoutGatewayState(t *testing.T) {
 	mock := &failingNeighborOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failIP: "192.168.4.1"}
 	overlay := newType5FailoverTestOverlay(mock)
-	routeA := type5FailoverRoute(t, 1, "192.168.4.1")
-	routeB := type5FailoverRoute(t, 2, "192.168.4.2")
-	routeC := type5FailoverRoute(t, 3, "192.168.4.3")
+	routeA := type5FailoverRoute(t, 1)
+	routeB := type5FailoverRoute(t, 2)
+	routeC := type5FailoverRoute(t, 3)
 
 	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
 	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
@@ -3820,13 +3672,13 @@ func newType5FailoverTestOverlay(ops overlayNetlinkOps) *OverlayTier {
 	}
 }
 
-func type5FailoverRoute(t *testing.T, rdAssigned uint32, gw string) *apipb.EVPNIPPrefixRoute {
+func type5FailoverRoute(t *testing.T, rdAssigned uint32) *apipb.EVPNIPPrefixRoute {
 	t.Helper()
-	rd, err := anypb.New(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAssigned})
+	rd, err := wrapRD(&apipb.RouteDistinguisherTwoOctetASN{Admin: 65000, Assigned: rdAssigned})
 	if err != nil {
-		t.Fatalf("anypb.New: %v", err)
+		t.Fatalf("wrap: %v", err)
 	}
-	return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0, GwAddress: gw}
+	return &apipb.EVPNIPPrefixRoute{Rd: rd, IpPrefix: "0.0.0.0", IpPrefixLen: 0}
 }
 
 // failingNeighborOps fails NeighSet for one gateway neighbor.
@@ -3846,7 +3698,7 @@ func (m *failingNeighborOps) NeighSet(n *netlink.Neigh) error {
 func TestHandleType5RouteRemovesPrefixWhenEveryFallbackFails(t *testing.T) {
 	mock := &failingNeighborOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failIP: "192.168.4.1"}
 	overlay := newType5FailoverTestOverlay(mock)
-	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+	routeA, routeB := type5FailoverRoute(t, 1), type5FailoverRoute(t, 2)
 
 	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
 	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
@@ -3863,7 +3715,7 @@ func TestHandleType5RouteRemovesPrefixWhenEveryFallbackFails(t *testing.T) {
 func TestHandleType5RouteInactiveWithdrawKeepsActiveRoute(t *testing.T) {
 	mock := &mockOverlayNetlinkOps{}
 	overlay := newType5FailoverTestOverlay(mock)
-	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+	routeA, routeB := type5FailoverRoute(t, 1), type5FailoverRoute(t, 2)
 
 	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
 	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
@@ -3879,7 +3731,7 @@ func TestHandleType5RouteInactiveWithdrawKeepsActiveRoute(t *testing.T) {
 func TestHandleType5RouteKeepsGatewayStateWhenPrefixDeleteFails(t *testing.T) {
 	mock := &failingNeighborOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failIP: "192.168.4.1"}
 	overlay := newType5FailoverTestOverlay(mock)
-	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+	routeA, routeB := type5FailoverRoute(t, 1), type5FailoverRoute(t, 2)
 
 	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
 	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
@@ -3894,7 +3746,7 @@ func TestHandleType5RouteKeepsGatewayStateWhenPrefixDeleteFails(t *testing.T) {
 func TestHandleType5RouteRestoresActivePathWhenNewPathFails(t *testing.T) {
 	mock := &failingNeighborOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failIP: "192.168.4.1"}
 	overlay := newType5FailoverTestOverlay(mock)
-	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+	routeA, routeB := type5FailoverRoute(t, 1), type5FailoverRoute(t, 2)
 
 	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
 	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
@@ -3912,8 +3764,8 @@ func TestHandleType5RouteRestoresActivePathWhenNewPathFails(t *testing.T) {
 func TestHandleType5RouteFallsBackWhenSameNLRIUpdateFails(t *testing.T) {
 	mock := &failingNeighborOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failIP: "192.168.4.9"}
 	overlay := newType5FailoverTestOverlay(mock)
-	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
-	routeBMoved := type5FailoverRoute(t, 2, "192.168.4.9")
+	routeA, routeB := type5FailoverRoute(t, 1), type5FailoverRoute(t, 2)
+	routeBMoved := type5FailoverRoute(t, 2)
 
 	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
 	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
@@ -3927,7 +3779,7 @@ func TestHandleType5RouteFallsBackWhenSameNLRIUpdateFails(t *testing.T) {
 func TestHandleType5RouteWithdrawAfterFailedUpdateRemovesPrefix(t *testing.T) {
 	mock := &failingGatewayRouteOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failGw: "192.168.4.9"}
 	overlay := newType5FailoverTestOverlay(mock)
-	routeB, routeBMoved := type5FailoverRoute(t, 2, "192.168.4.2"), type5FailoverRoute(t, 2, "192.168.4.9")
+	routeB, routeBMoved := type5FailoverRoute(t, 2), type5FailoverRoute(t, 2)
 
 	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
 	overlay.handleType5Route(routeBMoved, "192.168.4.9", mustParseMAC(t, "62:db:b8:c1:80:09"), false)
@@ -3941,7 +3793,7 @@ func TestHandleType5RouteWithdrawAfterFailedUpdateRemovesPrefix(t *testing.T) {
 func TestHandleType5RouteRemovesPrefixWhenNoPathInstalls(t *testing.T) {
 	mock := &mockOverlayNetlinkOps{}
 	overlay := newType5FailoverTestOverlay(mock)
-	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+	routeA, routeB := type5FailoverRoute(t, 1), type5FailoverRoute(t, 2)
 
 	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
 	mock.setErr = errors.New("neighbor set failed")
@@ -3980,7 +3832,7 @@ func TestOverlayTeardownWaitsForInFlightType5Update(t *testing.T) {
 		vtepRoutes.Add(1)
 		return nil
 	}
-	route := type5FailoverRoute(t, 1, "192.168.4.1")
+	route := type5FailoverRoute(t, 1)
 
 	updateDone := make(chan struct{})
 	go func() {
@@ -4009,7 +3861,7 @@ func TestOverlayTeardownWaitsForInFlightType5Update(t *testing.T) {
 	}
 
 	before := vtepRoutes.Load()
-	overlay.handleType5Route(type5FailoverRoute(t, 2, "192.168.4.2"), "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
+	overlay.handleType5Route(type5FailoverRoute(t, 2), "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
 	if vtepRoutes.Load() != before {
 		t.Fatal("an update after Teardown added a VTEP route")
 	}
@@ -4018,7 +3870,7 @@ func TestOverlayTeardownWaitsForInFlightType5Update(t *testing.T) {
 func TestHandleType5RouteKeepsActiveRouteWhenNewRouteReplaceFails(t *testing.T) {
 	mock := &failingGatewayRouteOps{mockOverlayNetlinkOps: &mockOverlayNetlinkOps{}, failGw: "192.168.4.2"}
 	overlay := newType5FailoverTestOverlay(mock)
-	routeA, routeB := type5FailoverRoute(t, 1, "192.168.4.1"), type5FailoverRoute(t, 2, "192.168.4.2")
+	routeA, routeB := type5FailoverRoute(t, 1), type5FailoverRoute(t, 2)
 
 	overlay.handleType5Route(routeA, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:01"), false)
 	overlay.handleType5Route(routeB, "192.168.4.2", mustParseMAC(t, "62:db:b8:c1:80:02"), false)
@@ -4049,12 +3901,9 @@ func startLocalTestBGP(t *testing.T, asn uint32, routerID string) *server.BgpSer
 // listLocalEVPNPaths returns the EVPN paths in the global RIB keyed by NLRI type.
 func listLocalEVPNPaths(t *testing.T, bgp *server.BgpServer) (type2, type3, type5 []*apipb.Path) {
 	t.Helper()
-	err := bgp.ListPath(context.Background(), &apipb.ListPathRequest{
-		TableType: apipb.TableType_GLOBAL,
-		Family:    &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
-	}, func(dst *apipb.Destination) {
-		for _, p := range dst.GetPaths() {
-			msg, err := p.GetNlri().UnmarshalNew()
+	for _, paths := range listPaths(t, bgp, &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}) {
+		for _, p := range paths {
+			msg, err := oneof(p.GetNlri())
 			if err != nil {
 				t.Errorf("unmarshal NLRI: %v", err)
 				continue
@@ -4070,9 +3919,6 @@ func listLocalEVPNPaths(t *testing.T, bgp *server.BgpServer) (type2, type3, type
 				t.Errorf("unexpected EVPN NLRI %T", msg)
 			}
 		}
-	})
-	if err != nil {
-		t.Fatalf("list paths: %v", err)
 	}
 	return type2, type3, type5
 }
@@ -4080,7 +3926,7 @@ func listLocalEVPNPaths(t *testing.T, bgp *server.BgpServer) (type2, type3, type
 func mustFindPMSITunnel(t *testing.T, path *apipb.Path) *apipb.PmsiTunnelAttribute {
 	t.Helper()
 	for _, attr := range path.GetPattrs() {
-		msg, err := attr.UnmarshalNew()
+		msg, err := oneof(attr)
 		if err != nil {
 			t.Fatalf("unmarshal path attribute: %v", err)
 		}
@@ -4101,6 +3947,8 @@ func l2AdvertiseTestConfig(enableL2 bool) *Config {
 		ProvisionIP:  "10.200.0.10/24",
 		BridgeMAC:    "62:db:b8:c1:80:52",
 		VPNRT:        "65000:1000",
+		RD:           "192.168.4.10:2",
+		L2RD:         "192.168.4.10:3",
 		EnableL2:     enableL2,
 	}
 }
@@ -4118,11 +3966,14 @@ func TestAdvertiseType3PublishesIMETWithIngressReplication(t *testing.T) {
 		t.Fatalf("paths: type-2=%d type-3=%d type-5=%d, want only one type-3", len(type2), len(type3), len(type5))
 	}
 	path := type3[0]
-	msg, err := path.GetNlri().UnmarshalNew()
+	msg, err := oneof(path.GetNlri())
 	if err != nil {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
 	route := msg.(*apipb.EVPNInclusiveMulticastEthernetTagRoute)
+	if got := rdString(t, route.GetRd()); got != "192.168.4.10:3" {
+		t.Fatalf("type-3 RD = %s, want the L2VNI RD 192.168.4.10:3", got)
+	}
 	if route.GetIpAddress() != "192.168.4.10" || route.GetEthernetTag() != 0 {
 		t.Fatalf("IMET route = ip %s tag %d, want ip 192.168.4.10 tag 0", route.GetIpAddress(), route.GetEthernetTag())
 	}
@@ -4162,11 +4013,14 @@ func TestAdvertiseType2PublishesBridgeMACAndIP(t *testing.T) {
 		t.Fatalf("paths: type-2=%d type-3=%d type-5=%d, want only one type-2", len(type2), len(type3), len(type5))
 	}
 	path := type2[0]
-	msg, err := path.GetNlri().UnmarshalNew()
+	msg, err := oneof(path.GetNlri())
 	if err != nil {
 		t.Fatalf("unmarshal NLRI: %v", err)
 	}
 	route := msg.(*apipb.EVPNMACIPAdvertisementRoute)
+	if got := rdString(t, route.GetRd()); got != "192.168.4.10:3" {
+		t.Fatalf("type-2 RD = %s, want the L2VNI RD 192.168.4.10:3", got)
+	}
 	if route.GetMacAddress() != "62:db:b8:c1:80:52" {
 		t.Fatalf("type-2 MAC = %s, want bridge MAC 62:db:b8:c1:80:52", route.GetMacAddress())
 	}
@@ -4245,7 +4099,7 @@ func TestHandleType5RouteZebraMetricAndWithdraw(t *testing.T) {
 		log: slog.Default(), netlinkOps: mock,
 	}
 	mac := mustParseMAC(t, "62:db:b8:c1:80:52")
-	connected := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.200.0.0", IpPrefixLen: 24, GwAddress: "192.168.4.1"}
+	connected := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.200.0.0", IpPrefixLen: 24, GwAddress: "0.0.0.0"}
 	overlay.handleType5Route(connected, "192.168.4.1", mac, false)
 	if len(mock.routeReplaces) != 1 {
 		t.Fatalf("route replaces = %d, want the Type-5 route next to the connected one", len(mock.routeReplaces))
@@ -4258,15 +4112,1424 @@ func TestHandleType5RouteZebraMetricAndWithdraw(t *testing.T) {
 		t.Fatalf("route deletes after the withdraw = %v, want the Type-5 route", mock.routeDels)
 	}
 
-	blackhole := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.250.0.0", IpPrefixLen: 24, GwAddress: "192.168.4.1"}
+	blackhole := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.250.0.0", IpPrefixLen: 24, GwAddress: "0.0.0.0"}
 	overlay.handleType5Route(blackhole, "192.168.4.1", mac, false)
 	if len(mock.routeReplaces) != 1 {
 		t.Fatalf("a Type-5 route for a static blackhole prefix was installed: %v", mock.routeReplaces)
 	}
+	// The withdraw is still processed: it deletes the Type-5 route of that
+	// gateway, never the static blackhole route, which has no gateway.
 	overlay.handleType5Route(blackhole, "192.168.4.1", mac, true)
-	for _, r := range mock.routeDels[1:] {
-		if r.Gw == nil {
-			t.Fatalf("the withdraw for a blackhole prefix deleted a route without gateway: %+v", r)
+	if len(mock.routeDels) != 2 || mock.routeDels[1].Gw == nil || mock.routeDels[1].Dst.String() != "10.250.0.0/24" {
+		t.Fatalf("route deletes after the blackhole withdraw = %v, want one route with a gateway", mock.routeDels)
+	}
+}
+
+func mustPMSI(t *testing.T, tunnelType uint32) *apipb.Attribute {
+	t.Helper()
+	a, err := wrapAttr(&apipb.PmsiTunnelAttribute{Type: tunnelType, Label: 100, Id: net.ParseIP("10.0.0.1").To4()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+// TestProcessRouteUpdateType3TunnelType checks the receive side of the PMSI
+// Tunnel attribute like FRR (evpn_zebra_install): a BUM entry only for
+// ingress replication; a missing attribute or another tunnel type gets
+// none, and removes an entry that an earlier update of the route added.
+// That last part differs from FRR: zebra keeps the entry on an update from
+// ingress replication to another tunnel type, because the check in
+// zebra_vxlan_remote_vtep_add (zebra_vxlan.c) is inverted.
+func TestProcessRouteUpdateType3TunnelType(t *testing.T) {
+	const pimSSM = 3
+	newOverlay := func() (*OverlayTier, *mockOverlayNetlinkOps) {
+		mock := &mockOverlayNetlinkOps{}
+		return &OverlayTier{
+			cfg:        &Config{RouterID: "10.0.0.99", ASN: 65000, ProvisionVNI: 4000, BridgeName: "br.provision", EnableL2: true},
+			log:        slog.Default(),
+			netlinkOps: mock,
+		}, mock
+	}
+	path := func(pmsi ...*apipb.Attribute) *apipb.Path {
+		p := mustAddRouteTarget(t, mustMarshalPath(t, &apipb.EVPNInclusiveMulticastEthernetTagRoute{IpAddress: "10.0.0.1"}, "10.0.0.1", false))
+		p.Pattrs = append(p.Pattrs, pmsi...)
+		return p
+	}
+	for name, p := range map[string]*apipb.Path{"no PMSI attribute": path(), "PIM-SSM": path(mustPMSI(t, pimSSM))} {
+		o, mock := newOverlay()
+		o.processRouteUpdate(p)
+		if len(mock.appends) != 0 {
+			t.Errorf("%s: BUM entries %v, want none", name, mock.appends)
 		}
 	}
+	o, mock := newOverlay()
+	o.processRouteUpdate(path(mustPMSI(t, pmsiTunnelTypeIngressReplication)))
+	if len(mock.appends) != 1 {
+		t.Fatalf("ingress replication: %d BUM entries, want 1", len(mock.appends))
+	}
+	o.processRouteUpdate(path(mustPMSI(t, pimSSM)))
+	if len(mock.dels) != 1 || !mock.dels[0].IP.Equal(net.ParseIP("10.0.0.1")) {
+		t.Fatalf("update to PIM-SSM: deletes %v, want the BUM entry to 10.0.0.1", mock.dels)
+	}
+}
+
+// TestHandleType2RouteBestPathPerMAC checks the receive rules of RFC 7432:
+// the withdraw of a MAC/IP route keeps the FDB entry while the MAC-only
+// route lives (section 10), the route with the higher MAC Mobility
+// sequence number wins, also across a wrap around, and on a tie the lower
+// VTEP address wins (section 15).
+func TestHandleType2RouteBestPathPerMAC(t *testing.T) {
+	const mac = "aa:bb:cc:dd:ee:ff"
+	newOverlay := func() (*OverlayTier, *mockOverlayNetlinkOps) {
+		mock := &mockOverlayNetlinkOps{}
+		return &OverlayTier{
+			cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+			log:        slog.Default(),
+			netlinkOps: mock,
+		}, mock
+	}
+	route := func(rd uint32, ip string) *apipb.EVPNMACIPAdvertisementRoute {
+		a := mustRD(t, fmt.Sprintf("65000:%d", rd))
+		return &apipb.EVPNMACIPAdvertisementRoute{Rd: a, MacAddress: mac, IpAddress: ip}
+	}
+	lastSet := func(t *testing.T, mock *mockOverlayNetlinkOps) string {
+		t.Helper()
+		if len(mock.sets) == 0 {
+			t.Fatal("no FDB entry installed")
+		}
+		return mock.sets[len(mock.sets)-1].IP.String()
+	}
+
+	t.Run("MAC/IP withdraw keeps the MAC-only entry", func(t *testing.T) {
+		o, mock := newOverlay()
+		o.handleType2Route(route(1, ""), "10.0.0.1", 0, false)
+		o.handleType2Route(route(1, "10.100.0.5"), "10.0.0.1", 0, false)
+		o.handleType2Route(route(1, "10.100.0.5"), "10.0.0.1", 0, true)
+		// Section 10: the ARP entry goes, the MAC entry stays.
+		if len(mock.dels) != 1 || mock.dels[0].Family == syscall.AF_BRIDGE || mock.dels[0].IP.String() != "10.100.0.5" {
+			t.Fatalf("MAC/IP withdraw: deletes %v, want only the neighbor 10.100.0.5", mock.dels)
+		}
+		o.handleType2Route(route(1, ""), "", 0, true)
+		if len(mock.dels) != 2 || mock.dels[1].Family != syscall.AF_BRIDGE || mock.dels[1].IP.String() != "10.0.0.1" {
+			t.Fatalf("MAC-only withdraw: deletes %v, want the FDB entry to 10.0.0.1", mock.dels)
+		}
+	})
+	t.Run("higher sequence number wins in any order", func(t *testing.T) {
+		o, mock := newOverlay()
+		o.handleType2Route(route(2, ""), "10.0.0.2", 1, false)
+		o.handleType2Route(route(1, ""), "10.0.0.1", 0, false) // stale route of the old PE
+		if got := lastSet(t, mock); got != "10.0.0.2" {
+			t.Fatalf("FDB VTEP = %s, want 10.0.0.2 (sequence 1)", got)
+		}
+		if len(mock.sets) != 1 {
+			t.Errorf("the stale route rewrote the FDB entry: %d sets", len(mock.sets))
+		}
+		o.handleType2Route(route(2, ""), "", 0, true)
+		if got := lastSet(t, mock); got != "10.0.0.1" {
+			t.Fatalf("after the withdraw of the new PE: FDB VTEP = %s, want 10.0.0.1", got)
+		}
+	})
+	t.Run("sequence number wrap around", func(t *testing.T) {
+		o, mock := newOverlay()
+		o.handleType2Route(route(1, ""), "10.0.0.1", 0xffffffff, false)
+		o.handleType2Route(route(2, ""), "10.0.0.2", 0, false)
+		if got := lastSet(t, mock); got != "10.0.0.2" {
+			t.Fatalf("FDB VTEP = %s, want 10.0.0.2 (0 follows 0xffffffff)", got)
+		}
+	})
+	t.Run("lowest VTEP on equal sequence numbers", func(t *testing.T) {
+		o, mock := newOverlay()
+		o.handleType2Route(route(2, ""), "10.0.0.2", 3, false)
+		o.handleType2Route(route(1, ""), "10.0.0.1", 3, false)
+		if got := lastSet(t, mock); got != "10.0.0.1" {
+			t.Fatalf("FDB VTEP = %s, want 10.0.0.1", got)
+		}
+	})
+	t.Run("teardown forgets the routes", func(t *testing.T) {
+		o, mock := newOverlay()
+		o.handleType2Route(route(1, ""), "10.0.0.1", 0, false)
+		o.type2Mu.Lock()
+		o.type2Paths, o.type2FDB = nil, nil
+		o.type2Mu.Unlock()
+		o.handleType2Route(route(1, ""), "10.0.0.1", 0, false)
+		if len(mock.sets) != 2 {
+			t.Fatalf("got %d FDB sets, want the entry again after a new setup", len(mock.sets))
+		}
+	})
+}
+
+// TestMacMobilityOf reads the sequence number and the sticky flag of the
+// MAC Mobility extended community.
+func TestMacMobilityOf(t *testing.T) {
+	mm, err := wrapExt(&apipb.MacMobilityExtended{SequenceNum: 7, IsSticky: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ext, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 100), mm}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := macMobilityOf(&apipb.Path{Pattrs: []*apipb.Attribute{ext}}); got != (macMobility{seq: 7, sticky: true}) {
+		t.Errorf("MAC mobility = %+v, want sequence 7, sticky", got)
+	}
+	if got := macMobilityOf(&apipb.Path{}); got != (macMobility{}) {
+		t.Errorf("MAC mobility without community = %+v, want zero", got)
+	}
+}
+
+func type2TestOverlay() (*OverlayTier, *mockOverlayNetlinkOps) {
+	mock := &mockOverlayNetlinkOps{}
+	return &OverlayTier{
+		cfg:        &Config{RouterID: "10.0.0.99", ASN: 65000, ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}, mock
+}
+
+func type2TestPath(t *testing.T, rd uint32, nh string, mm *apipb.MacMobilityExtended) *apipb.Path {
+	t.Helper()
+	r := mustRD(t, fmt.Sprintf("65000:%d", rd))
+	n, err := wrapNLRI(&apipb.EVPNMACIPAdvertisementRoute{Rd: r, MacAddress: "aa:bb:cc:dd:ee:ff"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
+		Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}, NextHops: []string{nh}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := []*apipb.ExtendedCommunity{mustRT2(t, 65000, 100)}
+	if mm != nil {
+		a, err := wrapExt(mm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c = append(c, a)
+	}
+	ec, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: c})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &apipb.Path{Nlri: n, Pattrs: []*apipb.Attribute{mp, ec}}
+}
+
+// The MAC Mobility community reaches the selection through
+// processRouteUpdate, and a sticky route wins over a higher sequence number
+// like in FRR (bgp_path_info_cmp).
+func TestProcessRouteUpdateType2MobilityAndSticky(t *testing.T) {
+	t.Run("sequence number", func(t *testing.T) {
+		o, mock := type2TestOverlay()
+		o.processRouteUpdate(type2TestPath(t, 2, "10.0.0.2", &apipb.MacMobilityExtended{SequenceNum: 1}))
+		o.processRouteUpdate(type2TestPath(t, 1, "10.0.0.1", nil))
+		if got := mock.sets[len(mock.sets)-1].IP.String(); got != "10.0.0.2" || len(mock.sets) != 1 {
+			t.Fatalf("FDB sets %v, want only 10.0.0.2 (sequence 1)", mock.sets)
+		}
+	})
+	t.Run("sticky wins over a higher sequence", func(t *testing.T) {
+		o, mock := type2TestOverlay()
+		o.processRouteUpdate(type2TestPath(t, 1, "10.0.0.1", &apipb.MacMobilityExtended{IsSticky: true}))
+		o.processRouteUpdate(type2TestPath(t, 2, "10.0.0.2", &apipb.MacMobilityExtended{SequenceNum: 5}))
+		if got := mock.sets[len(mock.sets)-1].IP.String(); got != "10.0.0.1" || len(mock.sets) != 1 {
+			t.Fatalf("FDB sets %v, want only the sticky 10.0.0.1", mock.sets)
+		}
+	})
+}
+
+// Like zebra, a Type-2 neighbor entry gets NTF_ROUTER when the route has
+// the router flag of the ARP/ND extended community, only for IPv6, and is
+// reinstalled when only the flag changes.
+func TestType2NeighborRouterFlag(t *testing.T) {
+	path := func(ip string, router bool, withdraw bool) *apipb.Path {
+		p := type2TestPath(t, 1, "10.0.0.1", nil)
+		p.GetNlri().GetEvpnMacadv().IpAddress = ip
+		p.IsWithdraw = withdraw
+		ext, err := wrapExt(&apipb.ArpNdExtended{IsRouter: router})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ec := p.GetPattrs()[1].GetExtendedCommunities()
+		ec.Communities = append(ec.Communities, ext)
+		return p
+	}
+	neighbors := func(list []*netlink.Neigh) []*netlink.Neigh {
+		var out []*netlink.Neigh
+		for _, n := range list {
+			if n.Family != syscall.AF_BRIDGE {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+	isRouter := func(n *netlink.Neigh) bool { return n.Flags&netlink.NTF_ROUTER != 0 }
+
+	o, mock := type2TestOverlay()
+	o.processRouteUpdate(path("fd00::5", true, false))
+	n := neighbors(mock.sets)
+	if len(n) != 1 || !isRouter(n[0]) || n[0].Flags&netlink.NTF_EXT_LEARNED == 0 {
+		t.Fatalf("IPv6 router: neighbor sets %v, want one with NTF_ROUTER and NTF_EXT_LEARNED", n)
+	}
+	o.processRouteUpdate(path("fd00::5", true, false))
+	if n := neighbors(mock.sets); len(n) != 1 {
+		t.Fatalf("an unchanged route set the neighbor again: %v", n)
+	}
+	o.processRouteUpdate(path("fd00::5", false, false))
+	if n := neighbors(mock.sets); len(n) != 2 || isRouter(n[1]) {
+		t.Fatalf("router flag cleared: neighbor sets %v, want a second set without NTF_ROUTER", n)
+	}
+	o.processRouteUpdate(path("fd00::5", false, true))
+	if d := neighbors(mock.dels); len(d) != 1 || isRouter(d[0]) {
+		t.Fatalf("withdraw: neighbor deletes %v", d)
+	}
+
+	o.processRouteUpdate(path("10.100.0.5", true, false))
+	if n := neighbors(mock.sets); len(n) != 3 || isRouter(n[2]) || n[2].Family != syscall.AF_INET {
+		t.Fatalf("IPv4 with the router flag: neighbor sets %v, want no NTF_ROUTER", n)
+	}
+}
+
+// The router flag of a Type-2 neighbor comes from the best route of the IP,
+// not from any route, and it moves with the best route.
+func TestType2NeighborRouterFollowsBestPath(t *testing.T) {
+	path := func(rd uint32, vtep string, seq uint32, router, withdraw bool) *apipb.Path {
+		p := type2TestPath(t, rd, vtep, &apipb.MacMobilityExtended{SequenceNum: seq})
+		p.GetNlri().GetEvpnMacadv().IpAddress = "fd00::5"
+		p.IsWithdraw = withdraw
+		ext, err := wrapExt(&apipb.ArpNdExtended{IsRouter: router})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ec := p.GetPattrs()[1].GetExtendedCommunities()
+		ec.Communities = append(ec.Communities, ext)
+		return p
+	}
+	lastNeighbor := func(list []*netlink.Neigh) *netlink.Neigh {
+		for i := len(list) - 1; i >= 0; i-- {
+			if list[i].Family != syscall.AF_BRIDGE {
+				return list[i]
+			}
+		}
+		return nil
+	}
+
+	o, mock := type2TestOverlay()
+	o.processRouteUpdate(path(1, "10.0.0.1", 1, false, false)) // best: higher sequence
+	o.processRouteUpdate(path(2, "10.0.0.2", 0, true, false))  // stale, router
+	if got := o.type2Neigh["fd00::5"]; got.router {
+		t.Fatalf("neighbor %+v takes the router flag of a route that is not the best", got)
+	}
+	if n := lastNeighbor(mock.sets); n == nil || n.Flags&netlink.NTF_ROUTER != 0 {
+		t.Fatalf("neighbor set %v, want one without NTF_ROUTER", n)
+	}
+
+	o.processRouteUpdate(path(1, "10.0.0.1", 1, false, true)) // the router route becomes the best
+	if got := o.type2Neigh["fd00::5"]; !got.router {
+		t.Fatalf("neighbor %+v after the withdraw of the best route, want the router flag of the new best route", got)
+	}
+	if n := lastNeighbor(mock.sets); n == nil || n.Flags&netlink.NTF_ROUTER == 0 {
+		t.Fatalf("neighbor set %v after the withdraw of the best route, want NTF_ROUTER", n)
+	}
+}
+
+// The real Teardown removes the FDB entries (a VXLAN device BOOTy did not
+// create would keep them) and forgets the routes; a callback after it
+// installs nothing, and a new Setup installs them again.
+func TestType2TeardownRemovesAndForgets(t *testing.T) {
+	// I4: Teardown also empties the IP index.
+	oi, _ := type2TestOverlay()
+	oi.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:01", IpAddress: "10.0.0.50"}, "10.0.0.1", 0, false)
+	if !oi.type2HasIP(net.ParseIP("10.0.0.50")) {
+		t.Fatal("type2HasIP false for a live MAC/IP route")
+	}
+	if err := oi.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if oi.type2HasIP(net.ParseIP("10.0.0.50")) {
+		t.Fatal("type2HasIP true after Teardown")
+	}
+
+	o, mock := type2TestOverlay()
+	r := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
+	o.handleType2Route(r, "10.0.0.1", 0, false)
+	if err := o.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(mock.dels) != 1 || mock.dels[0].HardwareAddr.String() != "aa:bb:cc:dd:ee:ff" || !mock.dels[0].IP.Equal(net.ParseIP("10.0.0.1")) {
+		t.Fatalf("teardown deletes %v, want the FDB entry", mock.dels)
+	}
+	o.handleType2Route(r, "10.0.0.1", 0, false)
+	if len(mock.sets) != 1 {
+		t.Fatalf("sets = %d, a callback after teardown installed an entry", len(mock.sets))
+	}
+	// Setup clears the flag; it fails here after that, at the VXLAN step.
+	o.cfg.OverlayType = string(OverlayEVPNVXLAN)
+	o.bgp = server.NewBgpServer()
+	o.hooks = &overlaySetupHooks{
+		createVXLANAndBridge: func() error { return errors.New("stop here") },
+		teardown:             func(context.Context) error { return nil },
+	}
+	if err := o.Setup(context.Background()); err == nil {
+		t.Fatal("Setup with a failing VXLAN step succeeded")
+	}
+	o.handleType2Route(r, "10.0.0.1", 0, false)
+	if len(mock.sets) != 2 {
+		t.Fatalf("sets = %d, want the entry again after a new Setup", len(mock.sets))
+	}
+}
+
+// A failed FDB set is retried by the next update of the route.
+func TestType2RetryAfterFailedSet(t *testing.T) {
+	o, mock := type2TestOverlay()
+	mock.setErr, mock.setErrOnCall = errors.New("boom"), 1
+	r := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
+	o.handleType2Route(r, "10.0.0.1", 0, false)
+	o.handleType2Route(r, "10.0.0.1", 0, false)
+	if len(mock.sets) != 2 {
+		t.Fatalf("sets = %d, want a retry after the failed set", len(mock.sets))
+	}
+	if o.type2FDB["aa:bb:cc:dd:ee:ff"] != "10.0.0.1" {
+		t.Fatal("the retried entry is not tracked")
+	}
+}
+
+// TestHandleType2RouteInstallsNeighbor checks RFC 9135 sections 5.2 and 6.2
+// (an asymmetric IRB receiver installs the (IP, MAC) association) the way
+// zebra does it for an L2VNI with an SVI: a NOARP extern_learn neighbor on
+// the bridge for each IP of a live MAC/IP route, following the best route,
+// removed with the last route of the IP and at teardown.
+func TestHandleType2RouteInstallsNeighbor(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	o := &OverlayTier{
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	route := func(rd uint32, mac, ip string) *apipb.EVPNMACIPAdvertisementRoute {
+		return &apipb.EVPNMACIPAdvertisementRoute{Rd: mustRD(t, fmt.Sprintf("65000:%d", rd)), MacAddress: mac, IpAddress: ip}
+	}
+	neighbors := func(list []*netlink.Neigh) []*netlink.Neigh {
+		var out []*netlink.Neigh
+		for _, n := range list {
+			if n.Family != syscall.AF_BRIDGE {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+
+	o.handleType2Route(route(1, "aa:bb:cc:dd:ee:01", ""), "10.0.0.1", 0, false)
+	if n := neighbors(mock.sets); len(n) != 0 {
+		t.Fatalf("MAC-only route installed neighbors %v", n)
+	}
+	o.handleType2Route(route(1, "aa:bb:cc:dd:ee:01", "10.100.0.5"), "10.0.0.1", 0, false)
+	n := neighbors(mock.sets)
+	if len(n) != 1 || n[0].LinkIndex != 42 || n[0].Family != syscall.AF_INET || !n[0].IP.Equal(net.ParseIP("10.100.0.5")) ||
+		n[0].HardwareAddr.String() != "aa:bb:cc:dd:ee:01" || n[0].State != netlink.NUD_NOARP || n[0].Flags != netlink.NTF_EXT_LEARNED {
+		t.Fatalf("neighbor = %+v, want 10.100.0.5 -> aa:bb:cc:dd:ee:01 NOARP extern_learn on the bridge", n)
+	}
+
+	// The IP moves to another MAC with a higher sequence number.
+	o.handleType2Route(route(2, "aa:bb:cc:dd:ee:02", "10.100.0.5"), "10.0.0.2", 1, false)
+	if n := neighbors(mock.sets); len(n) != 2 || n[1].HardwareAddr.String() != "aa:bb:cc:dd:ee:02" {
+		t.Fatalf("after the move: neighbors %v, want the new MAC", n)
+	}
+	o.handleType2Route(route(2, "aa:bb:cc:dd:ee:02", "10.100.0.5"), "", 0, true)
+	if n := neighbors(mock.sets); len(n) != 3 || n[2].HardwareAddr.String() != "aa:bb:cc:dd:ee:01" {
+		t.Fatalf("after the withdraw of the new MAC: neighbors %v, want the old MAC again", n)
+	}
+	o.handleType2Route(route(1, "aa:bb:cc:dd:ee:01", "10.100.0.5"), "", 0, true)
+	if d := neighbors(mock.dels); len(d) != 1 || !d[0].IP.Equal(net.ParseIP("10.100.0.5")) {
+		t.Fatalf("after the last withdraw: neighbor deletes %v, want 10.100.0.5", d)
+	}
+
+	o.handleType2Route(route(3, "aa:bb:cc:dd:ee:03", "fd00::5"), "10.0.0.3", 0, false)
+	if n := neighbors(mock.sets); n[len(n)-1].Family != syscall.AF_INET6 {
+		t.Fatalf("IPv6 neighbor family = %d", n[len(n)-1].Family)
+	}
+	if err := o.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d := neighbors(mock.dels); len(d) != 2 || !d[1].IP.Equal(net.ParseIP("fd00::5")) {
+		t.Fatalf("teardown neighbor deletes %v, want fd00::5", d)
+	}
+}
+
+// RFC 9136 section 3.2 like FRR enable-resolve-overlay-index: a Type-5 route
+// with a gateway IP is installed via the gateway only while a Type-2 MAC/IP
+// route carries that IP (bgpd bgp_evpn_is_gateway_ip_resolved). Its router
+// MAC is ignored: the neighbor entry of the gateway is the Type-2 one.
+func TestType5GatewayIPResolvedByType2(t *testing.T) {
+	gw := net.ParseIP("10.1.0.5")
+	t5 := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: gw.String()}
+	t2 := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:00:00:05", IpAddress: gw.String()}
+	rmac := mustParseMAC(t, "62:db:b8:c1:80:52")
+	count := func(routes []*netlink.Route) (n int) {
+		for _, r := range routes {
+			if r.Dst != nil && r.Dst.String() == "10.100.0.0/24" && (r.Gw == nil || r.Gw.Equal(gw)) {
+				n++
+			}
+		}
+		return n
+	}
+	noRouterMAC := func(t *testing.T, m *mockOverlayNetlinkOps) {
+		t.Helper()
+		for _, n := range append(append([]*netlink.Neigh{}, m.sets...), m.dels...) {
+			if n.HardwareAddr.String() == rmac.String() {
+				t.Fatalf("router MAC state %+v for a gateway IP route", n)
+			}
+		}
+	}
+	setup := func(resolve, l2 bool) (*OverlayTier, *mockOverlayNetlinkOps) {
+		o, m := type2TestOverlay()
+		o.cfg.ResolveOverlayIndex, o.cfg.EnableL2 = resolve, l2
+		return o, m
+	}
+
+	for _, tc := range []struct {
+		name        string
+		resolve, l2 bool
+	}{{"off, like FRR", false, true}, {"no L2 overlay", true, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, m := setup(tc.resolve, tc.l2)
+			o.handleType2Route(t2, "10.0.0.2", 0, false)
+			o.handleType5Route(t5, "10.0.0.1", rmac, false)
+			if count(m.routeReplaces) != 0 {
+				t.Fatalf("installed %v", m.routeReplaces)
+			}
+		})
+	}
+
+	t.Run("unresolved, resolved, unresolved, withdrawn", func(t *testing.T) {
+		o, m := setup(true, true)
+		o.handleType5Route(t5, "10.0.0.1", rmac, false)
+		if count(m.routeReplaces) != 0 {
+			t.Fatalf("installed before the gateway resolves: %v", m.routeReplaces)
+		}
+		o.handleType2Route(t2, "10.0.0.2", 0, false)
+		if count(m.routeReplaces) != 1 {
+			t.Fatalf("route replaces %v, want the route via %s once the Type-2 route came", m.routeReplaces, gw)
+		}
+		o.handleType2Route(t2, "10.0.0.2", 0, true)
+		if count(m.routeDels) != 1 {
+			t.Fatalf("route deletes %v, want the route gone with the Type-2 route", m.routeDels)
+		}
+		o.handleType2Route(t2, "10.0.0.2", 0, false)
+		before := len(m.dels)
+		o.handleType5Route(t5, "10.0.0.1", rmac, true)
+		if count(m.routeReplaces) != 2 || count(m.routeDels) != 2 {
+			t.Fatalf("replaces %v, deletes %v; want the route again and then gone with its withdraw", m.routeReplaces, m.routeDels)
+		}
+		for _, n := range m.dels[before:] {
+			if n.IP.Equal(gw) {
+				t.Fatalf("the Type-5 withdraw deleted the Type-2 neighbor of the gateway: %+v", n)
+			}
+		}
+		noRouterMAC(t, m)
+	})
+
+	t.Run("a Type-2 refresh does not replace the route again", func(t *testing.T) {
+		o, m := setup(true, true)
+		o.handleType2Route(t2, "10.0.0.2", 0, false)
+		o.handleType5Route(t5, "10.0.0.1", rmac, false)
+		o.handleType2Route(t2, "10.0.0.2", 0, false)
+		o.handleType2Route(t2, "10.0.0.3", 1, false) // the MAC moves, the IP stays
+		if count(m.routeReplaces) != 1 {
+			t.Fatalf("route replaces %v, want one", m.routeReplaces)
+		}
+	})
+
+	t.Run("Type-2 first", func(t *testing.T) {
+		o, m := setup(true, true)
+		o.handleType2Route(t2, "10.0.0.2", 0, false)
+		o.handleType5Route(t5, "10.0.0.1", rmac, false)
+		if count(m.routeReplaces) != 1 {
+			t.Fatalf("route replaces %v, want the route via %s", m.routeReplaces, gw)
+		}
+		noRouterMAC(t, m)
+	})
+}
+
+// Withdrawing a gateway IP route that was never installed finds no kernel
+// route; that is not a failure.
+func TestType5WithdrawOfUninstalledRouteIsQuiet(t *testing.T) {
+	o, m := type2TestOverlay()
+	var logs bytes.Buffer
+	o.log = slog.New(slog.NewTextHandler(&logs, nil))
+	o.cfg.ResolveOverlayIndex = true
+	m.routeDelErr = syscall.ESRCH
+	t5 := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: "10.1.0.5"}
+	o.handleType5Route(t5, "10.0.0.1", nil, false)
+	o.handleType5Route(t5, "10.0.0.1", nil, true)
+	if strings.Contains(logs.String(), "level=WARN") {
+		t.Fatalf("warning for a route that was never installed:\n%s", logs.String())
+	}
+}
+
+// R4: a Type-2 change of a gateway IP does not touch a prefix whose
+// installed path does not use that gateway, even when another path sorts
+// first.
+func TestType5GatewayIPResolutionKeepsTheActivePath(t *testing.T) {
+	o, m := type2TestOverlay()
+	o.cfg.ResolveOverlayIndex = true
+	route := func(rd uint32, gw string) *apipb.EVPNIPPrefixRoute {
+		return &apipb.EVPNIPPrefixRoute{Rd: mustRD(t, fmt.Sprintf("65000:%d", rd)), IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: gw}
+	}
+	o.handleType5Route(route(2, "0.0.0.0"), "10.0.0.2", nil, false) // "b", installed
+	o.handleType5Route(route(1, "0.0.0.0"), "10.0.0.1", nil, false) // "a", sorts first
+	o.handleType5Route(route(3, "10.1.0.5"), "10.0.0.3", nil, false)
+	before := len(m.routeReplaces)
+	t2 := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:00:00:05", IpAddress: "10.1.0.5"}
+	o.handleType2Route(t2, "10.0.0.9", 0, false)
+	o.handleType2Route(t2, "10.0.0.9", 0, true)
+	if len(m.routeReplaces) != before || len(m.routeDels) != 0 {
+		t.Fatalf("route replaces %v, deletes %v after the Type-2 changes; want none", m.routeReplaces[before:], m.routeDels)
+	}
+}
+
+// R5: a prefix route that is not in the kernel (ESRCH) still clears the
+// gateway state of the prefix.
+func TestRemoveType5PrefixClearsGatewayRefOnESRCH(t *testing.T) {
+	o, m := type2TestOverlay()
+	r := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: "0.0.0.0"}
+	o.handleType5Route(r, "10.0.0.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
+	if _, ok := o.loadType5GatewayRef("10.100.0.0/24"); !ok {
+		t.Fatal("no gateway reference after the install")
+	}
+	m.routeDelErr = syscall.ESRCH
+	state, ok := o.type5RouteState(r, "10.0.0.1", net.ParseIP("10.0.0.1"))
+	if !ok {
+		t.Fatal("no route state")
+	}
+	o.removeType5Prefix(state)
+	if _, ok := o.loadType5GatewayRef("10.100.0.0/24"); ok {
+		t.Fatal("the gateway reference survived an ESRCH delete")
+	}
+}
+
+// oneof returns the message set in the oneof of a GoBGP v4 API wrapper
+// (NLRI, Attribute, ExtendedCommunity, RouteDistinguisher), what
+// Any.UnmarshalNew did with GoBGP v3.
+func oneof(w proto.Message) (proto.Message, error) {
+	r := w.ProtoReflect()
+	fd := r.WhichOneof(r.Descriptor().Oneofs().Get(0))
+	if fd == nil {
+		return nil, fmt.Errorf("%T: no value set", w)
+	}
+	return r.Get(fd).Message().Interface(), nil
+}
+
+// wrapOneof sets m into the oneof field of w that has its type, what
+// anypb.New did with GoBGP v3.
+func wrapOneof[W proto.Message](w W, m proto.Message) (W, error) {
+	r := w.ProtoReflect()
+	fields := r.Descriptor().Oneofs().Get(0).Fields()
+	for i := range fields.Len() {
+		if fd := fields.Get(i); fd.Message() != nil && fd.Message().FullName() == m.ProtoReflect().Descriptor().FullName() {
+			r.Set(fd, protoreflect.ValueOfMessage(m.ProtoReflect()))
+			return w, nil
+		}
+	}
+	return w, fmt.Errorf("%T has no %T", w, m)
+}
+
+func wrapNLRI(m proto.Message) (*apipb.NLRI, error) { return wrapOneof(&apipb.NLRI{}, m) }
+
+func wrapAttr(m proto.Message) (*apipb.Attribute, error) { return wrapOneof(&apipb.Attribute{}, m) }
+
+func wrapExt(m proto.Message) (*apipb.ExtendedCommunity, error) {
+	return wrapOneof(&apipb.ExtendedCommunity{}, m)
+}
+
+func wrapRD(m proto.Message) (*apipb.RouteDistinguisher, error) {
+	return wrapOneof(&apipb.RouteDistinguisher{}, m)
+}
+
+// apiPath hands a GoBGP v4 watch path to the overlay handlers: the NLRI,
+// the next hop, the route target and the withdraw flag survive the
+// conversion from the native types.
+func TestAPIPathKeepsWithdrawAndAttributes(t *testing.T) {
+	nlri, err := buildEVPNType5NLRI(mustRD(t, "65000:4000"), "10.100.0.20/32", "0.0.0.0", 4000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attrs, err := buildType5PathAttrs(nlri, "10.0.0.1", 65000, 4000, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := &apipb.Path{Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}, Nlri: nlri, Pattrs: attrs}
+	native, err := apiutil.GetNativeNlri(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nattrs, err := apiutil.GetNativePathAttributes(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, withdraw := range []bool{false, true} {
+		p, err := apiPath(&apiutil.Path{Family: bgp.RF_EVPN, Nlri: native, Attrs: nattrs, Withdrawal: withdraw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.GetIsWithdraw() != withdraw || p.GetNlri().GetEvpnIpPrefix().GetIpPrefix() != "10.100.0.20" ||
+			extractNextHop(p) != "10.0.0.1" || !matchesLocalRT(p, 65000, 4000) {
+			t.Errorf("withdraw=%v: apiPath = %v", withdraw, p)
+		}
+	}
+}
+
+// bridgeNeigh returns the neighbor (not FDB) operations on ip.
+func bridgeNeigh(ops []*netlink.Neigh, ip string) []*netlink.Neigh {
+	var out []*netlink.Neigh
+	for _, n := range ops {
+		if n.Family != syscall.AF_BRIDGE && n.IP.Equal(net.ParseIP(ip)) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// The Type-5 gateway neighbor (VTEP IP -> router MAC) and the Type-2
+// neighbor (IP -> MAC) are one kernel entry when a MAC/IP route carries
+// the VTEP IP. The Type-2 one wins; a Type-5 withdraw keeps it, and the
+// last Type-2 withdraw brings the Type-5 entry back instead of deleting it.
+func TestType2AndType5ShareTheBridgeNeighbor(t *testing.T) {
+	const vtep, mac, rmac = "10.0.0.1", "aa:bb:cc:00:00:01", "62:db:b8:c1:80:52"
+	t5 := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: "0.0.0.0"}
+	t2 := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: mac, IpAddress: vtep}
+
+	t.Run("Type-5 withdraw keeps the Type-2 entry", func(t *testing.T) {
+		o, m := type2TestOverlay()
+		o.handleType2Route(t2, "10.0.0.2", 0, false)
+		o.handleType5Route(t5, vtep, mustParseMAC(t, rmac), false)
+		if sets := bridgeNeigh(m.sets, vtep); len(sets) != 1 || sets[0].HardwareAddr.String() != mac {
+			t.Fatalf("neighbor sets %v, want only the Type-2 entry", sets)
+		}
+		o.handleType5Route(t5, vtep, nil, true)
+		if dels := bridgeNeigh(m.dels, vtep); len(dels) != 0 {
+			t.Fatalf("the Type-5 withdraw deleted the Type-2 neighbor: %v", dels)
+		}
+	})
+	t.Run("last Type-2 withdraw restores the Type-5 entry", func(t *testing.T) {
+		o, m := type2TestOverlay()
+		o.handleType5Route(t5, vtep, mustParseMAC(t, rmac), false)
+		o.handleType2Route(t2, "10.0.0.2", 0, false)
+		o.handleType2Route(t2, "10.0.0.2", 0, true)
+		sets := bridgeNeigh(m.sets, vtep)
+		if dels := bridgeNeigh(m.dels, vtep); len(dels) != 0 || len(sets) != 3 || sets[2].HardwareAddr.String() != rmac {
+			t.Fatalf("sets %v, deletes %v; want Type-5, Type-2, then the Type-5 entry again", sets, bridgeNeigh(m.dels, vtep))
+		}
+		o.handleType5Route(t5, vtep, nil, true)
+		if dels := bridgeNeigh(m.dels, vtep); len(dels) != 1 {
+			t.Fatalf("deletes %v, want the Type-5 entry gone with its withdraw", dels)
+		}
+	})
+}
+
+// Equal routes of one IP from one VTEP (a duplicate IP) take the lowest
+// MAC, whatever the arrival order, so the entry does not move.
+func TestType2NeighborTiebreakOnMAC(t *testing.T) {
+	for _, order := range [][]string{{"aa:bb:cc:00:00:02", "aa:bb:cc:00:00:01"}, {"aa:bb:cc:00:00:01", "aa:bb:cc:00:00:02"}} {
+		for range 5 {
+			o, _ := type2TestOverlay()
+			for _, mac := range order {
+				o.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{MacAddress: mac, IpAddress: "10.0.0.50"}, "10.0.0.2", 0, false)
+			}
+			if got := o.type2Neigh["10.0.0.50"].mac; got != "aa:bb:cc:00:00:01" {
+				t.Fatalf("order %v: neighbor MAC %s, want the lowest", order, got)
+			}
+		}
+	}
+}
+
+// I3: the same MAC/IP from two RDs; the withdraw of one keeps the neighbor
+// entry and the index.
+func TestType2NeighborKeptByTheOtherRD(t *testing.T) {
+	o, m := type2TestOverlay()
+	route := func(rd uint32) *apipb.EVPNMACIPAdvertisementRoute {
+		return &apipb.EVPNMACIPAdvertisementRoute{Rd: testRD(rd), MacAddress: "aa:bb:cc:00:00:01", IpAddress: "10.0.0.50"}
+	}
+	o.handleType2Route(route(1), "10.0.0.1", 0, false)
+	o.handleType2Route(route(2), "10.0.0.1", 0, false)
+	o.handleType2Route(route(1), "10.0.0.1", 0, true)
+	if dels := bridgeNeigh(m.dels, "10.0.0.50"); len(dels) != 0 || !o.type2HasIP(net.ParseIP("10.0.0.50")) {
+		t.Fatalf("neighbor deletes %v, type2HasIP %v; want the entry kept by the RD 2 route", dels, o.type2HasIP(net.ParseIP("10.0.0.50")))
+	}
+}
+
+// L4: an IPv6 prefix over a VTEP that is also a Type-2 IP gets its
+// IPv4-mapped gateway entry: an IPv6 kernel entry of its own, not shared.
+func TestType5MappedGatewayIsNotShared(t *testing.T) {
+	const vtep, rmac = "10.0.0.1", "62:db:b8:c1:80:52"
+	o, m := type2TestOverlay()
+	o.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:00:00:01", IpAddress: vtep}, "10.0.0.2", 0, false)
+	o.handleType5Route(&apipb.EVPNIPPrefixRoute{IpPrefix: "2001:db8::", IpPrefixLen: 64, GwAddress: "::"}, vtep, mustParseMAC(t, rmac), false)
+	found := false
+	for _, n := range m.sets {
+		found = found || (n.Family == syscall.AF_INET6 && n.IP.Equal(net.ParseIP("::ffff:"+vtep)) && n.HardwareAddr.String() == rmac)
+	}
+	if !found {
+		t.Fatalf("no ::ffff:%s -> %s entry in %v", vtep, rmac, m.sets)
+	}
+}
+
+// L6: on a shared gateway a failed FDB set must not roll back (delete) the
+// neighbor entry, which is the Type-2 one.
+func TestType5SharedGatewayFDBFailureKeepsTheNeighbor(t *testing.T) {
+	const vtep = "10.0.0.1"
+	o, m := type2TestOverlay()
+	o.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:00:00:01", IpAddress: vtep}, "10.0.0.2", 0, false)
+	m.setErr, m.setErrOnCall = errors.New("boom"), len(m.sets)+1 // the Type-5 FDB set
+	o.handleType5Route(&apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: "0.0.0.0"}, vtep, mustParseMAC(t, "62:db:b8:c1:80:52"), false)
+	if len(m.sets) == 0 || m.sets[len(m.sets)-1].Family != syscall.AF_BRIDGE {
+		t.Fatalf("the failed set was not the FDB entry: %v", m.sets)
+	}
+	if dels := bridgeNeigh(m.dels, vtep); len(dels) != 0 {
+		t.Fatalf("a failed FDB set deleted the shared neighbor: %v", dels)
+	}
+}
+
+// TestType2ESIAliasingAndMassWithdraw checks the remote Ethernet segment
+// handling of FRR (bgpd/bgp_evpn_mh.c, zebra/zebra_evpn_mh.c): a MAC with a
+// non-reserved ESI is installed through the FDB nexthop group of the VTEPs
+// that sent both EAD routes for the ES (RFC 7432 sections 9.2.2, 14.1.2),
+// not before; an EAD withdraw moves every MAC of the ES at once, and the
+// last VTEP gone removes them (section 17.3).
+func TestType2ESIAliasingAndMassWithdraw(t *testing.T) {
+	mock := &mockOverlayNetlinkOps{}
+	o := &OverlayTier{
+		cfg:        &Config{RouterID: "10.0.0.99", ProvisionVNI: 100, BridgeName: "br.provision", EnableL2: true},
+		log:        slog.Default(),
+		netlinkOps: mock,
+	}
+	esi := &apipb.EthernetSegmentIdentifier{Type: 0, Value: []byte{0, 0x11, 0x22, 0x33, 0x44, 0x55, 0, 0, 1}}
+	rd := func(n uint32) *apipb.RouteDistinguisher { return testRD(n) }
+	ead := func(vtep string, perES, withdraw bool) {
+		tag := uint32(0)
+		if perES {
+			tag = maxET
+		}
+		n := uint32(1)
+		if vtep == "10.0.0.2" {
+			n = 2
+		}
+		if withdraw {
+			vtep = "" // a withdraw may come without next hop
+		}
+		o.handleType1Route(&apipb.EVPNEthernetAutoDiscoveryRoute{Rd: rd(n), Esi: esi, EthernetTag: tag}, vtep, false, withdraw)
+	}
+	lastGroup := func() []uint32 {
+		for i := len(mock.nexthops) - 1; i >= 0; i-- {
+			if mock.nexthops[i].vtep == nil {
+				return mock.nexthops[i].group
+			}
+		}
+		return nil
+	}
+
+	o.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{Rd: rd(1), Esi: esi, MacAddress: "aa:bb:cc:00:00:01"}, "10.0.0.1", 0, false)
+	o.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{Rd: rd(1), MacAddress: "aa:bb:cc:00:00:02"}, "10.0.0.1", 0, false)
+	if len(mock.fdbNhids) != 0 || len(mock.sets) != 1 {
+		t.Fatalf("before EAD routes: nhid entries %v, VTEP entries %d; want only the single-homed MAC", mock.fdbNhids, len(mock.sets))
+	}
+
+	ead("10.0.0.1", false, false) // EAD-per-EVI alone does not activate the VTEP
+	if len(mock.fdbNhids) != 0 {
+		t.Fatalf("installed with EAD-per-EVI only: %v", mock.fdbNhids)
+	}
+	ead("10.0.0.1", true, false)
+	g := o.esGroups[esiKey(esi)]
+	if len(mock.fdbNhids) != 1 || mock.fdbNhids[0] != fmt.Sprintf("aa:bb:cc:00:00:01 nhid %d", g.id) {
+		t.Fatalf("after both EAD routes: nhid entries %v, want the MAC via group %d", mock.fdbNhids, g.id)
+	}
+
+	ead("10.0.0.2", true, false)
+	ead("10.0.0.2", false, false)
+	if got := lastGroup(); len(got) != 2 {
+		t.Fatalf("aliasing: group members %v, want both VTEPs", got)
+	}
+	if len(mock.fdbNhids) != 1 {
+		t.Fatalf("the MAC entry changed when a VTEP joined: %v", mock.fdbNhids)
+	}
+
+	ead("10.0.0.1", true, true) // mass withdraw of the advertising VTEP
+	if got := lastGroup(); len(got) != 1 || got[0] != o.vtepNexthops["10.0.0.2"] {
+		t.Fatalf("after the EAD-per-ES withdraw of 10.0.0.1: group %v, want only 10.0.0.2", got)
+	}
+	if len(mock.fdbDels) != 0 {
+		t.Fatalf("the MAC was removed while 10.0.0.2 still has the ES: %v", mock.fdbDels)
+	}
+
+	ead("10.0.0.2", true, true)
+	if len(mock.fdbDels) != 1 || mock.fdbDels[0] != "aa:bb:cc:00:00:01" {
+		t.Fatalf("no active VTEP left: FDB deletes %v, want the MAC", mock.fdbDels)
+	}
+	if !slices.Contains(mock.nexthopDels, g.id) || len(o.vtepNexthops) != 0 {
+		t.Fatalf("group %d and VTEP nexthops not deleted: deletes %v, left %v", g.id, mock.nexthopDels, o.vtepNexthops)
+	}
+	if len(mock.dels) != 0 {
+		t.Fatalf("the single-homed MAC was touched: %v", mock.dels)
+	}
+}
+
+// TestEVPNRoutesCarryVXLANEncapsulation checks RFC 8365 section 5.1.3:
+// every EVPN route of an NVE carries the BGP Encapsulation extended
+// community. Without it a receiver assumes MPLS or a configured
+// encapsulation for BOOTy's Type-2 and Type-3 routes.
+func TestEVPNRoutesCarryVXLANEncapsulation(t *testing.T) {
+	rd := testRD(4000)
+	t2 := buildEVPNType2NLRI(rd, "aa:bb:cc:dd:ee:ff", "10.100.0.20", 4000)
+	t3 := buildEVPNType3NLRI(rd, "10.0.0.1")
+	t5, err := buildEVPNType5NLRI(rd, "10.100.0.20/32", type5DirectGateway, 4000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type2, err := buildType2PathAttrs(t2, "10.0.0.1", 65000, 4000, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type3, err := buildType3PathAttrs(t3, "10.0.0.1", 65000, 4000, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type5, err := buildType5PathAttrs(t5, "10.0.0.1", 65000, 4000, "", "02:54:00:00:00:01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, pattrs := range map[string][]*apipb.Attribute{"type-2": type2, "type-3": type3, "type-5": type5} {
+		var encaps []uint32
+		for _, attr := range pattrs {
+			for _, c := range attr.GetExtendedCommunities().GetCommunities() {
+				if e := c.GetEncap(); e != nil {
+					encaps = append(encaps, e.GetTunnelType())
+				}
+			}
+		}
+		if len(encaps) != 1 || encaps[0] != vxlanTunnelType {
+			t.Errorf("%s: encapsulation communities %v, want exactly [%d] (VXLAN)", name, encaps, vxlanTunnelType)
+		}
+	}
+}
+
+// TestProcessRouteUpdateType5TreatAsWithdraw checks the receive rules of
+// RFC 9136 sections 3.1 and 3.2: an update that BOOTy must not use is
+// handled as a withdraw of its route key, so it installs nothing and
+// removes the route that an earlier valid update of the same key
+// installed.
+func TestProcessRouteUpdateType5TreatAsWithdraw(t *testing.T) {
+	nextHop := func(nh string) *apipb.Attribute {
+		mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
+			Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+			NextHops: []string{nh},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mp
+	}
+	communities := func(mac string) *apipb.Attribute {
+		c := []*apipb.ExtendedCommunity{mustRT2(t, 65000, 4000)}
+		if mac != "" {
+			c = append(c, mustRouterMAC(t, mac))
+		}
+		a, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: c})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	pathVia := func(nh string, r *apipb.EVPNIPPrefixRoute, mac string) *apipb.Path {
+		r.IpPrefix, r.IpPrefixLen = "10.100.0.0", 24
+		n, err := wrapNLRI(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &apipb.Path{Nlri: n, Pattrs: []*apipb.Attribute{nextHop(nh), communities(mac)}}
+	}
+	path := func(r *apipb.EVPNIPPrefixRoute, mac string) *apipb.Path { return pathVia("192.168.4.1", r, mac) }
+	fdbDels := func(m *mockOverlayNetlinkOps) []string {
+		var out []string
+		for _, n := range m.dels {
+			if n.Family == syscall.AF_BRIDGE {
+				out = append(out, n.HardwareAddr.String())
+			}
+		}
+		return out
+	}
+	esi := &apipb.EthernetSegmentIdentifier{Type: 0, Value: []byte{0, 0, 0, 0, 0, 0, 0, 0, 1}}
+	const rmac = "62:db:b8:c1:80:52"
+	tests := []struct {
+		name  string
+		route *apipb.EVPNIPPrefixRoute
+		mac   string
+	}{
+		{"invalid router MAC", &apipb.EVPNIPPrefixRoute{Label: 4000}, "not-a-mac"},
+		{"multicast router MAC", &apipb.EVPNIPPrefixRoute{Label: 4000}, "01:00:5e:00:00:01"},
+		{"ESI and gateway IP", &apipb.EVPNIPPrefixRoute{Label: 4000, Esi: esi, GwAddress: "10.100.0.1"}, rmac},
+		{"multicast router MAC with a gateway IP", &apipb.EVPNIPPrefixRoute{Label: 4000, GwAddress: "10.100.0.1"}, "01:00:5e:00:00:01"},
+		{"zero label without overlay index", &apipb.EVPNIPPrefixRoute{GwAddress: "0.0.0.0"}, rmac},
+		// FRR bgp_evpn_is_esi_valid compares all 10 bytes: type 1 with a
+		// zero value is a set ESI.
+		{"ESI type 1 with a zero value and gateway IP", &apipb.EVPNIPPrefixRoute{Label: 4000, Esi: &apipb.EthernetSegmentIdentifier{Type: 1, Value: make([]byte, 9)}, GwAddress: "10.100.0.1"}, rmac},
+		{"ESI and gateway IP (gateway differs)", &apipb.EVPNIPPrefixRoute{Label: 4000, Esi: esi, GwAddress: "10.100.0.9"}, rmac},
+	}
+	newOverlay := func(mock *mockOverlayNetlinkOps) *OverlayTier {
+		return &OverlayTier{
+			cfg:        &Config{RouterID: "192.168.4.10", ASN: 65000, ProvisionVNI: 4000, BridgeName: "br.provision"},
+			log:        slog.Default(),
+			netlinkOps: mock,
+		}
+	}
+	for _, tt := range tests {
+		t.Run(tt.name+" installs nothing", func(t *testing.T) {
+			mock := &mockOverlayNetlinkOps{}
+			newOverlay(mock).processRouteUpdate(path(tt.route, tt.mac))
+			if len(mock.routeReplaces) != 0 || len(mock.sets) != 0 {
+				t.Fatalf("got %d route replaces and %d neighbor sets, want none", len(mock.routeReplaces), len(mock.sets))
+			}
+		})
+		t.Run(tt.name+" withdraws the installed route", func(t *testing.T) {
+			mock := &mockOverlayNetlinkOps{}
+			o := newOverlay(mock)
+			o.processRouteUpdate(path(&apipb.EVPNIPPrefixRoute{Label: 4000, GwAddress: "0.0.0.0"}, rmac))
+			if len(mock.routeReplaces) != 1 {
+				t.Fatalf("valid route: got %d route replaces, want 1", len(mock.routeReplaces))
+			}
+			// From another next hop: the withdraw must use the installed
+			// path's gateway and router MAC, not the update's.
+			o.processRouteUpdate(pathVia("192.168.4.2", tt.route, tt.mac))
+			if len(mock.routeReplaces) != 1 {
+				t.Errorf("got %d route replaces after the unusable update, want 1", len(mock.routeReplaces))
+			}
+			if len(mock.routeDels) != 1 || mock.routeDels[0].Dst.String() != "10.100.0.0/24" ||
+				!mock.routeDels[0].Gw.Equal(mock.routeReplaces[0].Gw) {
+				t.Errorf("route deletes = %v, want 10.100.0.0/24 via the installed gateway %s", mock.routeDels, mock.routeReplaces[0].Gw)
+			}
+			// The FDB entry of the router MAC of the installed path goes,
+			// not one of the invalid update's MAC.
+			fdbDel := false
+			for _, n := range mock.dels {
+				if n.Family == syscall.AF_BRIDGE {
+					if n.HardwareAddr.String() != rmac {
+						t.Errorf("FDB delete for %s, want only %s", n.HardwareAddr, rmac)
+					}
+					fdbDel = true
+				}
+			}
+			if !fdbDel {
+				t.Errorf("FDB entry %s -> VTEP not deleted", rmac)
+			}
+		})
+	}
+	t.Run("an unusable update of an unknown route deletes nothing", func(t *testing.T) {
+		for _, tt := range tests {
+			mock := &mockOverlayNetlinkOps{}
+			newOverlay(mock).processRouteUpdate(pathVia("192.168.4.2", tt.route, tt.mac))
+			if len(mock.routeDels) != 0 || len(fdbDels(mock)) != 0 {
+				t.Errorf("%s: route deletes %v, FDB deletes %v; want none", tt.name, mock.routeDels, fdbDels(mock))
+			}
+		}
+	})
+	t.Run("a tracked path without router MAC keeps the FDB", func(t *testing.T) {
+		mock := &mockOverlayNetlinkOps{}
+		o := newOverlay(mock)
+		o.processRouteUpdate(path(&apipb.EVPNIPPrefixRoute{Label: 4000, GwAddress: "0.0.0.0"}, ""))
+		o.processRouteUpdate(path(&apipb.EVPNIPPrefixRoute{GwAddress: "0.0.0.0"}, rmac)) // zero label: unusable
+		if len(mock.routeDels) != 1 || len(fdbDels(mock)) != 0 {
+			t.Fatalf("route deletes %v, FDB deletes %v; want the route only, the path had no router MAC", mock.routeDels, fdbDels(mock))
+		}
+	})
+	t.Run("valid routes are installed", func(t *testing.T) {
+		for _, r := range []struct {
+			route *apipb.EVPNIPPrefixRoute
+			mac   string
+		}{
+			{&apipb.EVPNIPPrefixRoute{Label: 4000, GwAddress: "0.0.0.0"}, rmac},
+			{&apipb.EVPNIPPrefixRoute{Label: 4000, GwAddress: "0.0.0.0"}, ""},
+			{&apipb.EVPNIPPrefixRoute{Label: 4000, GwAddress: "0.0.0.0"}, "00:00:00:00:00:00"},
+			{&apipb.EVPNIPPrefixRoute{Label: 4000, Esi: esi, GwAddress: "0.0.0.0"}, rmac},
+		} {
+			mock := &mockOverlayNetlinkOps{}
+			newOverlay(mock).processRouteUpdate(path(r.route, r.mac))
+			if len(mock.routeReplaces) != 1 {
+				t.Errorf("%+v %q: got %d route replaces, want 1", r.route, r.mac, len(mock.routeReplaces))
+			}
+			for _, n := range mock.sets {
+				if n.HardwareAddr[0]&1 != 0 {
+					t.Errorf("%+v %q: neighbor or FDB entry with the non-unicast MAC %s", r.route, r.mac, n.HardwareAddr)
+				}
+			}
+		}
+	})
+}
+
+// RFC 9136 section 3.2: a router MAC must be a unicast MAC.
+func TestParseRouterMACRejectsNonUnicast(t *testing.T) {
+	for _, mac := range []string{"01:00:5e:00:00:01", "ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00", "33:33:00:00:00:01"} {
+		if _, err := parseRouterMAC(mac); err == nil {
+			t.Errorf("parseRouterMAC(%s) accepted a non-unicast MAC", mac)
+		}
+	}
+	if _, err := parseRouterMAC("02:54:c0:00:02:11"); err != nil {
+		t.Errorf("unicast MAC rejected: %v", err)
+	}
+}
+
+// TestProcessRouteUpdateType5L3VNI checks the VNI of received Type-5 routes
+// like FRR and zebra: in the Type-5-only (L3VNI) mode a route without
+// gateway IP must carry the local L3VNI, else it is not installed (zebra
+// installs such a D-VNI next hop only on a single VXLAN device) and an
+// installed route of its key goes. The other modes keep their handling.
+func TestProcessRouteUpdateType5L3VNI(t *testing.T) {
+	mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
+		Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+		NextHops: []string{"192.168.4.1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ec, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 4000), mustRouterMAC(t, "62:db:b8:c1:80:52")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := func(label uint32, gw string) *apipb.Path {
+		n, err := wrapNLRI(&apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, Label: label, GwAddress: gw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &apipb.Path{Nlri: n, Pattrs: []*apipb.Attribute{mp, ec}}
+	}
+	newOverlay := func(type5Only bool) (*OverlayTier, *mockOverlayNetlinkOps) {
+		mock := &mockOverlayNetlinkOps{}
+		return &OverlayTier{
+			cfg:        &Config{RouterID: "192.168.4.10", ASN: 65000, ProvisionVNI: 4000, BridgeName: "br.provision", Type5Only: type5Only},
+			log:        slog.Default(),
+			netlinkOps: mock,
+		}, mock
+	}
+
+	o, mock := newOverlay(true)
+	o.processRouteUpdate(path(5000, "0.0.0.0"))
+	if len(mock.routeReplaces) != 0 {
+		t.Fatalf("L3VNI mode: route with VNI 5000 installed: %v", mock.routeReplaces)
+	}
+	o.processRouteUpdate(path(4000, "0.0.0.0"))
+	if len(mock.routeReplaces) != 1 {
+		t.Fatalf("L3VNI mode: route with the local VNI: %d installs, want 1", len(mock.routeReplaces))
+	}
+	o.processRouteUpdate(path(5000, "0.0.0.0"))
+	if len(mock.routeDels) != 1 {
+		t.Fatalf("L3VNI mode: update of the key to VNI 5000: %d deletes, want 1", len(mock.routeDels))
+	}
+	// A gateway IP route resolves through its gateway and is not checked
+	// against the VNI. Since #775 BOOTy installs it only in L2 mode with
+	// enable-resolve-overlay-index, so the rule itself is checked here.
+	if r := type5Unusable(&apipb.EVPNIPPrefixRoute{Label: 5000, GwAddress: "10.100.0.1"}, nil, o.type5LocalVNI()); r != "" {
+		t.Fatalf("L3VNI mode: a gateway IP route was checked against the VNI: %s", r)
+	}
+
+	o, mock = newOverlay(false)
+	o.processRouteUpdate(path(5000, "0.0.0.0"))
+	if len(mock.routeReplaces) != 1 {
+		t.Fatal("Type-5 with gateway mode: the VNI check must not apply")
+	}
+}
+
+// #747 x #775: a resolved gateway IP route, then an unusable update of the
+// same route key from another next hop (multicast router MAC, no gateway).
+// The update is a withdraw of the tracked path: one route delete via the
+// gateway IP, and the gateway's neighbor entry, which belongs to its Type-2
+// route, stays.
+func TestType5GatewayIPRouteConvertedWithdraw(t *testing.T) {
+	gw := net.ParseIP("10.1.0.5")
+	o, m := type2TestOverlay()
+	o.cfg.ResolveOverlayIndex = true
+	o.handleType2Route(&apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:00:00:05", IpAddress: gw.String()}, "10.0.0.2", 0, false)
+	path := func(nh string, r *apipb.EVPNIPPrefixRoute, mac string) *apipb.Path {
+		t.Helper()
+		mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{Family: &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN}, NextHops: []string{nh}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ec, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: []*apipb.ExtendedCommunity{mustRT2(t, 65000, 100), mustRouterMAC(t, mac)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err := wrapNLRI(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &apipb.Path{Nlri: n, Pattrs: []*apipb.Attribute{mp, ec}}
+	}
+	o.processRouteUpdate(path("10.0.0.1", &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, Label: 100, GwAddress: gw.String()}, "62:db:b8:c1:80:52"))
+	if len(m.routeReplaces) != 1 || !m.routeReplaces[0].Gw.Equal(gw) {
+		t.Fatalf("route replaces %v, want the route via %s", m.routeReplaces, gw)
+	}
+	before := len(m.dels)
+	o.processRouteUpdate(path("10.0.0.3", &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, Label: 100, GwAddress: "0.0.0.0"}, "01:00:5e:00:00:01"))
+	if len(m.routeDels) != 1 || !m.routeDels[0].Gw.Equal(gw) {
+		t.Fatalf("route deletes %v, want one via %s", m.routeDels, gw)
+	}
+	if dels := m.dels[before:]; len(dels) != 0 {
+		t.Fatalf("neighbor or FDB deletes %v, want none", dels)
+	}
+	if _, ok := o.type2Neigh[gw.String()]; !ok {
+		t.Fatal("the Type-2 neighbor of the gateway is forgotten")
+	}
+}
+
+// fibOwnerStub is the FIB writer's installed set for the overlay tests.
+type fibOwnerStub map[string]bool
+
+func (f fibOwnerStub) owns(table int, p netip.Prefix) bool { return f[routeKey(table, p)] }
+
+func newFIBOwnerOverlay(owned fibOwnerStub) (*OverlayTier, *mockOverlayNetlinkOps) {
+	mock := &mockOverlayNetlinkOps{}
+	return &OverlayTier{
+		cfg:        &Config{RouterID: "192.168.4.10", ProvisionVNI: 1000, BridgeName: "br.provision"},
+		log:        slog.Default(),
+		netlinkOps: mock,
+		fibOwns:    owned.owns,
+	}, mock
+}
+
+var (
+	fibOwnedPrefix = netip.MustParsePrefix("10.200.0.0/24")
+	fibOwnedKey    = routeKey(unix.RT_TABLE_MAIN, fibOwnedPrefix)
+	fibOwnedRoute  = &apipb.EVPNIPPrefixRoute{IpPrefix: "10.200.0.0", IpPrefixLen: 24, GwAddress: "0.0.0.0"}
+)
+
+// One writer owns a prefix: without an overlay VRF the overlay keeps a
+// Type-5 path for a prefix that the underlay FIB writer has installed in
+// the main table in the shadow, installs the others, and installs the
+// shadowed path when the writer removes its route.
+func TestType5ShadowedByFIBInstalledOnRemoval(t *testing.T) {
+	owned := fibOwnerStub{fibOwnedKey: true}
+	overlay, mock := newFIBOwnerOverlay(owned)
+	mac := mustParseMAC(t, "62:db:b8:c1:80:52")
+	overlay.handleType5Route(fibOwnedRoute, "192.168.4.1", mac, false)
+	if len(mock.routeReplaces) != 0 {
+		t.Fatalf("installed a Type-5 route for a prefix of the FIB writer: %v", mock.routeReplaces)
+	}
+	other := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.201.0.0", IpPrefixLen: 24, GwAddress: "0.0.0.0"}
+	overlay.handleType5Route(other, "192.168.4.1", mac, false)
+	if len(mock.routeReplaces) != 1 || mock.routeReplaces[0].Dst.String() != "10.201.0.0/24" {
+		t.Fatalf("route replaces = %v, want only 10.201.0.0/24", mock.routeReplaces)
+	}
+	// A removal in another table does not concern the overlay.
+	overlay.fibRemoved(100, fibOwnedPrefix)
+	if len(mock.routeReplaces) != 1 {
+		t.Fatalf("a removal in table 100 installed %v", mock.routeReplaces[1:])
+	}
+	delete(owned, fibOwnedKey)
+	overlay.fibRemoved(unix.RT_TABLE_MAIN, fibOwnedPrefix)
+	if len(mock.routeReplaces) != 2 || mock.routeReplaces[1].Dst.String() != "10.200.0.0/24" {
+		t.Fatalf("route replaces = %v, want the shadowed 10.200.0.0/24 after the FIB writer removed it", mock.routeReplaces)
+	}
+	// Installed now, so a withdraw deletes it.
+	overlay.handleType5Route(fibOwnedRoute, "192.168.4.1", mac, true)
+	if len(mock.routeDels) != 1 || mock.routeDels[0].Dst.String() != "10.200.0.0/24" {
+		t.Fatalf("route deletes = %v, want 10.200.0.0/24", mock.routeDels)
+	}
+}
+
+// A withdraw while the FIB writer owns the prefix only forgets the path: it
+// does not delete the writer's kernel route, and the path does not come
+// back when the writer removes its route.
+func TestType5WithdrawWhileShadowed(t *testing.T) {
+	owned := fibOwnerStub{fibOwnedKey: true}
+	overlay, mock := newFIBOwnerOverlay(owned)
+	mac := mustParseMAC(t, "62:db:b8:c1:80:52")
+	overlay.handleType5Route(fibOwnedRoute, "192.168.4.1", mac, false)
+	overlay.handleType5Route(fibOwnedRoute, "192.168.4.1", mac, true)
+	if len(mock.routeDels) != 0 {
+		t.Fatalf("a withdraw of a shadowed path deleted %v", mock.routeDels)
+	}
+	delete(owned, fibOwnedKey)
+	overlay.fibRemoved(unix.RT_TABLE_MAIN, fibOwnedPrefix)
+	if len(mock.routeReplaces) != 0 {
+		t.Fatalf("a withdrawn path was installed: %v", mock.routeReplaces)
+	}
+}
+
+// The other direction: the overlay installed its route first, then the FIB
+// writer replaced it. A withdraw meanwhile leaves the writer's route alone;
+// a live path is installed again when the writer removes its route.
+func TestType5ReplacedByFIBInstalledOnRemoval(t *testing.T) {
+	owned := fibOwnerStub{}
+	overlay, mock := newFIBOwnerOverlay(owned)
+	mac := mustParseMAC(t, "62:db:b8:c1:80:52")
+	overlay.handleType5Route(fibOwnedRoute, "192.168.4.1", mac, false)
+	if len(mock.routeReplaces) != 1 {
+		t.Fatalf("route replaces = %v, want the Type-5 route", mock.routeReplaces)
+	}
+	// The FIB writer replaced the route, then removed it again.
+	overlay.fibRemoved(unix.RT_TABLE_MAIN, fibOwnedPrefix)
+	if len(mock.routeReplaces) != 2 || mock.routeReplaces[1].Dst.String() != "10.200.0.0/24" {
+		t.Fatalf("route replaces = %v, want 10.200.0.0/24 again after the FIB writer removed it", mock.routeReplaces)
+	}
+
+	owned[fibOwnedKey] = true
+	overlay.handleType5Route(fibOwnedRoute, "192.168.4.1", mac, true)
+	if len(mock.routeDels) != 0 {
+		t.Fatalf("a withdraw deleted %v while the FIB writer owns the prefix", mock.routeDels)
+	}
+}
+
+// With an overlay VRF the tables differ, so the overlay installs a prefix
+// that the FIB writer has in the main table.
+func TestType5OverlayVRFNotShadowed(t *testing.T) {
+	overlay, mock := newFIBOwnerOverlay(fibOwnerStub{fibOwnedKey: true})
+	overlay.cfg.OverlayVRFName, overlay.cfg.OverlayVRFTableID = "provision", 100
+	overlay.handleType5Route(fibOwnedRoute, "192.168.4.1", mustParseMAC(t, "62:db:b8:c1:80:52"), false)
+	if len(mock.routeReplaces) != 1 || mock.routeReplaces[0].Table != 100 {
+		t.Fatalf("route replaces = %v, want 10.200.0.0/24 in table 100", mock.routeReplaces)
+	}
+}
+
+// A gateway IP Type-5 path kept in the shadow is not installed over the FIB
+// writer's route when the Type-2 route of its gateway IP arrives. It is
+// installed when the writer removes its route.
+func TestType5GatewayIPShadowedNotInstalledOnType2(t *testing.T) {
+	o, m := type2TestOverlay()
+	o.cfg.ResolveOverlayIndex = true
+	p := netip.MustParsePrefix("10.100.0.0/24")
+	owned := fibOwnerStub{routeKey(unix.RT_TABLE_MAIN, p): true}
+	o.fibOwns = owned.owns
+	gw := net.ParseIP("10.1.0.5")
+	t5 := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: gw.String()}
+	t2 := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:00:00:05", IpAddress: gw.String()}
+	o.handleType5Route(t5, "10.0.0.1", nil, false)
+	o.handleType2Route(t2, "10.0.0.2", 0, false)
+	for _, r := range m.routeReplaces {
+		if r.Dst != nil && r.Dst.String() == p.String() {
+			t.Fatalf("shadowed gateway IP path installed over the FIB route: %+v", r)
+		}
+	}
+	delete(owned, routeKey(unix.RT_TABLE_MAIN, p))
+	o.fibRemoved(unix.RT_TABLE_MAIN, p)
+	if n := len(m.routeReplaces); n == 0 || m.routeReplaces[n-1].Dst.String() != p.String() || !m.routeReplaces[n-1].Gw.Equal(gw) {
+		t.Fatalf("backup not installed after FIB removal: %v", m.routeReplaces)
+	}
+}
+
+// The Type-5 route was installed first and the FIB writer replaced it. The
+// Type-2 withdraw of the gateway IP does not delete the writer's route.
+func TestType2WithdrawKeepsFIBRoute(t *testing.T) {
+	o, m := type2TestOverlay()
+	o.cfg.ResolveOverlayIndex = true
+	p := netip.MustParsePrefix("10.100.0.0/24")
+	owned := fibOwnerStub{}
+	o.fibOwns = owned.owns
+	gw := net.ParseIP("10.1.0.5")
+	t5 := &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, GwAddress: gw.String()}
+	t2 := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:00:00:05", IpAddress: gw.String()}
+	o.handleType2Route(t2, "10.0.0.2", 0, false)
+	o.handleType5Route(t5, "10.0.0.1", nil, false)
+	owned[routeKey(unix.RT_TABLE_MAIN, p)] = true // the FIB writer replaced the route
+	before := len(m.routeDels)
+	o.handleType2Route(t2, "10.0.0.2", 0, true)
+	for _, r := range m.routeDels[before:] {
+		if r.Dst != nil && r.Dst.String() == p.String() {
+			t.Fatalf("Type-2 withdraw deleted the FIB writer's route: %+v", r)
+		}
+	}
+}
+
+// TestProcessRouteUpdateHonoursEncapsulation checks RFC 8365 section 6: a
+// route whose BGP Encapsulation communities do not include VXLAN gets no
+// VXLAN state and removes what an earlier update of its key installed; a
+// route without the community counts as VXLAN, like FRR.
+func TestProcessRouteUpdateHonoursEncapsulation(t *testing.T) {
+	const mplsTunnelType = 10
+	nextHop := func(nh string) *apipb.Attribute {
+		mp, err := wrapAttr(&apipb.MpReachNLRIAttribute{
+			Family:   &apipb.Family{Afi: apipb.Family_AFI_L2VPN, Safi: apipb.Family_SAFI_EVPN},
+			NextHops: []string{nh},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mp
+	}
+	communities := func(extra ...*apipb.ExtendedCommunity) *apipb.Attribute {
+		c := append([]*apipb.ExtendedCommunity{mustRT2(t, 65000, 4000)}, extra...)
+		a, err := wrapAttr(&apipb.ExtendedCommunitiesAttribute{Communities: c})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	encap := func(tt uint32) *apipb.ExtendedCommunity {
+		a, err := wrapExt(&apipb.EncapExtended{TunnelType: tt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	pathVia := func(nh string, route proto.Message, ec *apipb.Attribute) *apipb.Path {
+		n, err := wrapNLRI(route)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &apipb.Path{Nlri: n, Pattrs: []*apipb.Attribute{nextHop(nh), ec}}
+	}
+	path := func(route proto.Message, ec *apipb.Attribute) *apipb.Path { return pathVia("192.168.4.1", route, ec) }
+	newOverlay := func(mock *mockOverlayNetlinkOps) *OverlayTier {
+		return &OverlayTier{
+			cfg:        &Config{RouterID: "192.168.4.10", ASN: 65000, ProvisionVNI: 4000, BridgeName: "br.provision", EnableL2: true},
+			log:        slog.Default(),
+			netlinkOps: mock,
+		}
+	}
+	type5 := func() *apipb.EVPNIPPrefixRoute {
+		return &apipb.EVPNIPPrefixRoute{IpPrefix: "10.100.0.0", IpPrefixLen: 24, Label: 4000, GwAddress: "0.0.0.0"}
+	}
+
+	t.Run("type-5", func(t *testing.T) {
+		mock := &mockOverlayNetlinkOps{}
+		o := newOverlay(mock)
+		o.processRouteUpdate(path(type5(), communities(encap(mplsTunnelType))))
+		if len(mock.routeReplaces) != 0 {
+			t.Fatalf("MPLS-only route installed: %v", mock.routeReplaces)
+		}
+		o.processRouteUpdate(path(type5(), communities(encap(vxlanTunnelType), encap(mplsTunnelType))))
+		if len(mock.routeReplaces) != 1 {
+			t.Fatalf("route with VXLAN among its encapsulations: %d installs, want 1", len(mock.routeReplaces))
+		}
+		o.processRouteUpdate(path(type5(), communities(encap(mplsTunnelType))))
+		if len(mock.routeDels) != 1 {
+			t.Fatalf("an MPLS-only update of the installed key: %d route deletes, want 1", len(mock.routeDels))
+		}
+		// E3: an MPLS-only update of the same key from another next hop
+		// removes the installed route through its own gateway.
+		mock3 := &mockOverlayNetlinkOps{}
+		o3 := newOverlay(mock3)
+		o3.processRouteUpdate(path(type5(), communities(encap(vxlanTunnelType))))
+		o3.processRouteUpdate(pathVia("192.168.4.2", type5(), communities(encap(mplsTunnelType))))
+		if len(mock3.routeDels) != 1 || !mock3.routeDels[0].Gw.Equal(net.ParseIP("192.168.4.1")) {
+			t.Fatalf("MPLS-only update from another next hop: route deletes %v, want the route via 192.168.4.1", mock3.routeDels)
+		}
+		mock2 := &mockOverlayNetlinkOps{}
+		newOverlay(mock2).processRouteUpdate(path(type5(), communities()))
+		if len(mock2.routeReplaces) != 1 {
+			t.Fatal("a route without encapsulation community is not installed (FRR treats it as VXLAN)")
+		}
+	})
+	t.Run("type-2 and type-3", func(t *testing.T) {
+		mock := &mockOverlayNetlinkOps{}
+		o := newOverlay(mock)
+		t2 := &apipb.EVPNMACIPAdvertisementRoute{MacAddress: "aa:bb:cc:dd:ee:ff"}
+		o.processRouteUpdate(path(t2, communities(encap(vxlanTunnelType))))
+		if len(mock.sets) != 1 {
+			t.Fatalf("VXLAN type-2: %d FDB sets, want 1", len(mock.sets))
+		}
+		o.processRouteUpdate(path(t2, communities(encap(mplsTunnelType))))
+		if len(mock.dels) != 1 || !mock.dels[0].IP.Equal(net.ParseIP("192.168.4.1")) {
+			t.Fatalf("MPLS-only update: deletes %v, want the installed FDB entry", mock.dels)
+		}
+		o.processRouteUpdate(path(&apipb.EVPNInclusiveMulticastEthernetTagRoute{IpAddress: "192.168.4.2"}, communities(encap(mplsTunnelType))))
+		if len(mock.appends) != 0 {
+			t.Fatalf("MPLS-only type-3 added BUM entries %v", mock.appends)
+		}
+	})
 }

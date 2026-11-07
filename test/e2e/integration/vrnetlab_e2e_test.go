@@ -12,6 +12,8 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -376,6 +378,12 @@ func TestVrnetlabProvisionAttemptsImageDownload(t *testing.T) {
 		t.Logf("Serial log:\n%s", logs)
 		t.Fatal("provision VM did not attempt image download through EVPN")
 	}
+	// The format probe read the image over EVPN, and the stream wrote it.
+	for _, marker := range []string{"image prerequisites validated", `msg="image written"`} {
+		if !waitForVMLog(t, vmProvision, marker, 60*time.Second) {
+			t.Fatalf("provision VM log lacks %q: the image did not come over EVPN\n%s", marker, getVMSerialLog(t, vmProvision))
+		}
+	}
 	t.Log("provision VM: image download attempted through EVPN")
 }
 
@@ -672,11 +680,15 @@ func TestVrnetlabModulesLoaded(t *testing.T) {
 			vmProvision, provisioningMarker, logs)
 	}
 
+	// loadModules logs one line: msg="loaded kernel modules" ... modules="a.ko b.ko".
+	m := regexp.MustCompile(`msg="loaded kernel modules" .*modules="([^"]*)"`).FindStringSubmatch(logs)
+	if m == nil {
+		t.Fatalf("serial log for %s has no loaded kernel modules line", vmProvision)
+	}
+	loaded := strings.Fields(m[1])
 	for _, mod := range vrnetlabRequiredModules {
-		// loadModules logs: "loaded kernel module" with a "module=<name>.ko*" field.
-		field := "module=" + mod + ".ko"
-		if !strings.Contains(logs, "loaded kernel module") || !strings.Contains(logs, field) {
-			t.Errorf("module %q not loaded according to serial log — expected log entry with 'loaded kernel module' and %q", mod, field)
+		if !slices.Contains(loaded, mod+".ko") {
+			t.Errorf("module %q not loaded according to serial log (loaded: %v)", mod, loaded)
 		}
 	}
 }
@@ -708,6 +720,10 @@ var vrnetlabAllowedErrorRootCauses = []string{
 	// Expected when CAPRF endpoints are HTTP-only and token auth is enforced.
 	"failed to report error status",
 	"insecure transport",
+	// The vrnetlab ramdisk has no cloud-guest-utils: the provision ends in
+	// grow-partition, after the image came over EVPN and was written
+	// (TestVrnetlabProvisionAttemptsImageDownload requires both).
+	`exec: "growpart": executable file not found`,
 }
 
 var vrnetlabDeniedErrorRootCauses = []string{

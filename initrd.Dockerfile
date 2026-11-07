@@ -60,7 +60,7 @@ RUN ./autogen.sh && ./configure --enable-static-programs=sfdisk && make
 RUN strip --strip-all sfdisk.static
 
 # Build BOOTy as an init
-FROM golang:1.27.1-alpine AS dev
+FROM golang:1.27.2-alpine AS dev
 ARG BOOTY_VERSION=dev
 ARG BOOTY_BUILD=unknown
 ARG BOOTY_COMMIT_TIME=
@@ -284,39 +284,14 @@ RUN if [ -n "$KERNEL_SUITE" ]; then \
     echo "Extracted $(ls /modules/*.ko 2>/dev/null | wc -l) kernel modules of $KVER" && \
     rm -rf /tmp/kernel /tmp/debs /var/lib/apt/lists/*
 
-# lldpd and lldpcli from the Debian source package, built like Debian but
-# without the SNMP subagent. The subagent needs a running snmpd master
-# agent, which the ramdisk does not ship, so it can not work there. Its
-# libraries (net-snmp, libperl, libsensors, libpci, libwrap) were 2.3 MB of
-# every zstd ramdisk with lldpd. apt verifies the source files against the
-# signed archive index, like a binary package.
-FROM debian:trixie-slim AS lldpd
-RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources && \
-    apt-get -o Acquire::Retries=5 update && \
-    apt-get -o Acquire::Retries=5 install -y --no-install-recommends dpkg-dev fakeroot && \
-    mkdir /build && cd /build && \
-    apt-get -o Acquire::Retries=5 source lldpd && \
-    cd lldpd-*/ && \
-    sed -i '/--with-snmp/d' debian/rules && \
-    sed -i '/libsnmp-dev/d' debian/control && \
-    ! grep -q snmp debian/rules && \
-    apt-get -o Acquire::Retries=5 build-dep -y --no-install-recommends . && \
-    DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b -uc -us && \
-    mkdir /debs && cp ../lldpd_*.deb /debs/
-
 # Build disk, system, and firmware tools
 FROM debian:trixie-slim AS tools
-COPY --from=lldpd /debs/ /tmp/lldpd-debs/
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-    /tmp/lldpd-debs/*.deb && rm -rf /tmp/lldpd-debs && \
-    apt-mark hold lldpd && \
-    ! ldd /usr/sbin/lldpd | grep -q snmp && \
-    apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     binutils \
     mdadm util-linux fdisk e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
-    efibootmgr dmidecode ethtool curl iproute2 bridge-utils \
-    hdparm nvme-cli sg3-utils mstflint gpgv qemu-utils \
-    dropbear-bin cryptsetup-bin ipmitool \
+    efibootmgr dmidecode ethtool iproute2 bridge-utils \
+    hdparm nvme-cli sg3-utils mstflint gpgv \
+    dropbear-bin cryptsetup-bin \
     && rm -rf /var/lib/apt/lists/*
 
 # Collect shared libraries for all tool binaries while their packages are
@@ -330,20 +305,15 @@ RUN mkdir -p /tool-libs /tool-libs-full && \
         /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
         /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk /usr/sbin/sfdisk \
         /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
-        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
-        /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
+        /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
+        /usr/bin/mstconfig /usr/bin/mstflint \
         /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup \
-        /sbin/cryptsetup /usr/bin/ipmitool 2>/dev/null \
+        /sbin/cryptsetup 2>/dev/null \
     | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
     | sort -u | while read -r lib; do \
         [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /tool-libs/ 2>/dev/null || true; \
     done && \
     ldd /usr/bin/gpgv 2>/dev/null \
-    | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
-    | sort -u | while read -r lib; do \
-        [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /tool-libs-full/ 2>/dev/null || true; \
-    done && \
-    ldd /usr/bin/qemu-img 2>/dev/null \
     | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
     | sort -u | while read -r lib; do \
         [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /tool-libs-full/ 2>/dev/null || true; \
@@ -358,10 +328,10 @@ RUN strip --strip-all \
         /usr/sbin/xfs_growfs /usr/sbin/xfs_repair \
         /usr/bin/btrfs /usr/sbin/parted /usr/sbin/sgdisk /usr/sbin/sfdisk \
         /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
-        /usr/bin/curl /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
-        /usr/bin/mstconfig /usr/bin/mstflint /usr/sbin/lldpcli /usr/sbin/lldpd \
-        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup /usr/bin/gpgv /usr/bin/qemu-img \
-        /sbin/cryptsetup /usr/bin/ipmitool
+        /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
+        /usr/bin/mstconfig /usr/bin/mstflint \
+        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup /usr/bin/gpgv \
+        /sbin/cryptsetup
 
 # Busybox static binary — sourced from Docker Hub for reliability and
 # Dependabot version tracking.  Eliminates the fragile busybox.net download
@@ -377,6 +347,10 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/console c 5 1 && \
     mknod -m 666 dev/null c 1 3 && \
     mknod -m 600 dev/ttyS0 c 4 64
+# Users and groups: root, and frr and frrvty, which the FRR daemons switch
+# to (zebra: "could not lookup user frr" without them). Every flavor gets
+# them, so a ramdisk with FRR never lacks them.
+COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Pre-built static busybox binary from Docker Hub (cached by Docker layer cache)
 COPY --from=busybox-bin /bin/busybox bin/busybox
@@ -399,6 +373,8 @@ COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin/
 RUN for cmd in pvcreate vgs vgcreate lvcreate; do ln -sf lvm "sbin/${cmd}"; done
 COPY --from=sfdisk /util-linux/sfdisk.static bin/sfdisk
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+# "booty lldp ..." and other commands in the rescue shell run the agent binary.
+RUN ln -sf ../init bin/booty
 RUN mkdir -p usr/lib/booty
 COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
 COPY --from=efi-fallback /out/ usr/lib/booty/efi/
@@ -429,11 +405,9 @@ COPY --from=tools /sbin/partprobe bin/partprobe
 COPY --from=tools /usr/bin/partx bin/partx
 COPY --from=tools /bin/lsblk bin/lsblk
 COPY --from=tools /usr/sbin/kpartx bin/kpartx
-COPY --from=tools /usr/bin/qemu-img bin/qemu-img
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
 COPY --from=tools /usr/sbin/dmidecode bin/dmidecode
 COPY --from=tools /usr/sbin/ethtool bin/ethtool
-COPY --from=tools /usr/bin/curl bin/curl
 COPY --from=tools /sbin/ip bin/ip
 COPY --from=tools /sbin/bridge bin/bridge
 
@@ -450,12 +424,6 @@ COPY --from=tools /sbin/cryptsetup sbin/cryptsetup
 COPY --from=tools /usr/bin/mstconfig bin/mstconfig
 COPY --from=tools /usr/bin/mstflint bin/mstflint
 
-# IPMI local management
-COPY --from=tools /usr/bin/ipmitool bin/ipmitool
-
-# LLDP daemon for switch topology discovery
-COPY --from=tools /usr/sbin/lldpcli bin/lldpcli
-COPY --from=tools /usr/sbin/lldpd sbin/lldpd
 
 # Dropbear lightweight SSH server for rescue mode (~110 KB)
 COPY --from=tools /usr/sbin/dropbear bin/dropbear
@@ -481,10 +449,30 @@ COPY --from=kernel /modules/ modules/
 # that every dynamic executable resolves its libraries from the tree alone.
 # Nothing may change the tree between this step and cpio.
 COPY hack/prune-initramfs-libs.sh hack/pack-initramfs.sh /usr/local/bin/
+# The FRR daemons run as frr with the vty group frrvty: both must resolve
+# in the tree (busybox id reads its /etc/passwd and /etc/group).
+RUN chroot . /bin/busybox id frr | tee /dev/stderr | grep -q '(frrvty)' && \
+    chroot . /bin/busybox id root >/dev/null
 RUN prune-initramfs-libs.sh .
 
 # Package initramfs
 RUN pack-initramfs.sh . /initramfs.cpio.zst
+
+# ── Split ramdisk (optional, --target=split) ───────────────────────────────
+# The default tree as a base ramdisk plus one archive per optional payload
+# (FRR), which the boot loader loads only for the runs
+# that need them. See docs/proposal-ramdisk-split.md and pkg/payload.
+# The kernel comes from the same build as the modules of the base, and
+# SHA256SUMS lists every file, so one pin covers the set.
+FROM busybox AS split-builder
+ARG BOOTY_BUILD=unknown
+COPY hack/split-initramfs.sh /usr/local/bin/
+RUN split-initramfs.sh /build/initramfs /split "$BOOTY_BUILD"
+COPY --from=kernel /vmlinuz /split/vmlinuz
+RUN cd /split && sha256sum base.cpio.zst frr.cpio.zst vmlinuz > SHA256SUMS
+
+FROM scratch AS split
+COPY --from=split-builder /split/ .
 
 # ── ISO build stage (optional, triggered by --target=iso) ──────────────────
 # UEFI boot image: Debian shim (Microsoft UEFI CA) + Debian-signed GRUB,
@@ -536,6 +524,10 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/console c 5 1 && \
     mknod -m 666 dev/null c 1 3 && \
     mknod -m 600 dev/ttyS0 c 4 64
+# Users and groups: root, and frr and frrvty, which the FRR daemons switch
+# to (zebra: "could not lookup user frr" without them). Every flavor gets
+# them, so a ramdisk with FRR never lacks them.
+COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Copy busybox binary and create all applet symlinks (same as default variant).
 # This ensures utilities like tail, grep, dmesg, hostname, ps, and xargs are
@@ -549,13 +541,14 @@ RUN cp /usr/bin/growpart bin/growpart
 
 # BOOTy init binary (static, CGO-enabled)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+# "booty lldp ..." and other commands in the rescue shell run the agent binary.
+RUN ln -sf ../init bin/booty
 RUN mkdir -p usr/lib/booty
 COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
 
 # Minimal networking tools (DHCP mode — no FRR, no BGP)
 COPY --from=tools /sbin/ip bin/ip
 COPY --from=tools /usr/sbin/ethtool bin/ethtool
-COPY --from=tools /usr/bin/curl bin/curl
 # EFI boot entries: on UEFI a failed efibootmgr fails provisioning
 # (EFI_BOOT_ENTRY_REQUIRED); its libraries are in /tool-libs.
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
@@ -612,6 +605,10 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/console c 5 1 && \
     mknod -m 666 dev/null c 1 3 && \
     mknod -m 600 dev/ttyS0 c 4 64
+# Users and groups: root, and frr and frrvty, which the FRR daemons switch
+# to (zebra: "could not lookup user frr" without them). Every flavor gets
+# them, so a ramdisk with FRR never lacks them.
+COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Copy busybox binary and create all applet symlinks (same as default variant).
 # This ensures utilities like tail, pgrep, dmesg, lsblk, hostname, ps, grep,
@@ -624,6 +621,8 @@ COPY --from=busybox /build/initramfs/bin/growpart bin/growpart
 
 # BOOTy init binary (with GoBGP compiled in)
 COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
+# "booty lldp ..." and other commands in the rescue shell run the agent binary.
+RUN ln -sf ../init bin/booty
 RUN mkdir -p usr/lib/booty
 COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
 COPY --from=efi-fallback /out/ usr/lib/booty/efi/
@@ -652,11 +651,9 @@ COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
 COPY --from=tools /sbin/partprobe bin/partprobe
 COPY --from=tools /usr/bin/partx bin/partx
 COPY --from=tools /usr/sbin/kpartx bin/kpartx
-COPY --from=tools /usr/bin/qemu-img bin/qemu-img
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
 COPY --from=tools /usr/sbin/dmidecode bin/dmidecode
 COPY --from=tools /usr/sbin/ethtool bin/ethtool
-COPY --from=tools /usr/bin/curl bin/curl
 COPY --from=tools /sbin/ip bin/ip
 COPY --from=tools /sbin/bridge bin/bridge
 
@@ -673,12 +670,6 @@ COPY --from=tools /sbin/cryptsetup sbin/cryptsetup
 COPY --from=tools /usr/bin/mstconfig bin/mstconfig
 COPY --from=tools /usr/bin/mstflint bin/mstflint
 
-# IPMI local management
-COPY --from=tools /usr/bin/ipmitool bin/ipmitool
-
-# LLDP daemon for switch topology discovery
-COPY --from=tools /usr/sbin/lldpcli bin/lldpcli
-COPY --from=tools /usr/sbin/lldpd sbin/lldpd
 
 # Dropbear lightweight SSH server for rescue mode (~110 KB)
 COPY --from=tools /usr/sbin/dropbear bin/dropbear
@@ -725,8 +716,33 @@ RUN make-iso.sh /iso /efiboot.img /booty-gobgp.iso "$ISO_VOLID"
 FROM scratch AS gobgp-iso
 COPY --from=gobgp-iso-builder /booty-gobgp.iso .
 
+# ── Cable check ISO target ────────────────────────────────────────────────
+# The GoBGP ISO with hack/check-iso/vars as /deploy/vars, in an
+# uncompressed cpio archive before the zstd initramfs (like early
+# microcode; an archive appended after the zstd one did not unpack in our
+# test). One generic ISO for every host: MODE=check, links mode, bm4x LLDP
+# identity and CHECK_HOLD=until-poweroff. make-iso.sh packs it like the
+# other ISOs: BIOS (ISOLINUX) and UEFI with Secure Boot (Debian shim, GRUB
+# and kernel).
+FROM gobgp-builder AS check-iso-vars
+COPY hack/check-iso/vars /deploy-root/deploy/vars
+RUN cd /deploy-root && find . | cpio -o -H newc > /deploy.cpio
+
+FROM iso-tools AS check-iso-builder
+ARG ISO_VOLID=BOOTY
+ARG SOURCE_DATE_EPOCH=315532800
+COPY --from=efi-boot /efi-manifest.txt /iso/boot/efi-manifest.txt
+COPY --from=check-iso-vars /deploy.cpio /deploy.cpio
+COPY --from=gobgp-builder /initramfs.cpio.zst /initramfs.cpio.zst
+COPY --from=kernel /vmlinuz /iso/boot/vmlinuz
+RUN cat /deploy.cpio /initramfs.cpio.zst > /iso/boot/initrd.img \
+    && make-iso.sh /iso /efiboot.img /booty-check.iso "$ISO_VOLID"
+
+FROM scratch AS check-iso
+COPY --from=check-iso-builder /booty-check.iso .
+
 # ── Micro target: pure-Go BOOTy only, no external binaries ────────────────
-FROM golang:1.27.1-trixie AS micro-dev
+FROM golang:1.27.2-trixie AS micro-dev
 ARG BOOTY_VERSION=dev
 ARG BOOTY_BUILD=unknown
 ARG BOOTY_COMMIT_TIME=
@@ -760,7 +776,13 @@ RUN mkdir -p bin sbin dev proc run sys tmp etc && \
     mknod -m 600 dev/console c 5 1 && \
     mknod -m 666 dev/null c 1 3 && \
     mknod -m 600 dev/ttyS0 c 4 64
+# Users and groups: root, and frr and frrvty, which the FRR daemons switch
+# to (zebra: "could not lookup user frr" without them). Every flavor gets
+# them, so a ramdisk with FRR never lacks them.
+COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 COPY --from=micro-dev /go/src/github.com/telekom/BOOTy/init .
+# "booty lldp ..." and other commands in the rescue shell run the agent binary.
+RUN ln -sf ../init bin/booty
 RUN mkdir -p etc/ssl/certs && cp /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
 
 # Package micro initramfs

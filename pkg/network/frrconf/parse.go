@@ -723,6 +723,8 @@ func (p *parser) afStatement(f []string) error {
 		af.AdvertiseAllVNI = true
 	case is(f, "advertise-default-gw") && evpn:
 		af.AdvertiseDefaultGW = true
+	case is(f, "enable-resolve-overlay-index") && evpn:
+		af.ResolveOverlayIndex = true
 	case has(f, "vni") && len(f) == 2 && evpn:
 		vni, err := parseUint32(f[1], "VNI")
 		if err != nil {
@@ -736,6 +738,11 @@ func (p *parser) afStatement(f []string) error {
 		af.AdvertiseIPv6Unicast = true
 	case has(f, "route-target") && len(f) == 3 && evpn:
 		return p.routeTarget(af, f[1], f[2])
+	case has(f, "rd") && len(f) == 2 && evpn:
+		if err := validateExtCommunity(f[1]); err != nil {
+			return fmt.Errorf("invalid rd %q: %w", f[1], err)
+		}
+		af.RD = f[1]
 	case is(f, "exit-address-family"), is(f, "exit"):
 		p.pop()
 	default:

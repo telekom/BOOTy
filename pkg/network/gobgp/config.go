@@ -14,6 +14,7 @@
 package gobgp
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -62,6 +63,7 @@ type Config struct {
 	KeepaliveInterval uint64           // BGP keepalive seconds (default: 3)
 	HoldTime          uint64           // BGP hold timer seconds (default: 9)
 	ConnectRetry      uint64           // BGP connect retry seconds (default: 5)
+	ConnectAtOnce     bool             // first connect after Idle at once (default: off)
 	OverlayIP         string           // Overlay loopback IP (derived or same as RouterID)
 	BridgeMAC         string           // Derived MAC for provision bridge
 	IPMIMAC           string           // IPMI MAC for bridge MAC derivation
@@ -70,8 +72,12 @@ type Config struct {
 	NeighborAddrs     []string         // Explicit numbered peer IPs (dual/numbered modes)
 	RemoteASN         uint32           // Remote ASN for numbered peers (0 = same ASN → iBGP)
 	EnableL2          bool             // Enable L2 EVPN overlay (gate Type-2/3 route handling)
-	Type5Only         bool             // Use direct Type-5 routing without an L2 gateway
-	AuthPassword      string           // Optional TCP-MD5 password for BGP peers (empty = no auth)
+	// ResolveOverlayIndex resolves a Type-5 gateway IP overlay index through
+	// Type-2 routes, like FRR "enable-resolve-overlay-index". Without it a
+	// Type-5 route with a gateway IP is not installed, as in FRR.
+	ResolveOverlayIndex bool
+	Type5Only           bool   // Use direct Type-5 routing without an L2 gateway
+	AuthPassword        string // Optional TCP-MD5 password for BGP peers (empty = no auth)
 	// UnderlayAF selects the BGP address family for underlay sessions.
 	// Machine config accepts only ipv4; other parsed values are unsupported.
 	UnderlayAF string
@@ -118,13 +124,19 @@ type Config struct {
 	// empty lists use VPNRT or ASN:VNI.
 	ImportRTs []string
 	ExportRTs []string
+	// RD is the route distinguisher of the L3VNI routes (Type-5) and L2RD
+	// that of the L2VNI routes (Type-2 and Type-3), "ASN:NN" or "IPv4:NN".
+	RD, L2RD string
 	// OverlayDevices, NoAcceptRA and the forwarding settings come from
 	// netplan, frr.conf or the native options.
-	OverlayDevices network.OverlayDevices
-	NoAcceptRA     []string
-	EmitLLDP       []string
-	IPForwarding   *bool
-	IPv6Forwarding *bool
+	OverlayDevices   network.OverlayDevices
+	NoAcceptRA       []string
+	EmitLLDP         []string
+	LLDPProfile      string
+	LLDPPortIDFormat string
+	LLDPAnnounce     string
+	IPForwarding     *bool
+	IPv6Forwarding   *bool
 	// InstallRoutes runs the FIB writer, like zebra.
 	InstallRoutes bool
 	// FastExternalFailover stops unnumbered sessions on carrier loss.
@@ -142,6 +154,26 @@ type Config struct {
 	Policy *PolicyConfig
 	// GracefulRestart configures BGP graceful restart behavior.
 	GracefulRestart *GracefulRestartConfig
+}
+
+// evpnRDs returns the RDs of the EVPN routes: EVPN_RD or the frr.conf
+// "rd", else FRR's automatic "<router-id>:<n>" (bgp_evpn.c
+// bgp_evpn_derive_auto_rd_for_vrf and bgp_evpn_derive_auto_rd). The L3VNI
+// VRF instance has id EVPNRDIndex and an L2VNI the next free id after the
+// instances. Without frr.conf the native peers stand for the bm4x
+// template: "router bgp vrf <neighbor VRF>" first, then the L3VNI VRF.
+func evpnRDs(netCfg *network.Config, routerID string) (l3, l2 string) {
+	if netCfg.EVPNRD != "" {
+		return netCfg.EVPNRD, netCfg.EVPNRD
+	}
+	index, instances := netCfg.EVPNRDIndex, netCfg.BGPInstances
+	if instances == 0 {
+		index, instances = 1, 1
+		if u := cmp.Or(netCfg.BGPNeighborVRF, netCfg.VRFName); u != "" && u != overlayVRFName(netCfg) {
+			index, instances = 2, 2
+		}
+	}
+	return fmt.Sprintf("%s:%d", routerID, index), fmt.Sprintf("%s:%d", routerID, instances+1)
 }
 
 // overlayVRFName is OVERLAY_VRF_NAME when set (empty is the default VRF),
@@ -194,6 +226,7 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		NeighborAddrs:        parseNeighborAddrs(netCfg.BGPNeighbors),
 		RemoteASN:            netCfg.BGPRemoteASN,
 		EnableL2:             netCfg.EVPNL2Enabled,
+		ResolveOverlayIndex:  netCfg.EVPNResolveOverlayIndex,
 		Type5Only:            netCfg.EVPNType5Only,
 		AuthPassword:         netCfg.BGPAuthPassword,
 		UnderlayAF:           netCfg.BGPUnderlayAF,
@@ -207,11 +240,15 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		NeighborVRF:          netCfg.BGPNeighborVRF,
 		AllowASIn:            netCfg.BGPAllowASIn,
 		ConnectRetry:         uint64(netCfg.BGPConnectRetry),
+		ConnectAtOnce:        netCfg.BGPConnectAtOnce,
 		InstallRoutes:        netCfg.BGPInstallRoutes,
 		FastExternalFailover: fastExternalFailover(netCfg),
 		OverlayDevices:       netCfg.OverlayDevices,
 		NoAcceptRA:           netCfg.NoAcceptRA,
-		EmitLLDP:             netCfg.EmitLLDP,
+		EmitLLDP:             emitLLDP(netCfg),
+		LLDPProfile:          netCfg.LLDPProfile,
+		LLDPPortIDFormat:     netCfg.LLDPPortIDFormat,
+		LLDPAnnounce:         netCfg.LLDPAnnounce,
 		IPForwarding:         netCfg.IPForwarding,
 		IPv6Forwarding:       netCfg.IPv6Forwarding,
 		RouteMaps:            netCfg.BGPRouteMaps,
@@ -225,9 +262,8 @@ func NewConfig(netCfg *network.Config) (*Config, error) {
 		BFDReceiveMS:         netCfg.BFDReceiveMS,
 		BFDDetectMult:        netCfg.BFDDetectMult,
 	}
-
+	cfg.RD, cfg.L2RD = evpnRDs(netCfg, underlayIP)
 	cfg.ApplyDefaults()
-
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -305,10 +341,8 @@ func (c *Config) Validate() error {
 	if err := c.validateTimers(); err != nil {
 		return err
 	}
-	for _, spec := range slices.Concat(c.ImportRTs, c.ExportRTs) {
-		if _, _, err := ParseRouteTarget(spec); err != nil {
-			return fmt.Errorf("EVPN route target: %w", err)
-		}
+	if err := c.validateEVPNCommunities(); err != nil {
+		return err
 	}
 	if (c.BFDTransmitMS == 0) != (c.BFDReceiveMS == 0) {
 		return fmt.Errorf("BFD_TRANSMIT_MS and BFD_RECEIVE_MS must be set together")
@@ -392,6 +426,21 @@ func (c *Config) validatePolicy() error {
 	}
 	if err := ValidateCommunities(&c.Policy.ExportCommunities); err != nil {
 		return fmt.Errorf("export communities: %w", err)
+	}
+	return nil
+}
+
+// validateEVPNCommunities checks the route distinguishers and targets.
+func (c *Config) validateEVPNCommunities() error {
+	for _, rd := range []string{c.RD, c.L2RD} {
+		if _, err := parseRouteDistinguisher(rd); rd != "" && err != nil {
+			return fmt.Errorf("EVPN route distinguisher (EVPN_RD): %w", err)
+		}
+	}
+	for _, spec := range slices.Concat(c.ImportRTs, c.ExportRTs) {
+		if _, _, err := ParseRouteTarget(spec); err != nil {
+			return fmt.Errorf("EVPN route target: %w", err)
+		}
 	}
 	return nil
 }
@@ -532,4 +581,13 @@ func fastExternalFailover(n *network.Config) bool {
 		return *n.BGPFastExternalFailover
 	}
 	return len(n.BGPSessions) > 0
+}
+
+// emitLLDP lists the NICs that the underlay sends LLDP on: none when the
+// caller sends on every NIC (LLDPEmitAll).
+func emitLLDP(netCfg *network.Config) []string {
+	if netCfg.LLDPEmitAll {
+		return nil
+	}
+	return netCfg.EmitLLDP
 }

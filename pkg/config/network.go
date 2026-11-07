@@ -6,6 +6,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 )
 
@@ -32,7 +33,8 @@ const (
 //   - Bond/VLAN/VRF sections: read regardless of mode (layered on top)
 type NetworkConfig struct {
 	// Mode selects the network stack implementation.
-	// Valid values: "gobgp", "frr", "static", "dhcp"
+	// Valid values: "gobgp", "frr", "static", "dhcp", "links" (all physical
+	// NICs up with IPv6 link-local only, no DHCP, no BGP)
 	// Default: "" (auto-detect: GoBGP > FRR > Static > DHCP based on which fields are set)
 	Mode string `yaml:"mode" json:"mode"`
 
@@ -109,6 +111,9 @@ type NetworkConfig struct {
 	// neighbors and adds them to the inventory report. Unset (nil) means on.
 	LLDPReceive *bool `yaml:"lldpReceive,omitempty" json:"lldpReceive,omitempty"`
 
+	// LLDP selects what BOOTy sends in its LLDP frames and on which NICs.
+	LLDP LLDPConfig `yaml:"lldp,omitempty" json:"lldp,omitempty"`
+
 	// IPForwarding and IPv6Forwarding set the forwarding sysctls (GoBGP).
 	// Unset (nil) means the frr.conf "[no] ip[v6] forwarding", else IPv4 on
 	// and IPv6 off, like the legacy ramdisk.
@@ -140,6 +145,58 @@ type NetworkConfig struct {
 	VLAN   VLANConfig   `yaml:"vlan"   json:"vlan"`
 	VRF    VRFConfig    `yaml:"vrf"    json:"vrf"`
 	IPMI   IPMIConfig   `yaml:"ipmi"   json:"ipmi"`
+}
+
+// LLDPConfig selects the identity of the sent LLDP frames and the NICs that
+// send them.
+type LLDPConfig struct {
+	// Profile is the identity of the frames: "networkd" (port ID = interface
+	// name, system name = hostname, like systemd-networkd) or
+	// "bm4x-cablecheck" (port ID = NIC MAC, system name "bare-minimal", the
+	// identity that the bm4x connection check matches).
+	// Default: "" (networkd)
+	Profile string `yaml:"profile,omitempty" json:"profile,omitempty"`
+
+	// PortIDFormat is the port ID of the bm4x-cablecheck profile: "mac"
+	// (MAC port ID, subtype 3), "mac-string-colon" ("aa:bb:cc:dd:ee:ff",
+	// subtype 7), "mac-string-dotted" ("aabb.ccdd.eeff", subtype 7) or
+	// "ifname" (interface name, subtype 5). Only with that profile.
+	// Default: "" (mac)
+	PortIDFormat string `yaml:"portIDFormat,omitempty" json:"portIDFormat,omitempty"`
+
+	// EmitAll sends on every physical NIC with carrier, not only on the
+	// emitLLDP (netplan "emit-lldp: true") NICs, in every network mode.
+	// Default: nil (on with the bm4x-cablecheck profile, else off)
+	EmitAll *bool `yaml:"emitAll,omitempty" json:"emitAll,omitempty"`
+
+	// DisableFirmwareAgent stops the firmware LLDP agent (and with it the
+	// firmware DCBX) of Intel NICs (i40e private flag disable-fw-lldp on,
+	// ice fw-lldp-agent off), which consumes the switch's LLDP frames, so
+	// the switch never sees the host. ice keeps the flag in the NVM; BOOTy
+	// does not put it back. false leaves the flag alone. An SR-IOV profile
+	// that sets firmware.fwLLDPAgent owns the flag of its ports.
+	// Default: nil (on; the legacy ramdisk never touches the flag)
+	DisableFirmwareAgent *bool `yaml:"disableFirmwareAgent,omitempty" json:"disableFirmwareAgent,omitempty"`
+
+	// Announce selects the TLVs besides the identity: "parity" (what
+	// networkd sends), "standard" (a BOOTy system description, a port
+	// description with driver and PCI address, the management addresses,
+	// the 802.3 MAC/PHY and maximum frame size TLVs) or "full" (standard
+	// plus the host identity in the system description and the LLDP-MED
+	// inventory).
+	// Default: "" (parity)
+	Announce string `yaml:"announce,omitempty" json:"announce,omitempty"`
+}
+
+// EmitAllNICs reports whether BOOTy sends LLDP on every physical NIC.
+func (l LLDPConfig) EmitAllNICs() bool {
+	return BoolOr(l.EmitAll, l.Profile == lldp.ProfileBM4XCableCheck)
+}
+
+// DisableNICFirmwareLLDP reports whether BOOTy stops the firmware LLDP
+// agent of the NICs: network.lldp.disableFirmwareAgent, on by default.
+func (c *Config) DisableNICFirmwareLLDP() bool {
+	return BoolOr(c.Network.LLDP.DisableFirmwareAgent, true)
 }
 
 // BGPConfig holds BGP peering and tuning parameters.
@@ -220,6 +277,14 @@ type BGPConfig struct {
 	// Default: 0 (5s, or the frr.conf value)
 	ConnectRetry uint32 `yaml:"connectRetry" json:"connectRetry"`
 
+	// ConnectAtOnce starts the first connect of a GoBGP peer at once when
+	// it leaves Idle, like FRR when BGP_Start runs, instead of after a
+	// random 0 to 1 s. Unset (nil) means off: after a carrier loss both
+	// sides then have a connect pending until the link works again, and
+	// the connection collision that follows is resolved per RFC 4271 6.8
+	// but made the production template lab fail now and then (#811).
+	ConnectAtOnce *bool `yaml:"connectAtOnce,omitempty" json:"connectAtOnce,omitempty"`
+
 	// LocalAS is the local AS that GoBGP sends to the unnumbered (eBGP)
 	// peers, like FRR "neighbor X local-as N no-prepend replace-as". An
 	// explicit value also replaces the local-as of frr.conf eBGP peers.
@@ -249,6 +314,11 @@ type BGPConfig struct {
 	// GracefulRestartTime is the graceful restart time in seconds, 1 to
 	// 4095. 0 means 120, like FRR.
 	GracefulRestartTime uint32 `yaml:"gracefulRestartTime,omitempty" json:"gracefulRestartTime,omitempty"`
+	// GracefulNotification sets the N bit (RFC 8538) of the graceful
+	// restart capability, like FRR "bgp graceful-restart notification"
+	// (GoBGP). Unset (nil) follows the FRR default: off for "frr version"
+	// below 8.3 in frr.conf, else on.
+	GracefulNotification *bool `yaml:"gracefulNotification,omitempty" json:"gracefulNotification,omitempty"`
 	// AddPathReceive sends the add-path capability with receive in every
 	// address family, like FRR (GoBGP). Unset (nil) means on.
 	AddPathReceive *bool `yaml:"addPathReceive,omitempty" json:"addPathReceive,omitempty"`
@@ -349,6 +419,12 @@ type EVPNConfig struct {
 	// Default: false
 	L2Enabled bool `yaml:"l2Enabled" json:"l2Enabled"`
 
+	// ResolveOverlayIndex installs Type-5 routes with a gateway IP overlay
+	// index once a Type-2 route resolves the gateway, like FRR
+	// "enable-resolve-overlay-index". Needs l2Enabled.
+	// Default: false
+	ResolveOverlayIndex bool `yaml:"resolveOverlayIndex" json:"resolveOverlayIndex"`
+
 	// Type5Only enables direct EVPN Type-5 routing without an L2 gateway.
 	// In this mode provisionGateway is optional; remote VTEPs are reached
 	// through underlay BGP routes learned from the fabric.
@@ -363,6 +439,12 @@ type EVPNConfig struct {
 	// Default: "" (the frr.conf value, else vpnRT, else ASN:VNI)
 	ImportRouteTargets string `yaml:"importRouteTargets" json:"importRouteTargets"`
 	ExportRouteTargets string `yaml:"exportRouteTargets" json:"exportRouteTargets"`
+
+	// RD is the route distinguisher of BOOTy's EVPN routes ("ASN:NN" or
+	// "IPv4:NN"), like FRR "rd" in the VRF's address-family l2vpn evpn. It
+	// wins over the provisioner frr.conf.
+	// Default: "" (the frr.conf value, else "<router-id>:<n>" like FRR)
+	RD string `yaml:"rd,omitempty" json:"rd,omitempty"`
 
 	// Type5Networks is a comma-separated list of prefixes that BOOTy
 	// originates as EVPN Type-5 routes, like FRR "network" lines with

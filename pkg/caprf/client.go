@@ -49,6 +49,9 @@ type Client struct {
 	// vars is the raw /deploy/vars file, the base of standby command payloads.
 	vars         []byte
 	insecureWarn sync.Map
+	// stagedDeploy is the staging directory of the last deploy archive
+	// payload, until ApplyCommandFiles or DiscardCommandFiles.
+	stagedDeploy string
 }
 
 var errInsecureTransport = errors.New("insecure transport")
@@ -85,10 +88,15 @@ func New(varsPath string) (*Client, error) {
 }
 
 // CommandConfig returns the config for a standby command with a payload.
-// See MergeCommandVars.
+// See MergeCommandVars, and deploy_archive.go for a deploy archive payload.
 func (c *Client) CommandConfig(payload []byte) (cfg *config.MachineConfig, keys []string, err error) {
 	if c.vars == nil {
 		return nil, nil, fmt.Errorf("command payloads need a client created from a vars file")
+	}
+	// The staged archive of an earlier command never applies to this one.
+	c.DiscardCommandFiles()
+	if isDeployArchive(payload) {
+		return c.stageDeployArchive(payload)
 	}
 	return MergeCommandVars(c.vars, payload)
 }
@@ -367,6 +375,14 @@ func (c *Client) ReportHealthChecks(ctx context.Context, results []health.CheckR
 	return c.postJSONWithAuth(ctx, c.cfg.Health.ReportURL, data)
 }
 
+// ReportCheckResult sends the check result document (CHECK_RESULT_URL).
+func (c *Client) ReportCheckResult(ctx context.Context, data []byte) error {
+	if c.cfg.Check.ResultURL == "" {
+		return fmt.Errorf("no check result URL configured")
+	}
+	return c.postJSONWithAuth(ctx, c.cfg.Check.ResultURL, data)
+}
+
 // Heartbeat sends a keepalive to the CAPRF server.
 // Returns nil if no heartbeat URL is configured (non-standby mode).
 func (c *Client) Heartbeat(ctx context.Context) error {
@@ -424,8 +440,9 @@ func (c *Client) FetchCommands(ctx context.Context) ([]config.Command, error) {
 	}
 
 	var cmds []config.Command
-	// Limit response body to 1 MiB to prevent OOM from an oversized response.
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&cmds); err != nil {
+	// Limit the response body to prevent OOM from an oversized response. A
+	// deploy archive payload (base64) carries the per-job files.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&cmds); err != nil {
 		return nil, fmt.Errorf("decode commands: %w", err)
 	}
 	return cmds, nil
@@ -1211,7 +1228,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	if applySecureBootDigestVar(cfg, key, value) {
 		return true
 	}
-	if applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) {
+	if applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) || applyCheckStringVar(cfg, key, value) {
 		return true
 	}
 
@@ -1287,6 +1304,36 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	return false
 }
 
+// splitVarList splits a comma-separated vars value.
+func splitVarList(value string) []string {
+	var out []string
+	for _, v := range strings.Split(value, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// applyCheckStringVar handles the check mode keys.
+func applyCheckStringVar(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
+	case "CHECK_HOLD":
+		cfg.Check.Hold = value
+	case "LLDP_NEIGHBOR_WAIT":
+		cfg.Check.LLDPNeighborWait = value
+	case "CHECK_PROFILES":
+		cfg.Check.Profiles = splitVarList(value)
+	case "CHECK_RESULT_SINKS":
+		cfg.Check.Sinks = splitVarList(value)
+	case "CHECK_RESULT_URL":
+		cfg.Check.ResultURL = value
+	default:
+		return false
+	}
+	return true
+}
+
 func applyAgentStringVar(cfg *config.MachineConfig, key, value string) bool {
 	switch key {
 	case "HEARTBEAT_URL":
@@ -1350,6 +1397,9 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BOND_MODE":           &cfg.Network.Bond.Mode,
 		"VLANS":               &cfg.Network.VLAN.Config,
 		"NETWORK_MODE":        &cfg.Network.Mode,
+		"LLDP_PROFILE":        &cfg.Network.LLDP.Profile,
+		"LLDP_PORT_ID_FORMAT": &cfg.Network.LLDP.PortIDFormat,
+		"LLDP_ANNOUNCE":       &cfg.Network.LLDP.Announce,
 		"VRF_NAME":            &cfg.Network.VRF.Name,
 		"vrf_name":            &cfg.Network.VRF.Name,
 		"BGP_PEER_MODE":       &cfg.Network.BGP.PeerMode,
@@ -1371,6 +1421,7 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BGP_ROUTE_MAP_IN":    &cfg.Network.BGP.RouteMapIn,
 		"BGP_ROUTE_MAP_OUT":   &cfg.Network.BGP.RouteMapOut,
 		"EVPN_RT_IMPORT":      &cfg.Network.EVPN.ImportRouteTargets,
+		"EVPN_RD":             &cfg.Network.EVPN.RD,
 		"EVPN_RT_EXPORT":      &cfg.Network.EVPN.ExportRouteTargets,
 	}
 
@@ -1605,6 +1656,8 @@ func applyCoreBoolVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Provision.DisableKexec = parseBoolVar(value)
 	case "SECURE_ERASE":
 		cfg.Provision.Disk.SecureErase = parseBoolVar(value)
+	case "IMAGE_STREAM":
+		cfg.Provision.Image.Stream = parseBoolVar(value)
 	case "INVENTORY_ENABLED":
 		cfg.Provision.Inventory.Enabled = parseBoolVar(value)
 	case "FIRMWARE_REPORT":
@@ -1744,6 +1797,10 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		"BFD_PROFILES":        &cfg.Network.BGP.BFDProfiles,
 		"BGP_ROUTE_MAPS":      &cfg.Network.BGP.RouteMaps,
 		"BGP_COMMUNITY_LISTS": &cfg.Network.BGP.CommunityLists,
+		// The cable check inputs, like check.expectedCabling and
+		// check.thresholds in YAML.
+		"CHECK_EXPECTED_CABLING": &cfg.Check.ExpectedCabling,
+		"CHECK_THRESHOLDS":       &cfg.Check.Thresholds,
 	}[key]; ok {
 		// A JSON list, like network.bgp.sessions in YAML. An unknown field
 		// fails, like in the YAML config, so an unsupported statement is
@@ -1765,10 +1822,14 @@ func applyOptionalBoolVar(cfg *config.MachineConfig, key, value string) (bool, e
 		"BGP_FAST_EXTERNAL_FAILOVER": &cfg.Network.BGP.FastExternalFailover,
 		"BGP_EBGP_REQUIRES_POLICY":   &cfg.Network.BGP.EBGPRequiresPolicy,
 		"BGP_GRACEFUL_RESTART":       &cfg.Network.BGP.GracefulRestart,
+		"BGP_GRACEFUL_NOTIFICATION":  &cfg.Network.BGP.GracefulNotification,
+		"BGP_CONNECT_AT_ONCE":        &cfg.Network.BGP.ConnectAtOnce,
 		"BGP_ADDPATH_RX":             &cfg.Network.BGP.AddPathReceive,
 		"BGP_SOFTWARE_VERSION":       &cfg.Network.BGP.SoftwareVersion,
 		"LLDP_RECEIVE":               &cfg.Network.LLDPReceive,
 		"OOB_EFI_VAR":                &cfg.Telemetry.OOBEFIVar,
+		"LLDP_EMIT_ALL":              &cfg.Network.LLDP.EmitAll,
+		"LLDP_DISABLE_FW_AGENT":      &cfg.Network.LLDP.DisableFirmwareAgent,
 	}[key]; ok {
 		// A typo must not silently pick a value, so only booleans parse.
 		v, err := strconv.ParseBool(value)
@@ -1800,6 +1861,8 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) (bool, err
 		cfg.Rescue.AutoMountDisks = parseBoolVar(value)
 	case "EVPN_L2_ENABLED":
 		cfg.Network.EVPN.L2Enabled = parseBoolVar(value)
+	case "EVPN_RESOLVE_OVERLAY_INDEX":
+		cfg.Network.EVPN.ResolveOverlayIndex = parseBoolVar(value)
 	case "EVPN_TYPE5_ONLY":
 		v := parseBoolVar(value)
 		cfg.Network.EVPN.Type5Only = &v

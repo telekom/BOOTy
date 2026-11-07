@@ -11,13 +11,14 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
-	apipb "github.com/osrg/gobgp/v3/api"
-	"github.com/osrg/gobgp/v3/pkg/apiutil"
-	"github.com/osrg/gobgp/v3/pkg/packet/bgp"
-	"github.com/osrg/gobgp/v3/pkg/server"
+	apipb "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
+	"github.com/osrg/gobgp/v4/pkg/server"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
@@ -94,19 +95,21 @@ func fibTestRoutes(t *testing.T, h *netlink.Handle) []string {
 
 func fibTestAnnounce(t *testing.T, s *server.BgpServer, prefix, nexthop string, withdraw bool) {
 	t.Helper()
-	ip, ipnet, _ := net.ParseCIDR(prefix)
-	ones, _ := ipnet.Mask.Size()
-	nlri := bgp.NewIPAddrPrefix(uint8(ones), ip.String()) //nolint:gosec // test prefix length
-	p, err := apiutil.NewPath(nlri, withdraw, []bgp.PathAttributeInterface{
-		bgp.NewPathAttributeOrigin(0), bgp.NewPathAttributeNextHop(nexthop), bgp.NewPathAttributeLocalPref(100),
-	}, time.Now())
+	nlri, err := bgp.NewIPAddrPrefix(netip.MustParsePrefix(prefix))
 	if err != nil {
 		t.Fatal(err)
 	}
+	nh, err := bgp.NewPathAttributeNextHop(netip.MustParseAddr(nexthop))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &apiutil.Path{Family: bgp.RF_IPv4_UC, Nlri: nlri, Attrs: []bgp.PathAttributeInterface{
+		bgp.NewPathAttributeOrigin(0), nh, bgp.NewPathAttributeLocalPref(100),
+	}}
 	if withdraw {
-		err = s.DeletePath(context.Background(), &apipb.DeletePathRequest{Path: p})
+		err = s.DeletePath(apiutil.DeletePathRequest{Paths: []*apiutil.Path{p}})
 	} else {
-		_, err = s.AddPath(context.Background(), &apipb.AddPathRequest{Path: p})
+		_, err = s.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{p}})
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -179,6 +182,21 @@ func TestFIBWriterKernel(t *testing.T) {
 	}
 	w := newFIBWriter(booty, sel, map[int]string{1000: "vrf-t"})
 	w.nl, w.resync = h, time.Second
+	var removedMu sync.Mutex
+	var removed []string
+	w.onRemove = func(table int, p netip.Prefix) {
+		removedMu.Lock()
+		defer removedMu.Unlock()
+		removed = append(removed, routeKey(table, p))
+	}
+	wantRemoved := func(want ...string) {
+		t.Helper()
+		removedMu.Lock()
+		defer removedMu.Unlock()
+		if !slices.Equal(removed, want) {
+			t.Fatalf("removal callbacks = %q, want %q", removed, want)
+		}
+	}
 	wctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
@@ -194,8 +212,13 @@ func TestFIBWriterKernel(t *testing.T) {
 	fibTestAnnounce(t, fabric, "192.0.2.98/32", "10.99.0.1", false)
 	waitFIB(t, h, []string{"198.51.100.0/24 via 10.99.0.2 metric 20", "203.0.113.0/24 via 10.99.0.3 metric 20"})
 
+	if !w.owns(1000, netip.MustParsePrefix("198.51.100.0/24")) || w.owns(unix.RT_TABLE_MAIN, netip.MustParsePrefix("198.51.100.0/24")) {
+		t.Fatal("owns: want 198.51.100.0/24 in table 1000 only")
+	}
+
 	fibTestAnnounce(t, fabric, "198.51.100.0/24", "10.99.0.2", true)
 	waitFIB(t, h, []string{"203.0.113.0/24 via 10.99.0.3 metric 20"})
+	wantRemoved("1000/198.51.100.0/24")
 
 	_, lost, _ := net.ParseCIDR("203.0.113.0/24")
 	if err := h.RouteDel(&netlink.Route{Dst: lost, Table: 1000, Protocol: unix.RTPROT_BGP, Priority: fibMetric}); err != nil {
@@ -208,6 +231,7 @@ func TestFIBWriterKernel(t *testing.T) {
 	if got := fibTestRoutes(t, h); len(got) != 0 {
 		t.Fatalf("table 1000 after stop = %q, want no BGP routes", got)
 	}
+	wantRemoved("1000/198.51.100.0/24", "1000/203.0.113.0/24")
 }
 
 // A next hop that only the default route of the VRF covers is resolved
@@ -241,4 +265,133 @@ func TestFIBResolveViaDefault(t *testing.T) {
 			t.Errorf("resolve-via-default %v: %s resolved %v, want %v", tt.viaDefault, tt.nh, ok, tt.want)
 		}
 	}
+}
+
+// fibTestGateways returns the gateways of the BGP route to dst in table
+// 1000, sorted.
+func fibTestGateways(t *testing.T, h *netlink.Handle, dst string) []string {
+	t.Helper()
+	var out []string
+	for _, r := range fibTestRouteList(t, h) {
+		if r.Dst.String() != dst {
+			continue
+		}
+		if r.Gw != nil {
+			out = append(out, r.Gw.String())
+		}
+		for _, nh := range r.MultiPath {
+			out = append(out, nh.Gw.String())
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func fibTestRouteList(t *testing.T, h *netlink.Handle) []netlink.Route {
+	t.Helper()
+	routes, err := h.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: 1000, Protocol: unix.RTPROT_BGP}, netlink.RT_FILTER_TABLE|netlink.RT_FILTER_PROTOCOL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return routes
+}
+
+// When the peer of a non-best ECMP path goes down, the best path stays and
+// no path update arrives; the watch must still drop that next hop. The
+// periodic resync is out of reach here. GoBGP 4.10 reports the drop on two
+// streams: AdjInWithdraw and a best path event with an unchanged best path
+// (pkg/server/server.go:1508 notifies on every propagation), so this test
+// fails only when both are gone.
+func TestFIBWriterDropsECMPPathOfPeerDown(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root for a network namespace")
+	}
+	h := fibTestNS(t)
+	ctx := context.Background()
+	fams := []*apipb.AfiSafi{{Config: &apipb.AfiSafiConfig{Family: &apipb.Family{Afi: apipb.Family_AFI_IP, Safi: apipb.Family_SAFI_UNICAST}}}}
+	booty := server.NewBgpServer()
+	go booty.Serve()
+	t.Cleanup(booty.Stop)
+	if err := booty.StartBgp(ctx, &apipb.StartBgpRequest{Global: &apipb.Global{Asn: 65000, RouterId: "10.0.0.9", ListenPort: -1}}); err != nil {
+		t.Fatal(err)
+	}
+	fabrics := map[string]*server.BgpServer{}
+	for i, addr := range []string{"127.0.0.2", "127.0.0.3"} {
+		ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr+":0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := ln.Addr().(*net.TCPAddr).Port
+		ln.Close()
+		s := server.NewBgpServer()
+		go s.Serve()
+		t.Cleanup(s.Stop)
+		if err := s.StartBgp(ctx, &apipb.StartBgpRequest{Global: &apipb.Global{
+			Asn: 65000, RouterId: "10.0.0." + strconv.Itoa(i+1), ListenPort: int32(port), ListenAddresses: []string{addr}, //nolint:gosec // test port
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.AddPeer(ctx, &apipb.AddPeerRequest{Peer: &apipb.Peer{
+			Conf: &apipb.PeerConf{NeighborAddress: "127.0.0.1", PeerAsn: 65000}, Transport: &apipb.Transport{PassiveMode: true}, AfiSafis: fams,
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := booty.AddPeer(ctx, &apipb.AddPeerRequest{Peer: &apipb.Peer{
+			Conf: &apipb.PeerConf{NeighborAddress: addr, PeerAsn: 65000}, AfiSafis: fams,
+			Transport: &apipb.Transport{RemotePort: uint32(port)}, //nolint:gosec // test port
+			Timers:    &apipb.Timers{Config: &apipb.TimersConfig{ConnectRetry: 1}},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		fabrics[addr] = s
+	}
+	sel := &fibSelector{
+		localAS: func(string) uint32 { return 65000 },
+		table:   func(string) int { return 1000 },
+		peerDev: func(string) string { return "" },
+	}
+	w := newFIBWriter(booty, sel, map[int]string{1000: "vrf-t"})
+	w.nl, w.resync = h, time.Hour
+	wctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.run(wctx)
+	}()
+	t.Cleanup(func() { cancel(); <-done })
+
+	fibTestAnnounce(t, fabrics["127.0.0.2"], "198.51.100.0/24", "10.99.0.2", false)
+	fibTestAnnounce(t, fabrics["127.0.0.3"], "198.51.100.0/24", "10.99.0.3", false)
+	waitGateways := func(want ...string) {
+		t.Helper()
+		deadline := time.Now().Add(20 * time.Second)
+		var got []string
+		for time.Now().Before(deadline) {
+			if got = fibTestGateways(t, h, "198.51.100.0/24"); slices.Equal(got, want) {
+				return
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		t.Fatalf("gateways of 198.51.100.0/24 = %q, want %q", got, want)
+	}
+	waitGateways("10.99.0.2", "10.99.0.3")
+
+	// Take down the peer whose path is not the best one.
+	var down string
+	err := booty.ListPath(apiutil.ListPathRequest{TableType: apipb.TableType_TABLE_TYPE_GLOBAL, Family: bgp.RF_IPv4_UC},
+		func(_ bgp.NLRI, paths []*apiutil.Path) {
+			for _, p := range paths {
+				if !p.Best {
+					down = p.PeerAddress.String()
+				}
+			}
+		})
+	if err != nil || down == "" {
+		t.Fatalf("no non-best path: %v", err)
+	}
+	if err := booty.DisablePeer(ctx, &apipb.DisablePeerRequest{Address: down}); err != nil {
+		t.Fatal(err)
+	}
+	keep := map[string]string{"127.0.0.2": "10.99.0.3", "127.0.0.3": "10.99.0.2"}[down]
+	waitGateways(keep)
 }

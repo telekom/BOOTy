@@ -2499,6 +2499,19 @@ func TestParseVarsImageChecksumScope(t *testing.T) {
 	}
 }
 
+func TestParseVarsImageStream(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("IMAGE_STREAM=true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Provision.Image.Stream {
+		t.Fatal("IMAGE_STREAM=true did not set provision.image.stream")
+	}
+	if _, err := ParseVars(strings.NewReader("IMAGE_STREAM=true\nIMAGE_MODE=partition\n")); err == nil {
+		t.Fatal("ParseVars accepted IMAGE_STREAM=true with IMAGE_MODE=partition")
+	}
+}
+
 func TestParseVarsDiskSettleTimeout(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader("DISK_SETTLE_TIMEOUT_SEC=0\n"))
 	if err != nil {
@@ -2633,7 +2646,7 @@ func TestParseVarsGRUBCmdlineMode(t *testing.T) {
 		"GRUB_CMDLINE_MODE=append\n":                             true,
 		"CAPRF_LEGACY_COMPAT=true\n":                             true,
 		"CAPRF_LEGACY_COMPAT=true\nGRUB_CMDLINE_MODE=resolved\n": false,
-		"HOSTNAME=x\n": false,
+		"HOSTNAME=x\n":                                           false,
 	} {
 		cfg, err := ParseVars(strings.NewReader(vars))
 		if err != nil {
@@ -2893,6 +2906,7 @@ func TestParseVarsEmptyIntegersKeepDefaults(t *testing.T) {
 func TestParseVarsNativeSessions(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader(`BGP_DEFAULTS=traditional
 BGP_HOSTNAME=m-001
+EVPN_RD=192.0.2.17:9
 BGP_PEER_GROUPS=[{"name":"leaf","remoteAS":"65500","localAS":65501,"families":["ipv4-unicast"]}]
 BGP_SESSIONS=[{"name":"ens1f0np0","interface":true,"peerGroup":"leaf","allowASIn":3},{"name":"198.51.100.1","remoteAS":"internal","families":["l2vpn-evpn"]}]
 BGP_MULTIPATH_RELAX=true
@@ -2904,6 +2918,9 @@ BFD_PROFILES=[{"name":"fabric","transmitInterval":150,"receiveInterval":150,"det
 	b := cfg.Network.BGP
 	if len(b.BFDProfiles) != 1 || b.BFDProfiles[0].Name != "fabric" || *b.BFDProfiles[0].TransmitInterval != 150 || *b.BFDProfiles[0].DetectMultiplier != 3 {
 		t.Fatalf("BFD profiles = %+v", b.BFDProfiles)
+	}
+	if cfg.Network.EVPN.RD != "192.0.2.17:9" {
+		t.Fatalf("EVPN_RD = %q", cfg.Network.EVPN.RD)
 	}
 	if b.Defaults != "traditional" || b.Hostname != "m-001" || len(b.PeerGroups) != 1 || b.PeerGroups[0].LocalAS != 65501 ||
 		len(b.Sessions) != 2 || !b.Sessions[0].Interface || b.Sessions[0].AllowASIn != 3 || b.Sessions[1].RemoteAS != "internal" ||
@@ -2942,6 +2959,8 @@ BGP_GRACEFUL_RESTART=false
 BGP_GRACEFUL_RESTART_TIME=60
 BGP_ADDPATH_RX=false
 BGP_SOFTWARE_VERSION=true
+BGP_GRACEFUL_NOTIFICATION=false
+BGP_CONNECT_AT_ONCE=true
 BGP_EBGP_REQUIRES_POLICY=false
 BRIDGE_MAC=02:54:c0:00:02:13
 VXLAN_LINK=dum.underlay
@@ -2960,9 +2979,13 @@ OVERLAY_VRF_TABLE_ID=20
 	if b.BFDDetectMultiplier != 4 {
 		t.Errorf("BFD_DETECT_MULTIPLIER = %d, want 4", b.BFDDetectMultiplier)
 	}
+	if b.ConnectAtOnce == nil || !*b.ConnectAtOnce {
+		t.Errorf("BGP_CONNECT_AT_ONCE = %v, want true", b.ConnectAtOnce)
+	}
 	if b.GracefulRestart == nil || *b.GracefulRestart || b.GracefulRestartTime != 60 ||
-		b.AddPathReceive == nil || *b.AddPathReceive || b.SoftwareVersion == nil || !*b.SoftwareVersion {
-		t.Errorf("capabilities = %v %d %v %v", b.GracefulRestart, b.GracefulRestartTime, b.AddPathReceive, b.SoftwareVersion)
+		b.AddPathReceive == nil || *b.AddPathReceive || b.SoftwareVersion == nil || !*b.SoftwareVersion ||
+		b.GracefulNotification == nil || *b.GracefulNotification {
+		t.Errorf("capabilities = %v %d %v %v %v", b.GracefulRestart, b.GracefulRestartTime, b.AddPathReceive, b.SoftwareVersion, b.GracefulNotification)
 	}
 	// An explicit 0 and an explicit false are set, not unset.
 	if b.AllowASIn == nil || *b.AllowASIn != 0 || b.InstallRoutes == nil || *b.InstallRoutes ||

@@ -14,6 +14,7 @@
   "ProvisionIP": "",
   "ProvisionGateway": "",
   "DNSResolvers": "",
+  "KeepResolvConf": false,
   "DCGWIPs": "",
   "LeafASN": 0,
   "LocalASN": 65501,
@@ -25,6 +26,7 @@
   "StaticMatch": null,
   "LinkRenames": null,
   "NICWait": 0,
+  "UdevNames": false,
   "InterfaceNames": [
     "ens1f0np0",
     "ens1f0np0"
@@ -112,10 +114,12 @@
   "BGPCapabilities": {
     "GracefulRestart": false,
     "GracefulRestartTime": 0,
+    "GracefulNotification": false,
     "AddPathReceive": false,
     "SoftwareVersion": false
   },
   "BGPDefaults": "traditional",
+  "BGPFRRVersion": "8.2.2",
   "BGPHostname": "",
   "BGPRouteMaps": [
     {
@@ -163,6 +167,7 @@
   "BGPLocalAS": 0,
   "BGPNeighborVRF": "",
   "BGPConnectRetry": 0,
+  "BGPConnectAtOnce": false,
   "BGPAllowASIn": 0,
   "BGPInstallRoutes": false,
   "BGPFastExternalFailover": null,
@@ -179,6 +184,7 @@
   "EVPNL2Enabled": false,
   "EVPNType5Only": true,
   "EVPNType5OnlySet": false,
+  "EVPNResolveOverlayIndex": false,
   "EVPNL3VNIs": [
     3000
   ],
@@ -194,6 +200,9 @@
   "EVPNExportRTs": [
     "65169:3000"
   ],
+  "EVPNRD": "",
+  "EVPNRDIndex": 2,
+  "BGPInstances": 2,
   "Type5Networks": [
     "2001:db8:40a:5481::17/128",
     "2001:db8:40a:5481::/64"
@@ -218,6 +227,11 @@
   "EmitLLDP": [
     "ens1f0np0"
   ],
+  "LLDPProfile": "",
+  "LLDPPortIDFormat": "",
+  "LLDPAnnounce": "",
+  "LLDPEmitAll": false,
+  "EmitLLDPMatches": null,
   "IPForwarding": false,
   "IPv6Forwarding": null,
   "VLANs": null

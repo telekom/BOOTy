@@ -82,7 +82,7 @@ CAPRF-compatible `/deploy/vars` file.
 
 ## Prerequisites
 
-- Go **1.26+**
+- Go **1.27+**
 - Docker (for building the initramfs)
 - Redfish BMC with ISO virtual media or another boot path that supplies the BOOTy kernel, initramfs, and `/deploy/vars`
 
@@ -90,9 +90,10 @@ CAPRF-compatible `/deploy/vars` file.
 
 | Requirement          | Version | Notes |
 |----------------------|---------|-------|
-| Go                   | 1.26+   | `GOOS=linux` for cross-compilation on macOS/Windows |
+| Go                   | 1.27+   | `GOOS=linux` for cross-compilation on macOS/Windows |
 | Docker / Buildx      | 20.10+  | Multi-arch builds (`linux/amd64`, `linux/arm64`) |
-| golangci-lint        | v2.12.2 | Installed into `bin/` by `make lint`, config in `.golangci.yml` |
+| golangci-lint        | v2.14.0 | Installed into `bin/` by `make lint`, config in `.golangci.yml` |
+| git-cliff            | 2.14.2  | `make changelog` only, for example `pipx install git-cliff==2.14.2` |
 | GNU Make             | 4.0+    | Build automation |
 | ContainerLab         | 0.44+   | E2E tests only (Linux) |
 | KVM / QEMU           | —       | E2E boot tests only (Linux) |
@@ -182,6 +183,26 @@ The `initrd.Dockerfile` supports multiple build targets via `--target`:
 | `slim` | ~30 MB | DHCP only | Provisioning basics, no LVM/FRR | Lightweight provisioning without BGP |
 | `micro` | ~10 MB | None (pure Go) | None | Minimal agent, custom network stack |
 | `kernel-image` | ~12 MB | n/a | n/a | The Debian `vmlinuz` that matches the shipped modules, for QEMU tests |
+| `split` | see below | as the default | as the default | The default ramdisk as a base archive plus one archive per optional payload |
+
+The `split` target writes `base.cpio.zst`, one archive per payload
+(`frr.cpio.zst`), the `vmlinuz`
+whose modules the base carries, and `SHA256SUMS` over all of them. The boot
+loader loads the base and, after it, only the payloads that the run needs.
+The kernel unpacks them over each other (ISOLINUX
+`initrd=/boot/base.cpio.zst,/boot/frr.cpio.zst`, GRUB
+`initrd /boot/base.cpio.zst /boot/frr.cpio.zst`).
+
+| Payload | Load it for |
+|---|---|
+| `frr` | FRR network mode (`asn_server` with `underlay_ip` or `underlay_subnet`, no `NETWORK_MODE=gobgp`) |
+
+Each payload archive carries `/etc/booty/payloads/<name>` with the build
+ID, and BOOTy refuses a payload of another build (`BOOTY-PAY-002`). A run
+that needs a payload the boot loader did not load fails with
+`BOOTY-PAY-001` ([docs/failure-codes.md](docs/failure-codes.md)). PR
+artifacts (`booty-pr-split`) and releases (`split-<arch>-<part>.cpio.zst`)
+publish the archives; the other targets are unchanged.
 
 The build stages use Debian 13 (trixie) packages. The kernel and its modules
 come from the Debian-signed `linux-image-amd64` (or `linux-image-arm64`) of
@@ -220,8 +241,30 @@ same files cannot take over the boot. The volume label is `BOOTY`
 `hack/make-iso.sh` packs the ISO (xorriso's hybrid GPT layout with an appended
 EFI partition, as Ubuntu's ISOs use it); other ISOs, for example a
 cable-check ISO, can reuse both, or the `efi-boot` and `iso-tools` stages. The
-kernel command line of an ISO boot is `console=tty0 console=ttyS0,115200n8`.
+kernel command line of an ISO boot is
+`console=tty0 console=ttyS0,115200n8 loglevel=4 panic=10`: the console shows
+kernel errors only, and BOOTy logs the Secure Boot and lockdown state itself
+(`kernel security state`).
+
+Without a `panic=` or `sysctl.kernel.panic=` (with either separator, also
+`sysctl/kernel/panic=`) parameter on the kernel
+command line (before `--`),
+BOOTy sets `kernel.panic` to 10 when it starts as PID 1, so a kernel panic, also the "Attempted
+to kill init" panic when BOOTy itself crashes, reboots the host after 10 s
+instead of hanging; the ramdisk then boots again, as after a failed run. An
+explicit `panic=` or `sysctl.kernel.panic=` (for example `panic=0` to keep a
+panicked host) wins. The
+CAPRF ISOs set no `panic=`, so this covers them without a CAPRF change.
 The ISOs are amd64 only.
+
+Neither boot loader waits. ISOLINUX (BIOS) has no `PROMPT` or `TIMEOUT`, so
+it boots its only entry at once, as before. GRUB (UEFI) has
+`timeout_style=hidden` and `timeout=0`: it draws no menu and boots at once.
+To edit the kernel command line on UEFI, open the GRUB menu: hold Esc or
+Shift while GRUB starts, then press `e` on the `BOOTy` entry. On a BMC, use
+the virtual KVM (HTML5 or Java console) keyboard and hold the key from the
+firmware logo on; key presses on the serial-over-LAN console may arrive too
+late or not count, and Shift is not a key on a serial line at all.
 
 `SOURCE_DATE_EPOCH` fixes the timestamps, the ISO volume UUID, the GPT GUIDs
 and the FAT serial. The default is 315532800 (1980-01-01, the earliest FAT
@@ -237,8 +280,10 @@ or security update of shim or GRUB breaks the ISO build until the three pins
 are bumped, and old tags can no longer be rebuilt with their pins. To rebuild
 an old tag, point the `efi-boot` stage at
 [snapshot.debian.org](https://snapshot.debian.org/) for the date of the tag.
-Dependabot (the updater of this repository) does not track Debian package
-versions. The ISO builds of every pull request (`KVM iso-firmware`, PR ISO
+Dependabot does not track Debian package versions. Review these pins manually;
+update and boot-test all three together (see
+[Dependency Updates](CONTRIBUTING.md#dependency-updates)).
+The ISO builds of every pull request (`KVM iso-firmware`, PR ISO
 artifacts) fail at the `efi-boot` stage when a pin is gone, which is the
 signal to bump all three together.
 
@@ -507,6 +552,7 @@ root is mounted.
 | `IMAGE_CHECKSUM_TYPE` | — | Checksum algorithm: `sha256` or `sha512` |
 | `IMAGE_CHECKSUM_SCOPE` | `download` | `download` (file as downloaded) or `decompressed` (decompressed image) |
 | `IMAGE_MODE` | `whole-disk` | Image write mode: `whole-disk`, `partition`, or `ab`; with a declarative partition layout, `whole-disk` streams the selected root filesystem into the declared root partition |
+| `IMAGE_STREAM` | `false` | Forbid staging the image in RAM: QCOW2 images, also an `oci://` QCOW2 layer, fail before the disk wipe, `IMAGE_MODE=partition` is invalid; raw and compressed raw images stream anyway ([docs/disk.md](docs/disk.md#streaming-and-staging)) |
 | `IMAGE_SOURCE_ROOT_LABEL` | — | Source-image GPT partition label to stream into a declarative partition layout root |
 | `IMAGE_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number for declarative partition layout root streaming |
 | `OCI_PREPULL_ENABLED` | `false` | Pull configured OCI images during provisioning and install a first-boot runtime importer |
@@ -526,7 +572,7 @@ root is mounted.
 | `AB_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number to copy when no stable label exists |
 | `DISK_DEVICE` | auto-detect | Explicit disk device path override (e.g. `/dev/sda`) |
 | `DISK_SERIAL_NUMBER` | — | Select the target disk by exact sysfs serial number when `DISK_DEVICE` is unset |
-| `DISK_MIRRORING_MODE` | unset | Mirror the installed system with RAID1 (metadata 1.0) across the largest pair of disks with equal size and sector size, like the CAPRF legacy provisioner: root as `/dev/md2`, a separate `/boot` (ext2/3/4) as `/dev/md1`, the ESP copied with a firmware boot entry for the second disk on UEFI, GRUB installed on both disks on BIOS. `raid-1` (pair required), `auto` (single disk when no pair exists), `none`. Disks that share an NVMe controller, serial number or WWID do not count as a pair. The image must be GPT partitioned (MBR images fail in `mirror-root`, after the image is written) and needs mdadm; a separate `/boot` must have the extended boot partition type or be the `/boot` entry of the image fstab, and other extra partitions are rejected. `/`, `/boot` and `/boot/efi` fstab entries that name a partition of one disk are rewritten to the arrays or the ESP UUID. Both ESP copies keep one FAT UUID, as with the legacy provisioner, so `/boot/efi` mounts from either disk alone. For an image with an ESP, BOOTy also installs the `booty-esp-sync` service into the installed system (`/usr/local/libexec/booty-esp-sync`, `/etc/systemd/system/booty-esp-sync.service`, enabled): it copies changes of the mounted `/boot/efi`, such as bootloader updates, to the ESP on the other disk; disable it with `systemctl disable booty-esp-sync.service`, see [docs/disk.md](docs/disk.md#esp-synchronization). The UEFI boot entry of the second disk is labeled `<label>-disk2` (for example `ubuntu-disk2`), like the legacy provisioner; with `EFI_BOOT_ENTRY_REQUIRED=false` and no EFI variables it is skipped and the second disk boots through the removable fallback loader. Soft deprovision refuses a mirrored root; use hard deprovision without `deprovision.device` or `DISK_DEVICE`, because with a device override it wipes only that disk and the other mirror disk stays bootable. The slim flavor ships no kernel modules, so its kernel must provide `md_mod` and `raid1`. Ignored when `DISK_DEVICE` or `DISK_SERIAL_NUMBER` selects the disk; rejected before any disk change with explicit RAID, NVMe namespace setup, a partition layout or an image mode other than whole-disk (such as A/B) |
+| `DISK_MIRRORING_MODE` | unset | Mirror the installed system with RAID1 (metadata 1.0) across the largest pair of disks with equal size and sector size, like the CAPRF legacy provisioner: root as `/dev/md2`, a separate `/boot` (ext2/3/4) as `/dev/md1`, the ESP copied with a firmware boot entry for the second disk on UEFI, GRUB installed on both disks on BIOS. `raid-1` (pair required), `auto` (single disk when no pair exists), `none`. Disks that share an NVMe controller, serial number or WWID do not count as a pair. The image must be GPT partitioned (MBR images fail in `mirror-root`, after the image is written) and needs mdadm; a separate `/boot` must have the extended boot partition type or be the `/boot` entry of the image fstab, and other extra partitions are rejected. `/`, `/boot` and `/boot/efi` fstab entries that name a partition of one disk are rewritten to the arrays or the ESP UUID. The installed system gets `/etc/mdadm/mdadm.conf`, `/etc/mdadm.conf` and `/etc/dracut.conf.d/90-booty-mirror.conf` (`rd.md.uuid` of each array, so a dracut initramfs assembles them). Both ESP copies keep one FAT UUID, as with the legacy provisioner, so `/boot/efi` mounts from either disk alone. For an image with an ESP, BOOTy also installs the `booty-esp-sync` service into the installed system (`/usr/local/libexec/booty-esp-sync`, `/etc/systemd/system/booty-esp-sync.service`, enabled): it copies changes of the mounted `/boot/efi`, such as bootloader updates, to the ESP on the other disk; disable it with `systemctl disable booty-esp-sync.service`, see [docs/disk.md](docs/disk.md#esp-synchronization). The UEFI boot entry of the second disk is labeled `<label>-disk2` (for example `ubuntu-disk2`), like the legacy provisioner; with `EFI_BOOT_ENTRY_REQUIRED=false` and no EFI variables it is skipped and the second disk boots through the removable fallback loader. Soft deprovision refuses a mirrored root; use hard deprovision without `deprovision.device` or `DISK_DEVICE`, because with a device override it wipes only that disk and the other mirror disk stays bootable. The slim flavor ships no kernel modules, so its kernel must provide `md_mod` and `raid1`. Ignored when `DISK_DEVICE` or `DISK_SERIAL_NUMBER` selects the disk; rejected before any disk change with explicit RAID, NVMe namespace setup, a partition layout or an image mode other than whole-disk (such as A/B) |
 | `ROOT_PARTITION_LABEL` | — | Whole-disk image root GPT partition label/PARTLABEL; use when multiple Linux partitions exist |
 | `ROOT_PARTITION_NUMBER` | — | Whole-disk image root partition number; use only when no stable root partition label exists |
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
@@ -732,7 +778,7 @@ export MODE="dry-run"
 ```
 
 `DRY_RUN=true` has the same effect. The checks are: config validation, image
-reachability, image prerequisites such as `qemu-img` for QCOW2 sources, image
+reachability, image prerequisites, image
 checksum format, image signature settings, image mode, disk detection, NIC
 link state, EFI variable access, health checks, and an inventory probe. BOOTy
 sends a text summary of all results in the status message: an error status
@@ -1004,7 +1050,7 @@ Debian 6.12 kernel:
 | SCSI `SG_IO` and NVMe admin ioctls | `hdparm`, `sg_sanitize`, `sg_format`, `nvme` | work |
 | PCI config space writes (`/sys/bus/pci/devices/*/config`) and PCI BAR `mmap` | `mstflint`, `mstconfig` (Mellanox SR-IOV, `NUM_VFS`) | refused: in-band Mellanox firmware configuration fails; configure SR-IOV out of band or with Secure Boot off |
 | `/dev/mem`, `/dev/port`, `ioperm` | `dmidecode` fallback only (it reads `/sys/firmware/dmi/tables` first) | refused |
-| `/dev/ipmi0` | `ipmitool` | not restricted by lockdown (not measured: no IPMI device in QEMU) |
+| `/dev/ipmi0` | BMC watchdog of `WATCHDOG_IPMI_FALLBACK` | not restricted by lockdown |
 
 ### LUKS Encryption (Planned)
 
@@ -1061,6 +1107,10 @@ BOOTy uses kexec for fast reboots into the provisioned OS without full firmware
 re-initialization. After provisioning, BOOTy parses the installed GRUB config,
 loads the kernel and initramfs, unmounts the target filesystems, then executes
 the kexec syscall.
+
+See [docs/kexec.md](docs/kexec.md) for every limitation of the kexec path
+(firmware state, measured boot, Secure Boot, boot loader semantics,
+networking, CAPRF interaction) and when to reboot instead.
 
 ```bash
 # Disable kexec (force hard reboot via firmware)
@@ -1355,19 +1405,12 @@ gateways, DNS, and VLAN assignments where the selected writer supports them.
 
 ### IPMI Operations
 
-BOOTy includes an IPMI manager (`pkg/ipmi/`) for local BMC operations via
-`ipmitool`. This package is a library; it is not currently wired into the
-automatic provisioning, debug, or inventory flows.
-
-| Operation | Description |
-|-----------|-------------|
-| `GetBMCNetwork` | Read BMC IP, netmask, gateway, MAC, DHCP, and VLAN settings |
-| `SetNextBoot` | Set next boot device: `pxe`, `disk`, `cdrom`, `bios` |
-| `ChassisControl` | Power on/off/cycle/reset/soft |
-
-No vars key enables automatic IPMI use today. Sensor reading,
-chassis status reporting, and BMC auto-detection are tracked in the IPMI
-proposal docs but are not implemented in the runtime package.
+`pkg/ipmi` sends IPMI commands to the local BMC in process, through
+`/dev/ipmi0` (`ipmi_devintf`, like `ipmitool -I open`). BOOTy uses it only
+for the BMC watchdog of `WATCHDOG_IPMI_FALLBACK`. The ramdisks do not ship
+`ipmitool`; for BMC network settings, the boot device or the power state use
+the BMC (Redfish, its web interface or `ipmitool -I lanplus` from another
+host).
 
 ### TPM Support
 
@@ -1417,9 +1460,10 @@ ldd /usr/sbin/your-binary
 The default flavor bundles, among others: `mdadm`, `wipefs`, `sfdisk`,
 `sgdisk`, `growpart`, `e2fsck`, `resize2fs`, `xfs_growfs`, `xfs_repair`,
 `btrfs`, `parted`, `kpartx`, `lvm`, `lsblk`, `blkid`, `hdparm`, `nvme`,
-`qemu-img`, `gpgv`, `mstconfig`, `mstflint`, `ethtool`, `lldpcli`, `lldpd`,
-`dropbear`, `efibootmgr`. See `initrd.Dockerfile` for the full list per
-flavor.
+`gpgv`, `mstconfig`, `mstflint`, `ethtool`, `dropbear`,
+`efibootmgr`. See `initrd.Dockerfile` for the full list per flavor. No flavor
+ships `lldpd` or `lldpcli`: `booty lldp neighbors` and `booty lldp status`
+show the LLDP state (docs/networking.md, LLDP diagnosis in the rescue shell).
 
 > **Prefer Go libraries**: Where possible, use Go syscalls or libraries instead of
 > shelling out to external binaries. Examples: `unix.FinitModule()` instead of `insmod`,
@@ -1432,6 +1476,7 @@ make build       # Build the binary
 make test        # Unit tests with the race detector and the coverage gate
 make lint        # golangci-lint for the Linux build
 make fmt-check   # Check the formatting. "make fmt" rewrites the files.
+make changelog   # Print the next release section of CHANGELOG.md (needs git-cliff)
 
 # E2E tests without KVM (Linux). Some tests build the initramfs with Docker.
 make test-e2e
@@ -1528,7 +1573,8 @@ vrnetlab topologies and the test levels.
 | [docs/size-optimization.md](docs/size-optimization.md) | Initramfs size optimization |
 | [docs/library-adoption.md](docs/library-adoption.md) | Library adoption policy |
 | [docs/roadmap.md](docs/roadmap.md) | Feature roadmap (P0 to P4 priorities) and design proposals (`docs/proposal-*.md`) |
-| [CHANGELOG.md](CHANGELOG.md) | Changes in each release and in the unreleased `main` |
+| [CHANGELOG.md](CHANGELOG.md) | Changes in each release, generated from the pull request titles |
+| [changes/](changes/README.md) | Optional release notes of open changes (upgrade notes, breaking changes) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, coding standards, PR process |
 | [.github/AGENTS.md](.github/AGENTS.md) | Copilot agents, review personas, prompts |
 | [.github/copilot-instructions.md](.github/copilot-instructions.md) | Project guidelines for Copilot |

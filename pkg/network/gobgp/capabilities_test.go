@@ -4,17 +4,19 @@ import (
 	"reflect"
 	"testing"
 
-	apipb "github.com/osrg/gobgp/v3/api"
+	apipb "github.com/osrg/gobgp/v4/api"
 
 	"github.com/telekom/BOOTy/pkg/network"
 )
 
 // The FRR default capabilities reach every kind of peer: graceful restart
 // as helper (no family tuples), long-lived graceful restart, add-path
-// receive; the software version only when asked for.
+// receive; the software version and the N bit only when asked for.
 func TestSetCapabilities(t *testing.T) {
 	frr := network.BGPCapabilities{GracefulRestart: true, GracefulRestartTime: 120, AddPathReceive: true, SoftwareVersion: true}
-	for _, caps := range []network.BGPCapabilities{frr, {}} {
+	frr83 := frr
+	frr83.GracefulNotification = true
+	for _, caps := range []network.BGPCapabilities{frr, frr83, {}} {
 		cfg := &Config{ASN: 65000, Capabilities: caps}
 		for name, p := range map[string]*apipb.Peer{
 			"numbered":  buildNumberedPeer(cfg, "10.0.0.1", allFamilies()),
@@ -23,7 +25,8 @@ func TestSetCapabilities(t *testing.T) {
 		} {
 			gr := p.GetGracefulRestart()
 			if caps.GracefulRestart != gr.GetEnabled() || gr.GetHelperOnly() != caps.GracefulRestart || gr.GetRestartTime() != caps.GracefulRestartTime ||
-				gr.GetLonglivedEnabled() != caps.GracefulRestart || p.GetConf().GetSendSoftwareVersion() != caps.SoftwareVersion {
+				gr.GetLonglivedEnabled() != caps.GracefulRestart || p.GetConf().GetSendSoftwareVersion() != caps.SoftwareVersion ||
+				gr.GetNotificationEnabled() != caps.GracefulNotification {
 				t.Errorf("%s peer with %+v: graceful restart %+v, software version %v", name, caps, gr, p.GetConf().GetSendSoftwareVersion())
 			}
 			for _, af := range p.GetAfiSafis() {
@@ -81,6 +84,9 @@ func TestNewConfigCapabilitiesAndProfile(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if cfg.RD != "10.0.0.1:1" || cfg.L2RD != "10.0.0.1:2" {
+			t.Errorf("%s: RDs %s, %s; want 10.0.0.1:1 and 10.0.0.1:2", profile, cfg.RD, cfg.L2RD)
 		}
 		if cfg.Capabilities != caps || cfg.ResolveViaDefault != via {
 			t.Errorf("%s: capabilities %+v resolve-via-default %v, want %+v %v", profile, cfg.Capabilities, cfg.ResolveViaDefault, caps, via)

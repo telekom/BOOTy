@@ -853,15 +853,18 @@ type frrDaemonSpec struct {
 var frrDaemonDirs = []string{"/usr/lib/frr", "/sbin"}
 
 func frrDaemonSpecs() []frrDaemonSpec {
-	// FRR 10.x daemon startup order: mgmtd → zebra → staticd → bgpd → bfdd.
+	// FRR 10.x daemon startup order: mgmtd → zebra → staticd → bfdd → bgpd.
 	// bgpd always uses -f to read its config directly — peer-group property
-	// inheritance is unreliable when config is pushed by mgmtd alone.
+	// inheritance is unreliable when config is pushed by mgmtd alone. With
+	// the config, bgpd has zebra send RAs for its unnumbered peers at once,
+	// and the leaf starts BFD on the first RA, so bfdd must listen before
+	// bgpd starts (frrinit.sh loads the config only after all daemons run).
 	return []frrDaemonSpec{
 		{"mgmtd", []string{"-d", "-A", "127.0.0.1"}, false},
 		{"zebra", []string{"-d", "-A", "127.0.0.1", "-s", "90000000"}, true},
 		{"staticd", []string{"-d", "-A", "127.0.0.1"}, false},
-		{"bgpd", []string{"-d", "-A", "127.0.0.1", "-f", "/etc/frr/frr.conf"}, true},
 		{"bfdd", []string{"-d", "-A", "127.0.0.1"}, true},
+		{"bgpd", []string{"-d", "-A", "127.0.0.1", "-f", "/etc/frr/frr.conf"}, true},
 	}
 }
 

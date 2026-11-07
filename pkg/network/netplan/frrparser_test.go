@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frrconf"
 )
 
@@ -420,5 +421,100 @@ func TestL3VNIAutoRouteTarget4ByteASN(t *testing.T) {
 	imp, exp := l3vniRouteTargets(model, 3000)
 	if strings.Join(imp, " ") != "32913:3000" || strings.Join(exp, " ") != "32913:3000" {
 		t.Fatalf("auto route targets = %v / %v, want 32913:3000", imp, exp)
+	}
+}
+
+// "enable-resolve-overlay-index" turns on the Type-5 gateway IP resolution.
+func TestParseFRRConfigBytes_ResolveOverlayIndex(t *testing.T) {
+	conf := "router bgp 65101\n address-family l2vpn evpn\n  advertise-all-vni\n  enable-resolve-overlay-index\n exit-address-family\nexit\n"
+	params, err := ParseFRRConfigBytes([]byte(conf))
+	if err != nil {
+		t.Fatalf("ParseFRRConfigBytes: %v", err)
+	}
+	if !params.ResolveOverlayIndex {
+		t.Fatal("ResolveOverlayIndex = false, want true")
+	}
+	cfg := &network.Config{}
+	applyEVPNMode(params, cfg)
+	if !cfg.EVPNResolveOverlayIndex {
+		t.Fatal("EVPNResolveOverlayIndex = false after applyEVPNMode")
+	}
+}
+
+// The L3VNI RD follows FRR: the VRF's "rd", else its "router bgp"
+// instance id, given in frr.conf order from 1 (the bm4x template:
+// Vrf_underlay 1, default 2, so <router-id>:2 like the shadow node). A
+// VRF without "router bgp" gets the id after the configured instances.
+func TestL3VNIRD(t *testing.T) {
+	evpn := func(rd string) []frrconf.AddressFamily {
+		return []frrconf.AddressFamily{{AFI: "l2vpn", SAFI: "evpn", RD: rd}}
+	}
+	for _, tt := range []struct {
+		name             string
+		model            frrconf.Config
+		rd               string
+		index, instances int
+	}{
+		{"template", frrconf.Config{VRFVNIs: []frrconf.VRFVNI{{VNI: 3000}}, Routers: []frrconf.Router{{VRF: "Vrf_underlay"}, {VRF: "default"}}}, "", 2, 2},
+		{"default first", frrconf.Config{VRFVNIs: []frrconf.VRFVNI{{VNI: 3000}}, Routers: []frrconf.Router{{}, {VRF: "Vrf_underlay"}}}, "", 1, 2},
+		{"repeated block", frrconf.Config{VRFVNIs: []frrconf.VRFVNI{{VNI: 3000}}, Routers: []frrconf.Router{{VRF: "Vrf_underlay"}, {VRF: "Vrf_underlay"}, {}}}, "", 2, 2},
+		{"explicit rd", frrconf.Config{VRFVNIs: []frrconf.VRFVNI{{VNI: 3000, VRF: "Vrf_p"}}, Routers: []frrconf.Router{{}, {VRF: "Vrf_p", AddressFamilies: evpn("65000:9")}}}, "65000:9", 2, 2},
+		{"no router for the VRF", frrconf.Config{VRFVNIs: []frrconf.VRFVNI{{VNI: 3000, VRF: "Vrf_p"}}, Routers: []frrconf.Router{{}}}, "", 2, 2},
+		{"L2VNI", frrconf.Config{Routers: []frrconf.Router{{VRF: "Vrf_underlay"}, {}}}, "", 2, 2},
+		{"L2VNI without a default VRF instance", frrconf.Config{Routers: []frrconf.Router{{VRF: "Vrf_underlay"}}}, "", 1, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rd, index, instances := l3vniRD(&tt.model, 3000)
+			if rd != tt.rd || index != tt.index || instances != tt.instances {
+				t.Fatalf("l3vniRD = %q, %d, %d; want %q, %d, %d", rd, index, instances, tt.rd, tt.index, tt.instances)
+			}
+		})
+	}
+}
+
+// applyEVPNMode sets the RD ids also in L2 mode: the provision VNI is an
+// L2VNI, BOOTy's Type-5 route uses the default VRF instance's id and the
+// L2VNI the id after the instances.
+func TestApplyEVPNModeL2RD(t *testing.T) {
+	frr := &FRRParams{AdvertiseAllVNI: true, Model: &frrconf.Config{
+		Routers: []frrconf.Router{{VRF: "Vrf_underlay"}, {}},
+	}}
+	cfg := &network.Config{ProvisionVNI: 100}
+	applyEVPNMode(frr, cfg)
+	if !cfg.EVPNL2Enabled || cfg.EVPNType5Only || cfg.EVPNRDIndex != 2 || cfg.BGPInstances != 2 {
+		t.Fatalf("L2 mode: L2 %v Type-5 only %v RD index %d instances %d; want true false 2 2",
+			cfg.EVPNL2Enabled, cfg.EVPNType5Only, cfg.EVPNRDIndex, cfg.BGPInstances)
+	}
+}
+
+// The rd of the L3VNI VRF in frr.conf becomes the EVPN RD, unchanged for
+// a 4-byte ASN, with the VRF's instance id.
+func TestApplyFRRParamsL3VNIRD(t *testing.T) {
+	const conf = `vrf provision
+ vni 3000
+exit-vrf
+router bgp 4210000017
+ neighbor 192.0.2.1 remote-as external
+ address-family l2vpn evpn
+  neighbor 192.0.2.1 activate
+  advertise-all-vni
+ exit-address-family
+exit
+router bgp 4210000017 vrf provision
+ address-family l2vpn evpn
+  rd 4210000017:9
+  advertise ipv4 unicast
+ exit-address-family
+exit
+`
+	params, err := ParseFRRConfigBytes([]byte(conf))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &network.Config{ProvisionVNI: 3000}
+	applyFRRParams(params, cfg)
+	if !cfg.EVPNType5Only || cfg.EVPNRD != "4210000017:9" || cfg.EVPNRDIndex != 2 || cfg.BGPInstances != 2 {
+		t.Fatalf("Type-5 only %v RD %q index %d instances %d; want true 4210000017:9 2 2",
+			cfg.EVPNType5Only, cfg.EVPNRD, cfg.EVPNRDIndex, cfg.BGPInstances)
 	}
 }

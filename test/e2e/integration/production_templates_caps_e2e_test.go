@@ -13,14 +13,12 @@ import (
 
 // prodtplCapKeys are the capabilities of "show bgp neighbors json" that
 // BOOTy must send like FRR. Known deviations of GoBGP are left out:
-// enhancedRouteRefresh, extendedMessage and pathsLimit (not implemented),
-// the softwareVersion string, extendedNexthop, which GoBGP also sends for
-// l2vpn evpn, the Restart State (R) bit, and the family tuples of
+// the softwareVersion string, the Restart State (R) bit, and the family tuples of
 // long-lived graceful restart, which GoBGP leaves out in helper mode (FRR
 // sends them with stale time 0) (docs/networking.md, BGP capabilities).
 var prodtplCapKeys = []string{
-	"4byteAs", "addPath", "gracefulRestart", "gracefulRestartRemoteTimerMsecs",
-	"longLivedGracefulRestart", "multiprotocolExtensions", "routeRefresh",
+	"4byteAs", "addPath", "enhancedRouteRefresh", "extendedMessage", "extendedNexthop", "gracefulRestart",
+	"gracefulRestartRemoteTimerMsecs", "longLivedGracefulRestart", "multiprotocolExtensions", "pathsLimit", "routeRefresh",
 }
 
 // prodtplCaps returns the compared capabilities that a FRR node received
@@ -49,6 +47,9 @@ func prodtplCaps(ctx context.Context, container, neighbor string) (map[string]an
 	view["rcvHostName"] = host["rcvHostName"]
 	gr, _ := n["gracefulRestartInfo"].(map[string]any)
 	view["remoteGrMode"] = gr["remoteGrMode"]
+	// The N bit (RFC 8538). The R bit is a known deviation: FRR sets it
+	// for the first restart time after bgpd starts.
+	view["nBit"] = gr["nBit"]
 	view["state"] = n["bgpState"]
 	return view, nil
 }
@@ -72,7 +73,8 @@ func findNeighbor(v any, neighbor string) map[string]any {
 
 // The leaf (eBGP) and dcgw01 (iBGP) receive the same OPEN capabilities
 // from BOOTy as from the shadow FRR node: graceful restart with restart
-// time 120 and the family tuples (helper), long-lived graceful restart,
+// time 120 and the family tuples (helper) and the N bit of "frr version
+// 8.2.2" (off), long-lived graceful restart,
 // add-path receive, route refresh, 4-octet AS and the hostname.
 func TestProdTplOpenCapabilities(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), prodtplTimeout)

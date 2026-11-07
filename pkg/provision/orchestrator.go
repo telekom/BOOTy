@@ -30,6 +30,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/inventory"
 	"github.com/telekom/BOOTy/pkg/kexec"
+	"github.com/telekom/BOOTy/pkg/logging"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/lldp"
 	networkpersist "github.com/telekom/BOOTy/pkg/network/persist"
@@ -534,7 +535,8 @@ func (o *Orchestrator) setHostname(_ context.Context) error {
 func (o *Orchestrator) copyProvisionerFiles(ctx context.Context) error {
 	if o.cfg.ProvisionerFilesInRamdisk() {
 		// Like the legacy CAPRF scripts: provisioner files go to the ramdisk
-		// only. main applies them before the network starts.
+		// only. main applies them before the network starts; standby
+		// applies the files of a deploy archive before the command runs.
 		o.log.Info("provisioner files stay in the ramdisk, not copied to the target")
 		return nil
 	}
@@ -1097,6 +1099,15 @@ func (o *Orchestrator) validateProvisionInputs(ctx context.Context) error {
 	return o.validateImageStreamingPrerequisites(ctx, imageSources)
 }
 
+// Image format probe before the wipe; tests replace the probe and the delay.
+var (
+	validateStreamingPrerequisites = image.ValidateStreamingPrerequisites
+	probeRetryDelay                = 2 * time.Second
+)
+
+// probeAttempts bounds the image format probe before the wipe.
+const probeAttempts = 3
+
 func (o *Orchestrator) validateImageStreamingPrerequisites(ctx context.Context, imageSources []string) error {
 	bestURL := o.bestImageURL
 	if bestURL == "" {
@@ -1107,19 +1118,55 @@ func (o *Orchestrator) validateImageStreamingPrerequisites(ctx context.Context, 
 		}
 		o.bestImageURL = bestURL
 	}
-	if image.IsOCIReference(bestURL) {
+	// verify-image probes the manifest of an OCI source. With IMAGE_STREAM
+	// the magic of its layer blob must be read too: a qcow2 layer fails here,
+	// before the wipe.
+	if image.IsOCIReference(bestURL) && !o.cfg.Provision.Image.Stream {
 		return nil
 	}
-	format, err := image.ValidateStreamingPrerequisites(ctx, bestURL)
-	if err != nil {
-		if image.IsTransientFormatProbeError(err) {
-			o.log.Warn("unable to probe image prerequisites before destructive storage",
-				"url", image.RedactURL(bestURL), "error", err)
-			return nil
+	// Fail closed: an image source that cannot be read is found before the
+	// wipe, not after it, which would leave the host without an OS. A
+	// transient probe error gets retries first.
+	var format image.Format
+	var err error
+	for attempt := 1; ; attempt++ {
+		format, err = validateStreamingPrerequisites(ctx, bestURL)
+		if err == nil || !image.IsTransientFormatProbeError(err) || attempt == probeAttempts {
+			break
 		}
+		o.log.Warn("image format probe failed, retrying before destructive storage",
+			"url", image.RedactURL(bestURL), "attempt", attempt, "error", err)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("validating image prerequisites before destructive storage: %w", ctx.Err())
+		case <-time.After(time.Duration(attempt) * probeRetryDelay):
+		}
+	}
+	if err != nil && image.IsTransientFormatProbeError(err) {
+		// The format probe code, not the deadline code of the cause: a
+		// deadline of the parent context that ends the last attempt also
+		// reports BOOTY-IMG-004. The cause is text, redacted like a log
+		// line (credentials, signed URL parameters).
+		return fmt.Errorf("validating image prerequisites before destructive storage: %w after %d attempts, stopping before the disk wipe: %s",
+			image.ErrFormatProbe, probeAttempts, logging.RedactText(err.Error()))
+	}
+	if err != nil {
 		return fmt.Errorf("validating image prerequisites before destructive storage: %w", err)
 	}
+	if err := o.checkImageStreamFormat(format); err != nil {
+		return err
+	}
 	o.log.Info("image prerequisites validated", "url", image.RedactURL(bestURL), "format", format)
+	return nil
+}
+
+// checkImageStreamFormat fails, with IMAGE_STREAM, for a format that only a
+// RAM staging can write.
+func (o *Orchestrator) checkImageStreamFormat(format image.Format) error {
+	if o.cfg.Provision.Image.Stream && format == image.FormatQCOW2 {
+		return fmt.Errorf("validating image prerequisites before destructive storage: %w",
+			image.StagingForbiddenError(format))
+	}
 	return nil
 }
 
@@ -1446,8 +1493,9 @@ func (o *Orchestrator) waitForDisks(ctx context.Context, device, serial string) 
 		timeout = *t
 	}
 	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-	o.disk.WaitForStableDisks(ctx, diskSettleStable, diskSettlePoll, time.Duration(timeout)*time.Second)
-	for (device != "" || serial != "") && time.Now().Before(deadline) {
+	named := device != "" || serial != ""
+	waitForStableDisks(o.disk, ctx, diskSettleStable, diskSettlePoll, time.Duration(timeout)*time.Second, o.creditBootSettle(named))
+	for named && time.Now().Before(deadline) {
 		if device != "" {
 			if _, err := os.Stat(device); err == nil {
 				return
@@ -1462,6 +1510,23 @@ func (o *Orchestrator) waitForDisks(ctx context.Context, device, serial string) 
 		case <-time.After(diskSettlePoll):
 		}
 	}
+}
+
+// waitForStableDisks is a test seam for disk.Manager.WaitForStableDisks.
+var waitForStableDisks = (*disk.Manager).WaitForStableDisks
+
+// creditBootSettle reports whether the block device settle wait may count
+// from boot. Only a provision that uses one named disk and nothing else
+// may: an HBA with an asynchronous SCSI scan can present disks after the
+// boot watch went quiet, so every run that touches other disks observes
+// the full window itself. Those are WIPE_ALL_DISKS (it wipes every disk,
+// also with a named target), explicit RAID, and every deprovision (hard
+// deprovision with a named device also wipes its md mirror companion).
+// It reads the config, not targetDisk, which is still empty here.
+func (o *Orchestrator) creditBootSettle(named bool) bool {
+	d := o.cfg.Provision.Disk
+	return named && !config.BoolOr(d.WipeAllDisks, false) && len(d.RAID) == 0 &&
+		!config.IsDeprovisionMode(o.cfg.Mode)
 }
 
 // checkRamdiskDevicePath rejects a /dev/disk/... path: the ramdisk has no
@@ -1704,13 +1769,15 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	}
 
 	var opts []image.StreamOpts
-	if o.cfg.Provision.Image.Checksum != "" {
+	if o.cfg.Provision.Image.Checksum != "" || o.cfg.Provision.Image.Stream {
 		opts = append(opts, image.StreamOpts{
 			Checksum:      o.cfg.Provision.Image.Checksum,
 			ChecksumType:  o.cfg.Provision.Image.ChecksumType,
 			ChecksumScope: o.cfg.Provision.Image.ChecksumScope,
+			StreamOnly:    o.cfg.Provision.Image.Stream,
 		})
 	}
+	defer startMemoryPeak(o.log)()
 
 	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
 		return o.streamPartitionLayoutRootImage(ctx, bestURL, opts)
@@ -1767,7 +1834,7 @@ func classifyImageStreamError(imageURL string, err error) error {
 		msg: fmt.Sprintf("streaming %s: %s", image.RedactURL(imageURL), image.RedactSourceError(err, imageURL)),
 		err: err,
 	}
-	if strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
+	if errors.Is(err, image.ErrStagingForbidden) || errors.Is(err, image.ErrStagingFull) || strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
 		return &PermanentError{Err: wrapped}
 	}
 	return wrapped
@@ -2272,8 +2339,7 @@ func findRootPartitionByNumber(parts []disk.Partition, targetDisk string, number
 }
 
 func isLinuxRootPartition(part disk.Partition) bool {
-	return strings.EqualFold(part.Type, disk.LinuxFilesystemGUID) ||
-		strings.EqualFold(part.Type, disk.LinuxFilesystemMBRType)
+	return disk.IsLinuxRootPartitionType(part.Type)
 }
 
 func partitionNumberForSelector(node, targetDisk string) int {
@@ -3450,7 +3516,8 @@ func DumpDebugState(failedStep string) {
 		{"pvs", "pvs"},
 		{"lvs", "lvs"},
 
-		// Kernel messages.
+		// Kernel messages. The whole kernel log goes to DEBUG_URL and the
+		// crash metadata, not to LOG_URL: CAPRF classifies its lines.
 		{"dmesg tail", "dmesg | tail -100"},
 
 		// Network interfaces & routes (IPv4 + IPv6).

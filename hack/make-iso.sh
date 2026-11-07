@@ -21,7 +21,12 @@ out=${3:?usage: make-iso.sh <iso-root> <efiboot.img> <out.iso> [volid]}
 volid=${4:-BOOTY}
 : "${SOURCE_DATE_EPOCH:=315532800}"
 export SOURCE_DATE_EPOCH
-cmdline="console=tty0 console=ttyS0,115200n8"
+# loglevel=4: the console shows kernel errors only. Every kernel line costs
+# about 87 us per byte on a 115200 baud BMC serial console; BOOTy logs the
+# Secure Boot and lockdown state itself and ships the whole kernel log.
+# panic=10: a crash of BOOTy (PID 1) or another kernel panic reboots
+# after 10 s instead of hanging (BOOTy also sets it when it starts).
+cmdline="console=tty0 console=ttyS0,115200n8 loglevel=4 panic=10"
 
 for f in boot/vmlinuz boot/initrd.img; do
 	[ -s "$root/$f" ] || { echo "make-iso: $root/$f is missing" >&2; exit 1; }
@@ -31,15 +36,24 @@ mkdir -p "$root/isolinux" "$root/boot/grub" "$root/EFI/debian"
 cp /usr/lib/ISOLINUX/isolinux.bin /usr/lib/syslinux/modules/bios/ldlinux.c32 "$root/isolinux/"
 
 # SERIAL makes ISOLINUX usable on headless machines (serial console only).
+# Without PROMPT and TIMEOUT, ISOLINUX boots the DEFAULT entry at once.
 printf 'SERIAL 0 115200\nDEFAULT booty\nLABEL booty\n  KERNEL /boot/vmlinuz\n  APPEND initrd=/boot/initrd.img %s\n' \
 	"$cmdline" > "$root/isolinux/isolinux.cfg"
 
+# No menu and no wait: GRUB boots at once. Esc held while GRUB starts
+# (it checks once for a key) or Shift (keystatus, where the firmware
+# reports it) opens the menu, where e edits the kernel command line.
 cat > "$root/boot/grub/grub.cfg" <<GRUBCFG
-set timeout=1
 set default=0
+set timeout_style=hidden
+set timeout=0
 serial --unit=0 --speed=115200
 terminal_input console serial
 terminal_output console serial
+if keystatus --shift; then
+  set timeout_style=menu
+  set timeout=-1
+fi
 menuentry "BOOTy" {
   linux /boot/vmlinuz $cmdline
   initrd /boot/initrd.img

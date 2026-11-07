@@ -476,7 +476,13 @@ func applyEthernetFlags(np *Config, id string, eth *EthernetConfig, cfg *network
 		cfg.NoAcceptRA = append(cfg.NoAcceptRA, ethernetName(np, id))
 	}
 	if eth.EmitLLDP != nil && *eth.EmitLLDP {
-		cfg.EmitLLDP = append(cfg.EmitLLDP, ethernetName(np, id))
+		if eth.Match != nil && eth.SetName == "" {
+			// The ID of a match block is no interface name; networkd sends on
+			// every NIC the block selects.
+			cfg.EmitLLDPMatches = append(cfg.EmitLLDPMatches, network.LinkMatch{Name: eth.Match.Name, MAC: eth.Match.MAC})
+		} else {
+			cfg.EmitLLDP = append(cfg.EmitLLDP, ethernetName(np, id))
+		}
 	}
 }
 
@@ -556,6 +562,7 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 	cfg.BlackholeRoutes = frr.BlackholeRoutes
 	if frr.Model != nil {
 		cfg.BGPDefaults = string(frr.Model.Defaults)
+		cfg.BGPFRRVersion = frr.Model.Version
 		// Only an explicit "[no] ip[v6] forwarding" changes the GoBGP
 		// defaults: IPv4 on, IPv6 off like the kernel default that zebra
 		// keeps.
@@ -588,15 +595,20 @@ func applyFRRParams(frr *FRRParams, cfg *network.Config) {
 // only Type-5 routes, like FRR (advertise-all-vni yields Type-2/Type-3
 // routes for L2VNIs only), and its "network" lines are originated.
 func applyEVPNMode(frr *FRRParams, cfg *network.Config) {
+	cfg.EVPNResolveOverlayIndex = frr.ResolveOverlayIndex
 	if cfg.ProvisionVNI != 0 && slices.Contains(frr.L3VNIs, cfg.ProvisionVNI) {
 		cfg.EVPNType5Only = true
 		cfg.Type5Networks = type5Networks(frr.Model, cfg.ProvisionVNI)
 		if frr.Model != nil {
 			cfg.EVPNImportRTs, cfg.EVPNExportRTs = l3vniRouteTargets(frr.Model, cfg.ProvisionVNI)
+			cfg.EVPNRD, cfg.EVPNRDIndex, cfg.BGPInstances = l3vniRD(frr.Model, cfg.ProvisionVNI)
 		}
 		return
 	}
 	cfg.EVPNL2Enabled = frr.AdvertiseAllVNI
+	if frr.Model != nil {
+		_, cfg.EVPNRDIndex, cfg.BGPInstances = l3vniRD(frr.Model, cfg.ProvisionVNI)
+	}
 }
 
 // joinUnique deduplicates a string slice and joins with commas.

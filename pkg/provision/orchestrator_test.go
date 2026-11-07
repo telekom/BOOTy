@@ -529,7 +529,8 @@ func TestValidateImageSourceConfiguredRejectsInvalidSources(t *testing.T) {
 	}
 }
 
-func TestValidateProvisionInputsRejectsQCOW2WithoutQemuImg(t *testing.T) {
+// BOOTy converts qcow2 in process: a qcow2 image needs no qemu-img.
+func TestValidateProvisionInputsAllowsQCOW2WithoutQemuImg(t *testing.T) {
 	srv := newTestImageServer(t, append([]byte{0x51, 0x46, 0x49, 0xfb}, []byte("qcow2 payload")...))
 	defer srv.Close()
 	t.Setenv("PATH", t.TempDir())
@@ -539,31 +540,8 @@ func TestValidateProvisionInputsRejectsQCOW2WithoutQemuImg(t *testing.T) {
 	cfg.Provision.Image.URLs = []string{srv.URL + "/node.qcow2"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
-	err := o.validateProvisionInputs(context.Background())
-	if err == nil {
-		t.Fatal("expected qcow2 prerequisite error")
-	}
-	if !strings.Contains(err.Error(), "before destructive storage") ||
-		!strings.Contains(err.Error(), "qemu-img") {
-		t.Fatalf("error = %q, want pre-wipe qemu-img context", err.Error())
-	}
-}
-
-func TestValidateProvisionInputsRejectsQCOW2ByNameWithoutQemuImg(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-
-	cfg := &config.MachineConfig{}
-	cfg.Provision.TargetOS = config.TargetOSLinux
-	cfg.Provision.Image.URLs = []string{"https://127.0.0.1:1/node.qcow2.gz"}
-	o := newTestOrchestrator(t, cfg, &mockProvider{})
-
-	err := o.validateProvisionInputs(context.Background())
-	if err == nil {
-		t.Fatal("expected qcow2 prerequisite error")
-	}
-	if !strings.Contains(err.Error(), "before destructive storage") ||
-		!strings.Contains(err.Error(), "qemu-img") {
-		t.Fatalf("error = %q, want pre-wipe qemu-img context", err.Error())
+	if err := o.validateProvisionInputs(context.Background()); err != nil {
+		t.Fatalf("expected qcow2 image preflight to pass, got %v", err)
 	}
 }
 
@@ -582,14 +560,19 @@ func TestValidateProvisionInputsAllowsRawWithoutQemuImg(t *testing.T) {
 	}
 }
 
-func TestValidateProvisionInputsAllowsTransientRawProbeFailure(t *testing.T) {
+// An image that can not be probed stops the run before the wipe.
+func TestValidateProvisionInputsFailsClosedOnTransientProbeFailure(t *testing.T) {
+	origDelay := probeRetryDelay
+	t.Cleanup(func() { probeRetryDelay = origDelay })
+	probeRetryDelay = time.Millisecond
 	cfg := &config.MachineConfig{}
 	cfg.Provision.TargetOS = config.TargetOSLinux
 	cfg.Provision.Image.URLs = []string{"https://127.0.0.1:1/node.raw"}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
-	if err := o.validateProvisionInputs(context.Background()); err != nil {
-		t.Fatalf("expected transient image probe failure to warn and continue, got %v", err)
+	err := o.validateProvisionInputs(context.Background())
+	if code := CodeOf(WithCode("validate-provision-inputs", err)); code != codeFormatProbe {
+		t.Fatalf("err = %v (code %q), want the format probe code %s", err, code, codeFormatProbe)
 	}
 }
 
@@ -3377,6 +3360,24 @@ func TestParsePartitionsRejectsMissingConfiguredRootPartitionLabel(t *testing.T)
 	}
 	if !strings.Contains(err.Error(), `root partition label "missing-root" not found`) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParsePartitionsAcceptsDiscoverableRootPartitionNumber(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.RootPartitionNumber = 1
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	cmd.setResult("sfdisk --json", sfdiskJSON(t, []disk.Partition{
+		{Node: "/dev/sda1", Type: disk.LinuxRootX86_64GUID, Name: "cloudimg-rootfs"},
+		{Node: "/dev/sda15", Type: disk.EFISystemPartitionGUID},
+	}), nil)
+
+	if err := o.parsePartitions(context.Background()); err != nil {
+		t.Fatalf("parsePartitions: %v", err)
+	}
+	if o.rootPartition != "/dev/sda1" {
+		t.Fatalf("root partition = %q, want /dev/sda1", o.rootPartition)
 	}
 }
 

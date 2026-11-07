@@ -20,6 +20,7 @@ on:
       - "pkg/firmware/**"
       - "pkg/health/**"
       - "pkg/inventory/**"
+      - "pkg/sriov/**"
       - "pkg/provision/**"
       - "pkg/rescue/**"
       - "pkg/runmode/**"
@@ -35,6 +36,9 @@ on:
       - "go.sum"
       - "main.go"
       - "initrd.Dockerfile"
+      - "hack/make-iso.sh"
+      - "hack/make-efiboot.sh"
+      - "hack/split-initramfs.sh"
       - "test/e2e/assets/busybox/**"
       - "test/e2e/kvm/**"
       - ".github/workflows/kvm-matrix.yml"
@@ -56,6 +60,7 @@ on:
       - "pkg/firmware/**"
       - "pkg/health/**"
       - "pkg/inventory/**"
+      - "pkg/sriov/**"
       - "pkg/provision/**"
       - "pkg/rescue/**"
       - "pkg/runmode/**"
@@ -71,6 +76,9 @@ on:
       - "go.sum"
       - "main.go"
       - "initrd.Dockerfile"
+      - "hack/make-iso.sh"
+      - "hack/make-efiboot.sh"
+      - "hack/split-initramfs.sh"
       - "test/e2e/assets/busybox/**"
       - "test/e2e/kvm/**"
       - ".github/workflows/kvm-matrix.yml"
@@ -81,11 +89,41 @@ permissions:
   # Read the cycle timing report of main as the baseline.
   actions: read
 
+# A new push to a PR cancels its superseded run. Every other run (main
+# pushes, dispatches) gets a group of its own: in a shared group a third
+# queued run cancels the pending one even without cancel-in-progress.
+concurrency:
+  group: kvm-matrix-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.ref, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Fail-fast gate: the ~40 VM jobs only start once the code and the KVM
+  # tests compile and pass go vet (~1 minute).
+  preflight:
+    name: Preflight (go vet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.2"
+          cache: true
+      - name: Vet
+        env:
+          GOOS: linux
+        run: go vet ./... && go vet -tags e2e ./test/e2e/kvm/
+
   kvm-tests:
     name: KVM ${{ matrix.scenario }}
-    runs-on: ubuntu-latest
+    # Guests are assembled from runner binaries (busybox, kmod, ld-linux),
+    # which are x86-64-v3 builds on ubuntu-26.04 and trap in the guests.
+    # Follow-up: https://github.com/telekom/BOOTy/issues/881
+    runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_minutes || 75 }}
+    needs: preflight
     strategy:
       matrix:
         include:
@@ -176,6 +214,24 @@ jobs:
             setup: ""
             # Three QEMU runs with the guest RTC in 2001.
             go_timeout: 25m
+          # Provisions from zlib and zstd qcow2 images without qemu-img.
+          - scenario: qcow2-image
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestProvisionQCOW2ImageQEMU$"
+            privileged: true
+            setup: ""
+          # Peak RAM of a staged qcow2 against IMAGE_STREAM lz4 and zstd
+          # images, the IMAGE_STREAM rejection of a qcow2 and a qcow2
+          # larger than the staging tmpfs.
+          - scenario: image-stream
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestProvisionImageStream.*QEMU$"
+            privileged: true
+            setup: ""
+            # Five QEMU runs.
+            go_timeout: 35m
           - scenario: disk-wipe
             qemu_extra: ""
             test_tag: e2e
@@ -194,8 +250,9 @@ jobs:
             test_regex: "^TestWatchdog.*QEMU$"
             privileged: true
             setup: ""
-            # Two QEMU runs with an i6300esb watchdog.
-            go_timeout: 25m
+            # Two QEMU runs with an i6300esb watchdog, one with a simulated
+            # BMC (IPMI fallback).
+            go_timeout: 35m
           # Times a deprovision + provision cycle, cold (two ISO boots) and
           # through the standby agent. Writes cycle-timing.json and the job
           # summary, compared with the report of main.
@@ -229,6 +286,18 @@ jobs:
             test_regex: "^TestPredictableNICNamesQEMU$"
             privileged: true
             setup: ""
+          - scenario: links-mode-lldp
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestLinksModeLLDPQEMU$"
+            privileged: true
+            setup: ""
+          - scenario: check-iso-hold
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestCheckISOVarsHoldQEMU$"
+            privileged: true
+            setup: ""
           - scenario: flavor-storage-controllers
             qemu_extra: ""
             test_tag: e2e
@@ -238,6 +307,24 @@ jobs:
             setup: |
               docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --output type=local,dest=out-flavor -f initrd.Dockerfile .
               docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --target kernel-image --output type=local,dest=out-flavor -f initrd.Dockerfile .
+          # Rescue shell over SSH (dropbear) in the default flavor.
+          - scenario: rescue-ssh
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestRescueSSHLoginQEMU$"
+            privileged: false
+            setup: |
+              docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --output type=local,dest=out-flavor -f initrd.Dockerfile .
+              docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --target kernel-image --output type=local,dest=out-flavor -f initrd.Dockerfile .
+          # The split ramdisk: base, payload archives and deploy vars
+          # concatenated like a boot loader initrd list.
+          - scenario: split-ramdisk
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestSplitRamdiskPayloadsQEMU$"
+            privileged: true
+            setup: |
+              docker buildx build --platform linux/amd64 --target split --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --output type=local,dest=out-split -f initrd.Dockerfile .
           # The published ISO on BIOS, UEFI (CD and USB) and UEFI Secure Boot
           # with the Microsoft keys (shim -> Debian GRUB -> Debian kernel),
           # and a kernel without signature that Secure Boot must refuse.
@@ -265,6 +352,14 @@ jobs:
             test_regex: "^TestOOBStatus"
             privileged: true
             setup: ""
+          # QEMU igb (82576) with SR-IOV on q35: inventory, VFs, VF
+          # attributes and the handoff reset of configure-sriov.
+          - scenario: sriov-igb
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestSRIOVIgbProvisionQEMU$"
+            privileged: true
+            setup: ""
           - scenario: production-templates
             qemu_extra: ""
             test_tag: e2e
@@ -279,6 +374,18 @@ jobs:
             ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.fd
             setup: |
               cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
+          # The runner kernel with kexec handover at its default (on since
+          # Linux 7.0) in a 1024 MiB guest, under OVMF and SeaBIOS. The other
+          # runner-kernel guests boot with kho=off.
+          - scenario: bootloader-smoke-kho
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestKHODefaultBootSmoke$"
+            go_timeout: 10m
+            ovmf_vars: OVMF_VARS.fd
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.fd
+            setup: |
+              cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
           - scenario: iso-headless-q35
             qemu_extra: ""
             test_tag: e2e
@@ -286,10 +393,16 @@ jobs:
             setup: ""
           - scenario: mirror-boot-failover
             qemu_extra: ""
+            # Linux 6.19+ stores a logical block size in new md superblocks that the
+            # target OS kernel (<= 6.18) refuses, so provision with a pinned 6.8
+            # kernel instead of the runner kernel (7.x since runner image 20261018).
+            kernel_debs: |
+              b1f19b3c6ce0684e6884fec1abb9b88bc55362b37147d03a75d8ef0244a820f1  https://launchpad.net/ubuntu/+archive/primary/+files/linux-image-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
+              d27fd905b01bf76b8a14c9ac88eb55c76a79f8025a7c2c15b8481ac786153ce0  https://launchpad.net/ubuntu/+archive/primary/+files/linux-modules-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
             test_tag: e2e
             test_regex: "^TestMirroredRootBootFailoverVM$"
             # Two subtests of at most 8 + 6 + 6 minutes plus image preparation.
-            test_timeout: 50m
+            go_timeout: 50m
             timeout_minutes: 70
             privileged: true
             ovmf_vars: OVMF_VARS.fd
@@ -303,10 +416,16 @@ jobs:
               sudo apt-get install -y --no-install-recommends cloud-guest-utils efibootmgr
           - scenario: mirror-boot-failover-separate-boot
             qemu_extra: ""
+            # Linux 6.19+ stores a logical block size in new md superblocks that the
+            # target OS kernel (<= 6.18) refuses, so provision with a pinned 6.8
+            # kernel instead of the runner kernel (7.x since runner image 20261018).
+            kernel_debs: |
+              b1f19b3c6ce0684e6884fec1abb9b88bc55362b37147d03a75d8ef0244a820f1  https://launchpad.net/ubuntu/+archive/primary/+files/linux-image-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
+              d27fd905b01bf76b8a14c9ac88eb55c76a79f8025a7c2c15b8481ac786153ce0  https://launchpad.net/ubuntu/+archive/primary/+files/linux-modules-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
             test_tag: e2e
             test_regex: "^TestMirroredRootBootFailoverVM$"
             # Two subtests of at most 8 + 6 + 6 minutes plus image preparation.
-            test_timeout: 50m
+            go_timeout: 50m
             timeout_minutes: 70
             privileged: true
             ovmf_vars: OVMF_VARS.fd
@@ -315,6 +434,33 @@ jobs:
             mirror_os_image: ubuntu-24.04-server-cloudimg-amd64.img
             mirror_os_image_url: https://cloud-images.ubuntu.com/releases/noble/release-20260911/ubuntu-24.04-server-cloudimg-amd64.img
             mirror_os_image_sha256: 612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354
+            mirror_separate_boot: "true"
+            mirror_root_partition_number: "1"
+            mirror_disk_size: 6G
+            setup: |
+              cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
+              sudo apt-get install -y --no-install-recommends cloud-guest-utils efibootmgr
+          # Every Ubuntu LTS in standard support boots after provisioning:
+          # 22.04 and 24.04 above, 26.04 (Linux 7.0, dracut) here.
+          - scenario: mirror-boot-failover-ubuntu-26.04
+            qemu_extra: ""
+            # Provision with the pinned 6.8 kernel like the scenarios above: an
+            # older target kernel must read the arrays, and the production
+            # ramdisk kernel is older than 6.19 too.
+            kernel_debs: |
+              b1f19b3c6ce0684e6884fec1abb9b88bc55362b37147d03a75d8ef0244a820f1  https://launchpad.net/ubuntu/+archive/primary/+files/linux-image-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
+              d27fd905b01bf76b8a14c9ac88eb55c76a79f8025a7c2c15b8481ac786153ce0  https://launchpad.net/ubuntu/+archive/primary/+files/linux-modules-6.8.0-1071-azure_6.8.0-1071.79_amd64.deb
+            test_tag: e2e
+            test_regex: "^TestMirroredRootBootFailoverVM$"
+            go_timeout: 50m
+            timeout_minutes: 70
+            privileged: true
+            ovmf_vars: OVMF_VARS.fd
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.fd
+            # Ubuntu 26.04 cloud image: separate /boot partition (13) mirrored as md1.
+            mirror_os_image: ubuntu-26.04-server-cloudimg-amd64.img
+            mirror_os_image_url: https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img
+            mirror_os_image_sha256: 8800651811af9a85465ad1d552add729947bb16488dddb4a9b5305a3d97332b2
             mirror_separate_boot: "true"
             mirror_root_partition_number: "1"
             mirror_disk_size: 6G
@@ -380,7 +526,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26.6"
+          go-version: "1.27.2"
 
       - name: Install KVM dependencies
         # A slow mirror should fail this step fast instead of eating the job budget.
@@ -431,6 +577,7 @@ jobs:
         if: matrix.setup != ''
         run: ${{ matrix.setup }}
 
+      - uses: ./.github/actions/baseline-libc
       - name: Build BOOTy initramfs
         run: |
           set -euo pipefail
@@ -468,9 +615,29 @@ jobs:
           cd ..
 
       - name: Prepare kernel
+        env:
+          KERNEL_DEBS: ${{ matrix.kernel_debs || '' }}
         run: |
-          KERNEL=$(ls /boot/vmlinuz-* 2>/dev/null | head -1)
-          if [ -z "$KERNEL" ]; then
+          set -euo pipefail
+          KERNEL=$(ls /boot/vmlinuz-* 2>/dev/null | head -1 || true)
+          if [ -n "$KERNEL_DEBS" ]; then
+            # Unpack the pinned kernel image and modules packages. The modules go
+            # to /lib/modules so the e2e helpers copy them into the guest
+            # initramfs like the runner kernel's.
+            mkdir -p /tmp/kernel-pkg
+            while read -r sha url; do
+              [ -n "$url" ] || continue
+              deb=/tmp/kernel-pkg/$(basename "$url")
+              curl -fsSL --retry 3 -o "$deb" "$url"
+              echo "$sha  $deb" | sha256sum -c -
+              dpkg-deb -x "$deb" /tmp/kernel-pkg/root
+            done <<< "$KERNEL_DEBS"
+            KERNEL=$(ls /tmp/kernel-pkg/root/boot/vmlinuz-* | head -1)
+            RELEASE=$(basename "$KERNEL" | sed 's/^vmlinuz-//')
+            sudo mkdir -p /lib/modules
+            sudo cp -a "/tmp/kernel-pkg/root/lib/modules/$RELEASE" /lib/modules/
+            sudo depmod "$RELEASE"
+          elif [ -z "$KERNEL" ]; then
             echo "No kernel found in /boot, extracting from package"
             apt-get download linux-image-$(uname -r) 2>/dev/null || apt-get download linux-image-generic
             dpkg-deb -x linux-image*.deb /tmp/kernel-extract
@@ -560,6 +727,7 @@ jobs:
           BOOTY_KERNEL: ${{ github.workspace }}/vmlinuz
           BOOTY_FLAVOR_INITRAMFS: ${{ github.workspace }}/out-flavor/initramfs.cpio.zst
           BOOTY_FLAVOR_KERNEL: ${{ github.workspace }}/out-flavor/vmlinuz
+          BOOTY_SPLIT_DIR: ${{ github.workspace }}/out-split
           BOOTY_ISO: ${{ github.workspace }}/out-iso/booty.iso
           LUKS_DISK_IMAGE: ${{ matrix.luks_disk && format('{0}/{1}', github.workspace, matrix.luks_disk) || '' }}
           OVMF_VARS: ${{ matrix.ovmf_vars && format('{0}/{1}', github.workspace, matrix.ovmf_vars) || '' }}

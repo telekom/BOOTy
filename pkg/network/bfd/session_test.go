@@ -101,8 +101,8 @@ func TestSessionDetectionTime(t *testing.T) {
 func TestSessionPollFinal(t *testing.T) {
 	now := time.Now()
 	s := NewSession(fabric, 11)
-	if p := s.Packet(); p.DesiredMinTxUS != 1000000 || p.Poll || p.RequiredMinRxUS != 1000000 {
-		t.Fatalf("down packet = %+v, want 1 s slow start for both timers and no Poll", p)
+	if p := s.Packet(); p.DesiredMinTxUS != 1000000 || p.Poll || p.RequiredMinRxUS != 1000000 || p.RequiredMinEchoRxUS != 50000 {
+		t.Fatalf("down packet = %+v, want 1 s slow start for both timers, no Poll and FRR's echo receive 50 ms", p)
 	}
 	s.Receive(remote(StateInit, 11), now)
 	p := s.Packet()
@@ -243,4 +243,25 @@ func TestSessionNoPeriodicPacketsInRemoteDemandMode(t *testing.T) {
 	if s.TxInterval() == 0 {
 		t.Fatal("periodic packets did not resume after the peer left Demand mode")
 	}
+
+	// Both sides must be Up: the D bit alone does not stop the packets.
+	t.Run("we Up, peer Init with D", func(t *testing.T) {
+		s := NewSession(fabric, 11)
+		s.Receive(remote(StateInit, 11), now) // we are Up
+		p := remote(StateInit, 11)
+		p.Demand, p.Final = true, true // Final ends our Poll Sequence
+		s.Receive(p, now)
+		if s.State() != StateUp || s.TxInterval() == 0 {
+			t.Fatalf("state %s interval %s, want Up with periodic packets", s.State(), s.TxInterval())
+		}
+	})
+	t.Run("we Down, peer Up with D", func(t *testing.T) {
+		s := NewSession(fabric, 11)
+		p := remote(StateUp, 11)
+		p.Demand = true
+		s.Receive(p, now) // Down + remote Up stays Down
+		if s.State() != StateDown || s.TxInterval() == 0 {
+			t.Fatalf("state %s interval %s, want Down with periodic packets", s.State(), s.TxInterval())
+		}
+	})
 }

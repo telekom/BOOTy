@@ -7,6 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +18,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -27,11 +31,14 @@ import (
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/gobgp"
+	"github.com/telekom/BOOTy/pkg/network/lldp"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/oob"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/realm"
 	"github.com/telekom/BOOTy/pkg/runmode"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 type teardownRecorderMode struct {
@@ -466,7 +473,7 @@ func TestTryKexecSkipsWhenSecureBootReEnableRequested(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.SecureBoot.ReEnable = true
 
-	if tryKexec(cfg, false, func() (disk.ReleaseReport, error) { return disk.ReleaseReport{}, nil }) {
+	if tryKexec(cfg, false, func() (disk.ReleaseReport, error) { return disk.ReleaseReport{}, nil }, func() { t.Fatal("network stopped without kexec") }) {
 		t.Fatal("tryKexec returned true when secure boot re-enable requires hard reboot")
 	}
 }
@@ -669,9 +676,12 @@ func TestProvisionCompleteExitKeepsNetworkUntilHandoff(t *testing.T) {
 	if start < 0 {
 		t.Fatal("provision complete branch not found")
 	}
-	end := strings.Index(source[start:], "handleProvisionHandoff")
+	// The network stops only inside finishProvision, right before the
+	// kexec or the reboot (TestFinishProvisionStopsNetworkBeforeReboot); a
+	// power off keeps it (TestWithNetworkStopBeforeReboot).
+	end := strings.Index(source[start:], "finishProvision(")
 	if end < 0 {
-		t.Fatal("provision complete handoff call not found")
+		t.Fatal("provision complete branch does not call finishProvision")
 	}
 	branch := source[start : start+end]
 	if strings.Contains(branch, ".Teardown(") {
@@ -1455,6 +1465,9 @@ func TestKeepProvisionerResolvConfWithRamdiskFiles(t *testing.T) {
 	if netCfg.DNSResolvers != "" {
 		t.Fatalf("PROVISIONER_FILES_TARGET=ramdisk would rewrite the provisioner resolv.conf with %q", netCfg.DNSResolvers)
 	}
+	if !netCfg.KeepResolvConf {
+		t.Fatal("PROVISIONER_FILES_TARGET=ramdisk must keep the provisioner resolv.conf from DHCP too")
+	}
 }
 
 func TestLoadModulesWarnsWhenAModuleNeverLoads(t *testing.T) {
@@ -1563,8 +1576,13 @@ func TestLoadModulesSkipsEFIVarFSWithoutEFIFirmware(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		var loaded []string
-		loadModuleFn = func(path string) error {
+		var (
+			mu     sync.Mutex
+			loaded []string
+		)
+		loadModuleFn = func(path string) error { // called in parallel since #758
+			mu.Lock()
+			defer mu.Unlock()
 			loaded = append(loaded, filepath.Base(path))
 			return nil
 		}
@@ -2041,28 +2059,55 @@ func TestApplyBGPOptions(t *testing.T) {
 	// (also the default without frr.conf and BGP_DEFAULTS), to iBGP peers
 	// only with traditional. BGP_DEFAULTS wins over frr.conf; a set value
 	// wins over the profile.
+	// The N bit follows "frr version" like FRR BGP_GRACEFUL_NOTIFICATION:
+	// off below 8.3 (the bm4x templates have 8.2.2), else and without a
+	// version on.
 	t.Run("capabilities", func(t *testing.T) {
 		for _, tt := range []struct {
-			name, parsed, native, want string
-			version                    bool
+			name, parsed, native, want, frrVersion string
+			version, notification                  bool
 		}{
-			{"no profile", "", "", "datacenter", true},
-			{"frr.conf datacenter", "datacenter", "", "datacenter", true},
-			{"frr.conf traditional", "traditional", "", "traditional", false},
-			{"BGP_DEFAULTS wins", "datacenter", "traditional", "traditional", false},
+			{"no profile", "", "", "datacenter", "", true, true},
+			{"frr.conf datacenter", "datacenter", "", "datacenter", "9.1", true, true},
+			{"frr.conf traditional", "traditional", "", "traditional", "8.2.2", false, false},
+			{"BGP_DEFAULTS wins", "datacenter", "traditional", "traditional", "8.3", false, true},
+			{"frr version 7.5.1", "", "", "datacenter", "7.5.1", true, false},
+			{"frr version 10.2.1", "", "", "datacenter", "10.2.1", true, true},
+			{"frr version 8 (8.0)", "", "", "datacenter", "8", true, false},
+			{"frr version git (below 8.3, like FRR)", "", "", "datacenter", "git", true, false},
 		} {
-			n := &network.Config{BGPDefaults: tt.parsed}
+			n := &network.Config{BGPDefaults: tt.parsed, BGPFRRVersion: tt.frrVersion}
 			applyBGPOptions(&config.BGPConfig{Defaults: tt.native}, n)
-			want := network.BGPCapabilities{GracefulRestart: true, GracefulRestartTime: 120, AddPathReceive: true, SoftwareVersion: tt.version}
+			want := network.BGPCapabilities{GracefulRestart: true, GracefulRestartTime: 120, AddPathReceive: true, SoftwareVersion: tt.version,
+				GracefulNotification: tt.notification}
 			if n.BGPDefaults != tt.want || n.BGPCapabilities != want {
 				t.Errorf("%s: profile %q capabilities %+v, want %q %+v", tt.name, n.BGPDefaults, n.BGPCapabilities, tt.want, want)
 			}
 		}
 		n := &network.Config{}
 		applyBGPOptions(&config.BGPConfig{GracefulRestart: new(false), GracefulRestartTime: 60,
-			AddPathReceive: new(false), SoftwareVersion: new(false)}, n)
+			AddPathReceive: new(false), SoftwareVersion: new(false), GracefulNotification: new(true)}, n)
 		if want := (network.BGPCapabilities{GracefulRestartTime: 60}); n.BGPCapabilities != want {
 			t.Fatalf("set capabilities = %+v, want %+v", n.BGPCapabilities, want)
+		}
+		n = &network.Config{}
+		applyBGPOptions(&config.BGPConfig{GracefulNotification: new(false)}, n)
+		if n.BGPCapabilities.GracefulNotification {
+			t.Fatal("BGP_GRACEFUL_NOTIFICATION=false must win")
+		}
+	})
+	// ConnectAtOnce is off unless BGP_CONNECT_AT_ONCE turns it on: with it,
+	// a carrier loss makes GoBGP and the leaf connect at the same time (#811).
+	t.Run("connect at once", func(t *testing.T) {
+		for _, tt := range []struct {
+			set  *bool
+			want bool
+		}{{nil, false}, {new(false), false}, {new(true), true}} {
+			n := &network.Config{}
+			applyBGPOptions(&config.BGPConfig{ConnectAtOnce: tt.set}, n)
+			if n.BGPConnectAtOnce != tt.want {
+				t.Errorf("ConnectAtOnce %v: BGPConnectAtOnce = %v, want %v", tt.set, n.BGPConnectAtOnce, tt.want)
+			}
 		}
 	})
 	// The peer options are defaults: a session value wins.
@@ -2135,6 +2180,22 @@ func TestMergeBGPPolicyRouteTargets(t *testing.T) {
 	}
 }
 
+// EVPN_RD wins over the frr.conf rd; the FRR instance ids come from
+// frr.conf.
+func TestMergeBGPPolicyRD(t *testing.T) {
+	frr := &network.Config{EVPNRD: "192.0.2.17:9", EVPNRDIndex: 2, BGPInstances: 2}
+	dst := &network.Config{}
+	mergeBGPPolicy(dst, frr)
+	if dst.EVPNRD != "192.0.2.17:9" || dst.EVPNRDIndex != 2 || dst.BGPInstances != 2 {
+		t.Fatalf("frr.conf RD: %+v", dst)
+	}
+	dst = &network.Config{EVPNRD: "65000:7"}
+	mergeBGPPolicy(dst, frr)
+	if dst.EVPNRD != "65000:7" {
+		t.Fatalf("EVPN_RD = %q, want the native 65000:7", dst.EVPNRD)
+	}
+}
+
 // The native BFD timers reach the network config.
 func TestNetworkConfigFromMachineConfigBFD(t *testing.T) {
 	cfg := &config.MachineConfig{}
@@ -2161,6 +2222,15 @@ func TestNetworkConfigFromMachineConfigDevices(t *testing.T) {
 	}
 	if n.IPForwarding == nil || *n.IPForwarding || n.IPv6Forwarding == nil || !*n.IPv6Forwarding {
 		t.Errorf("forwarding = %v %v, want false and true", n.IPForwarding, n.IPv6Forwarding)
+	}
+}
+
+// EVPN_RD reaches the network config unchanged.
+func TestNetworkConfigFromMachineConfigEVPNRD(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Network.EVPN.RD = "4210000017:9"
+	if n := networkConfigFromMachineConfig(cfg); n.EVPNRD != "4210000017:9" {
+		t.Fatalf("EVPNRD = %q, want 4210000017:9", n.EVPNRD)
 	}
 }
 
@@ -2218,12 +2288,13 @@ func TestMergeNetplanConfigOverlayDevices(t *testing.T) {
 	}
 }
 
-// The "frr defaults" profile of frr.conf reaches the network config.
+// The "frr defaults" profile and the "frr version" of frr.conf reach the
+// network config.
 func TestMergeNetplanConfigBGPDefaults(t *testing.T) {
 	dst := &network.Config{}
-	mergeNetplanConfig(dst, &network.Config{BGPDefaults: "traditional"})
-	if dst.BGPDefaults != "traditional" {
-		t.Fatalf("BGPDefaults = %q, want traditional", dst.BGPDefaults)
+	mergeNetplanConfig(dst, &network.Config{BGPDefaults: "traditional", BGPFRRVersion: "8.2.2"})
+	if dst.BGPDefaults != "traditional" || dst.BGPFRRVersion != "8.2.2" {
+		t.Fatalf("BGPDefaults = %q, BGPFRRVersion = %q, want traditional 8.2.2", dst.BGPDefaults, dst.BGPFRRVersion)
 	}
 }
 
@@ -2414,5 +2485,579 @@ func TestLLDPReceiveStartGated(t *testing.T) {
 	if strings.Count(string(src), "startLLDPReceive(ctx)") != 1 ||
 		!strings.Contains(string(src), "if lldpReceiveEnabled(cfg) {\n\t\tstartLLDPReceive(ctx)\n\t}") {
 		t.Fatal("startLLDPReceive is not called once, behind lldpReceiveEnabled")
+	}
+}
+
+// The every-NIC LLDP sender is stopped (and waited for) once, so it sends
+// the shutdown LLDPDU before the handoff.
+func TestStopLLDPEmit(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	stopLLDPEmit() // none running
+	calls := 0
+	setLLDPEmitStop(func() { calls++ })
+	stopLLDPEmit()
+	stopLLDPEmit()
+	if calls != 1 {
+		t.Fatalf("stop ran %d times, want once", calls)
+	}
+}
+
+// Every handoff (kexec, reboot, power off) stops the LLDP sender first.
+func TestHandoffsStopLLDPEmit(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"reboot": false, "requestReboot": false, "requestPowerOff": false, "doKexecExecute": false}
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		if _, tracked := want[fn.Name.Name]; !tracked {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if c, ok := n.(*ast.CallExpr); ok {
+				if id, ok := c.Fun.(*ast.Ident); ok && id.Name == "stopLLDPEmit" {
+					want[fn.Name.Name] = true
+				}
+			}
+			return true
+		})
+	}
+	for name, ok := range want {
+		if !ok {
+			t.Errorf("%s does not call stopLLDPEmit", name)
+		}
+	}
+}
+
+func resetLLDPEmit() {
+	lldpEmitMu.Lock()
+	lldpEmitStop, lldpEmitStart, lldpEmitPending = nil, nil, nil
+	lldpEmitMu.Unlock()
+}
+
+// The stop waits for the shutdown frames at most lldpStopTimeout: BOOTy is
+// PID 1 right before kexec or power off.
+func TestWaitLLDPEmitIsBounded(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	orig := lldpStopTimeout
+	t.Cleanup(func() { lldpStopTimeout = orig })
+	lldpStopTimeout = 20 * time.Millisecond
+	block := make(chan struct{})
+	defer close(block)
+	start := time.Now()
+	waitLLDPEmit(func() { <-block })
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("waited %v for a sender that never stops", d)
+	}
+}
+
+// A failed reboot or power off request leaves the host up: the LLDP sender
+// starts again. A request that succeeds does not restart it.
+func TestFailedHandoffResumesLLDPEmit(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	origReboot, origPowerOff := realmRequestReboot, realmRequestPowerOff
+	t.Cleanup(func() { realmRequestReboot, realmRequestPowerOff = origReboot, origPowerOff })
+	var order []string
+	start := func() func() {
+		order = append(order, "lldp-start")
+		return func() { order = append(order, "lldp-stop") }
+	}
+	lldpEmitMu.Lock()
+	lldpEmitStart = start
+	lldpEmitMu.Unlock()
+	setLLDPEmitStop(start())
+	resumeLLDPEmit() // running: no second sender
+	if strings.Join(order, ",") != "lldp-start" {
+		t.Fatalf("resume while running: %v", order)
+	}
+
+	// The handoff ops as finishProvision wraps them (#723): the network
+	// comes back first, then the sender, so its frames go out on links
+	// that are up again.
+	ops := withNetworkStopBeforeHandoff(provisionHandoffOps{reboot: requestReboot, powerOff: requestPowerOff},
+		func() { order = append(order, "network-stop") },
+		func() func() {
+			order = append(order, "network-restore")
+			return func() { order = append(order, "network-stop") } // the restored network's stop
+		})
+	realmRequestReboot = func() error { return errors.New("refused") }
+	realmRequestPowerOff = func() error { return errors.New("refused") }
+	order = nil
+	if err := ops.reboot(); err == nil {
+		t.Fatal("reboot succeeded")
+	}
+	if err := ops.powerOff(); err == nil {
+		t.Fatal("power off succeeded")
+	}
+	// The second network stop is the one of the restored network (#810).
+	want := "network-stop,lldp-stop,network-restore,lldp-start,network-stop,lldp-stop,network-restore,lldp-start"
+	if got := strings.Join(order, ","); got != want {
+		t.Fatalf("order %s\nwant  %s", got, want)
+	}
+	realmRequestReboot = func() error { return nil }
+	order = nil
+	if err := ops.reboot(); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(order, ","); got != "network-stop,lldp-stop" {
+		t.Fatalf("successful reboot: order %s, want no restart", got)
+	}
+}
+
+// A restart during the stop window (before the senders end or the stop
+// times out) waits for the old senders and skips while they still run.
+func TestResumeLLDPEmitDuringTheStop(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	origStop, origResume := lldpStopTimeout, lldpResumeWait
+	t.Cleanup(func() { lldpStopTimeout, lldpResumeWait = origStop, origResume })
+	lldpStopTimeout, lldpResumeWait = time.Minute, 20*time.Millisecond
+	block := make(chan struct{})
+	var mu sync.Mutex
+	starts := 0
+	start := func() func() {
+		mu.Lock()
+		starts++
+		mu.Unlock()
+		return func() { waitLLDPEmit(func() { <-block }) }
+	}
+	lldpEmitMu.Lock()
+	lldpEmitStart = start
+	lldpEmitMu.Unlock()
+	setLLDPEmitStop(start())
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		stopLLDPEmit()
+	}()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		lldpEmitMu.Lock()
+		pending := lldpEmitPending != nil
+		lldpEmitMu.Unlock()
+		if pending {
+			break
+		}
+		if time.Now().After(deadline) {
+			close(block)
+			t.Fatal("the stop did not record its senders as pending")
+		}
+	}
+	resumeLLDPEmit()
+	mu.Lock()
+	n := starts
+	mu.Unlock()
+	if n != 1 {
+		t.Fatalf("restarted next to the old senders during the stop: %d starts", n)
+	}
+	close(block)
+	<-stopped
+	resumeLLDPEmit()
+	if starts != 2 {
+		t.Fatalf("not restarted after the old senders ended: %d starts", starts)
+	}
+}
+
+type orderNetMode struct {
+	network.Mode
+	order *[]string
+}
+
+func (m orderNetMode) Teardown(context.Context) error {
+	*m.order = append(*m.order, "teardown")
+	return nil
+}
+
+// The shutdown LLDPDUs go out before the network stop of a handoff, while
+// the NICs still have their links; stopNetworkOnce is the one path every
+// kexec, reboot and power off takes (#723).
+func TestStopNetworkOnceStopsLLDPFirst(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	var order []string
+	setLLDPEmitStop(func() { order = append(order, "lldp") })
+	stopNetworkOnce(context.Background(), orderNetMode{order: &order})()
+	if strings.Join(order, ",") != "lldp,teardown" {
+		t.Fatalf("order %v, want lldp before teardown", order)
+	}
+	setLLDPEmitStop(func() { order = append(order, "lldp") })
+	stopNetworkOnce(context.Background(), nil)() // no network mode: LLDP still stops
+	if strings.Join(order, ",") != "lldp,teardown,lldp" {
+		t.Fatalf("order %v, want the LLDP stop without a network mode", order)
+	}
+}
+
+// Concurrent restarts start one sender, never one that nobody can stop.
+func TestResumeLLDPEmitConcurrent(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	var mu sync.Mutex
+	starts := 0
+	lldpEmitMu.Lock()
+	lldpEmitStart = func() func() {
+		time.Sleep(5 * time.Millisecond) // widen the window between check and store
+		mu.Lock()
+		starts++
+		mu.Unlock()
+		return func() {}
+	}
+	lldpEmitMu.Unlock()
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resumeLLDPEmit()
+		}()
+	}
+	wg.Wait()
+	if starts != 1 {
+		t.Fatalf("%d senders started, want 1", starts)
+	}
+}
+
+// After a stop that timed out, a restart waits for the old senders, so
+// their late shutdown LLDPDU cannot follow the new frames; it skips the
+// restart while they are still alive.
+func TestResumeLLDPEmitWaitsForPendingSenders(t *testing.T) {
+	t.Cleanup(resetLLDPEmit)
+	origStop, origResume := lldpStopTimeout, lldpResumeWait
+	t.Cleanup(func() { lldpStopTimeout, lldpResumeWait = origStop, origResume })
+	lldpStopTimeout, lldpResumeWait = 10*time.Millisecond, 20*time.Millisecond
+	block := make(chan struct{})
+	starts := 0
+	start := func() func() {
+		starts++
+		return func() { waitLLDPEmit(func() { <-block }) }
+	}
+	lldpEmitMu.Lock()
+	lldpEmitStart = start
+	lldpEmitMu.Unlock()
+	setLLDPEmitStop(start())
+	stopLLDPEmit() // times out: the senders stay pending
+	resumeLLDPEmit()
+	if starts != 1 {
+		t.Fatalf("restarted while the old senders run: %d starts", starts)
+	}
+	close(block)
+	resumeLLDPEmit()
+	if starts != 2 {
+		t.Fatalf("not restarted after the old senders ended: %d starts", starts)
+	}
+}
+
+// networkd sends LLDP on emit-lldp NICs in every addressing mode; outside
+// GoBGP mode (whose underlay sends) networkModeWithResolvers starts the
+// sender and the mode's Teardown stops it.
+func TestNetworkModeWithResolversStartsLLDP(t *testing.T) {
+	orig := startLLDPEmit
+	t.Cleanup(func() { startLLDPEmit = orig })
+	var started [][]string
+	stopped := 0
+	startLLDPEmit = func(netCfg *network.Config) func() {
+		started = append(started, netCfg.EmitLLDP)
+		return func() { stopped++ }
+	}
+	mode := teardownRecorderMode{teardown: func() error { return nil }}
+
+	got, err := networkModeWithResolvers(context.Background(), &network.Config{EmitLLDP: []string{"eth0", "eth1"}}, mode, &linkLayerCleanup{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(started) != 1 || strings.Join(started[0], ",") != "eth0,eth1" {
+		t.Fatalf("LLDP started on %v, want eth0,eth1", started)
+	}
+	if err := got.Teardown(context.Background()); err != nil || stopped != 1 {
+		t.Fatalf("Teardown() = %v, LLDP stops = %d, want 1", err, stopped)
+	}
+
+	gobgp := &network.Config{EmitLLDP: []string{"eth0"}, ASN: 65000, UnderlayIP: "192.0.2.1", NetworkMode: "gobgp"}
+	if !gobgp.IsGoBGPMode() {
+		t.Skip("test config is not GoBGP mode")
+	}
+	if _, err := networkModeWithResolvers(context.Background(), gobgp, mode, &linkLayerCleanup{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(started) != 1 {
+		t.Fatalf("LLDP started %d times, want no second sender in GoBGP mode", len(started))
+	}
+	// LLDP_EMIT_ALL: the all-NIC sender runs, no second one.
+	all := &network.Config{EmitLLDP: []string{"eth0"}, LLDPEmitAll: true}
+	if _, err := networkModeWithResolvers(context.Background(), all, mode, &linkLayerCleanup{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(started) != 1 {
+		t.Fatalf("LLDP started %d times, want none next to LLDP_EMIT_ALL", len(started))
+	}
+}
+
+// The netplan sender uses the configured profile, and a NIC that appears
+// later and a match block selects sends too, once.
+func TestEmitLLDPOnNetplanNICsHotplug(t *testing.T) {
+	origEmit, origSub, origResolve := lldpEmit, lldpLinkSubscribe, resolveLinkMatches
+	t.Cleanup(func() { lldpEmit, lldpLinkSubscribe, resolveLinkMatches = origEmit, origSub, origResolve })
+	var mu sync.Mutex
+	var sent [][]string
+	var profiles []string
+	lldpEmit = func(_ context.Context, ifaces []string, info *lldp.Info, _ *slog.Logger) func() {
+		mu.Lock()
+		sent = append(sent, ifaces)
+		profiles = append(profiles, info.Profile)
+		mu.Unlock()
+		return func() {}
+	}
+	nics := make([]string, 0, 2)
+	nics = append(nics, "enp1s0")
+	resolveLinkMatches = func(context.Context, []network.LinkMatch) ([]string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(nics), nil
+	}
+	subscribed := make(chan chan<- netlink.LinkUpdate, 1)
+	lldpLinkSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}, _ netlink.LinkSubscribeOptions) error {
+		subscribed <- ch
+		go func() { <-done; close(ch) }()
+		return nil
+	}
+	origPrep := lldpPrepareNICs
+	t.Cleanup(func() { lldpPrepareNICs = origPrep })
+	var prepared []string
+	lldpPrepareNICs = func(nics []string) { mu.Lock(); prepared = append(prepared, nics...); mu.Unlock() }
+	stop := emitLLDPOnNetplanNICs(&network.Config{EmitLLDP: []string{"enp1s0"}, EmitLLDPMatches: []network.LinkMatch{{Name: "en*"}}, LLDPProfile: "bm4x-cablecheck"})
+	ch := <-subscribed
+	mu.Lock()
+	nics = append(nics, "enp2s0")
+	mu.Unlock()
+	for _, name := range []string{"enp2s0", "enp2s0", "enp1s0"} {
+		u := netlink.LinkUpdate{Link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: name}}}
+		u.Header.Type = unix.RTM_NEWLINK
+		ch <- u
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		mu.Lock()
+		n := len(sent)
+		mu.Unlock()
+		if n >= 2 || time.Now().After(deadline) {
+			break
+		}
+	}
+	stop()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sent) != 2 || strings.Join(sent[0], ",") != "enp1s0" || strings.Join(sent[1], ",") != "enp2s0" || profiles[0] != "bm4x-cablecheck" {
+		t.Fatalf("sent on %v with profiles %v, want enp1s0 then the new enp2s0 once, with the profile", sent, profiles)
+	}
+	if strings.Join(prepared, ",") != "enp2s0" {
+		t.Fatalf("firmware LLDP prepared on %v, want the new enp2s0 only", prepared)
+	}
+}
+
+// followLLDPMatches subscribes again after a netlink receive error. The
+// netlink fork (docs/dependency-forks.md) closes the socket of the ended
+// subscription; netlink 1.3.1 kept it open until ctx ended, one per error.
+func TestFollowLLDPMatchesResubscribeClosesSocket(t *testing.T) {
+	origSub := lldpLinkSubscribe
+	t.Cleanup(func() { lldpLinkSubscribe = origSub })
+	var subscriptions atomic.Int32
+	lldpLinkSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}, opts netlink.LinkSubscribeOptions) error {
+		subscriptions.Add(1)
+		opts.ReceiveTimeout = &unix.Timeval{Usec: 1000} // Receive fails with EAGAIN
+		return netlink.LinkSubscribeWithOptions(ch, done, opts)
+	}
+	openFDs := func() int {
+		fds, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(fds)
+	}
+	before := openFDs()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	followLLDPMatches(ctx, nil, func(string) bool { return true }, func([]string) {}, slog.New(slog.DiscardHandler))
+	for deadline := time.Now().Add(10 * time.Second); subscriptions.Load() < 4; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d subscriptions in 10 s, want 4", subscriptions.Load())
+		}
+	}
+	// At most the current subscription's socket is open.
+	var open int
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if open = openFDs() - before; open <= 1 || time.Now().After(deadline) {
+			break
+		}
+	}
+	if open > 1 {
+		t.Fatalf("%d file descriptors open after %d subscriptions, want at most 1", open, subscriptions.Load())
+	}
+}
+
+// A native EMIT_LLDP list replaces the netplan values, also match blocks.
+func TestMergeNetplanConfigEmitLLDPMatches(t *testing.T) {
+	src := &network.Config{EmitLLDPMatches: []network.LinkMatch{{Name: "en*"}}}
+	dst := &network.Config{}
+	mergeNetplanConfig(dst, src)
+	if len(dst.EmitLLDPMatches) != 1 {
+		t.Fatalf("EmitLLDPMatches = %v, want the netplan match", dst.EmitLLDPMatches)
+	}
+	dst = &network.Config{EmitLLDP: []string{"eth3"}}
+	mergeNetplanConfig(dst, src)
+	if len(dst.EmitLLDPMatches) != 0 {
+		t.Fatalf("EmitLLDPMatches = %v, want none with a native list", dst.EmitLLDPMatches)
+	}
+}
+
+// prepareLinkLayers adds the NICs that the netplan match blocks with
+// emit-lldp select to EmitLLDP, once.
+func TestPrepareLinkLayersResolvesLLDPMatches(t *testing.T) {
+	orig := resolveLinkMatches
+	t.Cleanup(func() { resolveLinkMatches = orig })
+	resolveLinkMatches = func(_ context.Context, m []network.LinkMatch) ([]string, error) {
+		if len(m) == 0 {
+			return nil, nil
+		}
+		return []string{"enp1s0", "enp2s0"}, nil
+	}
+	netCfg := &network.Config{EmitLLDP: []string{"enp1s0"}, EmitLLDPMatches: []network.LinkMatch{{Name: "en*"}}}
+	if _, err := prepareLinkLayers(context.Background(), netCfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(netCfg.EmitLLDP, ","); got != "enp1s0,enp2s0" {
+		t.Fatalf("EmitLLDP = %s, want enp1s0,enp2s0", got)
+	}
+}
+
+// The link-layer mode stops LLDP before the network mode, so the shutdown
+// frames go out before FRR stops.
+func TestLinkLayerTeardownStopsLLDPFirst(t *testing.T) {
+	var order []string
+	mode := teardownRecorderMode{teardown: func() error { order = append(order, "mode"); return nil }}
+	m := &linkLayerNetworkMode{Mode: mode, cleanup: &linkLayerCleanup{stopLLDP: func() { order = append(order, "lldp") }}}
+	if err := m.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(order, ",") != "lldp,mode" {
+		t.Fatalf("teardown order %v, want lldp before the mode", order)
+	}
+}
+
+type dnsManagingMode struct{ teardownRecorderMode }
+
+func (dnsManagingMode) ManagesDNS() bool { return true }
+
+// A mode that writes resolv.conf itself (DHCP) keeps its file: the
+// configured resolvers are only checked, a bad one still fails.
+func TestNetworkModeWithResolversLeavesDHCPResolvConf(t *testing.T) {
+	orig := configureResolvers
+	t.Cleanup(func() { configureResolvers = orig })
+	writes := 0
+	configureResolvers = func(string) error { writes++; return nil }
+	mode := dnsManagingMode{teardownRecorderMode{teardown: func() error { return nil }}}
+	if _, err := networkModeWithResolvers(context.Background(), &network.Config{DNSResolvers: "10.9.9.9"}, mode, &linkLayerCleanup{}); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 0 {
+		t.Fatalf("resolv.conf written %d times over the DHCP mode's file", writes)
+	}
+	if _, err := networkModeWithResolvers(context.Background(), &network.Config{DNSResolvers: "not-an-ip"}, mode, &linkLayerCleanup{}); err == nil {
+		t.Fatal("a bad resolver passed")
+	}
+}
+
+// A bad configured resolver fails the run in the DHCP fallback, as for
+// the other modes: dhcpFallback keeps DNSResolvers for the check.
+func TestDHCPFallbackBadResolverFails(t *testing.T) {
+	netCfg := &network.Config{DNSResolvers: "not-an-ip"}
+	mode, err := networkModeWithResolvers(context.Background(), netCfg, dhcpFallback(context.Background(), netCfg), &linkLayerCleanup{})
+	if err == nil || mode != nil {
+		t.Fatalf("networkModeWithResolvers(dhcpFallback) = %T, %v; want the resolver error", mode, err)
+	}
+}
+
+// A failed link watch closes its subscription (netlink keeps the socket
+// until done closes) and, subscribed again, resolves the matches once, so a
+// NIC whose event was lost sends LLDP too.
+func TestFollowLLDPMatchesResubscribes(t *testing.T) {
+	origSub, origResolve, origPrep := lldpLinkSubscribe, resolveLinkMatches, lldpPrepareNICs
+	t.Cleanup(func() { lldpLinkSubscribe, resolveLinkMatches, lldpPrepareNICs = origSub, origResolve, origPrep })
+	lldpPrepareNICs = func([]string) {}
+	resolveLinkMatches = func(context.Context, []network.LinkMatch) ([]string, error) {
+		return []string{"enp1s0", "enp2s0"}, nil
+	}
+	dones := make(chan (<-chan struct{}), 2)
+	var calls atomic.Int32
+	lldpLinkSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}, _ netlink.LinkSubscribeOptions) error {
+		dones <- done
+		if calls.Add(1) == 1 {
+			close(ch) // the receive failed (ENOBUFS), the event of enp2s0 is lost
+			return nil
+		}
+		go func() { <-done; close(ch) }()
+		return nil
+	}
+	started := make(chan []string, 2)
+	ctx, cancel := context.WithCancel(context.Background())
+	known := func(n string) bool { return n == "enp1s0" }
+	followLLDPMatches(ctx, []network.LinkMatch{{Name: "en*"}}, known, func(n []string) { started <- n }, slog.Default())
+	first := <-dones
+	select {
+	case <-first:
+	case <-time.After(time.Second):
+		t.Fatal("the failed subscription is not closed")
+	}
+	select {
+	case n := <-started:
+		if !slices.Equal(n, []string{"enp2s0"}) {
+			t.Fatalf("started %v, want enp2s0", n)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the NIC of the lost event never sends LLDP")
+	}
+	second := <-dones
+	cancel()
+	select {
+	case <-second:
+	case <-time.After(time.Second):
+		t.Fatal("the end of the run does not close the subscription")
+	}
+}
+
+// The LLDP link watch logs a failed receive, a message of another sender
+// only at debug, and nothing once the run or the subscription ended.
+func TestLLDPWatchErrors(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil)) // Info and up
+	sub, end := context.WithCancel(context.Background())
+	logErr := lldpWatchError(sub, log)
+	logErr(errors.New("Wrong sender portid 1234, expected 0"))
+	if buf.Len() != 0 {
+		t.Fatalf("a message of another sender logged %q", buf.String())
+	}
+	logErr(errors.New("Receive failed: no buffer space available"))
+	if !strings.Contains(buf.String(), "subscribing again") {
+		t.Fatalf("a failed receive logged %q", buf.String())
+	}
+	buf.Reset()
+	end()
+	logErr(errors.New("Receive failed: use of closed file"))
+	if buf.Len() != 0 {
+		t.Fatalf("the closed subscription logged %q", buf.String())
+	}
+}
+
+// frrVersionBelow compares like FRR's frr_version_cmp: digit runs as
+// numbers ("8.10" is above "8.3"), the end below '.', "~" below the end,
+// letters below digits ("git" is below 8.3); only an empty version (no
+// "frr version" line) is never below.
+func TestFRRVersionBelow(t *testing.T) {
+	for v, want := range map[string]bool{
+		"8": true, "8.2-dev": true, "8.3~rc1": true, "8.2.2": true, "7.5.1": true, "git": true,
+		"GIT": true, "8.\xff": true, "8.3\xff": false, "99999999999999999999": false,
+		"8.3": false, "8.3.1": false, "8.3.0~rc1": false, "8.9": false, "8.10": false, "10.2.1": false, "9": false,
+		"": false,
+	} {
+		if got := frrVersionBelow(v, "8.3"); got != want {
+			t.Errorf("frrVersionBelow(%q, 8.3) = %v, want %v", v, got, want)
+		}
 	}
 }

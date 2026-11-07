@@ -98,11 +98,22 @@ Status values:
 | `sync` before the handoff | `sync` before reboot, power off and kexec | Same | Merged (#623, #597) | Not needed |
 | Failure: `fail()` posts to `ERROR_URL`, the ramdisk stays up | Report the error. Provision applies `RESCUE_MODE` (default `reboot`). Deprovision reboots. | Report the error and wait. An explicit `RESCUE_MODE` still wins for provision. | Merged (#585) | `FAILURE_ACTION=wait` |
 | Failure before the task (network, JWT) or JWT renewal failure: `fail()` | Reboot | Report the error and wait | Merged (#585) | `FAILURE_ACTION=wait` |
+| Kernel panic, also a crash of the init process: the legacy boot entries set no `panic=`, so the host hangs until a power cycle | `kernel.panic=10` when BOOTy runs as PID 1 and the kernel command line has no `panic=` or `sysctl.kernel.panic=` (with either separator): the host reboots 10 s after the panic and boots the ramdisk again | Same | Deliberately different (#765) | `panic=` or `sysctl.kernel.panic=` on the kernel command line wins (`panic=0` keeps the hang) |
 | `/deploy/vars` is a shell script that `source` runs | Parsed as data: no variable expansion, no command substitution | Same | Deliberately different | Not needed |
 | No target OS check | `TARGET_OS=linux` or `PROVISION_TARGET_OS=linux` required for provisioning | Same | Deliberately different | Not needed |
 | `MODE=decommission` (`force-clean`): `decommission_wipe`, `remove_all_efi_boot_entries`, power off | Wipe every disk with `sgdisk` and `wipefs`, remove every `BootOrder` entry, log failures and continue, reboot | Same, plus `blkdiscard` on every NVMe disk first, then power off | Merged (#586) | `SUCCESS_ACTION=poweroff`, `DISCARD_NVME=true` |
 | EFI boot entries: `mount_efi_vars`, `efibootmgr -c` (provision), `remove_efi_boot_entries` (deprovision) under `set -e` on UEFI; skipped on BIOS | Same: a failure fails the run on UEFI, BIOS skips. Deprovision removes the entries before the wipe (legacy: after). | Same | #669 | `EFI_BOOT_ENTRY_REQUIRED=false` turns "EFI variables unavailable" into warnings |
 | Soft deprovision: rename `grub.cfg` | Rename `grub.cfg` to `grub.cfg.bak` in `/boot/grub` and `/boot/grub2`. An existing `grub.cfg.bak` counts as done. No config at all, or an unmount failure after the rename, is an error. | Same, the disk is selected like `_select_single_disk` | Merged (#590), `/boot/grub2` and errors in #635 | `DISK_SELECTION=lsblk` |
+
+A reboot after a panic cannot loop forever. CAPRF bounds every attempt by
+`--provision-timeout` (default 30 minutes, CAPRF `main.go` and
+`internal/provision/manager.go` `context.WithTimeoutCause`), allows 3
+provisioning attempts before `RetriesExhausted` (`maxProvisionAttempts` in
+`internal/provision/manager.go`), and ejects the virtual media when an
+attempt fails (`cleanupFailedVirtualMedia` in the step executor). A ramdisk
+that panics on every boot therefore ends after at most 3 attempts of 30
+minutes. A hung host, as with the legacy boot entries, also ends by the
+timeout, but stays hung until someone power cycles it.
 
 ### Disks
 
@@ -116,6 +127,7 @@ Detail for these rows is in [Disk handling](disk.md).
 | Grow the last GPT Linux partition, `e2fsck -p -f` before `growpart` | Grow the root partition | The last GPT Linux partition, also a data partition after the root. `e2fsck -p -f` before `growpart`, offline `resize2fs`. The root keeps its size. | Merged (#625) | `GROW_PARTITION=last-linux` |
 | Mount a separate `/boot` from the image `fstab` when the root has no `/boot/grub` | Not mounted. `update-grub` writes `grub.cfg` on the root filesystem. | Same as default | Planned (#595) | Not needed |
 | `clear_mdadm_superblocks` before the wipe: stop every array, `mdadm --zero-superblock` on every `linux_raid_member` of the host | Provision zeroes the superblocks only on the disks that `wipe-disks` wipes (the target and its mirror disk, or every disk with `WIPE_ALL_DISKS=true`), right before the wipe | Every disk, in `stop-raid` | Merged (#581) | `RAID_SUPERBLOCK_CLEAR` (`all`) |
+| Decompressor from the URL extension: `.gz` with `gunzip`, `.lz4` with `lz4 -d`, any other file written as is. Mirroring stages the decompressed image in `/dev/shm` (up to 60 % of `MemAvailable`) and attaches it with `qemu-nbd`. | Format from the magic bytes: raw, lz4, zstd, gzip, xz, bzip2 and QCOW2, also compressed. Raw and compressed raw images stream to the disk in every mode, also with mirroring. QCOW2 images and `IMAGE_MODE=partition` stage in a tmpfs of 3/4 of `MemAvailable`; an image that does not fit fails without a retry. See [Image Formats](disk.md#image-formats). | Same as default | Merged (#854) | `IMAGE_STREAM=true` forbids the staging; CAPRF sets it with `additionalVars` |
 | `DISK_MIRRORING_MODE=raid-1`: RAID1 `/dev/md2` over two disks | RAID1 `/dev/md2` (root) and `/dev/md1` (separate `/boot`) over the largest pair of equal disks | Same as default | Merged (#581) | Not needed |
 
 ### Transport and configuration input

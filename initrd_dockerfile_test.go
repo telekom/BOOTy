@@ -557,3 +557,60 @@ func dockerfileInstructions(block string) []string {
 	}
 	return out
 }
+
+// TestDockerfileShipsFRRUsers checks that every flavor tree gets the users
+// and groups that the FRR daemons switch to. Without frr, zebra fails with
+// "could not lookup user frr" and FRR mode falls back to DHCP.
+func TestDockerfileShipsFRRUsers(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range []string{"busybox", "slim-builder", "gobgp-builder", "micro-builder"} {
+		if !strings.Contains(dockerfileStageBlock(t, string(data), stage), "COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/") {
+			t.Errorf("stage %s does not copy /etc/passwd and /etc/group", stage)
+		}
+	}
+	passwd, err := os.ReadFile("hack/initramfs-etc/passwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, err := os.ReadFile("hack/initramfs-etc/group")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"root:x:0:0:", "frr:x:101:104:"} {
+		if !strings.Contains(string(passwd), want) {
+			t.Errorf("passwd lacks %q", want)
+		}
+	}
+	for _, want := range []string{"root:x:0:", "frr:x:104:", "frrvty:x:103:frr"} {
+		if !strings.Contains(string(group), want) {
+			t.Errorf("group lacks %q", want)
+		}
+	}
+}
+
+// Every flavor has /bin/booty, a relative link to the BOOTy binary /init
+// (CI rejects links that dangle outside the ramdisk), so the documented
+// rescue shell commands ("booty lldp neighbors") work.
+func TestDockerfileFlavorsLinkBootyCommand(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(data), "\n")
+	copies := 0
+	for i, l := range lines {
+		if !strings.HasPrefix(l, "COPY --from=") || !strings.HasSuffix(l, "/BOOTy/init .") {
+			continue
+		}
+		copies++
+		if i+2 >= len(lines) || lines[i+2] != "RUN ln -sf ../init bin/booty" {
+			t.Errorf("line %d: %q is not followed by the /bin/booty link", i+1, l)
+		}
+	}
+	if copies < 4 { // default, slim, gobgp, micro
+		t.Fatalf("found %d BOOTy /init copies, want one per flavor", copies)
+	}
+}

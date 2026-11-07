@@ -5,7 +5,7 @@
 # Build:  docker build -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
 
 # ── Stage 1: Build BOOTy static binary ────────────────────────────────
-FROM golang:1.27.1-alpine AS builder
+FROM golang:1.27.2-alpine AS builder
 RUN set -eu; \
     n=0; \
     until apk add --no-cache git ca-certificates gcc linux-headers musl-dev; do \
@@ -131,7 +131,8 @@ RUN mkdir -p bin sbin dev proc run sys etc tmp deploy lib/modules mnt \
 RUN cp /bin/busybox bin/busybox && \
     cd bin && \
     for cmd in sh mount umount insmod find ip ping cat echo ls mkdir rm \
-               chmod sleep ln test grep awk sed head tail stty chroot; do \
+               chmod sleep ln test grep awk sed head tail stty chroot \
+               blockdev sync; do \
         ln -sf busybox "$cmd"; \
     done
 

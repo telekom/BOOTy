@@ -4,7 +4,7 @@ Thank you for your interest in contributing! This document covers the developmen
 
 ## Development Setup
 
-1. Install Go 1.26+
+1. Install Go 1.27+
 2. Clone the repository:
    ```bash
    git clone https://github.com/telekom/BOOTy.git
@@ -17,17 +17,59 @@ Thank you for your interest in contributing! This document covers the developmen
 
 ## Dependency Updates
 
-Dependabot tracks direct and indirect Go modules, workflow actions, and base
-images in all six Dockerfiles through the four configured Docker directories.
+Dependabot checks daily for direct and indirect Go module, workflow action, and
+base image updates in all eight Dockerfiles through the four configured Docker
+directories. Minor/patch Go updates and action updates are grouped; Docker
+updates are grouped by dependency, with major updates separate.
 ContainerLab `*.clab.yml` topologies are not Kubernetes manifests and are not
-updated by Dependabot's Docker ecosystem. Keep their external FRR, Alpine,
-nginx and network-multitool image references synchronized manually.
+updated by Dependabot's Docker ecosystem.
 
-Package pins inside Dockerfile `RUN` instructions, downloaded tool/kernel
-versions, checksums and shell-script image references also need manual updates.
-Locally built `booty-*` images are test artifacts, not upstream dependencies.
-Validate dependency changes with the existing CI and KVM boot matrices before
-merging.
+The `CI Gate` workflow merges a Dependabot PR once every other check on it has
+passed, then dispatches the main-branch workflows a merge would normally start.
+Semver-major updates other than GitHub Actions wait for a maintainer.
+
+GitHub Dependabot is the only dependency updater. Arbitrary tool inputs, inline
+images, Debian EFI package versions, LVM tarballs and util-linux source refs are
+outside its supported manifest formats and require manual review. Compiler pins
+must stay consistent with the supported Go 1.27 source floor.
+
+The FRR Type-5 fixture requires a coordinated update of its exact-version
+assertions (`gobgp_type5_e2e_test.go`); 10.3.2 is the minimum with the
+encapsulation relay fix. Signed Debian EFI updates require Secure Boot proof.
+Review LVM tags together with their independent `LVM2_SHA256`; util-linux updates
+require boot validation. Do not fabricate digests or remove integrity verification.
+
+Deliberate manual pins are the KVM Ubuntu cloud-image URL/checksum pairs, the
+6.8 kernel package URL/checksum pairs (required for old md superblocks) and FRR GPG
+trust fingerprints. The four maintained Go fork replacements documented in
+`docs/dependency-forks.md` require explicit fork-tag review. Upstream alias ignores
+stay in Dependabot because bumping those aliases would not change the built
+replacements; approve a fork tag only after confirming its curated patches and
+compatibility are retained. Ubuntu Docker LTS matrix tags remain fixed while
+Dependabot updates their digests. These are compatibility/integrity decisions,
+not uncovered ordinary version strings. Locally built `booty-*` images,
+release-owned `BOOTY_VERSION`/`VERSION`, reproducibility timestamps and example
+registry/checksum fixtures are not external dependencies.
+
+Validate updates with the existing CI and KVM boot matrices before merging.
+A green Dependabot run does not establish coverage for the unsupported pins above.
+
+## Security Reports
+
+The CI govulncheck and nightly/release Trivy steps are advisory: findings and scanner failures remain in
+the logs and emit a `Security scan advisory` warning. Build, test and lint
+failures remain blocking; the scanner script still returns failures when run
+directly.
+
+After PR CI completes, the default-branch `Security report` workflow updates
+one bot comment for the current PR head. It reads check metadata only, never
+executes PR code or downloads PR artifacts with its write-enabled token, and
+ignores stale, closed or mismatched PRs. It starts commenting once this workflow
+is on the default branch. Run its tests locally with:
+
+```bash
+node --test .github/scripts/security-report.test.cjs
+```
 
 ## Building
 
@@ -122,9 +164,11 @@ This runs [golangci-lint](https://golangci-lint.run/) with the configuration in 
 The first run installs the golangci-lint version that CI uses into `bin/`.
 Like CI, it builds and runs the linter with the Go version from `go.mod`. The
 `go` command downloads that toolchain when your local Go is different.
-Do not run the linter with a newer local Go. With Go 1.27, golangci-lint
-v2.12.2 panics in the staticcheck `fact_purity` analyzer, and a golangci-lint
-built with Go 1.26 fails with "file requires newer Go version go1.27".
+Do not run the linter with a different local Go. A newer Go than the
+golangci-lint release supports can crash its analyzers (golangci-lint v2.12.2
+panicked in the staticcheck `fact_purity` analyzer with Go 1.27), and a
+golangci-lint built with an older Go fails with "file requires newer Go
+version".
 The lint always checks the Linux build, also on macOS.
 
 Key lint rules:
@@ -151,32 +195,76 @@ Key lint rules:
    - Changes the provisioning step count
    - Adds a new Make target or build flavor
    - Creates a new E2E topology or build tag
-6. Add a line for a user-visible change to the `Unreleased` section of
-   [CHANGELOG.md](CHANGELOG.md) (see [Changelog](#changelog)).
+6. Do not edit [CHANGELOG.md](CHANGELOG.md). Give the PR a Conventional
+   Commit title (see [Pull request titles](#pull-request-titles)). For upgrade
+   notes, a breaking change or a behaviour change, also add a fragment in
+   [`changes/`](changes/README.md).
 7. Open a PR with a description of what changed and why.
 8. A maintainer will review and merge once CI is green.
 
+### Pull request titles
+
+PRs are squash-merged, and the PR title becomes the commit title on `main`.
+The changelog line comes from that title, so write it for the reader of the
+changelog: `<type>(<scope>): <what an operator sees>`, for example
+`fix(gobgp): flood BUM traffic to a VTEP only for ingress replication`.
+
+The `PR Title` check in `.github/workflows/pr-title.yml` requires one of these
+types. The type selects the changelog section:
+
+| Type | Section |
+|------|---------|
+| `feat` | Features |
+| `fix` | Fixes |
+| `perf` | Performance |
+| `docs` | Docs |
+| `build`, `ci`, `test` | CI, build and tests |
+| any type with a `(deps...)` scope, also `chore(deps)` | Dependencies |
+| `refactor` | Maintenance |
+| `revert` | Reverts |
+| `chore`, `style` | not in the changelog |
+
+Use `chore` or `style` only for changes that no user sees. A change that a user
+or operator can see needs one of the other types, or it is missing from the
+changelog.
+
+Add `!` after the type or scope (`feat(config)!: ...`) for a breaking change:
+the line goes to "Breaking changes".
+
+GitHub titles a revert PR `Revert "..."`, which the check rejects. Retitle it
+`revert: <title of the reverted PR>`, for example
+`revert: fix(gobgp): flood BUM traffic only for ingress replication`. A commit
+that is reverted in the same release is left out together with its revert; a
+revert of a change from an earlier release is listed under "Reverts".
+
 ### Changelog
 
-[CHANGELOG.md](CHANGELOG.md) is written by hand in the
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format, newest first.
+[CHANGELOG.md](CHANGELOG.md) is generated by `hack/changelog.py` with
+[git-cliff](https://git-cliff.org/) (`cliff.toml`). Do not edit it in a PR. The
+section of a release is:
 
-- **Each PR**: add one line with the PR number to `## [Unreleased]`, in the
-  group that fits: Breaking or behaviour changes, Features, Security, Fixes,
-  CI, build and tests, Docs, Dependencies, Maintenance. Describe what an operator sees, not the
-  code change.
-- **Each release**: rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, add a
-  new empty `## [Unreleased]` above it, and update the link references at the
-  end of the file. Check that every PR merged since the previous tag has a line:
-  `git log --oneline vPREVIOUS..HEAD`.
-- To get a starting point, run `git cliff --unreleased --strip header` with the
-  repository `cliff.toml` and edit the output. Do not write its output into
-  `CHANGELOG.md` directly: it replaces the curated text.
+1. the text in `## [Unreleased]` of `CHANGELOG.md`. It holds the text written
+   by hand before the changelog was generated, and is normally empty;
+2. one line per commit since the previous tag, grouped by type, with a link
+   to the PR. A line is left out when the Unreleased text already names its PR;
+3. the fragments in `changes/*.md`, each in the section that its front matter
+   names (see [changes/README.md](changes/README.md)).
 
-The GitHub release body is still generated by git-cliff in
-`.github/workflows/release-v2.yml`. The `changelog` job writes that output to a
-`CHANGELOG.md` file in the runner workspace, and the `release` job uses it as
-the release body. Neither job changes the file in the repository.
+`make changelog` prints the next release section. It needs git-cliff
+(`pipx install git-cliff==2.14.2`, or `GIT_CLIFF="uvx git-cliff@2.14.2" make
+changelog`). The `Changelog Preview` CI job runs it on every PR and on `main`.
+
+### Releases
+
+1. Open a release PR titled `chore(release): vX.Y.Z` with
+   `make changelog-release RELEASE=X.Y.Z`. It writes the section as
+   `## [X.Y.Z] - YYYY-MM-DD`, empties `## [Unreleased]`, updates the link
+   references and deletes the fragments in `changes/`. Edit the section if
+   needed, for example to add highlights.
+2. Merge the release PR and tag the merge commit `vX.Y.Z`.
+3. `.github/workflows/release-v2.yml` uses the `## [X.Y.Z]` section of
+   `CHANGELOG.md` as the GitHub release body. If the tag has no such section,
+   it generates the section from the commits since the previous tag.
 
 ### Documentation Checklist
 

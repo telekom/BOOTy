@@ -57,9 +57,12 @@ echo "` + mirrorCheckEnd + `"
 systemctl poweroff --no-block
 `
 
+// The check writes to ttyS0, so the serial getty waits for it: agetty hangs
+// up the tty, and the check output after that is lost (seen on Ubuntu 26.04).
 const mirrorCheckUnit = `[Unit]
 Description=BOOTy mirrored root e2e check
 After=local-fs.target
+Before=serial-getty@ttyS0.service
 
 [Service]
 Type=oneshot
@@ -118,7 +121,10 @@ func TestMirroredRootBootFailoverVM(t *testing.T) {
 	})
 	kernel := findKernel(t)
 
+	// The subtests share only the read-only initramfs and image server, so
+	// they run in parallel: each one takes 5 to 9 minutes.
 	t.Run("uefi", func(t *testing.T) {
+		t.Parallel()
 		ovmfVars := filepath.Join(t.TempDir(), "OVMF_VARS.fd")
 		copyBinary(t, ovmfVarsTemplate, ovmfVars)
 		report := runMirrorFailover(t, kernel, initramfs, func(disks ...string) []string {
@@ -133,6 +139,7 @@ func TestMirroredRootBootFailoverVM(t *testing.T) {
 	// BIOS: SeaBIOS boots the first disk, so booting the second disk alone
 	// needs the GRUB that BOOTy installed into it.
 	t.Run("bios", func(t *testing.T) {
+		t.Parallel()
 		runMirrorFailover(t, kernel, initramfs, func(disks ...string) []string {
 			return mirrorQEMUBaseArgs(nil, disks...)
 		})
@@ -153,7 +160,7 @@ func runMirrorFailover(t *testing.T, kernel, initramfs string, qemuArgs func(dis
 	provisionArgs := append(qemuArgs(disk1, disk2),
 		"-kernel", kernel,
 		"-initrd", initramfs,
-		"-append", "console=ttyS0 panic=1 net.ifnames=0",
+		"-append", runnerKernelCmdline+" net.ifnames=0",
 		"-net", "nic,model=virtio",
 		"-net", "user",
 	)

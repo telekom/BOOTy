@@ -120,7 +120,7 @@ func measureAgentCycle(t *testing.T, kernel, image string) (boot, agent cycleRun
 	t.Logf("agent VM: %.1fs, tail:\n%s", vm.exit.Seconds(), tail(vm.out, 3000))
 	assertProvisionSucceeded(t, vm.out)
 	requirePowerOff(t, vm.out)
-	if n := strings.Count(string(vm.out), "Linux version "); n != 1 {
+	if n := strings.Count(string(vm.out), bootyStartMarker); n != 1 {
 		t.Fatalf("guest booted %d times, want one boot for the agent cycle", n)
 	}
 	acks := caprf.ackList()
@@ -180,7 +180,7 @@ TIMEOUT 1
 DEFAULT booty
 LABEL booty
   KERNEL /boot/vmlinuz
-  APPEND initrd=/boot/initrd.img console=ttyS0,115200n8 panic=1 net.ifnames=0
+  APPEND initrd=/boot/initrd.img console=ttyS0,115200n8 panic=1 net.ifnames=0 `+noKHO+`
 `)
 	iso := filepath.Join(t.TempDir(), "cycle.iso")
 	runXorrisofs(t, root, iso)

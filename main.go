@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"os"
 	"os/signal"
@@ -16,17 +17,17 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/telekom/BOOTy/pkg/caprf"
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/crash"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/executil"
+	nicfw "github.com/telekom/BOOTy/pkg/firmware/nic"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/kexec"
 	"github.com/telekom/BOOTy/pkg/network"
@@ -39,7 +40,10 @@ import (
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/realm"
 	"github.com/telekom/BOOTy/pkg/runmode"
+	"github.com/telekom/BOOTy/pkg/sriov"
 	"github.com/telekom/BOOTy/pkg/ux"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 // Version and Build are set via -ldflags at build time.
@@ -100,9 +104,18 @@ type provisionHandoffOps struct {
 	powerOff func() error
 	shell    func()
 	exit     func(int)
+	// stopNetwork, when set, stops the network before the exit after a
+	// failed handoff (the network that restoreNetwork set up again).
+	stopNetwork func()
 }
 
 func main() {
+	// "booty lldp ..." is the LLDP diagnosis command of the rescue shell.
+	// PID 1 is the agent: the kernel passes unknown command line words to
+	// init as arguments.
+	if len(os.Args) > 1 && os.Args[1] == "lldp" && os.Getpid() != 1 {
+		os.Exit(lldp.CLI(os.Args[2:], os.Stdout, os.Stderr, lldp.CLIDeps{NICs: network.DetectPhysicalNICsContext}))
+	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
 	// Ensure PATH includes standard binary directories. As PID 1 in an
@@ -118,9 +131,16 @@ func main() {
 		return
 	}
 	startPID1ChildReaper(ctx, os.Getpid())
+	setPanicReboot()
 	loadModules()
+	// The disk selection waits for the block devices to settle; count
+	// their settle time from here, while the network comes up.
+	disk.StartBlockWatch(ctx, "/sys", 250*time.Millisecond)
 
-	slog.Info("starting BOOTy", "version", Version, "build", Build)
+	// uptime is the seconds since the kernel started: the console has no
+	// kernel banner at loglevel=4, so it marks the kernel start.
+	slog.Info("starting BOOTy", "version", Version, "build", Build, "uptime", uptimeSeconds())
+	logSecureBootState(readKernelLogFn())
 	ux.Captain()
 	ux.SysInfo()
 
@@ -380,85 +400,6 @@ func setupMountsAndDevicesWith(m earlyInitMountManager, d earlyInitDeviceManager
 	return nil
 }
 
-// loadModules loads kernel modules from /modules/ for server NICs and storage controllers.
-// Uses the finit_module syscall directly instead of shelling out to insmod.
-// Errors are non-fatal: modules may already be built-in or not needed.
-//
-// Module dependencies are resolved by retrying: modules that fail on the
-// first pass (e.g. virtio_net depends on virtio_pci → virtio → virtio_ring)
-// succeed on subsequent passes once their dependencies have been loaded.
-func loadModules() {
-	entries, err := os.ReadDir(moduleDir)
-	if err != nil {
-		slog.Debug("no kernel modules directory, skipping", "path", moduleDir)
-		return
-	}
-
-	// Collect all module paths.
-	var pending []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		// efivarfs fails with ENODEV without EFI firmware; skip it on BIOS.
-		if strings.HasPrefix(entry.Name(), "efivarfs.ko") {
-			if _, err := os.Stat(efiFirmwareDir); err != nil {
-				slog.Info("no EFI firmware, skipping kernel module", "module", entry.Name())
-				continue
-			}
-		}
-		pending = append(pending, entry.Name())
-	}
-
-	// Retry up to 5 passes to resolve dependency ordering.
-	const maxPasses = 5
-	for pass := range maxPasses {
-		var failed []string
-		for _, name := range pending {
-			ko := filepath.Join(moduleDir, name)
-			if err := loadModuleFn(ko); err != nil {
-				failed = append(failed, name)
-				if pass == maxPasses-1 {
-					// Visible at the default level: a missing driver often
-					// shows up later as "no disk" or "DHCP failed".
-					slog.Warn("kernel module failed to load", "module", name, "error", err)
-				}
-				continue
-			}
-			slog.Info("loaded kernel module", "module", name)
-		}
-		if len(failed) == 0 {
-			break
-		}
-		pending = failed
-	}
-}
-
-// Test seams for loadModules.
-var (
-	efiFirmwareDir = "/sys/firmware/efi"
-	moduleDir      = "/modules"
-	loadModuleFn   = loadModule
-)
-
-// loadModule loads a single kernel module via the finit_module syscall.
-// Returns nil when the module is already loaded or built-in (EEXIST).
-func loadModule(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("open module %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
-
-	if err := unix.FinitModule(int(f.Fd()), "", 0); err != nil {
-		if errors.Is(err, unix.EEXIST) {
-			return nil
-		}
-		return fmt.Errorf("finit_module %s: %w", filepath.Base(path), err)
-	}
-	return nil
-}
-
 // runCAPRF runs the CAPRF provisioning flow (ISO-based, /deploy/vars config).
 func flushObservability() {
 	if originalSlogHandler != nil {
@@ -473,20 +414,29 @@ func flushObservability() {
 
 func reboot() {
 	watchdogHandoff(false)
+	stopLLDPEmit()
 	flushObservability()
 	realm.Reboot()
 }
 
+// The realm handoff requests; tests replace them.
+var (
+	realmRequestReboot   = realm.RequestReboot
+	realmRequestPowerOff = realm.RequestPowerOff
+)
+
 func requestReboot() error {
 	watchdogHandoff(false)
+	stopLLDPEmit()
 	flushObservability()
-	return realm.RequestReboot()
+	return realmRequestReboot()
 }
 
 func requestPowerOff() error {
 	watchdogHandoff(true)
+	stopLLDPEmit()
 	flushObservability()
-	return realm.RequestPowerOff()
+	return realmRequestPowerOff()
 }
 
 func shell() {
@@ -494,10 +444,24 @@ func shell() {
 	realm.Shell()
 }
 
-func doKexecExecute() error {
+// The kexec hooks and the installed root; tests replace them.
+var (
+	flushLogs    = flushObservability
+	kexecExecute = kexec.Execute
+	kexecLoad    = kexec.Load
+	kexecRoot    = installedRootPath
+)
+
+// doKexecExecute hands the watchdog over, ships the queued log lines,
+// stops the network, then kexecs. The order matters: the log handler needs
+// the network, and the switch should see the BGP Cease before the link
+// goes quiet.
+func doKexecExecute(stopNetwork func()) error {
 	watchdogHandoff(false)
-	flushObservability()
-	return kexec.Execute()
+	stopLLDPEmit()
+	flushLogs()
+	stopNetwork()
+	return kexecExecute()
 }
 
 func runCAPRF(ctx context.Context) {
@@ -544,6 +508,11 @@ func runCAPRF(ctx context.Context) {
 	if cfg.DryRun {
 		cfg.Mode = "dry-run"
 	}
+	if err := checkPayloads(); err != nil {
+		code := provision.CodeOf(provision.WithCode("check-payloads", err))
+		failRun(ctx, cfg, client, "check-payloads", code, fmt.Sprintf("ramdisk payload check failed [%s]: %v", code, err), reboot)
+		return
+	}
 	startWatchdog(ctx, cfg)
 
 	// Wire remote log shipping.
@@ -554,6 +523,10 @@ func runCAPRF(ctx context.Context) {
 		defer flushObservability()
 		slog.SetDefault(slog.New(caprfRemoteLogHandler))
 	}
+
+	// The console shows only kernel errors (loglevel=4). With DEBUG_URL
+	// the server gets the whole kernel log once.
+	go shipKernelLog(ctx, client, cfg.Transport.DebugURL)
 
 	slog.Info("CAPRF mode active",
 		"hostname", cfg.Hostname,
@@ -568,10 +541,9 @@ func runCAPRF(ctx context.Context) {
 	runCtx, stopRun := context.WithCancel(ctx)
 	defer stopRun()
 
-	netMode, err := setupNetworkAndTokenFlow(ctx, cfg, client, stopRun)
+	netMode, stopNetwork, err := setupNetworkAndTokenFlow(ctx, cfg, client, stopRun)
 	if err != nil {
-		code := provision.CodeOf(err)
-		failRun(ctx, cfg, client, "network-setup", code, fmt.Sprintf("network or token setup failed [%s]: %v", code, err), reboot)
+		failNetworkSetup(ctx, cfg, client, err, stopNetwork)
 		return
 	}
 
@@ -595,12 +567,7 @@ func runCAPRF(ctx context.Context) {
 	})
 	if err != nil {
 		slog.Error("unknown operating mode", "mode", cfg.Mode, "error", err)
-		if netMode != nil {
-			if tearErr := netMode.Teardown(ctx); tearErr != nil {
-				slog.Warn("network teardown error", "error", tearErr)
-			}
-		}
-		reboot()
+		stopAndReboot(stopNetwork)()
 		return
 	}
 
@@ -614,11 +581,28 @@ func runCAPRF(ctx context.Context) {
 		stopTokenGraceReboot()
 	}
 	if runCtx.Err() != nil && ctx.Err() == nil && !isTerminalSuccess(modeErr) {
-		tokenShutdown(ctx, cfg, client, tokenStopMessage(), reboot)
+		endTokenStoppedRun(ctx, cfg, client, stopNetwork)
 		return
 	}
 
 	slog.Info("CAPRF run complete")
+	endRun(ctx, cfg, client, diskMgr, stopNetwork, mode.Name(), modeErr)
+}
+
+// rebootNow and endRunPause are reboot and the pause before the reboot of
+// a failed run; tests replace them.
+var (
+	rebootNow   = reboot
+	shellHook   = shell
+	endRunPause = 2 * time.Second
+)
+
+// endRun ends the run after the mode returned. Every path that leaves the
+// ramdisk ships the queued log lines, then stops the network (BGP Cease,
+// BFD AdminDown), then hands off; only the rescue shell keeps the network.
+func endRun(ctx context.Context, cfg *config.MachineConfig, client provisionStatusReporter,
+	diskMgr *disk.Manager, stopNetwork func(), modeName string, modeErr error) {
+	leave := stopAndReboot(stopNetwork)
 
 	// Handle mode-specific exit behavior before network teardown,
 	// so rescue shell SSH access remains available.
@@ -630,23 +614,17 @@ func runCAPRF(ctx context.Context) {
 	case errors.As(modeErr, &rescueErr):
 		// Network teardown is intentionally skipped here so SSH access
 		// remains available in the rescue shell.
-		shell()
-		reboot()
+		shellHook()
+		rebootNow()
 		return
 	case errors.As(modeErr, &rebootErr):
-		if netMode != nil {
-			if err := netMode.Teardown(ctx); err != nil {
-				slog.Warn("network teardown error", "error", err)
-			}
-		}
-		reboot()
+		leave()
 		return
 	case errors.As(modeErr, &powerOffErr):
-		// Keep the network up, like the provision handoff, so a failed power
-		// off can still be reported. Do not reboot when the power off fails:
-		// CAPRF has not ejected the ISO yet, so a reboot would run the task
-		// again.
-		requestProvisionHandoff(ctx, client, "power off", provisionHandoff.powerOff, provisionHandoff,
+		// Do not reboot when the power off fails: CAPRF has not ejected the
+		// ISO yet, so a reboot would run the task again.
+		ops := withNetworkStopBeforeHandoff(provisionHandoff, stopNetwork, func() func() { return restoreNetwork(ctx, cfg) })
+		requestProvisionHandoff(ctx, client, "power off", ops.powerOff, ops,
 			"power off handoff failed after deprovisioning success")
 		return
 	case errors.As(modeErr, &provisionErr):
@@ -654,15 +632,7 @@ func runCAPRF(ctx context.Context) {
 			// A standby command ran with its own config (payload).
 			cfg = provisionErr.Cfg
 		}
-		kexeced := tryKexec(cfg, provisionErr.FirmwareChanged, func() (disk.ReleaseReport, error) {
-			return diskMgr.UnmountOrRemountReadOnly(installedRootPath)
-		})
-		if !kexeced && provision.ShouldKeepTargetRootMountedForKexec(cfg, provisionErr.FirmwareChanged) {
-			cleanupFailedKexecTarget(diskMgr)
-		}
-		// No pause here: the handoff closes the CAPRF log handler, and
-		// that drains the queued log lines (at most 5 s) before it acts.
-		handleProvisionHandoff(ctx, cfg, client, provisionErr, kexeced, provisionHandoff)
+		finishProvision(ctx, cfg, client, diskMgr, stopNetwork, provisionErr)
 		return
 	}
 
@@ -670,15 +640,184 @@ func runCAPRF(ctx context.Context) {
 	// Log other unexpected errors at error level.
 	var healthErr *runmode.HealthCheckError
 	if modeErr != nil && !errors.As(modeErr, &healthErr) {
-		slog.Error("mode exited with error", "mode", mode.Name(), "error", modeErr)
+		slog.Error("mode exited with error", "mode", modeName, "error", modeErr)
 	}
-	if netMode != nil {
-		if err := netMode.Teardown(ctx); err != nil {
-			slog.Warn("network teardown error", "error", err)
+	time.Sleep(endRunPause)
+	leave()
+}
+
+// networkStopTimeout bounds the network teardown before a kexec or reboot;
+// tests shorten it.
+var networkStopTimeout = 5 * time.Second
+
+// setupNetworkModeFn is setupNetworkMode; tests replace it.
+var setupNetworkModeFn = setupNetworkMode
+
+// teardownDone is closed when the teardown of stopNetworkOnce has finished;
+// nil before a stop. A teardown that timed out may still run, and it
+// removes devices by name, so a restore must wait for it.
+var teardownDone atomic.Pointer[chan struct{}]
+
+// stopNetworkOnce returns a function that tears the network mode down once
+// and waits at most networkStopTimeout. GoBGP sends a Cease NOTIFICATION to
+// every peer (StopBgp), which ends the session on the switch at once,
+// instead of after the BFD detection time or the BGP hold timer, so the next
+// OS can peer without waiting. BFD sends AdminDown (bfd.Manager.Close),
+// which only keeps the switch from taking the silence as a forwarding
+// failure (RFC 5882 3.2).
+func stopNetworkOnce(ctx context.Context, netMode network.Mode) func() {
+	return sync.OnceFunc(func() {
+		// The every-NIC LLDP sender first, so its shutdown LLDPDUs go out
+		// while the NICs still have their links.
+		stopLLDPEmit()
+		if netMode == nil {
+			return
+		}
+		done := make(chan error, 1)
+		finished := make(chan struct{})
+		teardownDone.Store(&finished)
+		go func() {
+			defer close(finished)
+			done <- netMode.Teardown(context.WithoutCancel(ctx))
+		}()
+		select {
+		case err := <-done:
+			if err != nil {
+				slog.Warn("network teardown before the handoff failed", "error", err)
+				return
+			}
+			slog.Info("network stopped before the handoff")
+		case <-time.After(networkStopTimeout):
+			slog.Warn("network teardown before the handoff did not finish, going on", "timeout", networkStopTimeout)
+		}
+	})
+}
+
+// finishProvision starts the installed OS after a successful provision:
+// kexec, or the handoff (reboot or power off). BGP and BFD stop cleanly
+// before each of them, like the legacy `shutdown now` stops FRR before the
+// power off.
+func finishProvision(ctx context.Context, cfg *config.MachineConfig, client provisionStatusReporter,
+	diskMgr *disk.Manager, stopNetwork func(), provisionErr *runmode.ProvisionCompleteError) {
+	kexeced := tryKexec(cfg, provisionErr.FirmwareChanged, func() (disk.ReleaseReport, error) {
+		return diskMgr.UnmountOrRemountReadOnly(installedRootPath)
+	}, stopNetwork)
+	if !kexeced && provision.ShouldKeepTargetRootMountedForKexec(cfg, provisionErr.FirmwareChanged) {
+		cleanupFailedKexecTarget(diskMgr)
+	}
+	// No pause here: the handoff closes the CAPRF log handler, and that
+	// drains the queued log lines (at most 5 s) before it acts.
+	handleProvisionHandoff(ctx, cfg, client, provisionErr, kexeced,
+		withNetworkStopBeforeHandoff(provisionHandoff, stopNetwork, func() func() { return restoreNetwork(ctx, cfg) }))
+}
+
+// withNetworkStopBeforeHandoff returns ops whose reboot and power off ship
+// the queued log lines, then stop the network, then hand off. When the
+// handoff fails, restore brings the network back, so that the failure can
+// be reported and the rescue shell is reachable, and returns the stop of
+// the restored network: the next handoff and the exit after the rescue
+// shell stop that one (BGP Cease), the first stop already ran.
+func withNetworkStopBeforeHandoff(ops provisionHandoffOps, stopNetwork func(), restore func() func()) provisionHandoffOps {
+	var mu sync.Mutex
+	current := stopNetwork
+	stop := func() {
+		mu.Lock()
+		s := current
+		mu.Unlock()
+		s()
+	}
+	wrap := func(handoff func() error) func() error {
+		return func() error {
+			flushLogs()
+			stop()
+			err := handoff()
+			if err != nil {
+				restored := restore()
+				mu.Lock()
+				current = restored
+				mu.Unlock()
+				resumeLLDPEmit() // after the network is back: the host stays up
+			}
+			return err
 		}
 	}
-	time.Sleep(2 * time.Second)
-	reboot()
+	ops.reboot = wrap(ops.reboot)
+	ops.powerOff = wrap(ops.powerOff)
+	ops.stopNetwork = stop
+	return ops
+}
+
+// restoreTimeout bounds the network setup and the one connectivity check
+// of restoreNetwork; tests shorten it.
+var restoreTimeout = time.Minute
+
+// restoreNetwork sets the network up again after a failed handoff, so the
+// error report reaches CAPRF; tests replace it. It waits for the teardown
+// of the stop first (bounded by networkStopTimeout) and skips the restore
+// while it still runs: the teardown removes the VRF, VXLAN and bridge by
+// name and would remove the new ones. One setup and one connectivity check
+// within restoreTimeout: the report is best effort. It returns the stop of
+// the restored network, or a no-op without one.
+var restoreNetwork = func(ctx context.Context, cfg *config.MachineConfig) func() {
+	if done := teardownDone.Load(); done != nil {
+		select {
+		case <-*done:
+		case <-time.After(networkStopTimeout):
+			slog.Error("handoff failed and the network teardown still runs, not setting the network up again")
+			return func() {}
+		}
+	}
+	slog.Warn("handoff failed after the network stop, setting the network up again")
+	netMode, ok := setupRestoredNetwork(ctx, cfg)
+	if !ok {
+		return func() {}
+	}
+	stop := stopNetworkOnce(ctx, netMode)
+	target := cfg.Transport.ErrorURL
+	if target == "" {
+		target = cfg.Transport.InitURL
+	}
+	if target == "" {
+		return stop
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, restoreTimeout)
+	defer cancel()
+	if err := netMode.WaitForConnectivity(waitCtx, target, restoreTimeout); err != nil {
+		slog.Error("no connectivity after the failed handoff", "error", err)
+	}
+	return stop
+}
+
+// setupRestoredNetwork sets the network up with the run context: the mode
+// keeps goroutines on it (the GoBGP EVPN route watcher), so it must not be
+// a context that ends with the restore. The wait is bounded by
+// restoreTimeout instead; a setup that finishes later is torn down.
+func setupRestoredNetwork(ctx context.Context, cfg *config.MachineConfig) (network.Mode, bool) {
+	type result struct {
+		mode network.Mode
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		mode, err := setupNetworkModeFn(ctx, cfg)
+		done <- result{mode, err}
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil {
+			slog.Error("network setup after the failed handoff failed", "error", r.err)
+			return nil, false
+		}
+		return r.mode, true
+	case <-time.After(restoreTimeout):
+		slog.Error("network setup after the failed handoff did not finish in time", "timeout", restoreTimeout)
+		go func() {
+			if r := <-done; r.err == nil && r.mode != nil {
+				_ = r.mode.Teardown(context.WithoutCancel(ctx))
+			}
+		}()
+		return nil, false
+	}
 }
 
 func handleProvisionHandoff(
@@ -718,6 +857,12 @@ func requestProvisionHandoff(
 		slog.Error("provisioning handoff failed after success report", "action", action, "error", err)
 		reportProvisionHandoffError(ctx, reporter, statusMessage)
 		ops.shell()
+		if ops.stopNetwork != nil {
+			// The exit of PID 1 ends the ramdisk; the restored network sends
+			// its BGP Cease first.
+			flushLogs()
+			ops.stopNetwork()
+		}
 		ops.exit(1)
 		return
 	}
@@ -733,20 +878,34 @@ func reportProvisionHandoffError(ctx context.Context, reporter provisionStatusRe
 	}
 }
 
-func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, client *caprf.Client, stopRun func()) (network.Mode, error) {
+// setupNetworkAndTokenFlow sets the network and the token up. It returns
+// the network mode and the function that stops it once (BGP Cease, BFD
+// AdminDown) before the run leaves the ramdisk; the stop is also valid
+// when a later setup step fails.
+func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, client *caprf.Client, stopRun func()) (network.Mode, func(), error) {
 	if cfg.Mode == "dry-run" {
 		slog.Info("dry-run mode: skipping active network setup and token renewal")
-		return noopNetworkMode{}, nil
+		return noopNetworkMode{}, func() {}, nil
 	}
+
+	lldp.SetRunMode(cfg.Mode) // for the system description of LLDP_ANNOUNCE
+
+	// Before the network setup: a driver may reset the port when the flag
+	// changes, which would drop BGP sessions set up before.
+	prepareFirmwareLLDP(ctx, cfg)
 
 	// Set up networking with retry — if connectivity fails, teardown and
 	// rebuild the entire network stack before giving up.
-	netMode, err := setupNetworkMode(ctx, cfg)
+	netMode, err := setupNetworkModeFn(ctx, cfg)
 	if err != nil {
-		return nil, &provision.CodedError{Code: provision.CodeNetworkSetup, Err: err}
+		// A known error (a missing FRR payload) keeps its own code.
+		return nil, func() {}, provision.WithCode("network-setup", err)
 	}
 	if lldpReceiveEnabled(cfg) {
 		startLLDPReceive(ctx)
+	}
+	if cfg.Network.LLDP.EmitAllNICs() {
+		startLLDPEmitAll(ctx, &cfg.Network.LLDP)
 	}
 	connectivityTarget := cfg.Transport.InitURL
 	if connectivityTarget == "" {
@@ -761,14 +920,15 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 	if connectivityTarget != "" {
 		activeMode, err := ensureNetworkConnectivity(ctx, cfg, netMode, connectivityTarget)
 		if err != nil {
-			return nil, &provision.CodedError{Code: provision.CodeConnectivity, Err: err}
+			return nil, stopNetworkOnce(ctx, activeMode), &provision.CodedError{Code: provision.CodeConnectivity, Err: err}
 		}
 		netMode = activeMode
 	}
+	stopNetwork := stopNetworkOnce(ctx, netMode)
 
 	if err := syncClock(ctx, cfg, connectivityTarget); err != nil {
 		provision.DumpDebugState("time-sync")
-		return nil, err
+		return nil, stopNetwork, err
 	}
 
 	// Acquire JWT after network is ready so the token endpoint is reachable.
@@ -776,21 +936,53 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 		slog.Error("failed to acquire jwt token", "error", err)
 		if cfg.Transport.TokenURL != "" {
 			provision.DumpDebugState("jwt-acquire")
-			return nil, &provision.CodedError{Code: provision.CodeAuth, Err: err}
+			return nil, stopNetwork, &provision.CodedError{Code: provision.CodeAuth, Err: err}
 		}
 	}
 
-	client.SetTokenRenewalFatalHandler(func(err error) { tokenRenewalFatal(cfg, err, reboot, stopRun) })
+	// The grace reboot of the handler holds this first stop, not the stop
+	// of a network that restoreNetwork sets up after a failed handoff. That
+	// is safe today: a terminal success cancels the grace timer
+	// (stopTokenGraceReboot) before any wrapped handoff runs.
+	client.SetTokenRenewalFatalHandler(tokenFatalHandler(cfg, stopNetwork, stopRun))
 
 	if err := client.StartTokenRenewal(ctx); err != nil {
 		slog.Error("failed to start token renewal", "error", err)
 		if cfg.Transport.TokenURL != "" {
 			provision.DumpDebugState("jwt-renewal-start")
-			return nil, &provision.CodedError{Code: provision.CodeAuth, Err: err}
+			return nil, stopNetwork, &provision.CodedError{Code: provision.CodeAuth, Err: err}
 		}
 	}
 
-	return netMode, nil
+	return netMode, stopNetwork, nil
+}
+
+// stopAndReboot returns a reboot that ships the queued log lines and stops
+// the network first.
+func stopAndReboot(stopNetwork func()) func() {
+	return func() {
+		flushLogs()
+		stopNetwork()
+		rebootNow()
+	}
+}
+
+// tokenFatalHandler is the token renewal fatal handler of the run: its
+// grace reboot stops the network first.
+func tokenFatalHandler(cfg *config.MachineConfig, stopNetwork, stopRun func()) func(error) {
+	return func(err error) { tokenRenewalFatal(cfg, err, stopAndReboot(stopNetwork), stopRun) }
+}
+
+// failNetworkSetup ends a run whose network or token setup failed; a
+// network that came up stops before the reboot.
+func failNetworkSetup(ctx context.Context, cfg *config.MachineConfig, reporter provisionStatusReporter, err error, stopNetwork func()) {
+	code := provision.CodeOf(err)
+	failRun(ctx, cfg, reporter, "network-setup", code, fmt.Sprintf("network or token setup failed [%s]: %v", code, err), stopAndReboot(stopNetwork))
+}
+
+// endTokenStoppedRun ends a run that a token failure stopped.
+func endTokenStoppedRun(ctx context.Context, cfg *config.MachineConfig, reporter provisionStatusReporter, stopNetwork func()) {
+	tokenShutdown(ctx, cfg, reporter, tokenStopMessage(), stopAndReboot(stopNetwork))
 }
 
 // failRun ends a run that failed outside a mode in step with the failure
@@ -944,7 +1136,7 @@ func ensureNetworkConnectivity(ctx context.Context, cfg *config.MachineConfig, n
 			if tErr := netMode.Teardown(ctx); tErr != nil {
 				slog.Warn("network teardown failed", "error", tErr)
 			}
-			newMode, setupErr := setupNetworkMode(ctx, cfg)
+			newMode, setupErr := setupNetworkModeFn(ctx, cfg)
 			if setupErr != nil {
 				return nil, fmt.Errorf("network retry setup: %w", setupErr)
 			}
@@ -988,23 +1180,187 @@ func networkWait(cfg *config.MachineConfig) (int, time.Duration) {
 	return 1, time.Duration(rounds) * 20 * time.Second
 }
 
-// setupNetworkMode detects and configures the appropriate network mode.
 // lldpReceiveEnabled is LLDP_RECEIVE, on by default.
 func lldpReceiveEnabled(cfg *config.MachineConfig) bool {
 	return config.BoolOr(cfg.Network.LLDPReceive, true)
 }
 
 // startLLDPReceive logs and records the LLDP neighbors of every physical
-// NIC for the rest of the run. The legacy ramdisk only sends LLDP.
+// NIC for the rest of the run. The legacy ramdisk only sends LLDP. The NIC
+// detection runs in the background: with one NIC it waits 3 s for more
+// NICs to appear, and the connectivity check must not wait for that.
 func startLLDPReceive(ctx context.Context) {
-	nics, err := network.DetectPhysicalNICsContext(ctx)
-	if err != nil || len(nics) == 0 {
-		slog.Warn("LLDP receive not started: no physical NICs", "error", err)
-		return
-	}
-	lldp.Receive(ctx, nics, slog.With("component", "lldp"))
+	lldp.ReceiveDetected(ctx, network.DetectPhysicalNICsContext, slog.With("component", "lldp"))
 }
 
+// disableNICFirmwareLLDP stops the firmware LLDP agent of the Intel NICs
+// (LLDP_DISABLE_FW_AGENT, on by default), which otherwise consumes the
+// switch's LLDP frames. The ports whose agent an SR-IOV profile sets are
+// left to that profile. A failure is only logged.
+func disableNICFirmwareLLDP(ctx context.Context, sriovCfg *sriov.Config) {
+	nics, err := detectNICs(ctx)
+	if err != nil {
+		slog.Warn("firmware LLDP agent not disabled: no physical NICs", "error", err)
+		return
+	}
+	disableNICFirmwareLLDPOn(nics, sriovCfg)
+}
+
+// prepareFirmwareLLDP stops the firmware LLDP agent of the NICs now and of
+// the NICs that appear later (lldpPrepareNICs), unless the config keeps it.
+func prepareFirmwareLLDP(ctx context.Context, cfg *config.MachineConfig) {
+	if !cfg.DisableNICFirmwareLLDP() {
+		return
+	}
+	disableNICFirmwareLLDP(ctx, &cfg.Provision.SRIOV)
+	lldpPrepareNICs = func(nics []string) { disableNICFirmwareLLDPOn(nics, &cfg.Provision.SRIOV) }
+}
+
+// disableNICFirmwareLLDPOn is disableNICFirmwareLLDP for the given NICs,
+// also for a NIC that appears later.
+func disableNICFirmwareLLDPOn(nics []string, sriovCfg *sriov.Config) {
+	if len(nics) == 0 {
+		return
+	}
+	owned, err := sriovCfg.FWLLDPAgentOwners(discoverPFs)
+	if err != nil {
+		slog.Warn("firmware LLDP agent not disabled: SR-IOV ports unknown", "error", err)
+		return
+	}
+	for _, nic := range nics {
+		if slices.Contains(owned, nic) {
+			slog.Info("firmware LLDP agent left to the SR-IOV profile", "interface", nic)
+			continue
+		}
+		flag, err := disableFirmwareLLDP(nic)
+		switch {
+		case err != nil:
+			slog.Warn("firmware LLDP agent not disabled", "interface", nic, "flag", flag, "error", err)
+		case flag != "":
+			slog.Info("firmware LLDP agent disabled", "interface", nic, "flag", flag)
+		}
+	}
+}
+
+// Seams of disableNICFirmwareLLDP.
+var (
+	detectNICs          = network.DetectPhysicalNICsContext
+	discoverPFs         = func() ([]sriov.PF, error) { return sriov.NewInspector().Discover() }
+	disableFirmwareLLDP = nicfw.DisableFirmwareLLDP
+)
+
+// startLLDPEmitAll sends LLDP frames on every physical NIC with carrier for
+// the rest of the run (LLDP_EMIT_ALL), in every network mode.
+func startLLDPEmitAll(ctx context.Context, l *config.LLDPConfig) {
+	nics, err := network.DetectPhysicalNICsContext(ctx)
+	if err != nil || len(nics) == 0 {
+		slog.Warn("LLDP not sent: no physical NICs", "error", err)
+		return
+	}
+	info := lldp.SystemInfo()
+	info.Profile, info.PortIDFormat, info.Announce = l.Profile, l.PortIDFormat, l.Announce
+	// Its own context: the run context is not canceled before kexec,
+	// reboot or power off, so the handoff stops it to send the shutdown
+	// LLDPDU (IEEE 802.1AB), like the GoBGP sender at its teardown.
+	start := func() func() {
+		emitCtx, cancel := context.WithCancel(ctx)
+		wait := lldp.Emit(emitCtx, nics, &info, slog.With("component", "lldp"))
+		return func() {
+			cancel()
+			waitLLDPEmit(wait)
+		}
+	}
+	lldpEmitMu.Lock()
+	lldpEmitStart = start
+	lldpEmitMu.Unlock()
+	setLLDPEmitStop(start())
+}
+
+// lldpEmitStop stops the every-NIC LLDP sender; nil when none runs.
+// lldpEmitStart starts it again and returns its stop function.
+// lldpEmitPending is closed when the senders of a stop that timed out have
+// ended; nil when none is pending.
+var (
+	lldpEmitMu      sync.Mutex
+	lldpEmitStop    func()
+	lldpEmitStart   func() func()
+	lldpEmitPending <-chan struct{}
+)
+
+// lldpStopTimeout bounds the wait for the shutdown LLDPDUs: BOOTy is PID 1
+// right before kexec or power off and must not hang there.
+// lldpResumeWait bounds the wait of a restart for senders still alive.
+var (
+	lldpStopTimeout = 2 * time.Second
+	lldpResumeWait  = 500 * time.Millisecond
+)
+
+func setLLDPEmitStop(stop func()) {
+	lldpEmitMu.Lock()
+	defer lldpEmitMu.Unlock()
+	lldpEmitStop = stop
+}
+
+// waitLLDPEmit waits for the senders, at most lldpStopTimeout. Their done
+// channel is pending from the start of the stop, so a restart, also one
+// during the wait, does not run next to them.
+func waitLLDPEmit(wait func()) {
+	done := make(chan struct{})
+	lldpEmitMu.Lock()
+	lldpEmitPending = done
+	lldpEmitMu.Unlock()
+	go func() {
+		wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(lldpStopTimeout):
+		slog.Warn("LLDP senders did not stop in time, handing off without waiting", "timeout", lldpStopTimeout)
+	}
+}
+
+// stopLLDPEmit stops the every-NIC LLDP sender, which then sends the
+// shutdown LLDPDU on each NIC, and waits for it (bounded). The network
+// teardown before a reboot and every handoff call it; a second call does
+// nothing.
+func stopLLDPEmit() {
+	lldpEmitMu.Lock()
+	stop := lldpEmitStop
+	lldpEmitStop = nil
+	lldpEmitMu.Unlock()
+	if stop != nil {
+		stop()
+	}
+}
+
+// resumeLLDPEmit starts the every-NIC LLDP sender again after a handoff
+// request failed and the host stays up; nothing when it runs or was never
+// started. The check, the start and the store happen under lldpEmitMu, so
+// a concurrent stop or resume cannot leave a sender nobody can stop. When
+// the senders of a timed-out stop are still alive after lldpResumeWait, it
+// does not restart: their late shutdown LLDPDU (TTL 0) would follow the
+// new frames and remove the host from the neighbor tables.
+func resumeLLDPEmit() {
+	lldpEmitMu.Lock()
+	defer lldpEmitMu.Unlock()
+	if lldpEmitStart == nil || lldpEmitStop != nil {
+		return
+	}
+	if pending := lldpEmitPending; pending != nil {
+		select {
+		case <-pending:
+			lldpEmitPending = nil
+		case <-time.After(lldpResumeWait):
+			slog.Warn("LLDP not restarted: the senders of the last stop are still running")
+			return
+		}
+	}
+	slog.Info("handoff failed, sending LLDP frames again")
+	lldpEmitStop = lldpEmitStart()
+}
+
+// setupNetworkMode detects and configures the appropriate network mode.
 // defaultNICWaitSeconds is the wait for configured NICs without
 // NIC_WAIT_SECONDS.
 const defaultNICWaitSeconds = 30
@@ -1042,6 +1398,8 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (_ network
 	ignored := setPeerVars(netCfg)
 	if npCfg != nil {
 		mergeNetplanConfig(netCfg, npCfg)
+		// The legacy ramdisk reads these files with udev names on every NIC.
+		netCfg.UdevNames = true
 	}
 	if err := applyNativeSessions(&cfg.Network.BGP, netCfg); err != nil {
 		return nil, err
@@ -1074,6 +1432,19 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (_ network
 	// static interface of a netplan match is known from here on.
 	network.RecordUsedInterfaces(netCfg)
 
+	// links mode is explicit only: link-local, no DHCP, no BGP.
+	if netCfg.IsLinksMode() {
+		slog.Info("using links network mode")
+		mode := &network.LinksMode{}
+		if err := mode.Setup(ctx, netCfg); err != nil {
+			if cleanupErr := linkCleanup.Teardown(ctx); cleanupErr != nil {
+				slog.Warn("link-layer cleanup after links setup failure failed", "error", cleanupErr)
+			}
+			return nil, fmt.Errorf("links network setup: %w", err)
+		}
+		return networkModeWithResolvers(ctx, netCfg, mode, linkCleanup)
+	}
+
 	// Priority: GoBGP > FRR > Static > DHCP.
 	if netCfg.IsGoBGPMode() {
 		detectIPMI(netCfg)
@@ -1092,6 +1463,9 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (_ network
 	if netCfg.IsFRRMode() {
 		if cfg.Network.BGP.HasSessions() {
 			slog.Warn("network.bgp.sessions (BGP_SESSIONS) applies to GoBGP mode only; the FRR stack ignores it")
+		}
+		if err := requireFRRPayload(ctx, linkCleanup); err != nil {
+			return nil, err
 		}
 		detectIPMI(netCfg)
 		slog.Info("using FRR/EVPN network mode", "asn", cfg.Network.BGP.ASN)
@@ -1122,69 +1496,75 @@ func setupNetworkMode(ctx context.Context, cfg *config.MachineConfig) (_ network
 
 func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 	netCfg := &network.Config{
-		UnderlaySubnet:    cfg.Network.EVPN.UnderlaySubnet,
-		UnderlayIP:        cfg.Network.EVPN.UnderlayIP,
-		OverlaySubnet:     cfg.Network.EVPN.OverlaySubnet,
-		IPMISubnet:        cfg.Network.IPMI.Subnet,
-		ASN:               cfg.Network.BGP.ASN,
-		ProvisionVNI:      cfg.Network.EVPN.ProvisionVNI,
-		ProvisionIP:       cfg.Network.EVPN.ProvisionIP,
-		ProvisionGateway:  cfg.Network.EVPN.ProvisionGateway,
-		LegacyFRRRecovery: cfg.Network.WaitMode == config.NetworkWaitRounds,
-		DNSResolvers:      cfg.Network.DNSResolvers,
-		DCGWIPs:           cfg.Network.EVPN.DCGWIPs,
-		LeafASN:           cfg.Network.EVPN.LeafASN,
-		LocalASN:          cfg.Network.EVPN.LocalASN,
-		OverlayAggregate:  cfg.Network.EVPN.OverlayAggregate,
-		VPNRT:             cfg.Network.EVPN.VPNRT,
-		StaticIP:          cfg.Network.Static.IP,
-		StaticGateway:     cfg.Network.Static.Gateway,
-		StaticIface:       cfg.Network.Static.Iface,
-		BondInterfaces:    cfg.Network.Bond.Interfaces,
-		BondMode:          cfg.Network.Bond.Mode,
-		VRFName:           cfg.Network.VRF.Name,
-		VRFTableID:        cfg.Network.VRF.TableID,
-		BGPKeepalive:      cfg.Network.BGP.Keepalive,
-		BGPHold:           cfg.Network.BGP.Hold,
-		BFDTransmitMS:     cfg.Network.BGP.BFDTransmitMS,
-		BFDReceiveMS:      cfg.Network.BGP.BFDReceiveMS,
-		BFDDetectMult:     cfg.Network.BGP.BFDDetectMultiplier,
-		NetworkMode:       cfg.Network.Mode,
-		BGPPeerMode:       network.ParsePeerMode(cfg.Network.BGP.PeerMode),
-		BGPInterfaces:     cfg.Network.BGP.Interfaces,
-		BGPNeighbors:      cfg.Network.BGP.Neighbors,
-		BGPRemoteASN:      cfg.Network.BGP.RemoteASN,
-		BGPUnderlayAF:     cfg.Network.BGP.UnderlayAF,
-		BGPOverlayType:    cfg.Network.BGP.OverlayType,
-		EVPNL2Enabled:     cfg.Network.EVPN.L2Enabled,
-		EVPNType5Only:     cfg.Network.EVPN.Type5Only != nil && *cfg.Network.EVPN.Type5Only,
-		EVPNType5OnlySet:  cfg.Network.EVPN.Type5Only != nil,
-		Type5Networks:     splitList(cfg.Network.EVPN.Type5Networks),
-		LoopbackAddrs:     splitList(cfg.Network.LoopbackAddresses),
-		BlackholeRoutes:   splitList(cfg.Network.BlackholeRoutes),
-		BridgeName:        cfg.Network.EVPN.BridgeName,
-		VXLANName:         cfg.Network.EVPN.VXLANName,
-		BridgeMAC:         cfg.Network.EVPN.BridgeMAC,
-		VXLANLink:         cfg.Network.EVPN.VXLANLink,
-		UnderlayDummyName: cfg.Network.EVPN.UnderlayDummyName,
-		MTU:               cfg.Network.MTU,
-		OverlayVRFTableID: cfg.Network.VRF.OverlayTableID,
-		BGPLocalAS:        cfg.Network.BGP.LocalAS,
-		OverlayDevices:    cfg.Network.Overlay,
-		NoAcceptRA:        splitList(cfg.Network.NoAcceptRA),
-		EmitLLDP:          splitList(cfg.Network.EmitLLDP),
-		IPForwarding:      cfg.Network.IPForwarding,
-		IPv6Forwarding:    cfg.Network.IPv6Forwarding,
-		BGPRouteMaps:      cfg.Network.BGP.RouteMaps,
-		BGPCommunityLists: cfg.Network.BGP.CommunityLists,
-		BGPRouteMapIn:     cfg.Network.BGP.RouteMapIn,
-		BGPRouteMapOut:    cfg.Network.BGP.RouteMapOut,
-		EVPNImportRTs:     splitList(cfg.Network.EVPN.ImportRouteTargets),
-		EVPNExportRTs:     splitList(cfg.Network.EVPN.ExportRouteTargets),
-		BGPNeighborVRF:    cfg.Network.BGP.NeighborVRF,
-		BGPConnectRetry:   cfg.Network.BGP.ConnectRetry,
-		BGPAuthPassword:   cfg.Network.BGP.AuthPassword,
-		BGPMinPeers:       cfg.Network.BGP.MinPeers,
+		UnderlaySubnet:          cfg.Network.EVPN.UnderlaySubnet,
+		UnderlayIP:              cfg.Network.EVPN.UnderlayIP,
+		OverlaySubnet:           cfg.Network.EVPN.OverlaySubnet,
+		IPMISubnet:              cfg.Network.IPMI.Subnet,
+		ASN:                     cfg.Network.BGP.ASN,
+		ProvisionVNI:            cfg.Network.EVPN.ProvisionVNI,
+		ProvisionIP:             cfg.Network.EVPN.ProvisionIP,
+		ProvisionGateway:        cfg.Network.EVPN.ProvisionGateway,
+		LegacyFRRRecovery:       cfg.Network.WaitMode == config.NetworkWaitRounds,
+		DNSResolvers:            cfg.Network.DNSResolvers,
+		DCGWIPs:                 cfg.Network.EVPN.DCGWIPs,
+		LeafASN:                 cfg.Network.EVPN.LeafASN,
+		LocalASN:                cfg.Network.EVPN.LocalASN,
+		OverlayAggregate:        cfg.Network.EVPN.OverlayAggregate,
+		VPNRT:                   cfg.Network.EVPN.VPNRT,
+		StaticIP:                cfg.Network.Static.IP,
+		StaticGateway:           cfg.Network.Static.Gateway,
+		StaticIface:             cfg.Network.Static.Iface,
+		BondInterfaces:          cfg.Network.Bond.Interfaces,
+		BondMode:                cfg.Network.Bond.Mode,
+		VRFName:                 cfg.Network.VRF.Name,
+		VRFTableID:              cfg.Network.VRF.TableID,
+		BGPKeepalive:            cfg.Network.BGP.Keepalive,
+		BGPHold:                 cfg.Network.BGP.Hold,
+		BFDTransmitMS:           cfg.Network.BGP.BFDTransmitMS,
+		BFDReceiveMS:            cfg.Network.BGP.BFDReceiveMS,
+		BFDDetectMult:           cfg.Network.BGP.BFDDetectMultiplier,
+		NetworkMode:             cfg.Network.Mode,
+		BGPPeerMode:             network.ParsePeerMode(cfg.Network.BGP.PeerMode),
+		BGPInterfaces:           cfg.Network.BGP.Interfaces,
+		BGPNeighbors:            cfg.Network.BGP.Neighbors,
+		BGPRemoteASN:            cfg.Network.BGP.RemoteASN,
+		BGPUnderlayAF:           cfg.Network.BGP.UnderlayAF,
+		BGPOverlayType:          cfg.Network.BGP.OverlayType,
+		EVPNL2Enabled:           cfg.Network.EVPN.L2Enabled,
+		EVPNResolveOverlayIndex: cfg.Network.EVPN.ResolveOverlayIndex,
+		EVPNType5Only:           cfg.Network.EVPN.Type5Only != nil && *cfg.Network.EVPN.Type5Only,
+		EVPNType5OnlySet:        cfg.Network.EVPN.Type5Only != nil,
+		Type5Networks:           splitList(cfg.Network.EVPN.Type5Networks),
+		LoopbackAddrs:           splitList(cfg.Network.LoopbackAddresses),
+		BlackholeRoutes:         splitList(cfg.Network.BlackholeRoutes),
+		BridgeName:              cfg.Network.EVPN.BridgeName,
+		VXLANName:               cfg.Network.EVPN.VXLANName,
+		BridgeMAC:               cfg.Network.EVPN.BridgeMAC,
+		VXLANLink:               cfg.Network.EVPN.VXLANLink,
+		UnderlayDummyName:       cfg.Network.EVPN.UnderlayDummyName,
+		MTU:                     cfg.Network.MTU,
+		OverlayVRFTableID:       cfg.Network.VRF.OverlayTableID,
+		BGPLocalAS:              cfg.Network.BGP.LocalAS,
+		OverlayDevices:          cfg.Network.Overlay,
+		NoAcceptRA:              splitList(cfg.Network.NoAcceptRA),
+		EmitLLDP:                splitList(cfg.Network.EmitLLDP),
+		LLDPProfile:             cfg.Network.LLDP.Profile,
+		LLDPPortIDFormat:        cfg.Network.LLDP.PortIDFormat,
+		LLDPAnnounce:            cfg.Network.LLDP.Announce,
+		LLDPEmitAll:             cfg.Network.LLDP.EmitAllNICs(),
+		IPForwarding:            cfg.Network.IPForwarding,
+		IPv6Forwarding:          cfg.Network.IPv6Forwarding,
+		BGPRouteMaps:            cfg.Network.BGP.RouteMaps,
+		BGPCommunityLists:       cfg.Network.BGP.CommunityLists,
+		BGPRouteMapIn:           cfg.Network.BGP.RouteMapIn,
+		BGPRouteMapOut:          cfg.Network.BGP.RouteMapOut,
+		EVPNImportRTs:           splitList(cfg.Network.EVPN.ImportRouteTargets),
+		EVPNExportRTs:           splitList(cfg.Network.EVPN.ExportRouteTargets),
+		EVPNRD:                  cfg.Network.EVPN.RD,
+		BGPNeighborVRF:          cfg.Network.BGP.NeighborVRF,
+		BGPConnectRetry:         cfg.Network.BGP.ConnectRetry,
+		BGPAuthPassword:         cfg.Network.BGP.AuthPassword,
+		BGPMinPeers:             cfg.Network.BGP.MinPeers,
 	}
 	// OVERLAY_VRF_NAME=default keeps the bridge in the default VRF.
 	if name := cfg.Network.VRF.OverlayName; name != "" {
@@ -1196,6 +1576,69 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 	return netCfg
 }
 
+// frrVersionBelow reports whether the "frr version" v is below spec, like
+// FRR's match_version "< spec". An empty version (no "frr version" line)
+// is the running FRR, so it is not below.
+func frrVersionBelow(v, spec string) bool {
+	return v != "" && frrVersionCmp(v, spec) < 0
+}
+
+// frrVersionCmp is FRR's frr_version_cmp (lib/defaults.c): runs of digits
+// compare as numbers, other characters by versionValue.
+func frrVersionCmp(a, b string) int {
+	isDigit := func(s string) bool { return s != "" && s[0] >= '0' && s[0] <= '9' }
+	for a != "" || b != "" {
+		if isDigit(a) && isDigit(b) {
+			av, ar := leadingNumber(a)
+			bv, br := leadingNumber(b)
+			if c := cmp.Compare(av, bv); c != 0 {
+				return c
+			}
+			a, b = ar, br
+			continue
+		}
+		if c := cmp.Compare(versionValue(a), versionValue(b)); c != 0 {
+			return c
+		}
+		// Equal values: both strings have a next character (the end
+		// differs from every character).
+		a, b = a[1:], b[1:]
+	}
+	return 0
+}
+
+// versionValue is FRR's version_value of the first character of s; the
+// end of s is '\0'.
+func versionValue(s string) int {
+	if s == "" {
+		return 1
+	}
+	switch c := s[0]; {
+	case c >= 128:
+		return 2 // non-ASCII
+	case c == '~':
+		return 0 // "~foo" sorts older than nothing
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+		return 0x100 + int(c|0x20)
+	default:
+		return 0x200 + int(c) // punctuation and digits
+	}
+}
+
+// leadingNumber returns the value of the leading digits of s, like
+// strtoul (saturated), and the rest.
+func leadingNumber(s string) (n uint64, rest string) {
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	n, err := strconv.ParseUint(s[:i], 10, 64)
+	if err != nil {
+		n = math.MaxUint64
+	}
+	return n, s[i:]
+}
+
 // applyBGPOptions applies the BGP options that frr.conf can also set. With
 // any BGP sessions (frr.conf or network.bgp.sessions) the default is FRR's
 // (routes installed); the BGP_PEER_MODE peers default it off. fast-external-failover is set in
@@ -1205,6 +1648,7 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 	withSessions := len(n.BGPSessions) > 0
 	n.BGPInstallRoutes = boolOr(o.InstallRoutes, withSessions)
+	n.BGPConnectAtOnce = boolOr(o.ConnectAtOnce, false)
 	if o.MultipathRelax != nil {
 		n.BGPMultipathRelax = *o.MultipathRelax
 	}
@@ -1216,10 +1660,13 @@ func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 	n.BGPDefaults = cmp.Or(n.BGPDefaults, "datacenter")
 	n.BGPHostname = o.Hostname
 	datacenter := n.BGPDefaults == "datacenter"
+	gr := boolOr(o.GracefulRestart, true)
 	n.BGPCapabilities = network.BGPCapabilities{
-		GracefulRestart:     boolOr(o.GracefulRestart, true),
+		GracefulRestart:     gr,
 		GracefulRestartTime: cmp.Or(o.GracefulRestartTime, 120),
-		AddPathReceive:      boolOr(o.AddPathReceive, true),
+		// FRR BGP_GRACEFUL_NOTIFICATION: off for "frr version" < 8.3.
+		GracefulNotification: gr && boolOr(o.GracefulNotification, !frrVersionBelow(n.BGPFRRVersion, "8.3")),
+		AddPathReceive:       boolOr(o.AddPathReceive, true),
 		// FRR 10.3 BGP_SOFT_VERSION_CAPABILITY: on for every peer with
 		// datacenter, iBGP only otherwise.
 		SoftwareVersion: boolOr(o.SoftwareVersion, datacenter),
@@ -1299,11 +1746,21 @@ func keepProvisionerResolvConf(cfg *config.MachineConfig, netCfg *network.Config
 	if cfg.ProvisionerFilesInRamdisk() && provision.HasProvisionerResolvConf() {
 		slog.Info("keeping the provisioner resolv.conf in the ramdisk")
 		netCfg.DNSResolvers = ""
+		netCfg.KeepResolvConf = true
 	}
 }
 
+// configureResolvers writes the configured resolvers; tests replace it.
+var configureResolvers = network.ConfigureResolvers
+
 func networkModeWithResolvers(ctx context.Context, netCfg *network.Config, mode network.Mode, cleanup *linkLayerCleanup) (network.Mode, error) {
-	if err := network.ConfigureResolvers(netCfg.DNSResolvers); err != nil {
+	configure := configureResolvers
+	if m, ok := mode.(interface{ ManagesDNS() bool }); ok && m.ManagesDNS() {
+		// DHCP mode writes the configured and the lease servers itself:
+		// only check the configured ones here, do not overwrite.
+		configure = func(r string) error { _, err := network.ResolverLines(r); return err }
+	}
+	if err := configure(netCfg.DNSResolvers); err != nil {
 		if cleanupErr := mode.Teardown(ctx); cleanupErr != nil {
 			slog.Warn("network mode cleanup after resolver setup failure failed", "error", cleanupErr)
 		}
@@ -1312,16 +1769,146 @@ func networkModeWithResolvers(ctx context.Context, netCfg *network.Config, mode 
 		}
 		return nil, fmt.Errorf("configure initramfs DNS: %w", err)
 	}
+	// networkd sends LLDP with "emit-lldp: true" whatever the addressing.
+	// The GoBGP underlay sends itself; the other modes send from here, after
+	// their setup brought the NICs up.
+	// With LLDP_EMIT_ALL the all-NIC sender runs instead (no duplicates).
+	if (len(netCfg.EmitLLDP) > 0 || len(netCfg.EmitLLDPMatches) > 0) && !netCfg.IsGoBGPMode() && !netCfg.LLDPEmitAll && cleanup != nil {
+		cleanup.stopLLDP = startLLDPEmit(netCfg)
+	}
 	return wrapLinkLayerMode(mode, cleanup), nil
 }
 
 // resolveLinkMatch is network.ResolveLinkMatch; tests replace it.
-var resolveLinkMatch = network.ResolveLinkMatch
+var (
+	resolveLinkMatch   = network.ResolveLinkMatch
+	resolveLinkMatches = network.ResolveLinkMatches
+	startLLDPEmit      = emitLLDPOnNetplanNICs
+	lldpLinkSubscribe  = netlink.LinkSubscribeWithOptions
+	// lldpPrepareNICs runs for a NIC that appears later before LLDP is sent
+	// on it; the network setup sets it from the config.
+	lldpPrepareNICs = func([]string) {}
+	lldpEmit        = lldp.Emit
+)
+
+// followLLDPMatches calls start with the NICs the matches select when a
+// NIC that is not known yet appears, until ctx ends.
+func followLLDPMatches(ctx context.Context, matches []network.LinkMatch, known func(string) bool, start func([]string), log *slog.Logger) {
+	// The watch outlives the call: it keeps the functions of the call, so a
+	// test that restores them at its end does not race with it.
+	subscribe, resolve := lldpLinkSubscribe, resolveLinkMatches
+	check := func() {
+		names, err := resolve(ctx, matches)
+		if err != nil {
+			return
+		}
+		fresh := slices.DeleteFunc(names, known)
+		if len(fresh) > 0 {
+			lldpPrepareNICs(fresh) // the firmware LLDP agent off, like at the start
+			start(fresh)
+		}
+	}
+	go func() {
+		// The subscription ends on a netlink error: subscribe again.
+		for again := false; ctx.Err() == nil; again = true {
+			updates := make(chan netlink.LinkUpdate, 16)
+			// One context per subscription, canceled when it ends: the
+			// netlink fork (#833) closes the socket after a receive error
+			// itself; upstream v1.3.1 keeps it until done closes.
+			sub, end := context.WithCancel(ctx)
+			opts := netlink.LinkSubscribeOptions{ErrorCallback: lldpWatchError(sub, log)}
+			if err := subscribe(updates, sub.Done(), opts); err != nil {
+				end()
+				log.Warn("NICs that appear later send no LLDP", "error", err)
+				return
+			}
+			if again {
+				check() // a NIC whose event was lost (ENOBUFS)
+			}
+			for u := range updates {
+				if u.Header.Type == unix.RTM_NEWLINK && u.Link != nil && !known(u.Attrs().Name) {
+					check()
+				}
+			}
+			end()
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Second):
+			}
+		}
+	}()
+}
+
+// lldpWatchError logs a netlink error of the LLDP link watch: a failed
+// receive ends the subscription (the watch subscribes again), a message of
+// another sender is skipped (the subscription goes on), and the close of
+// the subscription or the end of the run is no error.
+func lldpWatchError(sub context.Context, log *slog.Logger) func(error) {
+	return func(err error) {
+		switch {
+		case sub.Err() != nil:
+		case strings.Contains(err.Error(), "Wrong sender portid"):
+			log.Debug("link watch for LLDP skipped a message", "error", err)
+		default:
+			log.Warn("link watch for LLDP failed, subscribing again", "error", err)
+		}
+	}
+}
+
+// emitLLDPOnNetplanNICs sends LLDP on the NICs with netplan "emit-lldp:
+// true", with the configured profile like startLLDPEmitAll, and on every
+// NIC that appears later and a match block selects, like networkd matches
+// a link when udev announces it. It returns the stop function.
+func emitLLDPOnNetplanNICs(netCfg *network.Config) func() {
+	ctx, cancel := context.WithCancel(context.Background())
+	info := lldp.SystemInfo()
+	info.Profile, info.PortIDFormat, info.Announce = netCfg.LLDPProfile, netCfg.LLDPPortIDFormat, netCfg.LLDPAnnounce
+	log := slog.With("component", "lldp")
+	var mu sync.Mutex
+	var waits []func()
+	sending := map[string]bool{}
+	start := func(names []string) {
+		mu.Lock()
+		defer mu.Unlock()
+		var add []string
+		for _, n := range names {
+			if !sending[n] && ctx.Err() == nil {
+				sending[n] = true
+				add = append(add, n)
+			}
+		}
+		if len(add) > 0 {
+			waits = append(waits, lldpEmit(ctx, add, &info, log))
+		}
+	}
+	start(netCfg.EmitLLDP)
+	if len(netCfg.EmitLLDPMatches) > 0 {
+		known := func(name string) bool { mu.Lock(); defer mu.Unlock(); return sending[name] }
+		followLLDPMatches(ctx, netCfg.EmitLLDPMatches, known, start, log)
+	}
+	return func() {
+		cancel()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, w := range waits {
+			w()
+		}
+	}
+}
 
 func prepareLinkLayers(ctx context.Context, netCfg *network.Config) (*linkLayerCleanup, error) {
 	cleanup := &linkLayerCleanup{}
 	if err := network.ApplyLinkRenames(ctx, netCfg.LinkRenames); err != nil {
 		return nil, fmt.Errorf("netplan set-name: %w", err)
+	}
+	if names, err := resolveLinkMatches(ctx, netCfg.EmitLLDPMatches); err != nil {
+		slog.Warn("netplan match blocks with emit-lldp not resolved", "error", err)
+	} else {
+		for _, n := range names {
+			if !slices.Contains(netCfg.EmitLLDP, n) {
+				netCfg.EmitLLDP = append(netCfg.EmitLLDP, n)
+			}
+		}
 	}
 	if netCfg.StaticIface == "" && netCfg.StaticMatch != nil {
 		name, err := resolveLinkMatch(ctx, *netCfg.StaticMatch)
@@ -1377,18 +1964,20 @@ func setupVLANLayers(ctx context.Context, netCfg *network.Config, cleanup *linkL
 }
 
 type linkLayerCleanup struct {
-	bond  network.Mode
-	vlans []network.VLANConfig
+	bond     network.Mode
+	vlans    []network.VLANConfig
+	stopLLDP func()
 }
 
 func (c *linkLayerCleanup) empty() bool {
-	return c == nil || (c.bond == nil && len(c.vlans) == 0)
+	return c == nil || (c.bond == nil && len(c.vlans) == 0 && c.stopLLDP == nil)
 }
 
 func (c *linkLayerCleanup) Teardown(ctx context.Context) error {
 	if c.empty() {
 		return nil
 	}
+	c.stopLLDPNow()
 	var errs []error
 	for i := len(c.vlans) - 1; i >= 0; i-- {
 		v := c.vlans[i]
@@ -1416,8 +2005,19 @@ func wrapLinkLayerMode(mode network.Mode, cleanup *linkLayerCleanup) network.Mod
 	return &linkLayerNetworkMode{Mode: mode, cleanup: cleanup}
 }
 
+// Teardown stops the LLDP sender first, so its shutdown frames go out
+// before the network mode stops (FRR, within the network stop timeout).
 func (m *linkLayerNetworkMode) Teardown(ctx context.Context) error {
+	m.cleanup.stopLLDPNow()
 	return errors.Join(m.Mode.Teardown(ctx), m.cleanup.Teardown(ctx))
+}
+
+// stopLLDPNow stops the LLDP sender of the cleanup, once.
+func (c *linkLayerCleanup) stopLLDPNow() {
+	if c != nil && c.stopLLDP != nil {
+		c.stopLLDP()
+		c.stopLLDP = nil
+	}
 }
 
 // dhcpFallback creates a DHCP mode and attempts setup.
@@ -1427,6 +2027,8 @@ func dhcpFallback(ctx context.Context, netCfg *network.Config) network.Mode {
 	if err := dhcp.Setup(ctx, netCfg); err != nil {
 		slog.Error("DHCP setup failed", "error", err)
 	}
+	// netCfg.DNSResolvers stays: networkModeWithResolvers checks it (DHCP
+	// mode writes resolv.conf itself), so a bad resolver fails the run.
 	return dhcp
 }
 
@@ -1586,9 +2188,15 @@ func mergeNetplanConfig(dst, src *network.Config) {
 	if src.BGPDefaults != "" {
 		dst.BGPDefaults = src.BGPDefaults
 	}
+	if src.BGPFRRVersion != "" {
+		dst.BGPFRRVersion = src.BGPFRRVersion
+	}
 	mergeBGPPolicy(dst, src)
 	mergeOverlayDevices(&dst.OverlayDevices, &src.OverlayDevices)
 	nativeList("network.noAcceptRA", &dst.NoAcceptRA, src.NoAcceptRA)
+	if len(dst.EmitLLDP) == 0 {
+		dst.EmitLLDPMatches = src.EmitLLDPMatches
+	}
 	nativeList("network.emitLLDP", &dst.EmitLLDP, src.EmitLLDP)
 	// "no ip forwarding" in frr.conf is a default; an explicit option wins.
 	if dst.IPForwarding == nil {
@@ -1638,6 +2246,8 @@ func mergeInferredEVPNMode(dst, src *network.Config) {
 	if src.EVPNL2Enabled && !dst.EVPNType5Only {
 		dst.EVPNL2Enabled = true
 	}
+	// frr.conf "enable-resolve-overlay-index" or the native key turns it on.
+	dst.EVPNResolveOverlayIndex = dst.EVPNResolveOverlayIndex || src.EVPNResolveOverlayIndex
 }
 
 // mergeBGPPolicy takes the frr.conf route-maps, community-lists and route
@@ -1661,6 +2271,8 @@ func mergeBGPPolicy(dst, src *network.Config) {
 	if len(dst.EVPNImportRTs) == 0 && len(dst.EVPNExportRTs) == 0 {
 		dst.EVPNImportRTs, dst.EVPNExportRTs = src.EVPNImportRTs, src.EVPNExportRTs
 	}
+	dst.EVPNRD = cmp.Or(dst.EVPNRD, src.EVPNRD)
+	dst.EVPNRDIndex, dst.BGPInstances = src.EVPNRDIndex, src.BGPInstances
 }
 
 // mergeOverlayDevices takes every device setting that netplan sets and the
@@ -1784,7 +2396,10 @@ func detectIPMI(netCfg *network.Config) {
 // After the kernel and initramfs are loaded, releaseTarget unmounts the
 // target root (busy block device mounts are remounted read-only), so the
 // installed OS does not start with filesystems that need journal recovery.
-func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget func() (disk.ReleaseReport, error)) bool {
+//
+// stopNetwork runs after the load, right before the kexec: a failed load
+// keeps the network for the reboot fallback and its error report.
+func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget func() (disk.ReleaseReport, error), stopNetwork func()) bool {
 	if cfg.KexecDisabled() {
 		slog.Info("kexec disabled by configuration, skipping", "successAction", cfg.SuccessAction)
 		return false
@@ -1803,23 +2418,23 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget fun
 	// The entry that GRUB would boot: default, grubenv, submenus. When only
 	// GRUB can tell (BLS, conditional kernel lines, variables set at boot),
 	// reboot through the firmware instead of guessing.
-	entry, err := kexec.DefaultEntry(installedRootPath)
+	entry, err := kexec.DefaultEntry(kexecRoot)
 	if err != nil {
 		slog.Warn("no kexec boot entry, rebooting instead", "error", err)
 		return false
 	}
 	slog.Info("kexec boot entry", "entry", entry.Name)
 
-	kernel := resolveKexecPath(installedRootPath, entry.Kernel)
-	initrd := resolveKexecPath(installedRootPath, entry.Initramfs)
+	kernel := resolveKexecPath(kexecRoot, entry.Kernel)
+	initrd := resolveKexecPath(kexecRoot, entry.Initramfs)
 	slog.Info("attempting kexec", "kernel", kernel, "initrd", initrd)
 
-	if err := kexec.Load(kernel, initrd, entry.KernelArgs); err != nil {
+	if err := kexecLoad(kernel, initrd, entry.KernelArgs); err != nil {
 		slog.Warn("kexec load failed, falling back to reboot", "error", err)
 		return false
 	}
 	releaseKexecTarget(cfg, releaseTarget)
-	if err := doKexecExecute(); err != nil {
+	if err := doKexecExecute(stopNetwork); err != nil {
 		slog.Warn("kexec execute failed, falling back to reboot", "error", err)
 		return false
 	}
