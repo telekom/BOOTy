@@ -14,8 +14,8 @@ const (
 	// ChecksumScopeDownload checks the bytes as downloaded, before
 	// decompression or qcow2 conversion. Checksum files published next to
 	// an image (image.raw.lz4.sha256) cover these bytes. For oci:// sources
-	// these are the uncompressed layer bytes (layer.Uncompressed()), not the
-	// compressed blob that the layer digest covers.
+	// these are the pushed file of an artifact layer, or the content of a
+	// container layer without its transport compression (FetchOCIImageBlob).
 	ChecksumScopeDownload = "download"
 	// ChecksumScopeDecompressed checks the decompressed image. For qcow2
 	// images it checks the converted raw image.

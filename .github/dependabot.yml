@@ -5,13 +5,21 @@ updates:
     allow:
       - dependency-type: all
     schedule:
-      interval: weekly
+      interval: daily
     open-pull-requests-limit: 10
+    groups:
+      go-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
     ignore:
-      # go.mod replaces GoBGP with the fork tag v4.10.0-booty.10, so an
+      # go.mod replaces GoBGP with the fork tag v4.11.0-booty.5, so an
       # upstream bump would not change the build. Move the fork tag by hand:
       # docs/networking.md#gobgp-version-and-fork
       - dependency-name: github.com/osrg/gobgp/v4
+      # Same for the gopacket, netlink and dhcp forks: docs/dependency-forks.md
+      - dependency-name: github.com/gopacket/gopacket
+      - dependency-name: github.com/vishvananda/netlink
+      - dependency-name: github.com/insomniacslk/dhcp
 
   - package-ecosystem: docker
     # Dockerfile discovery is not recursive. List each independent context so
@@ -22,7 +30,20 @@ updates:
       - /test/e2e/clab/vrnetlab
       - /test/e2e/assets/busybox
     schedule:
-      interval: weekly
+      interval: daily
+    open-pull-requests-limit: 10
+    ignore:
+      # test/e2e/clab/networkd-test.Dockerfile pins one ubuntu image per LTS
+      # release in standard support (22.04, 24.04, 26.04). Dependabot merges
+      # these FROM lines into one ubuntu dependency with the version of the
+      # first (22.04) and ignores every tag above it, so no line moves to
+      # another release (25.10, 26.10); the digest of each pinned tag still
+      # gets updates. A new LTS is added by hand as a new FROM line.
+      - dependency-name: ubuntu
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+          - version-update:semver-patch
     groups:
       docker-major:
         group-by: dependency-name
@@ -41,4 +62,8 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
+    open-pull-requests-limit: 10
+    groups:
+      actions:
+        patterns: ["*"]

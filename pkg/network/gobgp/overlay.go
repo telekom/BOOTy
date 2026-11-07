@@ -4,12 +4,14 @@ package gobgp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
 	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"sync"
@@ -125,6 +127,9 @@ type OverlayTier struct {
 	netlinkOps      overlayNetlinkOps
 	hooks           *overlaySetupHooks
 	ensureVTEPRoute func(net.IP) error
+	// fibOwns reports whether the underlay FIB writer installed a route
+	// for a prefix in a table (UnderlayTier.FIBOwns); nil = never.
+	fibOwns func(table int, p netip.Prefix) bool
 
 	// Track resources created by us for clean teardown.
 	createdVRFs     map[string]bool
@@ -148,10 +153,10 @@ type OverlayTier struct {
 	// type2Stopped is set by Teardown, so a Type-1 or Type-2 callback that
 	// is still in flight does not install anything afterwards.
 	type2Stopped bool
-	// type2Neigh is the MAC of the neighbor entry installed on the bridge
-	// for each IP of a Type-2 MAC/IP route, like zebra installs remote
-	// neighbors on the SVI of an L2VNI.
-	type2Neigh map[string]string
+	// type2Neigh is the neighbor entry installed on the bridge for each IP
+	// of a Type-2 MAC/IP route, like zebra installs remote neighbors on the
+	// SVI of an L2VNI.
+	type2Neigh map[string]type2Neigh
 	// type2IPMACs indexes the MACs with a live MAC/IP route of each IP, so
 	// an update looks only at the routes of its IP.
 	type2IPMACs map[string]map[string]struct{}
@@ -434,6 +439,14 @@ func (o *OverlayTier) createVRF(name string, tableID uint32) error {
 
 	o.log.Info("vrf ready", "name", name, "table", tableID)
 	return nil
+}
+
+// fibTable is the overlay route table as the FIB writer keys it.
+func (o *OverlayTier) fibTable() int {
+	if t := o.overlayRouteTable(); t != 0 {
+		return t
+	}
+	return unix.RT_TABLE_MAIN
 }
 
 func (o *OverlayTier) overlayRouteTable() int {
@@ -720,7 +733,10 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 		return nil
 	}
 
-	rd := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	rd, err := o.routeDistinguisher(o.cfg.RD)
+	if err != nil {
+		return fmt.Errorf("build route distinguisher: %w", err)
+	}
 
 	// Extract the host IP from the CIDR and advertise it as a /32 host route.
 	ip, _, err := net.ParseCIDR(o.cfg.ProvisionIP)
@@ -758,7 +774,10 @@ func (o *OverlayTier) advertiseType5(ctx context.Context) error {
 // target. The IMET route carries a PMSI tunnel attribute (ingress replication)
 // telling peers to use unicast VXLAN encapsulation for BUM traffic.
 func (o *OverlayTier) advertiseType3(ctx context.Context) error {
-	rd := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	rd, err := o.routeDistinguisher(o.cfg.L2RD)
+	if err != nil {
+		return fmt.Errorf("build route distinguisher: %w", err)
+	}
 
 	nlri := buildEVPNType3NLRI(rd, o.cfg.RouterID)
 
@@ -799,7 +818,10 @@ func (o *OverlayTier) advertiseType2(ctx context.Context) error {
 		return fmt.Errorf("parse provision IP %s: %w", o.cfg.ProvisionIP, err)
 	}
 
-	rd := buildRouteDistinguisher(o.cfg.ASN, uint32(o.cfg.ProvisionVNI))
+	rd, err := o.routeDistinguisher(o.cfg.L2RD)
+	if err != nil {
+		return fmt.Errorf("build route distinguisher: %w", err)
+	}
 
 	nlri := buildEVPNType2NLRI(rd, o.cfg.BridgeMAC, ip.String(), uint32(o.cfg.ProvisionVNI))
 
@@ -867,19 +889,22 @@ func (o *OverlayTier) processRouteUpdate(p *apipb.Path) {
 
 	vtep := extractNextHop(p)
 
+	// RFC 8365 section 6: a route whose BGP Encapsulation communities do
+	// not include VXLAN cannot be reached over BOOTy's VXLAN device; it is
+	// handled as a withdraw of its route key. A route without the community
+	// counts as VXLAN, like FRR (which does not check the community).
+	notVXLAN := o.notVXLAN(p, nlri, vtep, withdraw)
+	withdraw = withdraw || notVXLAN
+
 	switch {
 	case nlri.GetEvpnIpPrefix() != nil:
-		route := nlri.GetEvpnIpPrefix()
-		routerMAC, err := extractRouterMAC(p)
-		routerMACValid := true
-		if err != nil {
-			o.log.Debug("type-5 route with invalid router MAC", "error", err)
-			routerMACValid = false
-		}
-		o.handleType5RouteWithRouterMACState(route, vtep, routerMAC, routerMACValid, withdraw)
+		o.processType5Update(p, nlri.GetEvpnIpPrefix(), vtep, withdraw, notVXLAN)
 	case nlri.GetEvpnMacadv() != nil:
 		if o.cfg.EnableL2 {
-			o.handleType2Update(nlri.GetEvpnMacadv(), vtep, macMobilityOf(p), withdraw)
+			if notVXLAN {
+				vtep = "" // remove the entry of the tracked route, not of this update
+			}
+			o.handleType2Update(nlri.GetEvpnMacadv(), vtep, macMobilityOf(p), arpNdRouter(p), withdraw)
 		}
 	case nlri.GetEvpnEthernetAd() != nil:
 		if o.cfg.EnableL2 {
@@ -904,6 +929,101 @@ func (o *OverlayTier) handleType3Path(p *apipb.Path, route *apipb.EVPNInclusiveM
 	o.handleType3Route(route, vtep, withdraw)
 }
 
+// notVXLAN reports an update (not a withdraw) whose BGP Encapsulation
+// communities do not include VXLAN, and logs it.
+func (o *OverlayTier) notVXLAN(p *apipb.Path, nlri *apipb.NLRI, vtep string, withdraw bool) bool {
+	if withdraw {
+		return false
+	}
+	types := encapTunnelTypes(p)
+	if len(types) == 0 || slices.Contains(types, vxlanTunnelType) {
+		return false
+	}
+	o.log.Warn("EVPN route without VXLAN encapsulation treated as withdraw", "type", fmt.Sprintf("%T", nlri.GetNlri()), "vtep", vtep, "tunnel_types", types)
+	return true
+}
+
+// processType5Update checks a Type-5 update and hands it to the handler;
+// converted is an update already handled as a withdraw.
+func (o *OverlayTier) processType5Update(p *apipb.Path, route *apipb.EVPNIPPrefixRoute, vtep string, withdraw, converted bool) {
+	routerMAC, err := extractRouterMAC(p)
+	if reason := type5Unusable(route, err, o.type5LocalVNI()); reason != "" && !withdraw {
+		// The update replaces the path of the same route key, so the old
+		// path goes too, as for a withdraw (RFC 7606 section 2).
+		o.log.Warn("type-5 route treated as withdraw", "prefix", route.GetIpPrefix(), "len", route.GetIpPrefixLen(),
+			"vtep", vtep, "reason", reason)
+		withdraw, converted = true, true
+	}
+	if err != nil {
+		routerMAC = nil
+	}
+	o.handleType5Update(route, vtep, routerMAC, err == nil, withdraw, converted)
+}
+
+// encapTunnelTypes returns the tunnel types of the BGP Encapsulation
+// extended communities of a path (RFC 9012; 8 is VXLAN).
+func encapTunnelTypes(path *apipb.Path) []uint32 {
+	var types []uint32
+	for _, attr := range path.GetPattrs() {
+		for _, c := range attr.GetExtendedCommunities().GetCommunities() {
+			if e := c.GetEncap(); e != nil {
+				types = append(types, e.GetTunnelType())
+			}
+		}
+	}
+	return types
+}
+
+// type5Unusable returns why a received Type-5 route must not be used, or
+// "" when BOOTy can install it. The rules follow FRR process_type5_route
+// (bgpd/bgp_evpn.c) and zebra, which is BOOTy's behavior reference, and
+// RFC 9136 sections 3.1 and 3.2 where they agree (docs/rfc-compliance.md
+// lists each choice):
+//   - ESI and gateway IP both set: treat as withdraw (FRR and RFC).
+//   - A multicast or broadcast router MAC: treat as withdraw, also with a
+//     gateway IP (FRR; the RFC asks the same for an invalid MAC). A zero
+//     router MAC counts as absent (FRR).
+//   - Label 0 without a gateway IP: not installable. FRR accepts the route
+//     in BGP, but zebra sees a VNI that differs from the L3VNI and installs
+//     such a nexthop only on a single VXLAN device, which BOOTy does not
+//     use; the RFC treats it as withdraw when it has no overlay index.
+//   - An ESI overlay index with a label: installed through the BGP next
+//     hop, like FRR (the RFC asks for a Type-1 resolution first).
+//   - In the L3VNI (Type-5-only) mode, a label other than the local VNI
+//     without a gateway IP: zebra sees a D-VNI next hop and installs it
+//     only on a single VXLAN device, which BOOTy does not use, so FRR does
+//     not install the route either (localVNI 0 skips the check).
+func type5Unusable(route *apipb.EVPNIPPrefixRoute, macErr error, localVNI uint32) string {
+	esi := route.GetEsi()
+	esiSet := esi.GetType() != 0 || slices.ContainsFunc(esi.GetValue(), func(b byte) bool { return b != 0 })
+	gw := net.ParseIP(route.GetGwAddress())
+	gwSet := gw != nil && !gw.IsUnspecified()
+	switch {
+	case macErr != nil:
+		return "invalid router MAC: " + macErr.Error()
+	case esiSet && gwSet:
+		return "both ESI and gateway IP are set"
+	case !gwSet && route.GetLabel() == 0:
+		return "label is zero without a gateway IP overlay index"
+	case !gwSet && localVNI != 0 && route.GetLabel() != localVNI:
+		return fmt.Sprintf("VNI %d is not the local L3VNI %d", route.GetLabel(), localVNI)
+	}
+	return ""
+}
+
+// type5LocalVNI is the VNI a received Type-5 route must carry, or 0 for no
+// check. It applies only in the Type-5-only (L3VNI) mode, where the
+// provision VNI is the L3VNI of the VRF, like FRR's VRF L3VNI. In the
+// "Type-5 with gateway" and L2 modes the provision VNI is an L2VNI; FRR
+// imports no Type-5 routes there at all (a VRF without L3VNI), so BOOTy
+// keeps its current handling instead of guessing a VNI.
+func (o *OverlayTier) type5LocalVNI() uint32 {
+	if o.cfg == nil || !o.cfg.Type5Only {
+		return 0
+	}
+	return uint32(o.cfg.ProvisionVNI) //nolint:gosec // validated 1..16777215
+}
+
 // handleType5Route installs or removes a kernel route for an IP prefix
 // received via EVPN Type-5 (IP Prefix) route. This is how BOOTy learns
 // the default route (and any other prefixes) from the fabric.
@@ -917,6 +1037,20 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 	routerMAC net.HardwareAddr,
 	routerMACValid bool,
 	withdraw bool,
+) {
+	o.handleType5Update(route, vtep, routerMAC, routerMACValid, withdraw, false)
+}
+
+// handleType5Update is handleType5RouteWithRouterMACState for an update that
+// may have been converted to a withdraw (RFC 7606 treat-as-withdraw): its
+// attributes are the invalid ones, so the withdraw uses the tracked path.
+func (o *OverlayTier) handleType5Update(
+	route *apipb.EVPNIPPrefixRoute,
+	vtep string,
+	routerMAC net.HardwareAddr,
+	routerMACValid bool,
+	withdraw bool,
+	converted bool,
 ) {
 	// Skip routes originated by this node (e.g., reflected back by the RR).
 	// Installing our own route would override the connected route and break
@@ -938,24 +1072,91 @@ func (o *OverlayTier) handleType5RouteWithRouterMACState(
 		return
 	}
 	prefix, key := dst.String(), type5PathKey(route)
+	shadowed := o.fibShadows(prefix)
 	if withdraw {
+		if shadowed {
+			// The kernel route is the FIB writer's; only forget the path.
+			o.forgetShadowedType5Path(prefix, key)
+			return
+		}
 		// Always processed, so no route of ours stays behind.
-		o.withdrawType5Path(prefix, key, route, vtep, routerMAC)
+		o.withdrawType5Path(prefix, key, route, vtep, routerMAC, converted)
 		return
 	}
 	if o.isBlackhole(prefix) {
 		o.log.Debug("type-5 route for a static blackhole prefix, static route wins", "prefix", prefix)
 		return
 	}
-	// Remember the path before any kernel change, so a later withdraw of
-	// another path can still fall back to it even if this install fails.
-	o.addType5Path(prefix, &type5Path{
+	path := &type5Path{
 		key:       key,
 		route:     route,
 		vtep:      vtep,
 		routerMAC: append(net.HardwareAddr(nil), routerMAC...),
 		valid:     routerMACValid,
-	})
+	}
+	if shadowed {
+		// Without an overlay VRF both writers use the main table with the
+		// same protocol and metric, so one would replace the other's route.
+		// The FIB writer owns the prefix; the path waits in the shadow until
+		// the writer removes its route (fibRemoved).
+		o.rememberType5Path(prefix, key, path)
+		delete(o.type5Active, prefix)
+		o.log.Warn("type-5 route for a prefix the underlay installed in the same table, underlay route stays",
+			"prefix", prefix, "table", o.fibTable(), "vtep", vtep)
+		return
+	}
+	// Remember the path before any kernel change, so a later withdraw of
+	// another path can still fall back to it even if this install fails.
+	o.addType5Path(prefix, path)
+}
+
+// fibShadows reports whether the underlay FIB writer owns prefix in the
+// overlay route table.
+//
+// The check and the RouteReplace that follows it are not atomic with the
+// FIB writer: the writer can install its route between them, and the
+// overlay route then replaces it. The window is bounded by the periodic
+// FIB resync (fibResyncDefault, 30 s), which installs the writer's routes
+// again with force.
+func (o *OverlayTier) fibShadows(prefix string) bool {
+	return o.fibOwns != nil && o.fibOwns(o.fibTable(), netip.MustParsePrefix(prefix))
+}
+
+// forgetShadowedType5Path forgets a withdrawn path of a prefix the FIB
+// writer owns. The kernel route is not touched. When the last path goes,
+// the gateway state of a route installed before the writer took over is
+// cleared. The caller holds type5PathsMu.
+func (o *OverlayTier) forgetShadowedType5Path(prefix, key string) {
+	delete(o.type5Active, prefix)
+	if len(o.forgetType5Path(prefix, key)) > 0 {
+		return
+	}
+	if link, err := o.netlinkOps.LinkByName(o.cfg.BridgeName); err == nil {
+		o.clearType5GatewayNeighbor(link, prefix)
+	}
+}
+
+// fibRemoved is called when the underlay FIB writer removed its route for
+// p in table. The overlay then installs a live Type-5 path for the prefix:
+// one kept in the shadow, or one whose route the writer had replaced.
+func (o *OverlayTier) fibRemoved(table int, p netip.Prefix) {
+	if table != o.fibTable() {
+		return
+	}
+	o.type5PathsMu.Lock()
+	defer o.type5PathsMu.Unlock()
+	if o.type5Stopped {
+		return
+	}
+	prefix := p.String()
+	delete(o.type5Active, prefix)
+	for _, path := range o.sortedType5Paths(prefix) {
+		if o.applyType5Path(path) {
+			o.markType5Active(prefix, path.key)
+			o.log.Info("underlay route removed, installed the type-5 route again", "prefix", prefix, "vtep", path.vtep)
+			return
+		}
+	}
 }
 
 // addType5Path records and installs a path. If the install fails, the
@@ -1005,11 +1206,22 @@ func (o *OverlayTier) addType5Path(prefix string, path *type5Path) {
 // withdrawType5Path removes a path. If it was the installed one, the route
 // moves to a remaining path, or is deleted when none can be installed.
 // The caller holds type5PathsMu.
-func (o *OverlayTier) withdrawType5Path(prefix, key string, route *apipb.EVPNIPPrefixRoute, vtep string, routerMAC net.HardwareAddr) {
+func (o *OverlayTier) withdrawType5Path(prefix, key string, route *apipb.EVPNIPPrefixRoute, vtep string, routerMAC net.HardwareAddr,
+	converted bool,
+) {
 	old, tracked := o.type5Paths[prefix][key]
-	installedRoute := route
-	if tracked {
-		installedRoute = old.route
+	switch {
+	case tracked:
+		// Tear down what the tracked path installed: a converted update
+		// carries the invalid attributes (gateway, router MAC), and a
+		// withdraw may carry none.
+		route, vtep = old.route, old.vtep
+		if converted || len(old.routerMAC) != 0 {
+			routerMAC = old.routerMAC
+		}
+	case converted:
+		// Nothing of this route key is installed.
+		return
 	}
 	remaining := o.forgetType5Path(prefix, key)
 	active, known := o.type5Active[prefix]
@@ -1037,7 +1249,7 @@ func (o *OverlayTier) withdrawType5Path(prefix, key string, route *apipb.EVPNIPP
 		o.removeType5Prefix(state)
 		return
 	}
-	if type5OverlayGateway(installedRoute) != nil {
+	if type5OverlayGateway(route) != nil {
 		// Installed without gateway state: the neighbor entry of the
 		// gateway IP belongs to its Type-2 route.
 		o.deleteType5KernelRoute(state)
@@ -1143,6 +1355,13 @@ func (o *OverlayTier) resolveType5Gateway(ip net.IP) {
 // resolveType5Prefix re-evaluates the paths of a prefix with a path via the
 // gateway IP ip. The caller holds type5PathsMu.
 func (o *OverlayTier) resolveType5Prefix(prefix string, ip net.IP) {
+	if o.fibShadows(prefix) {
+		// The kernel route is the FIB writer's: do not replace or delete
+		// it. fibRemoved installs a resolved path when the writer removes
+		// its route.
+		delete(o.type5Active, prefix)
+		return
+	}
 	active, had := o.type5Active[prefix]
 	if p := o.type5Paths[prefix][active]; had && p != nil &&
 		(!type5OverlayGateway(p.route).Equal(ip) || o.type2HasIP(ip)) {
@@ -1656,8 +1875,16 @@ type type2Path struct {
 	vtep   net.IP
 	seq    uint32
 	sticky bool   // the static (sticky) flag of the MAC Mobility community
+	router bool   // the router flag of the ARP/ND extended community
 	ip     net.IP // the IP of a MAC/IP route, nil for a MAC-only route
 	esi    string // the non-reserved ESI, "" for a single-homed MAC
+}
+
+// type2Neigh is an installed Type-2 neighbor entry: the MAC and the router
+// flag (NTF_ROUTER).
+type type2Neigh struct {
+	mac    string
+	router bool
 }
 
 // type2Key is the route key of a Type-2 route (RFC 7432 section 7.2): RD,
@@ -1693,7 +1920,7 @@ func (a type2Path) better(b type2Path) bool {
 // (RFC 7432 section 10) and a stale route of the old PE does not move the
 // MAC back (section 15).
 func (o *OverlayTier) handleType2Route(route *apipb.EVPNMACIPAdvertisementRoute, vtep string, seq uint32, withdraw bool) {
-	o.handleType2Update(route, vtep, macMobility{seq: seq}, withdraw)
+	o.handleType2Update(route, vtep, macMobility{seq: seq}, false, withdraw)
 }
 
 // removeType2FDB deletes the FDB entries of the Type-2 routes. The caller
@@ -1722,8 +1949,8 @@ type macMobility struct {
 }
 
 // handleType2Update is handleType2Route with the whole MAC Mobility
-// community.
-func (o *OverlayTier) handleType2Update(route *apipb.EVPNMACIPAdvertisementRoute, vtep string, mm macMobility, withdraw bool) {
+// community and the router flag of the ARP/ND extended community.
+func (o *OverlayTier) handleType2Update(route *apipb.EVPNMACIPAdvertisementRoute, vtep string, mm macMobility, router, withdraw bool) {
 	mac, err := net.ParseMAC(route.GetMacAddress())
 	if err != nil {
 		o.log.Debug("type-2 route with invalid MAC", "mac", route.GetMacAddress(), "error", err)
@@ -1754,7 +1981,7 @@ func (o *OverlayTier) handleType2Update(route *apipb.EVPNMACIPAdvertisementRoute
 	if withdraw {
 		o.forgetType2Path(macStr, key, ip)
 	} else {
-		o.rememberType2Path(macStr, key, type2Path{vtep: remoteIP, seq: mm.seq, sticky: mm.sticky, ip: ip, esi: esiKey(route.GetEsi())})
+		o.rememberType2Path(macStr, key, type2Path{vtep: remoteIP, seq: mm.seq, sticky: mm.sticky, ip: ip, esi: esiKey(route.GetEsi()), router: router})
 	}
 	o.syncType2FDB(mac)
 	if ip != nil {
@@ -1771,13 +1998,19 @@ func (o *OverlayTier) handleType2Update(route *apipb.EVPNMACIPAdvertisementRoute
 // of the best live MAC/IP route with that IP, or removes it when none is
 // left. zebra does the same for the remote MAC/IP routes of an L2VNI with an
 // SVI (state NOARP, extern_learn), and RFC 9135 sections 5.2 and 6.2 ask an
-// asymmetric IRB receiver to install the (IP, MAC) association. The caller
+// asymmetric IRB receiver to install the (IP, MAC) association. Like zebra,
+// an IPv6 entry gets NTF_ROUTER when the route has the router flag of the
+// ARP/ND extended community (RFC 9047 section 3): FRR passes the flag only
+// for IPv6 (bgpd/bgp_evpn.c, evpn_zebra_install) and zebra sets NTF_ROUTER
+// from it and reinstalls the entry when only the flag changes
+// (zebra/zebra_evpn_neigh.c, zebra_evpn_rem_neigh_install). The caller
 // holds type2Mu.
 func (o *OverlayTier) syncType2Neighbor(ip net.IP) {
 	ipStr := ip.String()
-	bestMAC := o.bestType2MAC(ip)
+	want := o.bestType2Neigh(ip)
+	bestMAC := want.mac
 	installed := o.type2Neigh[ipStr]
-	if bestMAC == installed {
+	if want == installed {
 		return
 	}
 	link, err := o.netlinkOps.LinkByName(o.cfg.BridgeName)
@@ -1795,29 +2028,30 @@ func (o *OverlayTier) syncType2Neighbor(ip net.IP) {
 			}
 			return
 		}
-		mac, _ := net.ParseMAC(installed)
-		if err := o.netlinkOps.NeighDel(type2Neighbor(link, ip, mac)); err != nil {
-			o.log.Debug("failed to delete type-2 neighbor", "ip", ip, "mac", installed, "error", err)
+		mac, _ := net.ParseMAC(installed.mac)
+		if err := o.netlinkOps.NeighDel(type2Neighbor(link, ip, mac, installed.router)); err != nil {
+			o.log.Debug("failed to delete type-2 neighbor", "ip", ip, "mac", installed.mac, "error", err)
 		}
 		return
 	}
 	mac, _ := net.ParseMAC(bestMAC)
-	if err := o.netlinkOps.NeighSet(type2Neighbor(link, ip, mac)); err != nil {
+	if err := o.netlinkOps.NeighSet(type2Neighbor(link, ip, mac, want.router)); err != nil {
 		o.log.Debug("failed to install type-2 neighbor", "ip", ip, "mac", bestMAC, "error", err)
 		return
 	}
-	o.log.Info("installed neighbor from type-2 route", "ip", ip, "mac", bestMAC)
+	o.log.Info("installed neighbor from type-2 route", "ip", ip, "mac", bestMAC, "router", want.router)
 	if o.type2Neigh == nil {
-		o.type2Neigh = map[string]string{}
+		o.type2Neigh = map[string]type2Neigh{}
 	}
-	o.type2Neigh[ipStr] = bestMAC
+	o.type2Neigh[ipStr] = want
 }
 
-// bestType2MAC returns the MAC of the best live MAC/IP route with ip, ""
-// for none. Equal routes (a duplicate IP from one VTEP with the same
-// sequence number) take the lowest MAC, so map order does not move the
-// entry. The caller holds type2Mu.
-func (o *OverlayTier) bestType2MAC(ip net.IP) string {
+// bestType2Neigh returns the neighbor entry of the best live MAC/IP route
+// with ip: its MAC, and for an IPv6 address its router flag (FRR passes
+// the flag to zebra only for IPv6). The MAC is "" for none. Equal routes (a
+// duplicate IP from one VTEP with the same sequence number) take the lowest
+// MAC, so map order does not move the entry. The caller holds type2Mu.
+func (o *OverlayTier) bestType2Neigh(ip net.IP) type2Neigh {
 	var best *type2Path
 	var bestMAC string
 	for mac := range o.type2IPMACs[ip.String()] {
@@ -1827,21 +2061,29 @@ func (o *OverlayTier) bestType2MAC(ip net.IP) string {
 			}
 		}
 	}
-	return bestMAC
+	if best == nil {
+		return type2Neigh{}
+	}
+	return type2Neigh{mac: bestMAC, router: best.router && ip.To4() == nil}
 }
 
 // type2Neighbor is the bridge neighbor entry of a remote MAC/IP route,
-// installed like zebra: NOARP and extern_learn.
-func type2Neighbor(link netlink.Link, ip net.IP, mac net.HardwareAddr) *netlink.Neigh {
+// installed like zebra: NOARP and extern_learn, plus NTF_ROUTER for an
+// IPv6 router.
+func type2Neighbor(link netlink.Link, ip net.IP, mac net.HardwareAddr, router bool) *netlink.Neigh {
 	family := syscall.AF_INET6
 	if ip.To4() != nil {
 		family, ip = syscall.AF_INET, ip.To4()
+	}
+	flags := netlink.NTF_EXT_LEARNED
+	if router {
+		flags |= netlink.NTF_ROUTER
 	}
 	return &netlink.Neigh{
 		LinkIndex:    link.Attrs().Index,
 		Family:       family,
 		State:        netlink.NUD_NOARP,
-		Flags:        netlink.NTF_EXT_LEARNED,
+		Flags:        flags,
 		IP:           ip,
 		HardwareAddr: mac,
 	}
@@ -1891,9 +2133,9 @@ func (o *OverlayTier) removeType2Neighbors() {
 	if err != nil {
 		return
 	}
-	for ipStr, macStr := range o.type2Neigh {
-		mac, _ := net.ParseMAC(macStr)
-		if err := o.netlinkOps.NeighDel(type2Neighbor(link, net.ParseIP(ipStr), mac)); err != nil {
+	for ipStr, n := range o.type2Neigh {
+		mac, _ := net.ParseMAC(n.mac)
+		if err := o.netlinkOps.NeighDel(type2Neighbor(link, net.ParseIP(ipStr), mac, n.router)); err != nil {
 			o.log.Debug("failed to delete type-2 neighbor", "ip", ipStr, "error", err)
 		}
 	}
@@ -2078,6 +2320,19 @@ func macMobilityOf(path *apipb.Path) macMobility {
 	return macMobility{}
 }
 
+// arpNdRouter reports the router flag of the ARP/ND extended community of
+// a path (RFC 9047 section 3).
+func arpNdRouter(path *apipb.Path) bool {
+	for _, attr := range path.GetPattrs() {
+		for _, c := range attr.GetExtendedCommunities().GetCommunities() {
+			if a := c.GetArpNd(); a != nil {
+				return a.GetIsRouter()
+			}
+		}
+	}
+	return false
+}
+
 // ingressReplication reports an IMET route whose PMSI Tunnel attribute has
 // tunnel type ingress replication. FRR 10.7.1 (bgp_evpn.c,
 // evpn_zebra_install) installs head-end replication only for that type;
@@ -2176,18 +2431,11 @@ func extractNextHop(p *apipb.Path) string {
 	return ""
 }
 
-// buildRouteDistinguisher builds an RD, selecting 2-octet or 4-octet ASN type.
-func buildRouteDistinguisher(asn, vni uint32) *apipb.RouteDistinguisher {
-	if asn <= asnMax2Byte {
-		return &apipb.RouteDistinguisher{Rd: &apipb.RouteDistinguisher_TwoOctetAsn{TwoOctetAsn: &apipb.RouteDistinguisherTwoOctetASN{
-			Admin:    asn,
-			Assigned: vni,
-		}}}
-	}
-	return &apipb.RouteDistinguisher{Rd: &apipb.RouteDistinguisher_FourOctetAsn{FourOctetAsn: &apipb.RouteDistinguisherFourOctetASN{
-		Admin:    asn,
-		Assigned: vni & 0xFFFF,
-	}}}
+// routeDistinguisher marshals an RD of the Config ("ASN:NN" or
+// "IPv4:NN"). An empty one is "<router-id>:1", FRR's RD of the only
+// "router bgp" instance.
+func (o *OverlayTier) routeDistinguisher(rd string) (*apipb.RouteDistinguisher, error) {
+	return parseRouteDistinguisher(cmp.Or(rd, o.cfg.RouterID+":1"))
 }
 
 // buildEVPNType5NLRI builds an EVPN IP Prefix (Type-5) NLRI for the given
@@ -2242,7 +2490,7 @@ func buildType5PathAttrsRTs(nlri *apipb.NLRI, nextHop string, asn, vni uint32, r
 		communities = append(communities, rmac)
 	}
 
-	return []*apipb.Attribute{originIGP(), evpnMpReach(nextHop, nlri), extCommunities(communities...)}, nil
+	return []*apipb.Attribute{originIGP(), evpnMpReach(nextHop, nlri), extCommunities(communities...), localMED()}, nil
 }
 
 // originIGP is the ORIGIN attribute IGP.
@@ -2265,6 +2513,16 @@ func extCommunities(c ...*apipb.ExtendedCommunity) *apipb.Attribute {
 	return &apipb.Attribute{Attr: &apipb.Attribute_ExtendedCommunities{ExtendedCommunities: &apipb.ExtendedCommunitiesAttribute{Communities: c}}}
 }
 
+// localMED is the MED 0 that FRR puts on every route it originates: a
+// "network" route gets the IGP metric 0 (bgp_route.c bgp_static_update)
+// and a redistributed route the zebra metric, 0 for a connected route.
+// The Type-5 routes of "advertise ipv4|ipv6 unicast" keep the attributes
+// of those routes. GoBGP keeps the MED of a local path also towards eBGP
+// peers.
+func localMED() *apipb.Attribute {
+	return &apipb.Attribute{Attr: &apipb.Attribute_MultiExitDisc{MultiExitDisc: &apipb.MultiExitDiscAttribute{Med: 0}}}
+}
+
 const ethernetMACLength = 6
 
 func parseRouterMAC(routerMAC string) (net.HardwareAddr, error) {
@@ -2274,6 +2532,10 @@ func parseRouterMAC(routerMAC string) (net.HardwareAddr, error) {
 	}
 	if len(mac) != ethernetMACLength {
 		return nil, fmt.Errorf("parse router MAC %s: expected 48-bit MAC, got %d bytes", routerMAC, len(mac))
+	}
+	// RFC 9136 section 3.2: a broadcast, multicast or zero MAC is invalid.
+	if mac[0]&1 != 0 || bytes.Equal(mac, make(net.HardwareAddr, ethernetMACLength)) {
+		return nil, fmt.Errorf("router MAC %s is not a unicast MAC", routerMAC)
 	}
 	return mac, nil
 }
@@ -2398,6 +2660,9 @@ func routerMACInCommunities(communities []*apipb.ExtendedCommunity) (net.Hardwar
 		rmac := c.GetRouterMac()
 		if rmac == nil {
 			continue
+		}
+		if m, err := net.ParseMAC(rmac.GetMac()); err == nil && bytes.Equal(m, make(net.HardwareAddr, ethernetMACLength)) {
+			return nil, nil // FRR: a zero router MAC is no router MAC
 		}
 		mac, err := parseRouterMAC(rmac.GetMac())
 		if err != nil {

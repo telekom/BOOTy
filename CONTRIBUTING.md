@@ -17,17 +17,59 @@ Thank you for your interest in contributing! This document covers the developmen
 
 ## Dependency Updates
 
-Dependabot tracks direct and indirect Go modules, workflow actions, and base
-images in all six Dockerfiles through the four configured Docker directories.
+Dependabot checks daily for direct and indirect Go module, workflow action, and
+base image updates in all eight Dockerfiles through the four configured Docker
+directories. Minor/patch Go updates and action updates are grouped; Docker
+updates are grouped by dependency, with major updates separate.
 ContainerLab `*.clab.yml` topologies are not Kubernetes manifests and are not
-updated by Dependabot's Docker ecosystem. Keep their external FRR, Alpine,
-nginx and network-multitool image references synchronized manually.
+updated by Dependabot's Docker ecosystem.
 
-Package pins inside Dockerfile `RUN` instructions, downloaded tool/kernel
-versions, checksums and shell-script image references also need manual updates.
-Locally built `booty-*` images are test artifacts, not upstream dependencies.
-Validate dependency changes with the existing CI and KVM boot matrices before
-merging.
+The `CI Gate` workflow merges a Dependabot PR once every other check on it has
+passed, then dispatches the main-branch workflows a merge would normally start.
+Semver-major updates other than GitHub Actions wait for a maintainer.
+
+GitHub Dependabot is the only dependency updater. Arbitrary tool inputs, inline
+images, Debian EFI package versions, LVM tarballs and util-linux source refs are
+outside its supported manifest formats and require manual review. Compiler pins
+must stay consistent with the supported Go 1.27 source floor.
+
+The FRR Type-5 fixture requires a coordinated update of its exact-version
+assertions (`gobgp_type5_e2e_test.go`); 10.3.2 is the minimum with the
+encapsulation relay fix. Signed Debian EFI updates require Secure Boot proof.
+Review LVM tags together with their independent `LVM2_SHA256`; util-linux updates
+require boot validation. Do not fabricate digests or remove integrity verification.
+
+Deliberate manual pins are the KVM Ubuntu cloud-image URL/checksum pairs, the
+6.8 kernel package URL/checksum pairs (required for old md superblocks) and FRR GPG
+trust fingerprints. The four maintained Go fork replacements documented in
+`docs/dependency-forks.md` require explicit fork-tag review. Upstream alias ignores
+stay in Dependabot because bumping those aliases would not change the built
+replacements; approve a fork tag only after confirming its curated patches and
+compatibility are retained. Ubuntu Docker LTS matrix tags remain fixed while
+Dependabot updates their digests. These are compatibility/integrity decisions,
+not uncovered ordinary version strings. Locally built `booty-*` images,
+release-owned `BOOTY_VERSION`/`VERSION`, reproducibility timestamps and example
+registry/checksum fixtures are not external dependencies.
+
+Validate updates with the existing CI and KVM boot matrices before merging.
+A green Dependabot run does not establish coverage for the unsupported pins above.
+
+## Security Reports
+
+The CI govulncheck and nightly/release Trivy steps are advisory: findings and scanner failures remain in
+the logs and emit a `Security scan advisory` warning. Build, test and lint
+failures remain blocking; the scanner script still returns failures when run
+directly.
+
+After PR CI completes, the default-branch `Security report` workflow updates
+one bot comment for the current PR head. It reads check metadata only, never
+executes PR code or downloads PR artifacts with its write-enabled token, and
+ignores stale, closed or mismatched PRs. It starts commenting once this workflow
+is on the default branch. Run its tests locally with:
+
+```bash
+node --test .github/scripts/security-report.test.cjs
+```
 
 ## Building
 

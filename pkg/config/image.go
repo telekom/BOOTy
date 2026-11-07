@@ -41,6 +41,15 @@ type ImageConfig struct {
 	// Default: "" (download)
 	ChecksumScope string `yaml:"checksumScope" json:"checksumScope"`
 
+	// Stream forbids staging the image in RAM (tmpfs). BOOTy then writes
+	// every image as one pipeline (download, decompress, write) and fails
+	// for the formats that need staging: a qcow2 image fails before the
+	// disk wipe, and Mode "partition" fails config validation. Raw and
+	// compressed raw images stream in every mode anyway, so their
+	// behavior does not change.
+	// Default: false (qcow2 and Mode "partition" stage in tmpfs)
+	Stream bool `yaml:"stream" json:"stream"`
+
 	// Mode controls how the image is written to disk.
 	// Valid values: "whole-disk" (default), "partition", "ab"
 	//   - whole-disk: dd-style write of the entire image to the block device,

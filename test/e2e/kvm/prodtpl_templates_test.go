@@ -96,7 +96,7 @@ func TestProdTplTemplatesQEMU(t *testing.T) {
 		"-device", "virtio-net-pci,netdev=u0,addr=0x5,mac=52:54:00:00:05:00",
 		"-netdev", "tap,id=u1,ifname=tpl1,script=no,downscript=no",
 		"-device", "virtio-net-pci,netdev=u1,addr=0x6,mac=52:54:00:00:06:00",
-		"-append", "console=ttyS0 panic=1 net.ifnames=0",
+		"-append", runnerKernelCmdline + " net.ifnames=0",
 	}
 	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
 	out, err := os.Create(console)
@@ -282,7 +282,15 @@ func resolveProductionTemplateKernelRelease(kernel, modulesRoot, releaseHint str
 // initramfs (initrd.Dockerfile). Compressed modules are decompressed.
 func addProdTplModules(t *testing.T, files map[string]string, release string) {
 	t.Helper()
-	for _, m := range []string{"vrf", "dummy", "vxlan", "bridge"} {
+	addKernelModules(t, files, release, "vrf", "dummy", "vxlan", "bridge")
+}
+
+// addKernelModules puts the modules and their dependencies of the guest
+// kernel into /modules, where BOOTy loads them. Compressed modules are
+// decompressed.
+func addKernelModules(t *testing.T, files map[string]string, release string, modules ...string) {
+	t.Helper()
+	for _, m := range modules {
 		out, err := exec.Command("modprobe", "--show-depends", "-S", release, m).Output()
 		if err != nil {
 			t.Logf("modprobe --show-depends %s: %v (built in?)", m, err)

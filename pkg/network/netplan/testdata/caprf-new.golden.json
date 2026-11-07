@@ -14,6 +14,7 @@
   "ProvisionIP": "10.200.0.11/32",
   "ProvisionGateway": "",
   "DNSResolvers": "",
+  "KeepResolvConf": false,
   "DCGWIPs": "",
   "LeafASN": 0,
   "LocalASN": 0,
@@ -126,6 +127,9 @@
   "EVPNExportRTs": [
     "65000:1000"
   ],
+  "EVPNRD": "",
+  "EVPNRDIndex": 2,
+  "BGPInstances": 2,
   "Type5Networks": null,
   "OverlayDevices": {
     "vxlanMTU": 9000,

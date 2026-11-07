@@ -2499,6 +2499,19 @@ func TestParseVarsImageChecksumScope(t *testing.T) {
 	}
 }
 
+func TestParseVarsImageStream(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("IMAGE_STREAM=true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Provision.Image.Stream {
+		t.Fatal("IMAGE_STREAM=true did not set provision.image.stream")
+	}
+	if _, err := ParseVars(strings.NewReader("IMAGE_STREAM=true\nIMAGE_MODE=partition\n")); err == nil {
+		t.Fatal("ParseVars accepted IMAGE_STREAM=true with IMAGE_MODE=partition")
+	}
+}
+
 func TestParseVarsDiskSettleTimeout(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader("DISK_SETTLE_TIMEOUT_SEC=0\n"))
 	if err != nil {
@@ -2893,6 +2906,7 @@ func TestParseVarsEmptyIntegersKeepDefaults(t *testing.T) {
 func TestParseVarsNativeSessions(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader(`BGP_DEFAULTS=traditional
 BGP_HOSTNAME=m-001
+EVPN_RD=192.0.2.17:9
 BGP_PEER_GROUPS=[{"name":"leaf","remoteAS":"65500","localAS":65501,"families":["ipv4-unicast"]}]
 BGP_SESSIONS=[{"name":"ens1f0np0","interface":true,"peerGroup":"leaf","allowASIn":3},{"name":"198.51.100.1","remoteAS":"internal","families":["l2vpn-evpn"]}]
 BGP_MULTIPATH_RELAX=true
@@ -2904,6 +2918,9 @@ BFD_PROFILES=[{"name":"fabric","transmitInterval":150,"receiveInterval":150,"det
 	b := cfg.Network.BGP
 	if len(b.BFDProfiles) != 1 || b.BFDProfiles[0].Name != "fabric" || *b.BFDProfiles[0].TransmitInterval != 150 || *b.BFDProfiles[0].DetectMultiplier != 3 {
 		t.Fatalf("BFD profiles = %+v", b.BFDProfiles)
+	}
+	if cfg.Network.EVPN.RD != "192.0.2.17:9" {
+		t.Fatalf("EVPN_RD = %q", cfg.Network.EVPN.RD)
 	}
 	if b.Defaults != "traditional" || b.Hostname != "m-001" || len(b.PeerGroups) != 1 || b.PeerGroups[0].LocalAS != 65501 ||
 		len(b.Sessions) != 2 || !b.Sessions[0].Interface || b.Sessions[0].AllowASIn != 3 || b.Sessions[1].RemoteAS != "internal" ||

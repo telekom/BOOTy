@@ -58,6 +58,17 @@ func TestTeardownStopsPeriodicRA(t *testing.T) {
 	}
 }
 
+// The router lifetime of the periodic RAs is zebra's default for the
+// bgpd unnumbered RA interval of 10 s: 30 s.
+func TestRouterAdvertisementLifetimeLikeZebra(t *testing.T) {
+	if raLifetime != 30 {
+		t.Fatalf("RA router lifetime %d s, want 30 s like zebra", raLifetime)
+	}
+	if b := routerAdvertisement(net.HardwareAddr{2, 0, 0, 0, 0, 1}, raLifetime); b[6] != 0 || b[7] != 30 {
+		t.Fatalf("RA lifetime bytes %x, want 001e", b[6:8])
+	}
+}
+
 // TestRouterAdvertisementPacket checks the RA of RFC 4861 §4.2 that BOOTy
 // sends on the unnumbered NICs.
 func TestRouterAdvertisementPacket(t *testing.T) {
@@ -78,7 +89,7 @@ func TestPeriodicRAEndsWithZeroLifetime(t *testing.T) {
 	sent := map[string][]uint16{}
 	orig := raSend
 	t.Cleanup(func() { raSend = orig })
-	raSend = func(iface string, lifetime uint16) {
+	raSend = func(iface string, lifetime uint16) bool {
 		if lifetime == 0 {
 			// A slow final RA: Teardown must still wait for it.
 			time.Sleep(50 * time.Millisecond)
@@ -86,6 +97,7 @@ func TestPeriodicRAEndsWithZeroLifetime(t *testing.T) {
 		mu.Lock()
 		sent[iface] = append(sent[iface], lifetime)
 		mu.Unlock()
+		return true
 	}
 	u := NewUnderlayTier(&Config{})
 	u.nics = []string{"eth0", "eth1"}

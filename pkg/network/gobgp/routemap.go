@@ -274,8 +274,16 @@ func asOccurrences(as uint32, n int) string {
 	return "^(.* )?" + strings.Join(parts, "( .* | )") + "( .*)?$"
 }
 
+// hostPrefix is the neighbor set entry of a peer. A link-local address
+// keeps its zone ("fe80::1%eth0/128"), so peers with the same link-local
+// address on different interfaces have their own policy, like the
+// per-interface peers of FRR.
 func hostPrefix(a netip.Addr) string {
-	return netip.PrefixFrom(a.WithZone(""), a.BitLen()).String()
+	p := netip.PrefixFrom(a.WithZone(""), a.BitLen())
+	if a.Zone() == "" || !a.IsLinkLocalUnicast() {
+		return p.String()
+	}
+	return fmt.Sprintf("%s%%%s/%d", p.Addr(), a.Zone(), p.Bits())
 }
 
 func familyOf(fam string) *apipb.Family {

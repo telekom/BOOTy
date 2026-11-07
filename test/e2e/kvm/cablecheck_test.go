@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcapgo"
+	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/layers"
+	"github.com/gopacket/gopacket/pcapgo"
 )
 
 // cablecheckNICs are the MACs of the two NICs of the cable check VMs.
@@ -29,7 +29,7 @@ func cablecheckBoot(t *testing.T, vars map[string]string) []string {
 	t.Helper()
 	return []string{
 		"-kernel", findKernel(t), "-initrd", buildProvisionInitramfs(t, vars),
-		"-append", "console=ttyS0 panic=1 net.ifnames=0",
+		"-append", runnerKernelCmdline + " net.ifnames=0",
 	}
 }
 
@@ -240,6 +240,7 @@ func checkISOBoot(t *testing.T, iso, mode string, extra ...string) []string {
 // The cable check ISO booted from CD with nothing else (BIOS, ISOLINUX)
 // runs the cable check and holds.
 func TestCheckISOQEMU(t *testing.T) {
+	t.Parallel() // each VM holds for 240s; they share nothing but the read-only ISO
 	iso := checkISO(t)
 	out, running, pcaps := runCableCheckVM(t, checkISOBoot(t, iso, "bios"), 240*time.Second)
 	requireHeldCableCheck(t, out, running, pcaps)
@@ -248,6 +249,7 @@ func TestCheckISOQEMU(t *testing.T) {
 // The same with UEFI: shim, GRUB and the kernel from the EFI system
 // partition of make-iso.sh.
 func TestCheckISOUEFIQEMU(t *testing.T) {
+	t.Parallel() // each VM holds for 240s; they share nothing but the read-only ISO
 	iso := checkISO(t)
 	out, running, pcaps := runCableCheckVM(t, checkISOBoot(t, iso, "uefi"), 240*time.Second)
 	requireHeldCableCheck(t, out, running, pcaps)
@@ -257,6 +259,7 @@ func TestCheckISOUEFIQEMU(t *testing.T) {
 // GRUB and the kernel (Debian-signed) pass the verification and the kernel
 // reports Secure Boot.
 func TestCheckISOSecureBootQEMU(t *testing.T) {
+	t.Parallel() // each VM holds for 240s; they share nothing but the read-only ISO
 	iso := checkISO(t)
 	out, running, pcaps := runCableCheckVM(t, checkISOBoot(t, iso, "secureboot"), 240*time.Second)
 	if !strings.Contains(string(out), "Secure boot enabled") {
@@ -269,6 +272,7 @@ func TestCheckISOSecureBootQEMU(t *testing.T) {
 // (decoyDisk of the ISO tests) must not take over the boot: GRUB uses the
 // ISO it was started from, and the cable check runs from it.
 func TestCheckISOIgnoresOtherBootyDiskQEMU(t *testing.T) {
+	t.Parallel() // each VM holds for 240s; they share nothing but the read-only ISO
 	iso := checkISO(t)
 	decoy := []string{
 		"-drive", fmt.Sprintf("file=%s,format=raw,if=none,id=decoy,readonly=on", decoyDisk(t)),

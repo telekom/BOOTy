@@ -5,9 +5,16 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      connect_at_once:
+        description: Run the production template lab with BGP_CONNECT_AT_ONCE=true (data for its default)
+        type: boolean
+        default: false
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
+  # A manual run gets its own group, so several runs of one commit (for
+  # example with connect_at_once) do not cancel each other.
+  group: ci-${{ github.event.pull_request.number || (github.event_name == 'workflow_dispatch' && github.run_id) || github.sha }}
   cancel-in-progress: true
 
 env:
@@ -17,6 +24,16 @@ permissions:
   contents: read
 
 jobs:
+  reporter-tests:
+    name: Security report tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: node --test .github/scripts/security-report.test.cjs
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -50,11 +67,12 @@ jobs:
           go-version: "1.27.2"
           cache: true
 
-      - name: Install swtpm
+      - name: Install swtpm and qemu-utils
         # pkg/tpm attestation tests run against the swtpm TPM simulator.
+        # pkg/image compares its qcow2 conversion with images of qemu-img.
         run: |
           sudo apt-get -o Acquire::Retries=3 update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends swtpm
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends swtpm qemu-utils
 
       - name: Run tests
         run: |
@@ -119,11 +137,18 @@ jobs:
           cache: true
 
       - name: Run govulncheck
+        id: scan
+        continue-on-error: true
         run: python3 hack/check-govulncheck.py
+
+      - name: Report scan status
+        if: always() && steps.scan.outcome != 'success'
+        run: echo '::warning title=Security scan advisory::govulncheck reported findings or could not complete. See the scan logs.'
 
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
+    needs: [lint]
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -153,11 +178,12 @@ jobs:
 
   build:
     name: Build (${{ matrix.arch }})
-    # `security` is deliberately not a dependency. The build, the E2E jobs and
-    # the KVM jobs all chain off this job. A single vulnerability report used to
-    # skip that whole chain, which hid unrelated regressions. The security job
-    # still runs and still reports on every pull request.
-    needs: [lint, test, e2e]
+    # Fail-fast gate: only the ~1 minute lint. The E2E and boot jobs chain off
+    # this binary, and also waiting for test and the ~11 minute E2E job only
+    # delayed them; those still run and report on every pull request.
+    # `security` is not a dependency either, because a single vulnerability
+    # report used to skip the whole chain and hide unrelated regressions.
+    needs: [lint]
     timeout-minutes: 20
     strategy:
       matrix:
@@ -193,6 +219,7 @@ jobs:
           go-version: "1.27.2"
           cache: true
 
+      - uses: ./.github/actions/baseline-libc
       - name: Build
         env:
           GOOS: linux
@@ -516,6 +543,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y qemu-system-x86 cpio zstd busybox-static
 
+      - uses: ./.github/actions/baseline-libc
       - name: Build initramfs image
         run: |
           set -euo pipefail
@@ -592,10 +620,13 @@ jobs:
       - name: Boot with QEMU and validate
         timeout-minutes: 5
         run: |
+          # kho=off: the runner kernel (7.0+) turns kexec handover on, and its
+          # scratch area can take most of the 512 MiB. See noKHO in
+          # test/e2e/kvm/kvm_test.go.
           timeout 120 qemu-system-x86_64 \
             -kernel vmlinuz \
             -initrd test-initramfs.cpio.gz \
-            -append "console=ttyS0 panic=1" \
+            -append "console=ttyS0 panic=1 kho=off" \
             -m 512 \
             -display none \
             -monitor none \
@@ -954,6 +985,7 @@ jobs:
             grub-common mtools cpio zstd busybox-static dosfstools \
             isolinux syslinux-common swtpm swtpm-tools
 
+      - uses: ./.github/actions/baseline-libc
       - name: Build initramfs image
         run: |
           set -euo pipefail
@@ -1173,6 +1205,7 @@ jobs:
   linux-e2e:
     name: Linux E2E (Privileged)
     runs-on: ubuntu-latest
+    needs: [lint]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1204,8 +1237,10 @@ jobs:
             sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
             sudo modprobe vrf
           fi
-          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestType5Netlink|^TestESINetlink|^TestFIBWriterKernel|^TestFIBWriterDropsECMPPathOfPeerDown|^TestFIBResolveViaDefault|^TestL3VNINetlink|^TestConnectedInVRF|^TestUnderlaySetupStartsRestarter' ./pkg/network/gobgp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
-          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestDHCPNetlink' ./pkg/network/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestType5Netlink|^TestESINetlink|^TestFIBWriterKernel|^TestFIBWriterDropsECMPPathOfPeerDown|^TestFIBResolveViaDefault|^TestL3VNINetlink|^TestConnectedInVRF|^TestUnderlaySetupStartsRestarter|^TestListenRSJoinsAllRouters|^TestDiscoverLinkLocalPeerFromRA|^TestUnderlaySetupAdvertisesBeforeDiscovery|^TestSendRAWaitsForDADAndCarrier|^TestUnderlaySetupFailureStopsRAs|^TestSendRAWaitsForOptimisticDAD|^TestSameLinkLocalPeersOnTwoNICs' ./pkg/network/gobgp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestDHCPNetlink|^TestWatchRAOnVeth|^TestSendRSOnVeth' ./pkg/network/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestTransportOnVeth' ./pkg/network/dhcp4/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestTransportOnVeth' ./pkg/network/dhcp6/ 2>&1 | tee -a linux-e2e-logs/go-test.log
           # SR-IOV discovery and runtime settings on netdevsim (devlink, eSwitch, VFs).
           if ! sudo modprobe netdevsim; then
             sudo apt-get update -qq
@@ -1213,7 +1248,7 @@ jobs:
             sudo modprobe netdevsim
           fi
           sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestNetdevsim' ./pkg/sriov/ 2>&1 | tee -a linux-e2e-logs/go-test.log
-          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestOpenRXGroupsAndOwnFrames' ./pkg/network/lldp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestOpenRXGroupsAndOwnFrames|^TestEmitFollowsVethCarrier' ./pkg/network/lldp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
           sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestLinkKernel|^TestModuleEEPROMKernel' ./pkg/network/ethtool/ 2>&1 | tee -a linux-e2e-logs/go-test.log
           if grep -E '^[[:space:]]*--- SKIP:' linux-e2e-logs/go-test.log; then
             echo "::error::linux e2e tests skipped in CI"
@@ -1257,6 +1292,7 @@ jobs:
   bfd-frr-interop:
     name: BFD FRR interop (${{ matrix.frr }})
     runs-on: ubuntu-latest
+    needs: [lint]
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1688,7 +1724,8 @@ jobs:
   check-iso:
     name: Cable Check ISO (BIOS, UEFI, Secure Boot)
     runs-on: ubuntu-latest
-    needs: [build]
+    # Only the lint gate: this job builds its own ISO, not from the build artifact.
+    needs: [lint]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1700,7 +1737,7 @@ jobs:
           go-version: "1.27.2"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Install QEMU and OVMF
         run: |
@@ -1807,10 +1844,18 @@ jobs:
         run: sudo containerlab destroy --topo test/e2e/clab/topology-cablecheck.clab.yml --cleanup || true
 
   e2e-prodtpl:
-    name: E2E Production Templates
+    # The networkd LLDP reference runs on every Ubuntu LTS in standard
+    # support. 22.04 (systemd 249, the legacy ramdisk) is the parity
+    # reference and keeps the job name; the one-uplink and native-model
+    # variants only change the BOOTy side, so they run on 22.04 only.
+    name: E2E Production Templates${{ matrix.ubuntu != '22.04' && format(' (networkd Ubuntu {0})', matrix.ubuntu) || '' }}
     runs-on: ubuntu-latest
     needs: [build]
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ["22.04", "24.04", "26.04"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -1820,11 +1865,19 @@ jobs:
         with:
           go-version: "1.27.2"
 
+      - name: BGP_CONNECT_AT_ONCE for the lab (manual input)
+        if: github.event_name == 'workflow_dispatch' && inputs.connect_at_once
+        run: |
+          for f in test/e2e/clab/data/vars-prodtpl-*; do
+            printf '\nexport BGP_CONNECT_AT_ONCE="true"\n' >> "$f"
+          done
+          grep -c BGP_CONNECT_AT_ONCE test/e2e/clab/data/vars-prodtpl-*
+
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
       - name: Build networkd test image
-        run: test/e2e/clab/docker-build-retry.sh -t booty-networkd-test:latest -f test/e2e/clab/networkd-test.Dockerfile test/e2e/clab
+        run: test/e2e/clab/docker-build-retry.sh --build-arg "UBUNTU=${{ matrix.ubuntu }}" -t booty-networkd-test:latest -f test/e2e/clab/networkd-test.Dockerfile test/e2e/clab
 
       - name: Install ContainerLab
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
@@ -1882,7 +1935,9 @@ jobs:
             TestProdTplLongOutageNewLinkLocal \
             TestProdTplOneDropPerFault \
             TestProdTplRRSessionsNotResetAtStart \
-            TestProdTplType5ConnectedPrefixKept; do
+            TestProdTplType5ConnectedPrefixKept \
+            TestProdTplRDAndMED \
+            TestProdTplRRSessionEchoNoENHE; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl.log; then
               echo "::error::${expected} did not pass"
               exit 1
@@ -1928,7 +1983,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: prodtpl-logs
+          name: prodtpl-logs${{ matrix.ubuntu != '22.04' && format('-networkd-{0}', matrix.ubuntu) || '' }}
           path: |
             e2e-prodtpl.log
             prodtpl-logs/
@@ -1955,6 +2010,14 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.2"
+
+      - name: BGP_CONNECT_AT_ONCE for the lab (manual input)
+        if: github.event_name == 'workflow_dispatch' && inputs.connect_at_once
+        run: |
+          for f in test/e2e/clab/data/vars-prodtpl-*; do
+            printf '\nexport BGP_CONNECT_AT_ONCE="true"\n' >> "$f"
+          done
+          grep -c BGP_CONNECT_AT_ONCE test/e2e/clab/data/vars-prodtpl-*
 
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
@@ -2018,7 +2081,9 @@ jobs:
             TestProdTplLongOutageNewLinkLocal \
             TestProdTplOneDropPerFault \
             TestProdTplRRSessionsNotResetAtStart \
-            TestProdTplType5ConnectedPrefixKept; do
+            TestProdTplType5ConnectedPrefixKept \
+            TestProdTplRDAndMED \
+            TestProdTplRRSessionEchoNoENHE; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl-one-uplink.log; then
               echo "::error::${expected} did not pass"
               exit 1
@@ -2093,6 +2158,14 @@ jobs:
         with:
           go-version: "1.27.2"
 
+      - name: BGP_CONNECT_AT_ONCE for the lab (manual input)
+        if: github.event_name == 'workflow_dispatch' && inputs.connect_at_once
+        run: |
+          for f in test/e2e/clab/data/vars-prodtpl-*; do
+            printf '\nexport BGP_CONNECT_AT_ONCE="true"\n' >> "$f"
+          done
+          grep -c BGP_CONNECT_AT_ONCE test/e2e/clab/data/vars-prodtpl-*
+
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
 
@@ -2155,7 +2228,9 @@ jobs:
             TestProdTplLongOutageNewLinkLocal \
             TestProdTplOneDropPerFault \
             TestProdTplRRSessionsNotResetAtStart \
-            TestProdTplType5ConnectedPrefixKept; do
+            TestProdTplType5ConnectedPrefixKept \
+            TestProdTplRDAndMED \
+            TestProdTplRRSessionEchoNoENHE; do
             if ! grep -q "^--- PASS: ${expected} " e2e-prodtpl-native-model.log; then
               echo "::error::${expected} did not pass"
               exit 1

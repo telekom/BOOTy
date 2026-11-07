@@ -1465,6 +1465,9 @@ func TestKeepProvisionerResolvConfWithRamdiskFiles(t *testing.T) {
 	if netCfg.DNSResolvers != "" {
 		t.Fatalf("PROVISIONER_FILES_TARGET=ramdisk would rewrite the provisioner resolv.conf with %q", netCfg.DNSResolvers)
 	}
+	if !netCfg.KeepResolvConf {
+		t.Fatal("PROVISIONER_FILES_TARGET=ramdisk must keep the provisioner resolv.conf from DHCP too")
+	}
 }
 
 func TestLoadModulesWarnsWhenAModuleNeverLoads(t *testing.T) {
@@ -2070,7 +2073,8 @@ func TestApplyBGPOptions(t *testing.T) {
 			{"BGP_DEFAULTS wins", "datacenter", "traditional", "traditional", "8.3", false, true},
 			{"frr version 7.5.1", "", "", "datacenter", "7.5.1", true, false},
 			{"frr version 10.2.1", "", "", "datacenter", "10.2.1", true, true},
-			{"unparsable frr version", "", "", "datacenter", "8", true, true},
+			{"frr version 8 (8.0)", "", "", "datacenter", "8", true, false},
+			{"frr version git (below 8.3, like FRR)", "", "", "datacenter", "git", true, false},
 		} {
 			n := &network.Config{BGPDefaults: tt.parsed, BGPFRRVersion: tt.frrVersion}
 			applyBGPOptions(&config.BGPConfig{Defaults: tt.native}, n)
@@ -2176,6 +2180,22 @@ func TestMergeBGPPolicyRouteTargets(t *testing.T) {
 	}
 }
 
+// EVPN_RD wins over the frr.conf rd; the FRR instance ids come from
+// frr.conf.
+func TestMergeBGPPolicyRD(t *testing.T) {
+	frr := &network.Config{EVPNRD: "192.0.2.17:9", EVPNRDIndex: 2, BGPInstances: 2}
+	dst := &network.Config{}
+	mergeBGPPolicy(dst, frr)
+	if dst.EVPNRD != "192.0.2.17:9" || dst.EVPNRDIndex != 2 || dst.BGPInstances != 2 {
+		t.Fatalf("frr.conf RD: %+v", dst)
+	}
+	dst = &network.Config{EVPNRD: "65000:7"}
+	mergeBGPPolicy(dst, frr)
+	if dst.EVPNRD != "65000:7" {
+		t.Fatalf("EVPN_RD = %q, want the native 65000:7", dst.EVPNRD)
+	}
+}
+
 // The native BFD timers reach the network config.
 func TestNetworkConfigFromMachineConfigBFD(t *testing.T) {
 	cfg := &config.MachineConfig{}
@@ -2202,6 +2222,15 @@ func TestNetworkConfigFromMachineConfigDevices(t *testing.T) {
 	}
 	if n.IPForwarding == nil || *n.IPForwarding || n.IPv6Forwarding == nil || !*n.IPv6Forwarding {
 		t.Errorf("forwarding = %v %v, want false and true", n.IPForwarding, n.IPv6Forwarding)
+	}
+}
+
+// EVPN_RD reaches the network config unchanged.
+func TestNetworkConfigFromMachineConfigEVPNRD(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Network.EVPN.RD = "4210000017:9"
+	if n := networkConfigFromMachineConfig(cfg); n.EVPNRD != "4210000017:9" {
+		t.Fatalf("EVPNRD = %q, want 4210000017:9", n.EVPNRD)
 	}
 }
 
@@ -2823,6 +2852,46 @@ func TestEmitLLDPOnNetplanNICsHotplug(t *testing.T) {
 	}
 }
 
+// followLLDPMatches subscribes again after a netlink receive error. The
+// netlink fork (docs/dependency-forks.md) closes the socket of the ended
+// subscription; netlink 1.3.1 kept it open until ctx ended, one per error.
+func TestFollowLLDPMatchesResubscribeClosesSocket(t *testing.T) {
+	origSub := lldpLinkSubscribe
+	t.Cleanup(func() { lldpLinkSubscribe = origSub })
+	var subscriptions atomic.Int32
+	lldpLinkSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}, opts netlink.LinkSubscribeOptions) error {
+		subscriptions.Add(1)
+		opts.ReceiveTimeout = &unix.Timeval{Usec: 1000} // Receive fails with EAGAIN
+		return netlink.LinkSubscribeWithOptions(ch, done, opts)
+	}
+	openFDs := func() int {
+		fds, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(fds)
+	}
+	before := openFDs()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	followLLDPMatches(ctx, nil, func(string) bool { return true }, func([]string) {}, slog.New(slog.DiscardHandler))
+	for deadline := time.Now().Add(10 * time.Second); subscriptions.Load() < 4; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d subscriptions in 10 s, want 4", subscriptions.Load())
+		}
+	}
+	// At most the current subscription's socket is open.
+	var open int
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if open = openFDs() - before; open <= 1 || time.Now().After(deadline) {
+			break
+		}
+	}
+	if open > 1 {
+		t.Fatalf("%d file descriptors open after %d subscriptions, want at most 1", open, subscriptions.Load())
+	}
+}
+
 // A native EMIT_LLDP list replaces the netplan values, also match blocks.
 func TestMergeNetplanConfigEmitLLDPMatches(t *testing.T) {
 	src := &network.Config{EmitLLDPMatches: []network.LinkMatch{{Name: "en*"}}}
@@ -2869,5 +2938,126 @@ func TestLinkLayerTeardownStopsLLDPFirst(t *testing.T) {
 	}
 	if strings.Join(order, ",") != "lldp,mode" {
 		t.Fatalf("teardown order %v, want lldp before the mode", order)
+	}
+}
+
+type dnsManagingMode struct{ teardownRecorderMode }
+
+func (dnsManagingMode) ManagesDNS() bool { return true }
+
+// A mode that writes resolv.conf itself (DHCP) keeps its file: the
+// configured resolvers are only checked, a bad one still fails.
+func TestNetworkModeWithResolversLeavesDHCPResolvConf(t *testing.T) {
+	orig := configureResolvers
+	t.Cleanup(func() { configureResolvers = orig })
+	writes := 0
+	configureResolvers = func(string) error { writes++; return nil }
+	mode := dnsManagingMode{teardownRecorderMode{teardown: func() error { return nil }}}
+	if _, err := networkModeWithResolvers(context.Background(), &network.Config{DNSResolvers: "10.9.9.9"}, mode, &linkLayerCleanup{}); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 0 {
+		t.Fatalf("resolv.conf written %d times over the DHCP mode's file", writes)
+	}
+	if _, err := networkModeWithResolvers(context.Background(), &network.Config{DNSResolvers: "not-an-ip"}, mode, &linkLayerCleanup{}); err == nil {
+		t.Fatal("a bad resolver passed")
+	}
+}
+
+// A bad configured resolver fails the run in the DHCP fallback, as for
+// the other modes: dhcpFallback keeps DNSResolvers for the check.
+func TestDHCPFallbackBadResolverFails(t *testing.T) {
+	netCfg := &network.Config{DNSResolvers: "not-an-ip"}
+	mode, err := networkModeWithResolvers(context.Background(), netCfg, dhcpFallback(context.Background(), netCfg), &linkLayerCleanup{})
+	if err == nil || mode != nil {
+		t.Fatalf("networkModeWithResolvers(dhcpFallback) = %T, %v; want the resolver error", mode, err)
+	}
+}
+
+// A failed link watch closes its subscription (netlink keeps the socket
+// until done closes) and, subscribed again, resolves the matches once, so a
+// NIC whose event was lost sends LLDP too.
+func TestFollowLLDPMatchesResubscribes(t *testing.T) {
+	origSub, origResolve, origPrep := lldpLinkSubscribe, resolveLinkMatches, lldpPrepareNICs
+	t.Cleanup(func() { lldpLinkSubscribe, resolveLinkMatches, lldpPrepareNICs = origSub, origResolve, origPrep })
+	lldpPrepareNICs = func([]string) {}
+	resolveLinkMatches = func(context.Context, []network.LinkMatch) ([]string, error) {
+		return []string{"enp1s0", "enp2s0"}, nil
+	}
+	dones := make(chan (<-chan struct{}), 2)
+	var calls atomic.Int32
+	lldpLinkSubscribe = func(ch chan<- netlink.LinkUpdate, done <-chan struct{}, _ netlink.LinkSubscribeOptions) error {
+		dones <- done
+		if calls.Add(1) == 1 {
+			close(ch) // the receive failed (ENOBUFS), the event of enp2s0 is lost
+			return nil
+		}
+		go func() { <-done; close(ch) }()
+		return nil
+	}
+	started := make(chan []string, 2)
+	ctx, cancel := context.WithCancel(context.Background())
+	known := func(n string) bool { return n == "enp1s0" }
+	followLLDPMatches(ctx, []network.LinkMatch{{Name: "en*"}}, known, func(n []string) { started <- n }, slog.Default())
+	first := <-dones
+	select {
+	case <-first:
+	case <-time.After(time.Second):
+		t.Fatal("the failed subscription is not closed")
+	}
+	select {
+	case n := <-started:
+		if !slices.Equal(n, []string{"enp2s0"}) {
+			t.Fatalf("started %v, want enp2s0", n)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the NIC of the lost event never sends LLDP")
+	}
+	second := <-dones
+	cancel()
+	select {
+	case <-second:
+	case <-time.After(time.Second):
+		t.Fatal("the end of the run does not close the subscription")
+	}
+}
+
+// The LLDP link watch logs a failed receive, a message of another sender
+// only at debug, and nothing once the run or the subscription ended.
+func TestLLDPWatchErrors(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil)) // Info and up
+	sub, end := context.WithCancel(context.Background())
+	logErr := lldpWatchError(sub, log)
+	logErr(errors.New("Wrong sender portid 1234, expected 0"))
+	if buf.Len() != 0 {
+		t.Fatalf("a message of another sender logged %q", buf.String())
+	}
+	logErr(errors.New("Receive failed: no buffer space available"))
+	if !strings.Contains(buf.String(), "subscribing again") {
+		t.Fatalf("a failed receive logged %q", buf.String())
+	}
+	buf.Reset()
+	end()
+	logErr(errors.New("Receive failed: use of closed file"))
+	if buf.Len() != 0 {
+		t.Fatalf("the closed subscription logged %q", buf.String())
+	}
+}
+
+// frrVersionBelow compares like FRR's frr_version_cmp: digit runs as
+// numbers ("8.10" is above "8.3"), the end below '.', "~" below the end,
+// letters below digits ("git" is below 8.3); only an empty version (no
+// "frr version" line) is never below.
+func TestFRRVersionBelow(t *testing.T) {
+	for v, want := range map[string]bool{
+		"8": true, "8.2-dev": true, "8.3~rc1": true, "8.2.2": true, "7.5.1": true, "git": true,
+		"GIT": true, "8.\xff": true, "8.3\xff": false, "99999999999999999999": false,
+		"8.3": false, "8.3.1": false, "8.3.0~rc1": false, "8.9": false, "8.10": false, "10.2.1": false, "9": false,
+		"": false,
+	} {
+		if got := frrVersionBelow(v, "8.3"); got != want {
+			t.Errorf("frrVersionBelow(%q, 8.3) = %v, want %v", v, got, want)
+		}
 	}
 }

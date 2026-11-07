@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -370,6 +371,23 @@ func TestResolveFRRDaemonsSurfacesStatErrors(t *testing.T) {
 	}
 }
 
+// bfdd starts before bgpd. bgpd reads frr.conf at its start and has zebra
+// send RAs for its unnumbered peers at once; the leaf starts BFD on the
+// first RA, and without bfdd its first packet gets ICMP port unreachable.
+// systemctl and frrinit.sh load the integrated config with vtysh -b after
+// all daemons run, so bfdd listens first there as well.
+func TestStartDaemonsDirectStartsBfddBeforeBgpd(t *testing.T) {
+	setupFakeDaemonDir(t, []string{"mgmtd", "zebra", "staticd", "bgpd", "bfdd"})
+	commands, _ := installDaemonHooks(t, func(string) error { return nil }, nil)
+	if err := NewManager(nil).startDaemonsDirect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := commandBases(*commands)
+	if bfdd, bgpd := slices.Index(got, "bfdd"), slices.Index(got, "bgpd"); bfdd < 0 || bfdd > bgpd {
+		t.Fatalf("commands = %v, want bfdd before bgpd", got)
+	}
+}
+
 func TestStartDaemonsDirectStopsStartedDaemonsOnRequiredFailure(t *testing.T) {
 	setupFakeDaemonDir(t, []string{"mgmtd", "zebra", "staticd", "bgpd", "bfdd"})
 	commands, signals := installDaemonHooks(t,
@@ -379,7 +397,7 @@ func TestStartDaemonsDirectStopsStartedDaemonsOnRequiredFailure(t *testing.T) {
 			}
 			return nil
 		},
-		map[string][]int{"mgmtd": {101}, "zebra": {102}, "staticd": {103}},
+		map[string][]int{"mgmtd": {101}, "zebra": {102}, "staticd": {103}, "bfdd": {104}},
 	)
 
 	mgr := NewManager(nil)
@@ -391,11 +409,11 @@ func TestStartDaemonsDirectStopsStartedDaemonsOnRequiredFailure(t *testing.T) {
 		t.Fatalf("error = %q, want bgpd context", err.Error())
 	}
 
-	wantCommands := []string{"mgmtd", "zebra", "staticd", "bgpd"}
+	wantCommands := []string{"mgmtd", "zebra", "staticd", "bfdd", "bgpd"}
 	if got := commandBases(*commands); strings.Join(got, ",") != strings.Join(wantCommands, ",") {
 		t.Fatalf("commands = %v, want %v", got, wantCommands)
 	}
-	wantSignals := []string{"staticd:103:terminated", "zebra:102:terminated", "mgmtd:101:terminated"}
+	wantSignals := []string{"bfdd:104:terminated", "staticd:103:terminated", "zebra:102:terminated", "mgmtd:101:terminated"}
 	if strings.Join(*signals, ",") != strings.Join(wantSignals, ",") {
 		t.Fatalf("signals = %v, want %v", *signals, wantSignals)
 	}
@@ -464,14 +482,14 @@ func TestRestartFRRRestartsTrackedDirectDaemons(t *testing.T) {
 	if strings.Join(*signals, ",") != strings.Join(wantSignals, ",") {
 		t.Fatalf("signals = %v, want %v", *signals, wantSignals)
 	}
-	wantCommands := []string{"zebra", "bgpd", "bfdd"}
+	wantCommands := []string{"zebra", "bfdd", "bgpd"}
 	if got := commandBases(*commands); strings.Join(got, ",") != strings.Join(wantCommands, ",") {
 		t.Fatalf("commands = %v, want %v", got, wantCommands)
 	}
 	if mgr.frrStartMethod != frrStartDirect {
 		t.Fatalf("frrStartMethod = %q, want direct", mgr.frrStartMethod)
 	}
-	if got := strings.Join(mgr.directDaemonList, ","); got != "zebra,bgpd,bfdd" {
+	if got := strings.Join(mgr.directDaemonList, ","); got != "zebra,bfdd,bgpd" {
 		t.Fatalf("directDaemonList = %v, want restarted daemons", mgr.directDaemonList)
 	}
 }

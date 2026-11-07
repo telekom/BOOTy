@@ -279,7 +279,7 @@ type BGPConfig struct {
 
 	// ConnectAtOnce starts the first connect of a GoBGP peer at once when
 	// it leaves Idle, like FRR when BGP_Start runs, instead of after a
-	// random 1.5 to 2 s. Unset (nil) means off: after a carrier loss both
+	// random 0 to 1 s. Unset (nil) means off: after a carrier loss both
 	// sides then have a connect pending until the link works again, and
 	// the connection collision that follows is resolved per RFC 4271 6.8
 	// but made the production template lab fail now and then (#811).
@@ -439,6 +439,12 @@ type EVPNConfig struct {
 	// Default: "" (the frr.conf value, else vpnRT, else ASN:VNI)
 	ImportRouteTargets string `yaml:"importRouteTargets" json:"importRouteTargets"`
 	ExportRouteTargets string `yaml:"exportRouteTargets" json:"exportRouteTargets"`
+
+	// RD is the route distinguisher of BOOTy's EVPN routes ("ASN:NN" or
+	// "IPv4:NN"), like FRR "rd" in the VRF's address-family l2vpn evpn. It
+	// wins over the provisioner frr.conf.
+	// Default: "" (the frr.conf value, else "<router-id>:<n>" like FRR)
+	RD string `yaml:"rd,omitempty" json:"rd,omitempty"`
 
 	// Type5Networks is a comma-separated list of prefixes that BOOTy
 	// originates as EVPN Type-5 routes, like FRR "network" lines with

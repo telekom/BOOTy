@@ -20,7 +20,7 @@ import (
 // BGP_CONNECT_AT_ONCE sets ConnectAtOnce (GoBGP fork) on every peer: FRR
 // connects as soon as BGP_Start runs (bgp_fsm.c, bgp_start), and BGP_Start
 // comes from the start timer, from a valid next hop (bgp_fsm_nht_update)
-// and from BFD Up. Without it GoBGP waits a random 1.5 to 2 s before the
+// and from BFD Up. Without it GoBGP waits a random 0 to 1 s before the
 // first connect after Idle (osrg/gobgp#3736); retries wait the connect
 // timer either way. It is off by default: after a carrier loss GoBGP and
 // the leaf then both have a connect pending until the link works again,

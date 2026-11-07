@@ -422,6 +422,9 @@ func validateImageSourceRootSelectors(cfg *ImageConfig) error {
 	if label != "" && cfg.SourceRootPartition != 0 {
 		return fmt.Errorf("provision.image.sourceRootLabel and provision.image.sourceRootPartition are mutually exclusive")
 	}
+	if cfg.Stream && strings.EqualFold(strings.TrimSpace(cfg.Mode), ImageModePartition) {
+		return fmt.Errorf("provision.image.stream (IMAGE_STREAM) cannot be combined with provision.image.mode partition, which stages the image in RAM")
+	}
 	cfg.SourceRootLabel = label
 	return nil
 }

@@ -41,6 +41,7 @@ and, with `OOB_EFI_VAR`, in the `BootyLastResult` UEFI variable.
 | `BOOTY-IMG-004` | permanent | `*` | Image format probe failed. |
 | `BOOTY-IMG-005` | transient | `apply-sysexts` | System extension download or install failed. |
 | `BOOTY-IMG-006` | transient | `prepare-oci-prepulls` | OCI image pre-pull preparation failed. |
+| `BOOTY-IMG-007` | permanent | `*` | The staged image does not fit in the staging tmpfs; use a raw or compressed raw image or IMAGE_STREAM. |
 | `BOOTY-DSK-001` | environment | `release-stale-mounts` | Stale target mounts could not be released. |
 | `BOOTY-DSK-002` | hardware | `disable-lvm` | Disabling LVM failed. |
 | `BOOTY-DSK-003` | hardware | `stop-raid` | Stopping RAID arrays failed. |
@@ -89,5 +90,5 @@ and, with `OOB_EFI_VAR`, in the `BootyLastResult` UEFI variable.
 | `BOOTY-OS-014` | environment | `teardown-chroot` | Chroot teardown failed. |
 | `BOOTY-OS-015` | config | `soft-deprovision` | Soft deprovision failed. |
 | `BOOTY-WDT-001` | environment | `*` | A step made no progress within its watchdog budget; the hardware watchdog resets the host. |
-| `BOOTY-PAY-001` | config | `*` | The vars need a ramdisk payload (FRR, qemu-img or ipmitool) that the ramdisk does not have: the boot loader did not load its archive, or the flavor has no such tool. |
+| `BOOTY-PAY-001` | config | `*` | The vars need a ramdisk payload (FRR) that the ramdisk does not have: the boot loader did not load its archive, or the flavor has no such tool. |
 | `BOOTY-PAY-002` | permanent | `check-payloads` | A ramdisk payload archive is from another BOOTy build or architecture than the base ramdisk. |

@@ -1421,6 +1421,7 @@ func applyNetworkStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"BGP_ROUTE_MAP_IN":    &cfg.Network.BGP.RouteMapIn,
 		"BGP_ROUTE_MAP_OUT":   &cfg.Network.BGP.RouteMapOut,
 		"EVPN_RT_IMPORT":      &cfg.Network.EVPN.ImportRouteTargets,
+		"EVPN_RD":             &cfg.Network.EVPN.RD,
 		"EVPN_RT_EXPORT":      &cfg.Network.EVPN.ExportRouteTargets,
 	}
 
@@ -1655,6 +1656,8 @@ func applyCoreBoolVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Provision.DisableKexec = parseBoolVar(value)
 	case "SECURE_ERASE":
 		cfg.Provision.Disk.SecureErase = parseBoolVar(value)
+	case "IMAGE_STREAM":
+		cfg.Provision.Image.Stream = parseBoolVar(value)
 	case "INVENTORY_ENABLED":
 		cfg.Provision.Inventory.Enabled = parseBoolVar(value)
 	case "FIRMWARE_REPORT":

@@ -290,8 +290,8 @@ RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 instal
     binutils \
     mdadm util-linux fdisk e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
     efibootmgr dmidecode ethtool iproute2 bridge-utils \
-    hdparm nvme-cli sg3-utils mstflint gpgv qemu-utils \
-    dropbear-bin cryptsetup-bin ipmitool \
+    hdparm nvme-cli sg3-utils mstflint gpgv \
+    dropbear-bin cryptsetup-bin \
     && rm -rf /var/lib/apt/lists/*
 
 # Collect shared libraries for all tool binaries while their packages are
@@ -308,17 +308,12 @@ RUN mkdir -p /tool-libs /tool-libs-full && \
         /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
         /usr/bin/mstconfig /usr/bin/mstflint \
         /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup \
-        /sbin/cryptsetup /usr/bin/ipmitool 2>/dev/null \
+        /sbin/cryptsetup 2>/dev/null \
     | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
     | sort -u | while read -r lib; do \
         [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /tool-libs/ 2>/dev/null || true; \
     done && \
     ldd /usr/bin/gpgv 2>/dev/null \
-    | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
-    | sort -u | while read -r lib; do \
-        [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /tool-libs-full/ 2>/dev/null || true; \
-    done && \
-    ldd /usr/bin/qemu-img 2>/dev/null \
     | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
     | sort -u | while read -r lib; do \
         [ -n "$lib" ] && [ -f "$lib" ] && cp -L --parents "$lib" /tool-libs-full/ 2>/dev/null || true; \
@@ -335,8 +330,8 @@ RUN strip --strip-all \
         /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
         /usr/bin/mstconfig /usr/bin/mstflint \
-        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup /usr/bin/gpgv /usr/bin/qemu-img \
-        /sbin/cryptsetup /usr/bin/ipmitool
+        /usr/sbin/dropbear /usr/bin/dropbearkey /bin/lsblk /sbin/blkid /usr/sbin/losetup /usr/bin/gpgv \
+        /sbin/cryptsetup
 
 # Busybox static binary — sourced from Docker Hub for reliability and
 # Dependabot version tracking.  Eliminates the fragile busybox.net download
@@ -410,7 +405,6 @@ COPY --from=tools /sbin/partprobe bin/partprobe
 COPY --from=tools /usr/bin/partx bin/partx
 COPY --from=tools /bin/lsblk bin/lsblk
 COPY --from=tools /usr/sbin/kpartx bin/kpartx
-COPY --from=tools /usr/bin/qemu-img bin/qemu-img
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
 COPY --from=tools /usr/sbin/dmidecode bin/dmidecode
 COPY --from=tools /usr/sbin/ethtool bin/ethtool
@@ -430,8 +424,6 @@ COPY --from=tools /sbin/cryptsetup sbin/cryptsetup
 COPY --from=tools /usr/bin/mstconfig bin/mstconfig
 COPY --from=tools /usr/bin/mstflint bin/mstflint
 
-# IPMI local management
-COPY --from=tools /usr/bin/ipmitool bin/ipmitool
 
 # Dropbear lightweight SSH server for rescue mode (~110 KB)
 COPY --from=tools /usr/sbin/dropbear bin/dropbear
@@ -468,7 +460,7 @@ RUN pack-initramfs.sh . /initramfs.cpio.zst
 
 # ── Split ramdisk (optional, --target=split) ───────────────────────────────
 # The default tree as a base ramdisk plus one archive per optional payload
-# (FRR, qemu-img, ipmitool), which the boot loader loads only for the runs
+# (FRR), which the boot loader loads only for the runs
 # that need them. See docs/proposal-ramdisk-split.md and pkg/payload.
 # The kernel comes from the same build as the modules of the base, and
 # SHA256SUMS lists every file, so one pin covers the set.
@@ -477,7 +469,7 @@ ARG BOOTY_BUILD=unknown
 COPY hack/split-initramfs.sh /usr/local/bin/
 RUN split-initramfs.sh /build/initramfs /split "$BOOTY_BUILD"
 COPY --from=kernel /vmlinuz /split/vmlinuz
-RUN cd /split && sha256sum base.cpio.zst frr.cpio.zst qemu-img.cpio.zst ipmitool.cpio.zst vmlinuz > SHA256SUMS
+RUN cd /split && sha256sum base.cpio.zst frr.cpio.zst vmlinuz > SHA256SUMS
 
 FROM scratch AS split
 COPY --from=split-builder /split/ .
@@ -659,7 +651,6 @@ COPY --from=tools /usr/sbin/sgdisk bin/sgdisk
 COPY --from=tools /sbin/partprobe bin/partprobe
 COPY --from=tools /usr/bin/partx bin/partx
 COPY --from=tools /usr/sbin/kpartx bin/kpartx
-COPY --from=tools /usr/bin/qemu-img bin/qemu-img
 COPY --from=tools /usr/bin/efibootmgr bin/efibootmgr
 COPY --from=tools /usr/sbin/dmidecode bin/dmidecode
 COPY --from=tools /usr/sbin/ethtool bin/ethtool
@@ -679,8 +670,6 @@ COPY --from=tools /sbin/cryptsetup sbin/cryptsetup
 COPY --from=tools /usr/bin/mstconfig bin/mstconfig
 COPY --from=tools /usr/bin/mstflint bin/mstflint
 
-# IPMI local management
-COPY --from=tools /usr/bin/ipmitool bin/ipmitool
 
 # Dropbear lightweight SSH server for rescue mode (~110 KB)
 COPY --from=tools /usr/sbin/dropbear bin/dropbear

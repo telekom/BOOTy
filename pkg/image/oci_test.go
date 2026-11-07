@@ -211,6 +211,46 @@ func TestFetchOCILayerRejectsMultiplePayloadLayers(t *testing.T) {
 	}
 }
 
+// TestFetchOCILayerSelectsTCaaSRawImageLayer pulls an artifact like the one
+// that push-oci-artifact.sh of the T-CaaS image builder pushes: a qcow2, the
+// compressed raw image and the ansible facts.
+func TestFetchOCILayerSelectsTCaaSRawImageLayer(t *testing.T) {
+	srv := startTestRegistry(t)
+	defer srv.Close()
+
+	layer := func(content, mediaType string) v1.Layer {
+		return stream.NewLayer(io.NopCloser(strings.NewReader(content)), stream.WithMediaType(types.MediaType(mediaType)))
+	}
+	img, err := mutate.AppendLayers(empty.Image,
+		layer("qcow2", "application/vnd.tcaas.node-image+qcow2"),
+		layer("raw-lz4", "application/vnd.tcaas.node-image+raw.lz4"),
+		layer("facts", "application/vnd.tcaas.ansible_facts+yaml"),
+	)
+	if err != nil {
+		t.Fatalf("mutate.AppendLayers: %v", err)
+	}
+	ref, err := name.ParseReference(fmt.Sprintf("%s/test/node-image:v1", strings.TrimPrefix(srv.URL, "http://")))
+	if err != nil {
+		t.Fatalf("parse ref: %v", err)
+	}
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatalf("remote.Write: %v", err)
+	}
+
+	rc, err := FetchOCILayer(context.Background(), ref.String())
+	if err != nil {
+		t.Fatalf("FetchOCILayer: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(got) != "raw-lz4" {
+		t.Errorf("got %q, want the node-image+raw.lz4 layer", got)
+	}
+}
+
 func TestFetchOCILayerSkipsChecksumTextLayer(t *testing.T) {
 	srv := startTestRegistry(t)
 	defer srv.Close()

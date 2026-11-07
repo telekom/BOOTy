@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"os"
 	"os/signal"
@@ -130,6 +131,7 @@ func main() {
 		return
 	}
 	startPID1ChildReaper(ctx, os.Getpid())
+	setPanicReboot()
 	loadModules()
 	// The disk selection waits for the block devices to settle; count
 	// their settle time from here, while the network comes up.
@@ -506,7 +508,7 @@ func runCAPRF(ctx context.Context) {
 	if cfg.DryRun {
 		cfg.Mode = "dry-run"
 	}
-	if err := checkPayloads(cfg); err != nil {
+	if err := checkPayloads(); err != nil {
 		code := provision.CodeOf(provision.WithCode("check-payloads", err))
 		failRun(ctx, cfg, client, "check-payloads", code, fmt.Sprintf("ramdisk payload check failed [%s]: %v", code, err), reboot)
 		return
@@ -890,10 +892,7 @@ func setupNetworkAndTokenFlow(ctx context.Context, cfg *config.MachineConfig, cl
 
 	// Before the network setup: a driver may reset the port when the flag
 	// changes, which would drop BGP sessions set up before.
-	if cfg.DisableNICFirmwareLLDP() {
-		disableNICFirmwareLLDP(ctx, &cfg.Provision.SRIOV)
-		lldpPrepareNICs = func(nics []string) { disableNICFirmwareLLDPOn(nics, &cfg.Provision.SRIOV) }
-	}
+	prepareFirmwareLLDP(ctx, cfg)
 
 	// Set up networking with retry — if connectivity fails, teardown and
 	// rebuild the entire network stack before giving up.
@@ -1187,14 +1186,11 @@ func lldpReceiveEnabled(cfg *config.MachineConfig) bool {
 }
 
 // startLLDPReceive logs and records the LLDP neighbors of every physical
-// NIC for the rest of the run. The legacy ramdisk only sends LLDP.
+// NIC for the rest of the run. The legacy ramdisk only sends LLDP. The NIC
+// detection runs in the background: with one NIC it waits 3 s for more
+// NICs to appear, and the connectivity check must not wait for that.
 func startLLDPReceive(ctx context.Context) {
-	nics, err := network.DetectPhysicalNICsContext(ctx)
-	if err != nil || len(nics) == 0 {
-		slog.Warn("LLDP receive not started: no physical NICs", "error", err)
-		return
-	}
-	lldp.Receive(ctx, nics, slog.With("component", "lldp"))
+	lldp.ReceiveDetected(ctx, network.DetectPhysicalNICsContext, slog.With("component", "lldp"))
 }
 
 // disableNICFirmwareLLDP stops the firmware LLDP agent of the Intel NICs
@@ -1208,6 +1204,16 @@ func disableNICFirmwareLLDP(ctx context.Context, sriovCfg *sriov.Config) {
 		return
 	}
 	disableNICFirmwareLLDPOn(nics, sriovCfg)
+}
+
+// prepareFirmwareLLDP stops the firmware LLDP agent of the NICs now and of
+// the NICs that appear later (lldpPrepareNICs), unless the config keeps it.
+func prepareFirmwareLLDP(ctx context.Context, cfg *config.MachineConfig) {
+	if !cfg.DisableNICFirmwareLLDP() {
+		return
+	}
+	disableNICFirmwareLLDP(ctx, &cfg.Provision.SRIOV)
+	lldpPrepareNICs = func(nics []string) { disableNICFirmwareLLDPOn(nics, &cfg.Provision.SRIOV) }
 }
 
 // disableNICFirmwareLLDPOn is disableNICFirmwareLLDP for the given NICs,
@@ -1253,7 +1259,6 @@ func startLLDPEmitAll(ctx context.Context, l *config.LLDPConfig) {
 	}
 	info := lldp.SystemInfo()
 	info.Profile, info.PortIDFormat, info.Announce = l.Profile, l.PortIDFormat, l.Announce
-	info.CarrierOnly = true
 	// Its own context: the run context is not canceled before kexec,
 	// reboot or power off, so the handoff stops it to send the shutdown
 	// LLDPDU (IEEE 802.1AB), like the GoBGP sender at its teardown.
@@ -1555,6 +1560,7 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 		BGPRouteMapOut:          cfg.Network.BGP.RouteMapOut,
 		EVPNImportRTs:           splitList(cfg.Network.EVPN.ImportRouteTargets),
 		EVPNExportRTs:           splitList(cfg.Network.EVPN.ExportRouteTargets),
+		EVPNRD:                  cfg.Network.EVPN.RD,
 		BGPNeighborVRF:          cfg.Network.BGP.NeighborVRF,
 		BGPConnectRetry:         cfg.Network.BGP.ConnectRetry,
 		BGPAuthPassword:         cfg.Network.BGP.AuthPassword,
@@ -1570,20 +1576,67 @@ func networkConfigFromMachineConfig(cfg *config.MachineConfig) *network.Config {
 	return netCfg
 }
 
-// frrVersionBelow reports whether the "frr version" v is below
-// major.minor, like the match_version of FRR's FRR_CFG_DEFAULT_*. An empty
-// or unparsable version is the running FRR, so it is not below.
-func frrVersionBelow(v string, major, minor int) bool {
-	f := strings.SplitN(v, ".", 3)
-	if len(f) < 2 {
-		return false
+// frrVersionBelow reports whether the "frr version" v is below spec, like
+// FRR's match_version "< spec". An empty version (no "frr version" line)
+// is the running FRR, so it is not below.
+func frrVersionBelow(v, spec string) bool {
+	return v != "" && frrVersionCmp(v, spec) < 0
+}
+
+// frrVersionCmp is FRR's frr_version_cmp (lib/defaults.c): runs of digits
+// compare as numbers, other characters by versionValue.
+func frrVersionCmp(a, b string) int {
+	isDigit := func(s string) bool { return s != "" && s[0] >= '0' && s[0] <= '9' }
+	for a != "" || b != "" {
+		if isDigit(a) && isDigit(b) {
+			av, ar := leadingNumber(a)
+			bv, br := leadingNumber(b)
+			if c := cmp.Compare(av, bv); c != 0 {
+				return c
+			}
+			a, b = ar, br
+			continue
+		}
+		if c := cmp.Compare(versionValue(a), versionValue(b)); c != 0 {
+			return c
+		}
+		// Equal values: both strings have a next character (the end
+		// differs from every character).
+		a, b = a[1:], b[1:]
 	}
-	ma, err1 := strconv.Atoi(f[0])
-	mi, err2 := strconv.Atoi(f[1])
-	if err1 != nil || err2 != nil {
-		return false
+	return 0
+}
+
+// versionValue is FRR's version_value of the first character of s; the
+// end of s is '\0'.
+func versionValue(s string) int {
+	if s == "" {
+		return 1
 	}
-	return ma < major || ma == major && mi < minor
+	switch c := s[0]; {
+	case c >= 128:
+		return 2 // non-ASCII
+	case c == '~':
+		return 0 // "~foo" sorts older than nothing
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+		return 0x100 + int(c|0x20)
+	default:
+		return 0x200 + int(c) // punctuation and digits
+	}
+}
+
+// leadingNumber returns the value of the leading digits of s, like
+// strtoul (saturated), and the rest.
+func leadingNumber(s string) (n uint64, rest string) {
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	n, err := strconv.ParseUint(s[:i], 10, 64)
+	if err != nil {
+		n = math.MaxUint64
+	}
+	return n, s[i:]
 }
 
 // applyBGPOptions applies the BGP options that frr.conf can also set. With
@@ -1612,7 +1665,7 @@ func applyBGPOptions(o *config.BGPConfig, n *network.Config) {
 		GracefulRestart:     gr,
 		GracefulRestartTime: cmp.Or(o.GracefulRestartTime, 120),
 		// FRR BGP_GRACEFUL_NOTIFICATION: off for "frr version" < 8.3.
-		GracefulNotification: gr && boolOr(o.GracefulNotification, !frrVersionBelow(n.BGPFRRVersion, 8, 3)),
+		GracefulNotification: gr && boolOr(o.GracefulNotification, !frrVersionBelow(n.BGPFRRVersion, "8.3")),
 		AddPathReceive:       boolOr(o.AddPathReceive, true),
 		// FRR 10.3 BGP_SOFT_VERSION_CAPABILITY: on for every peer with
 		// datacenter, iBGP only otherwise.
@@ -1693,11 +1746,21 @@ func keepProvisionerResolvConf(cfg *config.MachineConfig, netCfg *network.Config
 	if cfg.ProvisionerFilesInRamdisk() && provision.HasProvisionerResolvConf() {
 		slog.Info("keeping the provisioner resolv.conf in the ramdisk")
 		netCfg.DNSResolvers = ""
+		netCfg.KeepResolvConf = true
 	}
 }
 
+// configureResolvers writes the configured resolvers; tests replace it.
+var configureResolvers = network.ConfigureResolvers
+
 func networkModeWithResolvers(ctx context.Context, netCfg *network.Config, mode network.Mode, cleanup *linkLayerCleanup) (network.Mode, error) {
-	if err := network.ConfigureResolvers(netCfg.DNSResolvers); err != nil {
+	configure := configureResolvers
+	if m, ok := mode.(interface{ ManagesDNS() bool }); ok && m.ManagesDNS() {
+		// DHCP mode writes the configured and the lease servers itself:
+		// only check the configured ones here, do not overwrite.
+		configure = func(r string) error { _, err := network.ResolverLines(r); return err }
+	}
+	if err := configure(netCfg.DNSResolvers); err != nil {
 		if cleanupErr := mode.Teardown(ctx); cleanupErr != nil {
 			slog.Warn("network mode cleanup after resolver setup failure failed", "error", cleanupErr)
 		}
@@ -1731,35 +1794,65 @@ var (
 // followLLDPMatches calls start with the NICs the matches select when a
 // NIC that is not known yet appears, until ctx ends.
 func followLLDPMatches(ctx context.Context, matches []network.LinkMatch, known func(string) bool, start func([]string), log *slog.Logger) {
+	// The watch outlives the call: it keeps the functions of the call, so a
+	// test that restores them at its end does not race with it.
+	subscribe, resolve := lldpLinkSubscribe, resolveLinkMatches
+	check := func() {
+		names, err := resolve(ctx, matches)
+		if err != nil {
+			return
+		}
+		fresh := slices.DeleteFunc(names, known)
+		if len(fresh) > 0 {
+			lldpPrepareNICs(fresh) // the firmware LLDP agent off, like at the start
+			start(fresh)
+		}
+	}
 	go func() {
 		// The subscription ends on a netlink error: subscribe again.
-		for ctx.Err() == nil {
+		for again := false; ctx.Err() == nil; again = true {
 			updates := make(chan netlink.LinkUpdate, 16)
-			opts := netlink.LinkSubscribeOptions{ErrorCallback: func(err error) {
-				log.Warn("link watch for LLDP failed, subscribing again", "error", err)
-			}}
-			if err := lldpLinkSubscribe(updates, ctx.Done(), opts); err != nil {
+			// One context per subscription, canceled when it ends: the
+			// netlink fork (#833) closes the socket after a receive error
+			// itself; upstream v1.3.1 keeps it until done closes.
+			sub, end := context.WithCancel(ctx)
+			opts := netlink.LinkSubscribeOptions{ErrorCallback: lldpWatchError(sub, log)}
+			if err := subscribe(updates, sub.Done(), opts); err != nil {
+				end()
 				log.Warn("NICs that appear later send no LLDP", "error", err)
 				return
 			}
-			for u := range updates {
-				if u.Header.Type != unix.RTM_NEWLINK || u.Link == nil || known(u.Attrs().Name) {
-					continue
-				}
-				names, err := resolveLinkMatches(ctx, matches)
-				if err != nil {
-					continue
-				}
-				fresh := slices.DeleteFunc(names, known)
-				lldpPrepareNICs(fresh) // the firmware LLDP agent off, like at the start
-				start(fresh)
+			if again {
+				check() // a NIC whose event was lost (ENOBUFS)
 			}
+			for u := range updates {
+				if u.Header.Type == unix.RTM_NEWLINK && u.Link != nil && !known(u.Attrs().Name) {
+					check()
+				}
+			}
+			end()
 			select {
 			case <-ctx.Done():
 			case <-time.After(time.Second):
 			}
 		}
 	}()
+}
+
+// lldpWatchError logs a netlink error of the LLDP link watch: a failed
+// receive ends the subscription (the watch subscribes again), a message of
+// another sender is skipped (the subscription goes on), and the close of
+// the subscription or the end of the run is no error.
+func lldpWatchError(sub context.Context, log *slog.Logger) func(error) {
+	return func(err error) {
+		switch {
+		case sub.Err() != nil:
+		case strings.Contains(err.Error(), "Wrong sender portid"):
+			log.Debug("link watch for LLDP skipped a message", "error", err)
+		default:
+			log.Warn("link watch for LLDP failed, subscribing again", "error", err)
+		}
+	}
 }
 
 // emitLLDPOnNetplanNICs sends LLDP on the NICs with netplan "emit-lldp:
@@ -1934,6 +2027,8 @@ func dhcpFallback(ctx context.Context, netCfg *network.Config) network.Mode {
 	if err := dhcp.Setup(ctx, netCfg); err != nil {
 		slog.Error("DHCP setup failed", "error", err)
 	}
+	// netCfg.DNSResolvers stays: networkModeWithResolvers checks it (DHCP
+	// mode writes resolv.conf itself), so a bad resolver fails the run.
 	return dhcp
 }
 
@@ -2176,6 +2271,8 @@ func mergeBGPPolicy(dst, src *network.Config) {
 	if len(dst.EVPNImportRTs) == 0 && len(dst.EVPNExportRTs) == 0 {
 		dst.EVPNImportRTs, dst.EVPNExportRTs = src.EVPNImportRTs, src.EVPNExportRTs
 	}
+	dst.EVPNRD = cmp.Or(dst.EVPNRD, src.EVPNRD)
+	dst.EVPNRDIndex, dst.BGPInstances = src.EVPNRDIndex, src.BGPInstances
 }
 
 // mergeOverlayDevices takes every device setting that netplan sets and the
