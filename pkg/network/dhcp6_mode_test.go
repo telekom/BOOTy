@@ -230,6 +230,43 @@ func TestDHCPv6UpgradesToStateful(t *testing.T) {
 	}
 }
 
+// boundDHCPv6 starts a stateful client on eth0 and binds an address.
+func boundDHCPv6(t *testing.T) (*dhcp6Stub, *DHCPMode, *dhcp6.Lease) {
+	t.Helper()
+	s := stubDHCPv6(t)
+	d := NewDHCPMode()
+	d.mu.Lock()
+	d.startRA(dummyLink("eth0", 1), &net.Interface{Name: "eth0", Index: 1}, "")
+	d.mu.Unlock()
+	s.watching()(true, false)
+	l := &dhcp6.Lease{Addr: net.ParseIP("fd00:10::1a4"), Valid: time.Minute}
+	s.clients[0].OnBound(l)
+	return s, d, l
+}
+
+// The address goes before Stop sends the RELEASE: the client must stop
+// using it when the RELEASE starts (RFC 8415 18.2.7).
+func TestDHCPv6DropsAddressBeforeRelease(t *testing.T) {
+	s, d, _ := boundDHCPv6(t)
+	var deletedAtStop []string
+	s.fakes[0].onStop = func() { deletedAtStop = slices.Clone(s.deleted) }
+	d.stop6(1, false)
+	if want := []string{"fd00:10::1a4/128"}; !slices.Equal(deletedAtStop, want) || !slices.Equal(s.deleted, want) {
+		t.Fatalf("deleted %v at Stop, %v after: want the address removed once, before Stop", deletedAtStop, s.deleted)
+	}
+}
+
+// A lease that the client reports while it stops does not put the
+// released address back.
+func TestDHCPv6IgnoresLeaseWhileStopping(t *testing.T) {
+	s, d, l := boundDHCPv6(t)
+	s.fakes[0].onStop = func() { s.clients[0].OnBound(l) }
+	d.stop6(1, false)
+	if len(s.added) != 1 || !slices.Equal(s.deleted, []string{"fd00:10::1a4/128"}) {
+		t.Fatalf("added %d, deleted %v: want the late lease ignored", len(s.added), s.deleted)
+	}
+}
+
 // A link-local DHCPv6 DNS server goes to resolv.conf with its zone; the
 // domain search list (option 24) joins the search line.
 func TestDHCPv6LinkLocalDNSAndDomains(t *testing.T) {

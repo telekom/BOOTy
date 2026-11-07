@@ -218,7 +218,9 @@ func (d *DHCPMode) onBound6(idx int) dhcp6.Callback {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		n := d.v6[idx]
-		if d.stopped || n == nil {
+		// n.client is nil while the client stops: a late lease must not
+		// put back the address that stop6 released.
+		if d.stopped || n == nil || n.client == nil {
 			return
 		}
 		if l.Addr != nil {
@@ -269,10 +271,12 @@ func (d *DHCPMode) dropAddr6(n *nic6) {
 	n.addr = nil
 }
 
-// stop6 stops the DHCPv6 client of a NIC (it releases its address) and
-// removes the address and DNS servers; the RA watch stays unless all is
-// set. The caller does not hold d.mu: Stop waits for the client, whose
-// callbacks take d.mu.
+// stop6 removes the DHCPv6 address of a NIC, stops its client (it
+// releases the address) and removes the DNS servers; the RA watch stays
+// unless all is set. The address goes first: the client must stop using it
+// when the RELEASE starts (RFC 8415 18.2.7), and the RELEASE goes out from
+// the link-local address. The caller does not hold d.mu: Stop waits for
+// the client, whose callbacks take d.mu.
 func (d *DHCPMode) stop6(idx int, all bool) {
 	d.mu.Lock()
 	n := d.v6[idx]
@@ -282,6 +286,7 @@ func (d *DHCPMode) stop6(idx int, all bool) {
 	}
 	c := n.client
 	n.client = nil
+	d.dropAddr6(n)
 	if all {
 		if n.stopRA != nil {
 			n.stopRA()
@@ -293,7 +298,6 @@ func (d *DHCPMode) stop6(idx int, all bool) {
 		c.Stop()
 	}
 	d.mu.Lock()
-	d.dropAddr6(n)
 	n.dns, n.domains = nil, nil
 	d.writeResolvers()
 	d.mu.Unlock()
