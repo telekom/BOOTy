@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/telekom/BOOTy/test/e2e/clab/labimages"
 )
 
 // prodtplLeafConf is an FRR leaf with one unnumbered eBGP session per tap,
@@ -186,11 +188,15 @@ func startProdTplLeaf(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "daemons"), []byte(daemons), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	frr, err := labimages.Image("frr")
+	if err != nil {
+		t.Fatal(err)
+	}
 	name := fmt.Sprintf("booty-kvm-leaf-%d", os.Getpid())
 	run(t, "start FRR leaf", "docker", "run", "-d", "--name", name, "--network", "none", "--privileged",
 		"-v", filepath.Join(dir, "frr.conf")+":/etc/frr/frr.conf:ro",
 		"-v", filepath.Join(dir, "daemons")+":/etc/frr/daemons:ro",
-		"quay.io/frrouting/frr:10.3.1")
+		frr)
 	t.Cleanup(func() {
 		if t.Failed() {
 			for _, c := range [][]string{

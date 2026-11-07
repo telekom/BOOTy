@@ -9,7 +9,7 @@ topology:
   nodes:
     spine01:
       kind: linux
-      image: quay.io/frrouting/frr:10.3.1
+      image: ${BOOTY_LAB_FRR_IMAGE}
       binds:
         - spine01.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
@@ -36,7 +36,7 @@ topology:
 
     leaf01:
       kind: linux
-      image: quay.io/frrouting/frr:10.3.1
+      image: ${BOOTY_LAB_FRR_IMAGE}
       binds:
         - leaf01.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
@@ -57,7 +57,7 @@ topology:
 
     client:
       kind: linux
-      image: alpine:3.20
+      image: ${BOOTY_LAB_ALPINE_IMAGE}
       exec:
         - ip addr add 10.100.0.100/24 dev eth1
         - ip link set dev eth1 up
@@ -65,7 +65,7 @@ topology:
 
     nginx:
       kind: linux
-      image: nginx:1.31.8-alpine
+      image: ${BOOTY_LAB_NGINX_IMAGE}
       cmd: sh -c "rm -f /var/log/nginx/access.log && touch /var/log/nginx/access.log && nginx -g 'daemon off;'"
       binds:
         - nginx.conf:/etc/nginx/nginx.conf:ro
@@ -77,7 +77,7 @@ topology:
 
     caprf-mock:
       kind: linux
-      image: nginx:1.31.8-alpine
+      image: ${BOOTY_LAB_NGINX_IMAGE}
       cmd: sh -c "rm -f /var/log/nginx/access.log && touch /var/log/nginx/access.log && nginx -g 'daemon off;'"
       binds:
         - caprf-mock.conf:/etc/nginx/nginx.conf:ro
