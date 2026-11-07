@@ -13,7 +13,7 @@ import (
 // replace them.
 var (
 	memoryPeakInfo     = "/proc/meminfo"
-	memoryPeakInterval = time.Second
+	memoryPeakInterval = 100 * time.Millisecond
 )
 
 // startMemoryPeak samples MemAvailable while the image is written and
