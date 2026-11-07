@@ -15,6 +15,132 @@ notes and the history of each tag.
 
 ## [Unreleased]
 
+## [0.2.0-rc.19] - 2026-11-07
+
+### Behaviour changes in all modes
+
+- GoBGP mode: the GoBGP fork moves to upstream master 629e5ae8, after
+  v4.11.0 (fork tag v4.11.0-booty.1) (#874). The fork drops the fixes that
+  upstream has merged: EVPN NLRIs of unknown route types, the EVPN
+  ARP/ND extended community, the IPv6 zone of a neighbor set entry, the
+  admin state idempotence and request queue, a new connection from a
+  restarting peer, a connection that arrives while the idle hold time is
+  0, out-of-range RD/RT and community values, and per-bind-interface BFD
+  listeners. It keeps the FRR idle hold backoff, `BfdDown`,
+  `ConnectAtOnce`, Enhanced Route Refresh, Paths-Limit and the collision
+  cases that upstream does not cover.
+
+  GoBGP now accepts a connection that arrives right after `AddPeer`
+  instead of closing it at random, takes a new connection from a
+  restarting peer as a graceful restart, and sends Cease/BFD Down and
+  Administrative Reset as a Hard Reset when the N bit was exchanged, like
+  FRR. An EVPN MAC/IP route with a MAC length other than 48 is malformed
+  and resets the session like FRR and BIRD. BOOTy keeps the graceful
+  restart stale routes when it disables a peer on carrier loss
+  (v4.11.0-booty.1), as before.
+- GoBGP mode: a new connection while the session is established is a
+  graceful restart only when the new OPEN says that the peer preserved
+  forwarding state. The decision uses the new OPEN, not the established
+  session, so a peer that started with F=0 can still restart with
+  forwarding preserved. The GR F bit wins per family; an LLGR tuple counts
+  only for a family that the GR capability does not list and only with a
+  nonzero stale time. Only families negotiated for the session and the
+  locally advertised GR/LLGR capabilities count. FRR helper-only leaves
+  advertise GR F=0, LLGR F=1 and stale time zero, so their late connection
+  after a carrier fault no longer ends the just-recovered session a second
+  time. The OPEN is read in the background, so `DisablePeer`/`EnablePeer`
+  are not blocked by a slow peer, and the replayed connection keeps
+  `syscall.Conn` for the socket options. The fork tag is v4.11.0-booty.5
+  (#876).
+- GoBGP mode: after a carrier fault, the leaf's and BOOTy's connections
+  collide. When BOOTy has the higher BGP Identifier, GoBGP now resolves the
+  collision the way FRR does. It closes the leaf's connection as soon as
+  the leaf's OPEN arrives there while BOOTy's OPEN is out on its own
+  connection, and does not send a KEEPALIVE on the leaf's connection
+  first. When its OPEN went out only after that KEEPALIVE, GoBGP waits for
+  the leaf's choice instead of deciding first. Before, the leaf could
+  become Established on its own connection while GoBGP kept the other one.
+  Both connections then ended, and the leaf counted two session drops for
+  one fault.
+
+### Fixes
+
+- gobgp: move the GoBGP fork to upstream v4.11.0 ([#874](https://github.com/telekom/BOOTy/pull/874))
+- gobgp: inspect a helper-only new connection without blocking the FSM ([#876](https://github.com/telekom/BOOTy/pull/876))
+- crash: report a crash archive that failed to flush ([#878](https://github.com/telekom/BOOTy/pull/878))
+- gobgp: resolve connection collisions like FRR ([#884](https://github.com/telekom/BOOTy/pull/884))
+
+### CI, build and tests
+
+- fix CI on ubuntu-26.04 runners ([#880](https://github.com/telekom/BOOTy/pull/880))
+- harden release, nightly and promote workflows ([#879](https://github.com/telekom/BOOTy/pull/879))
+- gate merges on all checks and auto-merge green dependabot PRs ([#877](https://github.com/telekom/BOOTy/pull/877))
+- drop non-dependencies from the build chain and run fixed-hold VMs in parallel ([#883](https://github.com/telekom/BOOTy/pull/883))
+
+### Dependencies
+
+- bump the go-minor-patch group across 1 directory with 3 updates ([#872](https://github.com/telekom/BOOTy/pull/872))
+- bump oras-project/setup-oras ([#873](https://github.com/telekom/BOOTy/pull/873))
+- bump the go-minor-patch group across 1 directory with 2 updates ([#875](https://github.com/telekom/BOOTy/pull/875))
+
+## [0.2.0-rc.18] - 2026-10-28
+
+### Behaviour changes in all modes
+
+- New option `IMAGE_STREAM=true` (YAML `provision.image.stream`, CAPRF
+  `additionalVars`) forbids staging the image in RAM. Raw and compressed raw
+  images (lz4, zstd, gzip, xz, bzip2) already stream in every mode and do not
+  change. A QCOW2 image, also an `oci://` QCOW2 layer, then fails before the
+  disk wipe with `BOOTY-IMG-004`, and `IMAGE_MODE=partition` is an invalid
+  config. Default off: QCOW2 and partition mode stage in tmpfs as before
+  (#854).
+- The staging tmpfs is 3/4 of `MemAvailable` (4 GiB when it cannot be read),
+  not a fixed 4 GiB. A staged image that does not fit fails with "staged
+  image does not fit (tmpfs N MiB, MemAvailable M MiB)", code `BOOTY-IMG-007`
+  and no retry, instead
+  of exhausting the RAM; on large machines a QCOW2 over 4 GiB now works
+  (#854).
+- `oci://` sources with an artifact layer (any media type that is not a
+  container layer type, as `oras push` writes them): BOOTy downloads the
+  blob as pushed (checked against the layer digest) and decompresses it
+  itself. A `download` scope `IMAGE_CHECKSUM` now covers the pushed file
+  (`.raw.lz4`, `.raw.zst`), like the `.sha256` file next to it; before,
+  go-containerregistry decoded a zstd or gzip blob first, so the published
+  digest of a `+raw.zst` layer never matched. Container layers
+  (`application/vnd.oci.image.layer.v1.tar+gzip` and so on) keep the old
+  behaviour: the transport compression is removed first. An OCI blob read
+  that delivers no data for 2 minutes fails like a stalled HTTP download
+  (#854).
+- An `oci://` artifact of the T-CaaS image builder, which has the image, its
+  ansible facts and optionally a QCOW2 layer, now works: BOOTy takes the one
+  `application/vnd.tcaas.node-image+raw*` layer. Before, more than one
+  non-text layer failed the pull (#854).
+- A failed image write or checksum mismatch now zeroes the first and the last
+  MiB of the target disk or partition, not only the first MiB, so a backup
+  GPT cannot bring back a partial image (#854).
+- BOOTy logs the RAM high-water mark of the image step (`image step memory`,
+  `peak_used_mib`) (#854).
+- GoBGP mode: the GoBGP fork moves to upstream master 6d26fa29 (fork tag
+  v4.10.0-booty.24). GoBGP now waits a random 0 to 1 s before its first
+  connect after Idle, down from 1.5 to 2 s; `BGP_CONNECT_AT_ONCE` still
+  connects at once. GoBGP now ignores a reset of an
+  administratively down peer, so BOOTy no longer resets a peer that a
+  carrier loss stopped before it enables it again; the peer still waits
+  1 s.
+  Connection collisions use the upstream resolution, which sends
+  Cease/Connection Collision Resolution on the losing connection (#858).
+
+### Upgrade notes for CAPRF
+
+- `oci://` image sources with an artifact layer (`oras push`, for example
+  `application/vnd.tcaas.node-image+raw.zst`): a `download` scope
+  `IMAGE_CHECKSUM` (the default) is now the digest of the pushed file, the
+  value of the published `.raw.zst.sha256` or `.raw.lz4.sha256`. Before, it
+  had to be the digest after go-containerregistry decompressed a gzip or
+  zstd blob. A machine that sets such a decompressed digest needs
+  `IMAGE_CHECKSUM_SCOPE=decompressed`. Container layer types
+  (`application/vnd.oci.image.layer.v1.tar+gzip`) do not change (#854).
+
 ## [0.2.0-rc.17] - 2026-10-22
 
 ### Highlights
@@ -2062,7 +2188,9 @@ First release: CAPRF provisioning agent with FRR/EVPN and GoBGP networking.
 - gobgp: Extract constants, add tests, update README (#22)
 - Modernize CI, testing, and codebase (#1)
 
-[Unreleased]: https://github.com/telekom/BOOTy/compare/v0.2.0-rc.17...HEAD
+[Unreleased]: https://github.com/telekom/BOOTy/compare/v0.2.0-rc.19...HEAD
+[0.2.0-rc.19]: https://github.com/telekom/BOOTy/releases/tag/v0.2.0-rc.19
+[0.2.0-rc.18]: https://github.com/telekom/BOOTy/releases/tag/v0.2.0-rc.18
 [0.2.0-rc.17]: https://github.com/telekom/BOOTy/releases/tag/v0.2.0-rc.17
 [0.2.0-rc.16]: https://github.com/telekom/BOOTy/releases/tag/v0.2.0-rc.16
 [0.2.0-rc.15]: https://github.com/telekom/BOOTy/releases/tag/v0.2.0-rc.15
