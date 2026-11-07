@@ -89,11 +89,41 @@ permissions:
   # Read the cycle timing report of main as the baseline.
   actions: read
 
+# A new push to a PR cancels its superseded run. Every other run (main
+# pushes, dispatches) gets a group of its own: in a shared group a third
+# queued run cancels the pending one even without cancel-in-progress.
+concurrency:
+  group: kvm-matrix-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.ref, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Fail-fast gate: the ~40 VM jobs only start once the code and the KVM
+  # tests compile and pass go vet (~1 minute).
+  preflight:
+    name: Preflight (go vet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.2"
+          cache: true
+      - name: Vet
+        env:
+          GOOS: linux
+        run: go vet ./... && go vet -tags e2e ./test/e2e/kvm/
+
   kvm-tests:
     name: KVM ${{ matrix.scenario }}
-    runs-on: ubuntu-latest
+    # Guests are assembled from runner binaries (busybox, kmod, ld-linux),
+    # which are x86-64-v3 builds on ubuntu-26.04 and trap in the guests.
+    # Follow-up: https://github.com/telekom/BOOTy/issues/881
+    runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_minutes || 75 }}
+    needs: preflight
     strategy:
       matrix:
         include:
@@ -547,6 +577,7 @@ jobs:
         if: matrix.setup != ''
         run: ${{ matrix.setup }}
 
+      - uses: ./.github/actions/baseline-libc
       - name: Build BOOTy initramfs
         run: |
           set -euo pipefail

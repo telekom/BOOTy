@@ -148,6 +148,7 @@ jobs:
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
+    needs: [lint]
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -177,11 +178,12 @@ jobs:
 
   build:
     name: Build (${{ matrix.arch }})
-    # `security` is deliberately not a dependency. The build, the E2E jobs and
-    # the KVM jobs all chain off this job. A single vulnerability report used to
-    # skip that whole chain, which hid unrelated regressions. The security job
-    # still runs and still reports on every pull request.
-    needs: [lint, test, e2e]
+    # Fail-fast gate: only the ~1 minute lint. The E2E and boot jobs chain off
+    # this binary, and also waiting for test and the ~11 minute E2E job only
+    # delayed them; those still run and report on every pull request.
+    # `security` is not a dependency either, because a single vulnerability
+    # report used to skip the whole chain and hide unrelated regressions.
+    needs: [lint]
     timeout-minutes: 20
     strategy:
       matrix:
@@ -217,6 +219,7 @@ jobs:
           go-version: "1.27.2"
           cache: true
 
+      - uses: ./.github/actions/baseline-libc
       - name: Build
         env:
           GOOS: linux
@@ -540,6 +543,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y qemu-system-x86 cpio zstd busybox-static
 
+      - uses: ./.github/actions/baseline-libc
       - name: Build initramfs image
         run: |
           set -euo pipefail
@@ -981,6 +985,7 @@ jobs:
             grub-common mtools cpio zstd busybox-static dosfstools \
             isolinux syslinux-common swtpm swtpm-tools
 
+      - uses: ./.github/actions/baseline-libc
       - name: Build initramfs image
         run: |
           set -euo pipefail
@@ -1200,6 +1205,7 @@ jobs:
   linux-e2e:
     name: Linux E2E (Privileged)
     runs-on: ubuntu-latest
+    needs: [lint]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1286,6 +1292,7 @@ jobs:
   bfd-frr-interop:
     name: BFD FRR interop (${{ matrix.frr }})
     runs-on: ubuntu-latest
+    needs: [lint]
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1717,7 +1724,8 @@ jobs:
   check-iso:
     name: Cable Check ISO (BIOS, UEFI, Secure Boot)
     runs-on: ubuntu-latest
-    needs: [build]
+    # Only the lint gate: this job builds its own ISO, not from the build artifact.
+    needs: [lint]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

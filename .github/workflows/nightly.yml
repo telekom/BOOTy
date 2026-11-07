@@ -18,6 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - id: version
         run: |
@@ -40,6 +41,8 @@ jobs:
       fail-fast: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
@@ -48,6 +51,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      - uses: ./.github/actions/baseline-libc
+        if: matrix.flavor == 'default'
       - name: Build binary
         if: matrix.flavor == 'default'
         env:
@@ -115,6 +120,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Download nightly artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -155,6 +162,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Download nightly artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -267,6 +276,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -314,18 +325,22 @@ jobs:
           printf 'image_tag=%s\n' "${IMAGE}" >> "${GITHUB_OUTPUT}"
 
       - name: Sign nightly container image
+        env:
+          IMAGE_REF: ${{ steps.push.outputs.image_ref }}
         run: |
-          cosign sign --yes "${{ steps.push.outputs.image_ref }}"
+          cosign sign --yes "${IMAGE_REF}"
           cosign verify \
-            --certificate-identity "${{ github.server_url }}/${{ github.repository }}/.github/workflows/nightly.yml@${{ github.ref }}" \
+            --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/nightly.yml@${GITHUB_REF}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            "${{ steps.push.outputs.image_ref }}"
+            "${IMAGE_REF}"
 
       - name: Attach SBOM attestation
+        env:
+          IMAGE_REF: ${{ steps.push.outputs.image_ref }}
         run: |
           test -s sbom/sbom-nightly.spdx.json
           jq -e . sbom/sbom-nightly.spdx.json >/dev/null
           cosign attest --yes \
             --predicate sbom/sbom-nightly.spdx.json \
             --type spdxjson \
-            "${{ steps.push.outputs.image_ref }}"
+            "${IMAGE_REF}"
