@@ -970,6 +970,29 @@ The release workflow also signs these OCI artifact refs:
 | GoBGP ISO | `ghcr.io/telekom/booty-iso:${VERSION_NO_V}-gobgp` |
 | SBOM | `ghcr.io/telekom/booty/sbom:${VERSION_NO_V}` |
 
+Release files that have a `.sha256` checksum (binaries, initramfs, split
+parts, ISOs, SBOM) plus the `split-<arch>-SHA256SUMS` manifests, and the
+multi-arch `ghcr.io/telekom/booty:<version>` and `:<version>-gobgp` images,
+also carry GitHub build provenance attestations. Verify them with the GitHub
+CLI (2.49+):
+
+```bash
+# Release file (download it from the GitHub release first).
+gh attestation verify default-amd64-initramfs.cpio.zst \
+  --repo telekom/BOOTy \
+  --signer-workflow telekom/BOOTy/.github/workflows/release-v2.yml \
+  --source-ref "refs/tags/${VERSION}"
+
+# Multi-arch container image.
+gh attestation verify "oci://ghcr.io/telekom/booty:${VERSION_NO_V}" \
+  --repo telekom/BOOTy \
+  --signer-workflow telekom/BOOTy/.github/workflows/release-v2.yml \
+  --source-ref "refs/tags/${VERSION}"
+```
+
+The per-arch `-amd64`/`-arm64` image tags and the ORAS artifact refs above are
+signed with cosign but have no separate provenance attestation.
+
 ### Telemetry and Metrics
 
 `TELEMETRY_ENABLED=true` makes BOOTy post a metrics summary when provisioning
