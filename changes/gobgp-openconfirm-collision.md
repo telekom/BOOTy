@@ -3,11 +3,12 @@ section: Behaviour changes in all modes
 ---
 
 - GoBGP mode: after a carrier fault, the leaf's and BOOTy's connections
-  collide. When BOOTy has the higher BGP Identifier and both connections
-  carry its OPEN, GoBGP now waits for the leaf's choice (a NOTIFICATION or
-  close on one connection, or its KEEPALIVE on BOOTy's connection) instead
-  of deciding first. GoBGP used to close the leaf's connection while the
-  leaf was already Established there, or go Established on the leaf's
-  connection while the leaf kept BOOTy's. Either way both connections
-  ended, and the leaf counted two session drops for one fault. Without a
-  choice within 500 ms, GoBGP behaves as before.
+  collide. When BOOTy has the higher BGP Identifier, GoBGP now resolves the
+  collision the way FRR does. It closes the leaf's connection as soon as
+  the leaf's OPEN arrives there while BOOTy's OPEN is out on its own
+  connection, and does not send a KEEPALIVE on the leaf's connection
+  first. When its OPEN went out only after that KEEPALIVE, GoBGP waits for
+  the leaf's choice instead of deciding first. Before, the leaf could
+  become Established on its own connection while GoBGP kept the other one.
+  Both connections then ended, and the leaf counted two session drops for
+  one fault.
