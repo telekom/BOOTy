@@ -2,8 +2,9 @@
 
 ## Status
 
-Implemented: option 2 (a second initrd), #782. FRR is the only split
-payload today, see [Since then](#since-then).
+Implemented in BOOTy: option 2 (a second initrd), #782. FRR is the only
+split payload today, see [Since then](#since-then). CAPRF does not load
+the split archives yet (CAPRF draft MR !311), so no deployment uses them.
 
 ## Context
 
@@ -63,13 +64,14 @@ Two parts were needed in every option and came with it:
   `frr.cpio.zst`, the `vmlinuz` of the same build and `SHA256SUMS`
   (`hack/split-initramfs.sh`). The base has no payload executables and
   none of the libraries that only they load. The other targets are
-  unchanged: the default, gobgp and slim ramdisks and the ISOs still ship
-  everything built in.
+  unchanged: the default ramdisk and the `iso` target still have FRR
+  built in.
 - Each payload carries `/etc/booty/payloads/<name>` with `build=` and
   `arch=`. The base lists the payloads it left out in
   `/etc/booty/payloads/split` (`pkg/payload`).
 - `BOOTY-PAY-001`: the vars need FRR and the boot loader did not load
-  `frr.cpio.zst`. It fails before the network setup.
+  `frr.cpio.zst`. It fails where the network stack is chosen, before
+  FRR starts, and does not fall back to DHCP.
   `BOOTY-PAY-002`: a payload is from another build or architecture
   ([failure-codes.md](failure-codes.md)).
 - PR artifacts (`booty-pr-split`) and releases (`split-<arch>-*`) publish
