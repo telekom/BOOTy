@@ -2,24 +2,20 @@
 
 ## Supported Versions
 
-Security fixes are provided for the current `main` branch and for the latest
-release (including release candidates) published on
-[GitHub Releases](https://github.com/telekom/BOOTy/releases). Older releases
-do not receive fixes; upgrade to the latest release.
+Only the latest release published on
+[GitHub Releases](https://github.com/telekom/BOOTy/releases) and the `main`
+branch are supported. Security fixes land on `main` and ship in the next
+release; older releases are not patched, so upgrade to the latest release.
 
 ## Reporting a Vulnerability
 
 **Do not** open a public GitHub issue, pull request, or discussion for
 security vulnerabilities.
 
-Report suspected vulnerabilities privately:
-
-- Preferred: GitHub private vulnerability reporting, via the repository's
-  **Security** tab → **Report a vulnerability**
-  (https://github.com/telekom/BOOTy/security/advisories/new).
-- If that option is not available to you, email
-  [opensource@telekom.de](mailto:opensource@telekom.de) with "BOOTy security"
-  in the subject.
+Report suspected vulnerabilities privately by email to
+[opensource@telekom.de](mailto:opensource@telekom.de) with "BOOTy security" in
+the subject. GitHub private vulnerability reporting is not enabled for this
+repository.
 
 ## What to Include
 
@@ -39,5 +35,6 @@ reporters are credited unless they ask not to be.
 
 ## Verifying Releases
 
-Release checksum files are signed with keyless Cosign (`*.sha256.bundle`), and
-release container images are signed with Cosign.
+Release checksum files and container images are signed with keyless Cosign.
+See [Release Artifact Verification](README.md#release-artifact-verification)
+for the verification commands.
