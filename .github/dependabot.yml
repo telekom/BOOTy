@@ -1,5 +1,17 @@
 version: 2
 updates:
+  # govulncheck for hack/check-govulncheck.py, pinned by a tool directive.
+  - package-ecosystem: gomod
+    directory: /hack/tools
+    allow:
+      - dependency-name: golang.org/x/vuln
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
+    open-pull-requests-limit: 10
+
   - package-ecosystem: gomod
     directory: /
     allow:
