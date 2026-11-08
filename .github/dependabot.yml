@@ -11,6 +11,12 @@ updates:
       default-days: 3
       semver-major-days: 14
     open-pull-requests-limit: 10
+    groups:
+      # Security updates ignore `allow` and can raise any module in
+      # govulncheck's graph; collect them in one PR.
+      go-tools-security:
+        applies-to: security-updates
+        patterns: ["*"]
 
   - package-ecosystem: gomod
     directory: /
@@ -26,6 +32,9 @@ updates:
       go-minor-patch:
         patterns: ["*"]
         update-types: [minor, patch]
+      go-security:
+        applies-to: security-updates
+        patterns: ["*"]
     ignore:
       # go.mod replaces GoBGP with the fork tag v4.11.0-booty.5, so an
       # upstream bump would not change the build. Move the fork tag by hand:
