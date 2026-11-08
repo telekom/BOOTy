@@ -203,22 +203,26 @@ func (d *DHCPMode) onRA(idx int, iface *net.Interface, hostname string, managed,
 		DUID:        id[5:], // the DUID-EN of DHCPv4 option 61
 		IAID:        binary.BigEndian.Uint32(id[1:5]),
 		Stateful:    managed,
-		OnBound:     d.onBound6(idx),
-		OnExpire:    d.onExpire6(idx),
 		SendRelease: true,
 		Log:         d.log,
 	}
-	n.client, n.stateful = dhcp6New(c), managed
+	self := dhcp6New(c)
+	c.OnBound, c.OnExpire = d.onBound6(idx, self), d.onExpire6(idx, self)
+	n.client, n.stateful = self, managed
 	d.log.Info("Starting DHCPv6", "interface", iface.Name, "managed", managed)
 	n.client.Start()
 }
 
-func (d *DHCPMode) onBound6(idx int) dhcp6.Callback {
+// onBound6 and onExpire6 return the callbacks of the client self. They do
+// nothing once the client is off the NIC (stop6, the stateless-to-stateful
+// upgrade): a late lease must not put back the address that stop6
+// released, and a stopping client must not touch the state of the next.
+func (d *DHCPMode) onBound6(idx int, self dhcp6Client) dhcp6.Callback {
 	return func(l *dhcp6.Lease) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		n := d.v6[idx]
-		if d.stopped || n == nil {
+		if d.stopped || n == nil || n.client != self {
 			return
 		}
 		if l.Addr != nil {
@@ -246,11 +250,11 @@ func (d *DHCPMode) onBound6(idx int) dhcp6.Callback {
 	}
 }
 
-func (d *DHCPMode) onExpire6(idx int) dhcp6.Callback {
+func (d *DHCPMode) onExpire6(idx int, self dhcp6Client) dhcp6.Callback {
 	return func(*dhcp6.Lease) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		if n := d.v6[idx]; n != nil {
+		if n := d.v6[idx]; !d.stopped && n != nil && n.client == self {
 			d.dropAddr6(n)
 			n.dns, n.domains = nil, nil
 			d.writeResolvers()
@@ -269,10 +273,13 @@ func (d *DHCPMode) dropAddr6(n *nic6) {
 	n.addr = nil
 }
 
-// stop6 stops the DHCPv6 client of a NIC (it releases its address) and
-// removes the address and DNS servers; the RA watch stays unless all is
-// set. The caller does not hold d.mu: Stop waits for the client, whose
-// callbacks take d.mu.
+// stop6 removes the DHCPv6 address and DNS servers of a NIC, then stops
+// its client (it releases the address); the RA watch stays unless all is
+// set. The address goes first: the client must stop using it before the
+// Release exchange begins (RFC 8415 18.2.7), and the RELEASE goes out from
+// the link-local address. The callbacks of the stopping client do nothing
+// (onBound6). The caller does not hold d.mu: Stop waits for the client,
+// whose callbacks take d.mu.
 func (d *DHCPMode) stop6(idx int, all bool) {
 	d.mu.Lock()
 	n := d.v6[idx]
@@ -282,21 +289,19 @@ func (d *DHCPMode) stop6(idx int, all bool) {
 	}
 	c := n.client
 	n.client = nil
+	d.dropAddr6(n)
+	n.dns, n.domains = nil, nil
 	if all {
 		if n.stopRA != nil {
 			n.stopRA()
 		}
 		delete(d.v6, idx)
 	}
+	d.writeResolvers()
 	d.mu.Unlock()
 	if c != nil {
 		c.Stop()
 	}
-	d.mu.Lock()
-	d.dropAddr6(n)
-	n.dns, n.domains = nil, nil
-	d.writeResolvers()
-	d.mu.Unlock()
 }
 
 // solicitRA asks the routers of a NIC whose carrier came back for an RA,
