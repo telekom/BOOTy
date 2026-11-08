@@ -974,7 +974,7 @@ Release files that have a `.sha256` checksum (binaries, initramfs, split
 parts, ISOs, SBOM) plus the `split-<arch>-SHA256SUMS` manifests, and the
 multi-arch `ghcr.io/telekom/booty:<version>` and `:<version>-gobgp` images,
 also carry GitHub build provenance attestations. Verify them with the GitHub
-CLI (2.49+):
+CLI (2.68+, the first release with `--source-ref`):
 
 ```bash
 # Release file (download it from the GitHub release first).
