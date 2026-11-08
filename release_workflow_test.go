@@ -86,3 +86,24 @@ func TestReleaseWorkflowRetriesTransientSBOMDownload(t *testing.T) {
 		t.Fatalf("second SBOM attempt condition = %q", second.If)
 	}
 }
+
+func TestReleaseWorkflowAttestsBuildProvenance(t *testing.T) {
+	wf := loadWorkflow(t, ".github/workflows/release-v2.yml")
+
+	sign := wf.Jobs["sign"]
+	if sign == nil {
+		t.Fatal("missing sign job")
+	}
+	requireWorkflowStepRunContains(t, sign, "Collect provenance subjects", "sha256sum -c --quiet")
+	requireWorkflowStepRunContains(t, sign, "Collect provenance subjects", "split-*-SHA256SUMS")
+	attest := requireAction(t, sign, "actions/attest-build-provenance")
+	assertStepWith(t, attest, "subject-checksums", "${{ runner.temp }}/provenance-subjects.sha256")
+
+	manifest := wf.Jobs["container-manifest"]
+	if manifest == nil {
+		t.Fatal("missing container-manifest job")
+	}
+	attest = requireAction(t, manifest, "actions/attest-build-provenance")
+	assertStepWith(t, attest, "subject-digest", "${{ steps.manifest.outputs.digest }}")
+	assertStepWith(t, attest, "push-to-registry", "true")
+}
