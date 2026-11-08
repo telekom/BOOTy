@@ -36,7 +36,7 @@ topology:
   nodes:
     leaf01:
       kind: linux
-      image: quay.io/frrouting/frr:10.3.1
+      image: ${BOOTY_LAB_FRR_IMAGE}
       binds:
         - prodtpl-leaf01.frr.conf:/etc/frr/frr.conf:ro
         - ${PRODTPL_LEAF_SETUP:=prodtpl-leaf-setup.sh}:/setup.sh:ro
@@ -46,7 +46,7 @@ topology:
 
     dcgw01:
       kind: linux
-      image: quay.io/frrouting/frr:10.3.1
+      image: ${BOOTY_LAB_FRR_IMAGE}
       binds:
         - prodtpl-dcgw01.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
@@ -64,7 +64,7 @@ topology:
 
     dcgw02:
       kind: linux
-      image: quay.io/frrouting/frr:10.3.1
+      image: ${BOOTY_LAB_FRR_IMAGE}
       binds:
         - prodtpl-dcgw02.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
@@ -74,7 +74,7 @@ topology:
     # FRR with the production template, netplan applied by hand.
     shadow:
       kind: linux
-      image: quay.io/frrouting/frr:10.3.1
+      image: ${BOOTY_LAB_FRR_IMAGE}
       binds:
         - ${PRODTPL_SHADOW_FRR:=prodtpl-shadow.frr.conf}:/etc/frr/frr.conf:ro
         - ${PRODTPL_SHADOW_SETUP:=prodtpl-shadow-setup.sh}:/setup.sh:ro
@@ -104,7 +104,7 @@ topology:
     # to 198.18.0.0/24 the best one.
     tester:
       kind: linux
-      image: quay.io/frrouting/frr:10.3.1
+      image: ${BOOTY_LAB_FRR_IMAGE}
       binds:
         - prodtpl-tester.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
@@ -114,7 +114,7 @@ topology:
     # IPv6 CAPRF mock behind the L3VNI gateway.
     caprf6:
       kind: linux
-      image: nginx:alpine
+      image: ${BOOTY_LAB_NGINX_IMAGE}
       binds:
         - caprf6.conf:/etc/nginx/nginx.conf:ro
       exec:
@@ -151,7 +151,7 @@ topology:
 
     caprf-mock:
       kind: linux
-      image: nginx:alpine
+      image: ${BOOTY_LAB_NGINX_IMAGE}
       mgmt-ipv4: 172.31.250.10
       binds:
         - caprf-mock.conf:/etc/nginx/nginx.conf:ro

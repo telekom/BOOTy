@@ -563,7 +563,7 @@ func TestOnBoundRenewalTracksAddressWhenRollbackFails(t *testing.T) {
 type fakeDHCPClient struct {
 	mu                        sync.Mutex
 	started, stopped, reboots int
-	onStart                   func()
+	onStart, onStop           func()
 }
 
 func (c *fakeDHCPClient) Reboot() {
@@ -582,6 +582,9 @@ func (c *fakeDHCPClient) Start() {
 }
 
 func (c *fakeDHCPClient) Stop() {
+	if c.onStop != nil {
+		c.onStop()
+	}
 	time.Sleep(200 * time.Millisecond)
 	c.mu.Lock()
 	c.stopped++

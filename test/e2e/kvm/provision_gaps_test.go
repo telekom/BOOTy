@@ -401,7 +401,7 @@ func TestUEFIBootloaderInstallAndNativeBoot(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", args...)
+	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)...)
 	out, _ := cmd.CombinedOutput()
 	t.Logf("UEFI provision tail:\n%s", tail(out, 2000))
 
@@ -461,6 +461,8 @@ func TestSecureBootEnforcementReachesInit(t *testing.T) {
 		copyBinary(t, ovmfVars, varsCopy)
 		args = append(args, "-drive", "if=pflash,format=raw,file="+varsCopy)
 	}
+
+	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
 
 	out := runQEMUSmoke(t, args, 2*time.Minute, "secureboot-enforcement", false)
 	outStr := string(out)
@@ -527,6 +529,8 @@ func TestLUKSEncryptionDetection(t *testing.T) {
 		"-append", runnerKernelCmdline,
 	}
 
+	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
+
 	out := runQEMUSmoke(t, args, 2*time.Minute, "luks-detection", true)
 	outStr := string(out)
 	t.Logf("LUKS detection output tail:\n%s", tail(out, 2000))
@@ -592,6 +596,8 @@ func TestTPMDetectionAndPCRRead(t *testing.T) {
 		"-append", runnerKernelCmdline,
 	}
 
+	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
+
 	out := runQEMUSmoke(t, args, 2*time.Minute, "tpm-detection", true)
 	outStr := string(out)
 	t.Logf("TPM output tail:\n%s", tail(out, 2000))
@@ -654,7 +660,7 @@ func TestEFIBootEntryManagementOVMF(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", args...)
+	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)...)
 	out, _ := cmd.CombinedOutput()
 	outStr := string(out)
 	t.Logf("EFI boot entry output tail:\n%s", tail(out, 2000))
@@ -763,13 +769,13 @@ func TestFirmwareCollectionInQEMU(t *testing.T) {
 	kernel := findKernel(t)
 	requireKVMAssets(t, initramfs, kernel)
 
-	out := runQEMUSmoke(t, []string{
+	out := runQEMUSmoke(t, append([]string{
 		"-m", "512", "-nographic", "-no-reboot",
 		"-kernel", kernel,
 		"-initrd", initramfs,
 		"-append", runnerKernelCmdline,
 		"-smbios", "type=0,vendor=TestVendor,version=1.2.3",
-	}, 2*time.Minute, "firmware-collection", true)
+	}, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...), 2*time.Minute, "firmware-collection", true)
 
 	outStr := string(out)
 	t.Logf("Firmware output tail:\n%s", tail(out, 2000))
@@ -827,7 +833,7 @@ func TestISOBootProvisioning(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", args...)
+	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)...)
 	out, _ := cmd.CombinedOutput()
 	outStr := string(out)
 	t.Logf("ISO provision output tail:\n%s", tail(out, 3000))
