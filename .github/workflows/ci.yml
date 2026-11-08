@@ -1229,7 +1229,12 @@ jobs:
         run: |
           set -eo pipefail
           mkdir -p linux-e2e-logs
-          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/... 2>&1 | tee linux-e2e-logs/go-test.log
+          # sudo-rs (ubuntu-26.04) ignores -E, so pass the environment explicitly:
+          # CI and GITHUB_ACTIONS turn missing host support into failures, and
+          # HOME keeps the runner's Go module cache.
+          mapfile -d '' runner_env < <(env -0)
+          as_root=(sudo env "${runner_env[@]}" "PATH=$PATH:/usr/sbin:/sbin")
+          "${as_root[@]}" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m ./test/e2e/linux/... 2>&1 | tee linux-e2e-logs/go-test.log
           # TestFIBWriterKernel creates a VRF in a network namespace; the
           # Azure runner kernel has the module in linux-modules-extra.
           if ! sudo modprobe vrf; then
@@ -1237,19 +1242,19 @@ jobs:
             sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
             sudo modprobe vrf
           fi
-          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestType5Netlink|^TestESINetlink|^TestFIBWriterKernel|^TestFIBWriterDropsECMPPathOfPeerDown|^TestFIBResolveViaDefault|^TestL3VNINetlink|^TestConnectedInVRF|^TestUnderlaySetupStartsRestarter|^TestListenRSJoinsAllRouters|^TestDiscoverLinkLocalPeerFromRA|^TestUnderlaySetupAdvertisesBeforeDiscovery|^TestSendRAWaitsForDADAndCarrier|^TestUnderlaySetupFailureStopsRAs|^TestSendRAWaitsForOptimisticDAD|^TestSameLinkLocalPeersOnTwoNICs' ./pkg/network/gobgp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
-          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestDHCPNetlink|^TestWatchRAOnVeth|^TestSendRSOnVeth' ./pkg/network/ 2>&1 | tee -a linux-e2e-logs/go-test.log
-          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestTransportOnVeth' ./pkg/network/dhcp4/ 2>&1 | tee -a linux-e2e-logs/go-test.log
-          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestTransportOnVeth' ./pkg/network/dhcp6/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          "${as_root[@]}" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestType5Netlink|^TestESINetlink|^TestFIBWriterKernel|^TestFIBWriterDropsECMPPathOfPeerDown|^TestFIBResolveViaDefault|^TestL3VNINetlink|^TestConnectedInVRF|^TestUnderlaySetupStartsRestarter|^TestListenRSJoinsAllRouters|^TestDiscoverLinkLocalPeerFromRA|^TestUnderlaySetupAdvertisesBeforeDiscovery|^TestSendRAWaitsForDADAndCarrier|^TestUnderlaySetupFailureStopsRAs|^TestSendRAWaitsForOptimisticDAD|^TestSameLinkLocalPeersOnTwoNICs' ./pkg/network/gobgp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          "${as_root[@]}" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestDHCPNetlink|^TestWatchRAOnVeth|^TestSendRSOnVeth' ./pkg/network/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          "${as_root[@]}" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestTransportOnVeth' ./pkg/network/dhcp4/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          "${as_root[@]}" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestTransportOnVeth' ./pkg/network/dhcp6/ 2>&1 | tee -a linux-e2e-logs/go-test.log
           # SR-IOV discovery and runtime settings on netdevsim (devlink, eSwitch, VFs).
           if ! sudo modprobe netdevsim; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
             sudo modprobe netdevsim
           fi
-          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestNetdevsim' ./pkg/sriov/ 2>&1 | tee -a linux-e2e-logs/go-test.log
-          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestOpenRXGroupsAndOwnFrames|^TestEmitFollowsVethCarrier' ./pkg/network/lldp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
-          sudo -E env "PATH=$PATH:/usr/sbin:/sbin" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestLinkKernel|^TestModuleEEPROMKernel' ./pkg/network/ethtool/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          "${as_root[@]}" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestNetdevsim' ./pkg/sriov/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          "${as_root[@]}" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestOpenRXGroupsAndOwnFrames|^TestEmitFollowsVethCarrier' ./pkg/network/lldp/ 2>&1 | tee -a linux-e2e-logs/go-test.log
+          "${as_root[@]}" "$(which go)" test -tags linux_e2e -v -count=1 -timeout 5m -run '^TestLinkKernel|^TestModuleEEPROMKernel' ./pkg/network/ethtool/ 2>&1 | tee -a linux-e2e-logs/go-test.log
           if grep -E '^[[:space:]]*--- SKIP:' linux-e2e-logs/go-test.log; then
             echo "::error::linux e2e tests skipped in CI"
             exit 1

@@ -5,6 +5,7 @@ package kvm
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -64,7 +65,7 @@ func testLsblkDiskSelection(t *testing.T, varsFor func(*fakeCAPRF) map[string]st
 		"-net", "nic,model=virtio,macaddr=52:54:00:12:34:56", "-net", "user",
 		"-append", runnerKernelCmdline + " net.ifnames=0",
 	}
-	output, _ := exec.CommandContext(ctx, "qemu-system-x86_64", args...).CombinedOutput()
+	output, _ := exec.CommandContext(ctx, "qemu-system-x86_64", append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)...).CombinedOutput()
 	if ctx.Err() != nil {
 		t.Fatalf("QEMU timed out. tail:\n%s", tail(output, 4000))
 	}
