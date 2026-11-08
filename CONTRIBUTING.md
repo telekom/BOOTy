@@ -20,7 +20,9 @@ Thank you for your interest in contributing! This document covers the developmen
 Dependabot checks daily for direct and indirect Go module, workflow action, and
 base image updates in all eight Dockerfiles through the four configured Docker
 directories. Minor/patch Go updates and action updates are grouped; Docker
-updates are grouped by dependency, with major updates separate.
+updates are grouped by dependency, with major updates separate. Base images are
+pinned as `tag@sha256` index digests, and digest-only updates are grouped per
+image in `docker-digests`.
 ContainerLab `*.clab.yml` topologies are not Kubernetes manifests and are not
 updated by Dependabot's Docker ecosystem.
 
