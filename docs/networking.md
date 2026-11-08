@@ -1089,6 +1089,76 @@ the colon form, NX-OS shows `aabb.ccdd.eeff`. A locally assigned port ID
 both kinds of switch show it. The NX-OS column assumes that NX-OS shows a
 locally assigned port ID unchanged; check it on a leaf before relying on it.
 
+### Acceptance against the legacy ramdisk
+
+BOOTy replaces the legacy ramdisk only when the fabric cannot tell the two
+apart. The reference is the legacy ramdisk
+(`image-building/deployer-base-image` 0.3.0): Ubuntu with systemd-networkd
+(through netplan) and FRR from the `frr-stable` channel. Its `bgpd` and
+`bfdd` read the production `frr.conf` of the bm4x-operator
+(`internal/controller/infra/redfish/provcfg/templates`), with `frr version
+8.2.2` and `frr defaults traditional`:
+
+- `timers 30 90` on the leaf and route reflector peers, `timers connect 5`
+  on the route reflectors, profile `traditional` for the rest.
+- BFD profile `fabric` (150 ms, 150 ms, multiplier 3) on every BGP peer.
+- netplan `emit-lldp: true` on the fabric NICs; no lldpd.
+- MTU 9100 on the fabric NICs, 9000 on the VXLAN device and the bridge.
+
+The CAPRF kindmetal e2e has a production-shaped fixture
+(`test/e2e/evpn-bm4x`): both ramdisks get the same files, rendered from the
+bm4x templates, and `fabric-parity-diff` compares what the leaves and
+route reflectors see. A difference passes only when an entry of
+`parity-allowlist.yaml` covers the field and names the gap. The fixture is
+in CAPRF !291 (a draft, not on CAPRF `main`).
+
+| Requirement | Lab test (containerlab, against an FRR node with the same files) | kindmetal check |
+|---|---|---|
+| Sessions, address families, local-as, VRF-bound route reflectors | `TestProdTplLeafSessions`, `TestProdTplRRSessions`, `TestProdTplLocalASReplaceASPath` | sessions to two leaves and two route reflectors, `fabric-parity-diff` |
+| Timers and profile defaults | the session tests | 30/90 negotiated at both leaves |
+| Routes, ECMP, next hops (RFC 5549) | `TestProdTplFIBRoutes`, `TestProdTplRFC5549Routes` | routes and routing tables in the fabric snapshot |
+| EVPN Type-5 only for an L3VNI, IPv6 | `TestProdTplType5*` | Type-2 and Type-3 absence checks |
+| BFD | `TestProdTplBFDSessions`, `TestProdTplBFDFailover` | single-hop BFD at both leaves (150/150/3), multihop BFD at both route reflectors |
+| Route-maps, route targets, local-as loop check | `TestProdTplRouteMap*`, `TestProdTplLocalASLoopCheck` | effect visible in `fabric-parity-diff` |
+| VTEP, VXLAN and bridge devices, MTU, `accept-ra`, forwarding | `TestProdTplKernelDevices` | MTU and ARP/ND of the leaf port in the fabric snapshot |
+| LLDP sent on every fabric NIC | `TestProdTplLLDP`, `TestProdTplLLDPLikeNetworkd` | `EVPN_EXPECT_LLDP`: each leaf receives LLDP from every host |
+| Switch faults: link flap, BGP reset, leaf down and up | `TestProdTplUplinkCarrierLoss`, `TestProdTplBFDFailover`, `TestProdTplRRRestart`, `TestProdTplOneDropPerFault`, `TestProdTplLongOutageNewLinkLocal` | `bgp-reset`, `link-flap`, `leaf-down`, and both leaves down one after the other while the image downloads |
+| Native configuration only (no netplan, no `frr.conf`) | the vars-only server `native` in the lab tests that run on every server (`prodtplServers`); `TestProdTplRouteMap*`, `TestProdTplEBGPWithoutPolicy` and `TestProdTplLLDPLikeNetworkd` leave it out | the native variant of the fixture |
+
+Results (CAPRF jobs, all `success`):
+
+| Run | BOOTy | Jobs |
+|---|---|---|
+| legacy ramdisk, template files (CAPRF !292) | none | 407514447 |
+| first BOOTy pass, template files and native vars (CAPRF !293) | `main` 0a4b1eaf | 407554688, 407554689 |
+| combined build of #703, #710, #697, #698 (CAPRF !303) | #736 5d11f516 | 407655545, 407655546 |
+| every kindmetal job, including the L2 parity jobs (CAPRF !315, pipeline 78240781) | `main` ff009523 (2026-10-21) | 410510527, 410563941, 410510532 |
+
+CAPRF !292 to !315 are closed: !292 moved into !291, and the others were
+runs that pin a BOOTy build, not meant to merge. In the !303 pipeline the
+L2 job `e2e-kindmetal-booty` failed (407660711); the cause is not recorded
+here, and it passes in the !315 pipeline. In the !315 pipeline 410563941
+is the retry of 410510528, which the runner lost (`remote command exited
+without exit status`), not a test failure.
+
+The parity runs found the route distinguisher, MED, BFD echo RX, the
+capability set, the unnumbered session that did not come back after a
+60 s leaf outage, and the BFD flap after a recovery. #697, #703 and #710
+fixed them; see [Routes BOOTy originates](#routes-booty-originates),
+[BGP capabilities and LLDP](#bgp-capabilities-and-lldp) and
+[BGP sessions](#bgp-sessions). The `parity-allowlist.yaml` of the !315
+run still accepts two rows of the deviation table in
+[BGP capabilities and LLDP](#bgp-capabilities-and-lldp), the graceful
+restart R bit and the software version; dynamic capability is no
+difference here, because FRR does not send it with `frr defaults
+traditional`. It also accepts the neighbor discovery that goes with BOOTy
+leaving the first connect to the leaf (`BGP_CONNECT_AT_ONCE` off, see
+[configuration.md](configuration.md)), and entries that change from run to
+run (the uplink that ECMP picks for a multihop session, the Router flag in
+the leaf's neighbor cache). BOOTy also adds what the legacy ramdisk does
+not have: LLDP receive, the shutdown LLDPDU and the firmware LLDP agent
+switch.
+
 ## GoBGP peer modes
 
 | Mode | Sessions | Address families | Requirements |
