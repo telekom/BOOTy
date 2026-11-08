@@ -274,11 +274,11 @@ $(CLAB_TEST_IMAGE): test/e2e/clab/create-test-image.sh
 
 clab-up: $(CLAB_TEST_IMAGE)
 	@echo Deploying ContainerLab topology
-	@cd test/e2e/clab && sudo clab deploy --topo topology.clab.yml
+	@cd test/e2e/clab && sudo ./lab-images.sh clab deploy --topo topology.clab.yml
 
 clab-down:
 	@echo Destroying ContainerLab topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology.clab.yml --cleanup
+	@cd test/e2e/clab && sudo ./lab-images.sh clab destroy --topo topology.clab.yml --cleanup
 
 test-e2e-integration:
 	@printf '%s\n' 'Running E2E integration tests (requires clab-up)'
@@ -290,11 +290,11 @@ booty-test-image:
 
 clab-boot-up: booty-test-image $(CLAB_TEST_IMAGE)
 	@printf '%s\n' 'Deploying boot test topology (includes BOOTy nodes)'
-	@cd test/e2e/clab && sudo clab deploy --topo topology-boot.clab.yml
+	@cd test/e2e/clab && sudo ./lab-images.sh clab deploy --topo topology-boot.clab.yml
 
 clab-boot-down:
 	@echo Destroying boot test topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-boot.clab.yml --cleanup
+	@cd test/e2e/clab && sudo ./lab-images.sh clab destroy --topo topology-boot.clab.yml --cleanup
 
 test-e2e-boot:
 	@printf '%s\n' 'Running BOOTy boot E2E tests (requires clab-boot-up)'
@@ -306,11 +306,11 @@ booty-vrnetlab-image:
 
 clab-vrnetlab-up: booty-vrnetlab-image $(CLAB_TEST_IMAGE)
 	@printf '%s\n' 'Deploying vrnetlab EVPN topology (QEMU VMs + EVPN fabric)'
-	@cd test/e2e/clab && sudo clab deploy --topo topology-vrnetlab.clab.yml
+	@cd test/e2e/clab && sudo ./lab-images.sh clab deploy --topo topology-vrnetlab.clab.yml
 
 clab-vrnetlab-down:
 	@echo Destroying vrnetlab EVPN topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-vrnetlab.clab.yml --cleanup
+	@cd test/e2e/clab && sudo ./lab-images.sh clab destroy --topo topology-vrnetlab.clab.yml --cleanup
 
 test-e2e-vrnetlab:
 	@printf '%s\n' 'Running vrnetlab EVPN E2E tests (requires clab-vrnetlab-up)'
@@ -324,11 +324,11 @@ booty-gobgp-test-image:
 
 clab-gobgp-up: booty-gobgp-test-image $(CLAB_TEST_IMAGE)
 	@printf '%s\n' 'Deploying GoBGP test topology (unnumbered + dual + numbered)'
-	@cd test/e2e/clab && sudo clab deploy --topo topology-gobgp.clab.yml
+	@cd test/e2e/clab && sudo ./lab-images.sh clab deploy --topo topology-gobgp.clab.yml
 
 clab-gobgp-down:
 	@echo Destroying GoBGP test topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-gobgp.clab.yml --cleanup
+	@cd test/e2e/clab && sudo ./lab-images.sh clab destroy --topo topology-gobgp.clab.yml --cleanup
 
 test-e2e-gobgp:
 	@printf '%s\n' 'Running GoBGP E2E tests (requires clab-gobgp-up)'
@@ -336,11 +336,11 @@ test-e2e-gobgp:
 
 clab-gobgp-vrnetlab-up: booty-vrnetlab-image $(CLAB_TEST_IMAGE)
 	@printf '%s\n' 'Deploying GoBGP vrnetlab topology (QEMU VMs, all PeerModes)'
-	@cd test/e2e/clab && sudo clab deploy --topo topology-gobgp-vrnetlab.clab.yml
+	@cd test/e2e/clab && sudo ./lab-images.sh clab deploy --topo topology-gobgp-vrnetlab.clab.yml
 
 clab-gobgp-vrnetlab-down:
 	@echo Destroying GoBGP vrnetlab topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-gobgp-vrnetlab.clab.yml --cleanup
+	@cd test/e2e/clab && sudo ./lab-images.sh clab destroy --topo topology-gobgp-vrnetlab.clab.yml --cleanup
 
 test-e2e-gobgp-vrnetlab:
 	@printf '%s\n' 'Running GoBGP vrnetlab E2E tests (requires clab-gobgp-vrnetlab-up)'
@@ -350,11 +350,11 @@ test-e2e-gobgp-vrnetlab:
 
 clab-type5-up: booty-gobgp-test-image
 	@printf '%s\n' 'Deploying pure Type-5 topology (spine + per-machine leaf, VNI 1000)'
-	@cd test/e2e/clab && sudo clab deploy --topo topology-type5.clab.yml
+	@cd test/e2e/clab && sudo ./lab-images.sh clab deploy --topo topology-type5.clab.yml
 
 clab-type5-down:
 	@echo Destroying pure Type-5 topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-type5.clab.yml --cleanup
+	@cd test/e2e/clab && sudo ./lab-images.sh clab destroy --topo topology-type5.clab.yml --cleanup
 
 test-e2e-type5:
 	@printf '%s\n' 'Running pure Type-5 E2E tests (requires clab-type5-up)'
@@ -364,11 +364,11 @@ test-e2e-type5:
 
 clab-prodtpl-up: booty-gobgp-test-image
 	@printf '%s\n' 'Deploying the production template topology (BOOTy and shadow FRR)'
-	@cd test/e2e/clab && sudo clab deploy --topo topology-production-templates.clab.yml
+	@cd test/e2e/clab && sudo ./lab-images.sh clab deploy --topo topology-production-templates.clab.yml
 
 clab-prodtpl-down:
 	@echo Destroying the production template topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-production-templates.clab.yml --cleanup
+	@cd test/e2e/clab && sudo ./lab-images.sh clab destroy --topo topology-production-templates.clab.yml --cleanup
 
 test-e2e-prodtpl:
 	@printf '%s\n' 'Running production template E2E tests (requires clab-prodtpl-up)'
@@ -380,11 +380,11 @@ PRODUCTION_CI_TESTS := ^(TestProductionBootyStartsSuccessfully|TestProductionCAP
 
 clab-production-up: booty-test-image $(CLAB_TEST_IMAGE)
 	@printf '%s\n' 'Deploying production-realistic topology'
-	@cd test/e2e/clab && sudo clab deploy --topo topology-production.clab.yml
+	@cd test/e2e/clab && sudo ./lab-images.sh clab deploy --topo topology-production.clab.yml
 
 clab-production-down:
 	@echo Destroying production-realistic topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-production.clab.yml --cleanup
+	@cd test/e2e/clab && sudo ./lab-images.sh clab destroy --topo topology-production.clab.yml --cleanup
 
 test-e2e-production:
 	@printf '%s\n' 'Running CI-proven production E2E smoke tests (requires clab-production-up)'
@@ -402,11 +402,11 @@ booty-dhcpd-test-image:
 
 clab-dhcp-up: booty-dhcpd-test-image
 	@echo Deploying DHCP test topology
-	@cd test/e2e/clab && sudo clab deploy --topo topology-dhcp.clab.yml
+	@cd test/e2e/clab && sudo ./lab-images.sh clab deploy --topo topology-dhcp.clab.yml
 
 clab-dhcp-down:
 	@echo Destroying DHCP test topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-dhcp.clab.yml --cleanup
+	@cd test/e2e/clab && sudo ./lab-images.sh clab destroy --topo topology-dhcp.clab.yml --cleanup
 
 test-e2e-dhcp:
 	@printf '%s\n' 'Running DHCP E2E tests (requires clab-dhcp-up)'
@@ -416,11 +416,11 @@ test-e2e-dhcp:
 
 clab-bond-up:
 	@printf '%s\n' 'Deploying bond-mode (non-LACP) test topology'
-	@cd test/e2e/clab && sudo clab deploy --topo topology-lacp.clab.yml
+	@cd test/e2e/clab && sudo ./lab-images.sh clab deploy --topo topology-lacp.clab.yml
 
 clab-bond-down:
 	@printf '%s\n' 'Destroying bond-mode (non-LACP) test topology'
-	@cd test/e2e/clab && sudo clab destroy --topo topology-lacp.clab.yml --cleanup
+	@cd test/e2e/clab && sudo ./lab-images.sh clab destroy --topo topology-lacp.clab.yml --cleanup
 
 test-e2e-bond:
 	@printf '%s\n' 'Running bond-mode (non-LACP) E2E tests (requires clab-bond-up)'
@@ -436,11 +436,11 @@ test-e2e-lacp: test-e2e-bond
 
 clab-static-up:
 	@echo Deploying static IP test topology
-	@cd test/e2e/clab && sudo clab deploy --topo topology-static.clab.yml
+	@cd test/e2e/clab && sudo ./lab-images.sh clab deploy --topo topology-static.clab.yml
 
 clab-static-down:
 	@echo Destroying static IP test topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-static.clab.yml --cleanup
+	@cd test/e2e/clab && sudo ./lab-images.sh clab destroy --topo topology-static.clab.yml --cleanup
 
 test-e2e-static:
 	@printf '%s\n' 'Running static IP E2E tests (requires clab-static-up)'
@@ -453,10 +453,10 @@ booty-lldpd-test-image:
 
 clab-cablecheck-up: booty-gobgp-test-image booty-lldpd-test-image
 	@printf '%s\n' 'Deploying the cable check topology (BOOTy and an lldpd leaf)'
-	@cd test/e2e/clab && sudo clab deploy --topo topology-cablecheck.clab.yml
+	@cd test/e2e/clab && sudo ./lab-images.sh clab deploy --topo topology-cablecheck.clab.yml
 
 clab-cablecheck-down:
-	@cd test/e2e/clab && sudo clab destroy --topo topology-cablecheck.clab.yml --cleanup
+	@cd test/e2e/clab && sudo ./lab-images.sh clab destroy --topo topology-cablecheck.clab.yml --cleanup
 
 test-e2e-cablecheck:
 	@printf '%s\n' 'Running cable check E2E tests (requires clab-cablecheck-up)'
@@ -466,11 +466,11 @@ test-e2e-cablecheck:
 
 clab-multi-nic-up:
 	@echo Deploying multi-NIC test topology
-	@cd test/e2e/clab && sudo clab deploy --topo topology-multi-nic.clab.yml
+	@cd test/e2e/clab && sudo ./lab-images.sh clab deploy --topo topology-multi-nic.clab.yml
 
 clab-multi-nic-down:
 	@echo Destroying multi-NIC test topology
-	@cd test/e2e/clab && sudo clab destroy --topo topology-multi-nic.clab.yml --cleanup
+	@cd test/e2e/clab && sudo ./lab-images.sh clab destroy --topo topology-multi-nic.clab.yml --cleanup
 
 test-e2e-multi-nic:
 	@printf '%s\n' 'Running multi-NIC E2E tests (requires clab-multi-nic-up)'

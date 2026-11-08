@@ -32,7 +32,7 @@ topology:
   nodes:
     spine01:
       kind: linux
-      image: quay.io/frrouting/frr:10.3.2
+      image: ${BOOTY_LAB_FRR_TYPE5_IMAGE}
       binds:
         - spine01-type5.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
@@ -48,7 +48,7 @@ topology:
 
     leaf01:
       kind: linux
-      image: quay.io/frrouting/frr:10.3.2
+      image: ${BOOTY_LAB_FRR_TYPE5_IMAGE}
       binds:
         - leaf01-type5.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro
@@ -65,7 +65,7 @@ topology:
 
     leaf02:
       kind: linux
-      image: quay.io/frrouting/frr:10.3.2
+      image: ${BOOTY_LAB_FRR_TYPE5_IMAGE}
       binds:
         - leaf02-type5.frr.conf:/etc/frr/frr.conf:ro
         - daemons:/etc/frr/daemons:ro

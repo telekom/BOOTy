@@ -726,7 +726,7 @@ jobs:
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy topology
-        run: sudo containerlab deploy --topo test/e2e/clab/topology.clab.yml
+        run: sudo test/e2e/clab/lab-images.sh containerlab deploy --topo test/e2e/clab/topology.clab.yml
 
       - name: Wait for BGP convergence
         run: |
@@ -832,7 +832,7 @@ jobs:
         if: always()
         run: |
           if command -v containerlab >/dev/null 2>&1; then
-            sudo containerlab destroy --topo test/e2e/clab/topology.clab.yml --cleanup || true
+            sudo test/e2e/clab/lab-images.sh containerlab destroy --topo test/e2e/clab/topology.clab.yml --cleanup || true
           fi
 
   e2e-production:
@@ -859,7 +859,7 @@ jobs:
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy production topology
-        run: sudo containerlab deploy --topo test/e2e/clab/topology-production.clab.yml
+        run: sudo test/e2e/clab/lab-images.sh containerlab deploy --topo test/e2e/clab/topology-production.clab.yml
 
       - name: Run production E2E tests
         env:
@@ -958,7 +958,7 @@ jobs:
         if: always()
         run: |
           if command -v containerlab >/dev/null 2>&1; then
-            sudo containerlab destroy --topo test/e2e/clab/topology-production.clab.yml --cleanup || true
+            sudo test/e2e/clab/lab-images.sh containerlab destroy --topo test/e2e/clab/topology-production.clab.yml --cleanup || true
           fi
 
   uefi-iso-boot:
@@ -1302,8 +1302,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The legacy ramdisk and kindmetal leaves run 10.2.1, the lab 10.3.1.
-        frr: ["10.2.1", "10.3.1"]
+        # The legacy ramdisk and kindmetal leaves run 10.2.1. "lab" is the lab
+        # FRR of test/e2e/clab/labimages/Dockerfile, which Dependabot tracks.
+        include:
+          - frr: "10.2.1"
+            image: quay.io/frrouting/frr:10.2.1
+          - frr: lab
+            image: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -1314,7 +1319,7 @@ jobs:
         run: |
           set -eo pipefail
           mkdir -p "$HOME/go/pkg/mod"
-          CYCLES=6 test/e2e/bfd/frr-interop.sh "quay.io/frrouting/frr:${{ matrix.frr }}" 2>&1 | tee bfd-frr-interop.log
+          CYCLES=6 test/e2e/bfd/frr-interop.sh "${{ matrix.image }}" 2>&1 | tee bfd-frr-interop.log
           grep -q '^--- PASS: TestFRRInterop' bfd-frr-interop.log
 
   e2e-boot:
@@ -1341,7 +1346,7 @@ jobs:
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy boot topology
-        run: sudo containerlab deploy --topo test/e2e/clab/topology-boot.clab.yml
+        run: sudo test/e2e/clab/lab-images.sh containerlab deploy --topo test/e2e/clab/topology-boot.clab.yml
 
       - name: Wait for BGP convergence
         run: |
@@ -1436,7 +1441,7 @@ jobs:
         if: always()
         run: |
           if command -v containerlab >/dev/null 2>&1; then
-            sudo containerlab destroy --topo test/e2e/clab/topology-boot.clab.yml --cleanup || true
+            sudo test/e2e/clab/lab-images.sh containerlab destroy --topo test/e2e/clab/topology-boot.clab.yml --cleanup || true
           fi
 
   e2e-gobgp:
@@ -1460,7 +1465,7 @@ jobs:
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy GoBGP topology
-        run: sudo containerlab deploy --topo test/e2e/clab/topology-gobgp.clab.yml
+        run: sudo test/e2e/clab/lab-images.sh containerlab deploy --topo test/e2e/clab/topology-gobgp.clab.yml
 
       - name: Wait for BGP convergence
         run: |
@@ -1574,7 +1579,7 @@ jobs:
         if: always()
         run: |
           if command -v containerlab >/dev/null 2>&1; then
-            sudo containerlab destroy --topo test/e2e/clab/topology-gobgp.clab.yml --cleanup || true
+            sudo test/e2e/clab/lab-images.sh containerlab destroy --topo test/e2e/clab/topology-gobgp.clab.yml --cleanup || true
           fi
 
   e2e-type5:
@@ -1598,7 +1603,7 @@ jobs:
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy Type-5 topology
-        run: sudo containerlab deploy --topo test/e2e/clab/topology-type5.clab.yml
+        run: sudo test/e2e/clab/lab-images.sh containerlab deploy --topo test/e2e/clab/topology-type5.clab.yml
 
       - name: Wait for BGP convergence
         run: |
@@ -1723,7 +1728,7 @@ jobs:
         if: always()
         run: |
           if command -v containerlab >/dev/null 2>&1; then
-            sudo containerlab destroy --topo test/e2e/clab/topology-type5.clab.yml --cleanup || true
+            sudo test/e2e/clab/lab-images.sh containerlab destroy --topo test/e2e/clab/topology-type5.clab.yml --cleanup || true
           fi
 
   check-iso:
@@ -1805,7 +1810,7 @@ jobs:
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy cable check topology
-        run: sudo containerlab deploy --topo test/e2e/clab/topology-cablecheck.clab.yml
+        run: sudo test/e2e/clab/lab-images.sh containerlab deploy --topo test/e2e/clab/topology-cablecheck.clab.yml
 
       - name: Run cable check E2E tests
         run: |
@@ -1846,7 +1851,7 @@ jobs:
 
       - name: Destroy cable check topology
         if: always()
-        run: sudo containerlab destroy --topo test/e2e/clab/topology-cablecheck.clab.yml --cleanup || true
+        run: sudo test/e2e/clab/lab-images.sh containerlab destroy --topo test/e2e/clab/topology-cablecheck.clab.yml --cleanup || true
 
   e2e-prodtpl:
     # The networkd LLDP reference runs on every Ubuntu LTS in standard
@@ -1899,7 +1904,7 @@ jobs:
           sudo modprobe vxlan
 
       - name: Deploy production template topology
-        run: sudo containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
+        run: sudo test/e2e/clab/lab-images.sh containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
 
       - name: Run production template E2E tests
         env:
@@ -1999,7 +2004,7 @@ jobs:
         if: always()
         run: |
           if command -v containerlab >/dev/null 2>&1; then
-            sudo containerlab destroy --topo test/e2e/clab/topology-production-templates.clab.yml --cleanup || true
+            sudo test/e2e/clab/lab-images.sh containerlab destroy --topo test/e2e/clab/topology-production-templates.clab.yml --cleanup || true
           fi
 
   e2e-prodtpl-one-uplink:
@@ -2047,7 +2052,7 @@ jobs:
       - name: Deploy production template topology
         run: |
           eval "$(sh test/e2e/clab/prodtpl-variant.sh one-uplink)"
-          sudo --preserve-env=PRODTPL_BOOTY_FS,PRODTPL_SHADOW_FRR,PRODTPL_SHADOW_SETUP,PRODTPL_LEAF_SETUP,PRODTPL_NATIVE_VARS,PRODTPL_NATIVE_VRF_VARS containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
+          sudo --preserve-env=PRODTPL_BOOTY_FS,PRODTPL_SHADOW_FRR,PRODTPL_SHADOW_SETUP,PRODTPL_LEAF_SETUP,PRODTPL_NATIVE_VARS,PRODTPL_NATIVE_VRF_VARS test/e2e/clab/lab-images.sh containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
 
       - name: Run production template E2E tests
         env:
@@ -2145,7 +2150,7 @@ jobs:
         if: always()
         run: |
           if command -v containerlab >/dev/null 2>&1; then
-            sudo containerlab destroy --topo test/e2e/clab/topology-production-templates.clab.yml --cleanup || true
+            sudo test/e2e/clab/lab-images.sh containerlab destroy --topo test/e2e/clab/topology-production-templates.clab.yml --cleanup || true
           fi
 
 
@@ -2194,7 +2199,7 @@ jobs:
       - name: Deploy production template topology
         run: |
           eval "$(sh test/e2e/clab/prodtpl-variant.sh native-model)"
-          sudo --preserve-env=PRODTPL_BOOTY_FS,PRODTPL_SHADOW_FRR,PRODTPL_SHADOW_SETUP,PRODTPL_LEAF_SETUP,PRODTPL_NATIVE_VARS,PRODTPL_NATIVE_VRF_VARS containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
+          sudo --preserve-env=PRODTPL_BOOTY_FS,PRODTPL_SHADOW_FRR,PRODTPL_SHADOW_SETUP,PRODTPL_LEAF_SETUP,PRODTPL_NATIVE_VARS,PRODTPL_NATIVE_VRF_VARS test/e2e/clab/lab-images.sh containerlab deploy --topo test/e2e/clab/topology-production-templates.clab.yml
 
       - name: Run production template E2E tests
         env:
@@ -2292,7 +2297,7 @@ jobs:
         if: always()
         run: |
           if command -v containerlab >/dev/null 2>&1; then
-            sudo containerlab destroy --topo test/e2e/clab/topology-production-templates.clab.yml --cleanup || true
+            sudo test/e2e/clab/lab-images.sh containerlab destroy --topo test/e2e/clab/topology-production-templates.clab.yml --cleanup || true
           fi
 
   e2e-vrnetlab:
@@ -2319,7 +2324,7 @@ jobs:
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy vrnetlab EVPN topology
-        run: sudo containerlab deploy --topo test/e2e/clab/topology-vrnetlab.clab.yml
+        run: sudo test/e2e/clab/lab-images.sh containerlab deploy --topo test/e2e/clab/topology-vrnetlab.clab.yml
 
       - name: Wait for BGP convergence
         run: |
@@ -2464,7 +2469,7 @@ jobs:
         if: always()
         run: |
           if command -v containerlab >/dev/null 2>&1; then
-            sudo containerlab destroy --topo test/e2e/clab/topology-vrnetlab.clab.yml --cleanup || true
+            sudo test/e2e/clab/lab-images.sh containerlab destroy --topo test/e2e/clab/topology-vrnetlab.clab.yml --cleanup || true
           fi
 
   e2e-gobgp-vrnetlab:
@@ -2488,7 +2493,7 @@ jobs:
         run: test/e2e/clab/install-containerlab.sh "${CONTAINERLAB_VERSION}"
 
       - name: Deploy GoBGP vrnetlab topology
-        run: sudo containerlab deploy --topo test/e2e/clab/topology-gobgp-vrnetlab.clab.yml
+        run: sudo test/e2e/clab/lab-images.sh containerlab deploy --topo test/e2e/clab/topology-gobgp-vrnetlab.clab.yml
 
       - name: Run GoBGP vrnetlab E2E tests
         env:
@@ -2549,5 +2554,5 @@ jobs:
         if: always()
         run: |
           if command -v containerlab >/dev/null 2>&1; then
-            sudo containerlab destroy --topo test/e2e/clab/topology-gobgp-vrnetlab.clab.yml --cleanup || true
+            sudo test/e2e/clab/lab-images.sh containerlab destroy --topo test/e2e/clab/topology-gobgp-vrnetlab.clab.yml --cleanup || true
           fi
