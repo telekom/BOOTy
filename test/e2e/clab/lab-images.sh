@@ -17,7 +17,11 @@ booty_lab_images_export() {
 	lines=$(awk '
 		{ sub(/\r$/, "") }
 		/^FROM / {
-			if (NF != 4 || toupper($3) != "AS" || $2 !~ /@sha256:/) {
+			# Same check as labimages.go; the digest length is checked
+			# separately because not every awk supports {64}.
+			digest = substr($2, index($2, "@sha256:") + 8)
+			if (NF != 4 || toupper($3) != "AS" ||
+				$2 !~ /^[^@]+:[^@:\/]+@sha256:[0-9a-f]+$/ || length(digest) != 64) {
 				printf "%s:%d: want FROM <image>:<tag>@sha256:<digest> AS <stage>\n", FILENAME, FNR > "/dev/stderr"
 				bad = 1
 				next
