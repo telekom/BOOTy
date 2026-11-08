@@ -12,8 +12,9 @@ updates:
       semver-major-days: 14
     open-pull-requests-limit: 10
     groups:
-      # Security updates ignore `allow` and can raise any module in
-      # govulncheck's graph; collect them in one PR.
+      # In other repos Dependabot has raised security updates for tool-graph
+      # modules that `allow` does not list (e.g. telekom/whereabouts#492).
+      # Collect any such updates in govulncheck's graph in one PR.
       go-tools-security:
         applies-to: security-updates
         patterns: ["*"]
