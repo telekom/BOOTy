@@ -145,7 +145,7 @@ func cycleQEMUArgs(iso, disk, monitor string) []string {
 		cd += ",throttling.bps-read=" + bps
 	}
 	args := []string{
-		"-machine", "q35,usb=off", "-accel", "kvm", "-accel", "tcg",
+		"-machine", "q35,usb=off,accel=kvm:tcg",
 		"-m", "1024", "-display", "none", "-nodefaults", "-no-reboot",
 		"-chardev", "stdio,id=charserial0", "-device", "isa-serial,chardev=charserial0",
 		"-device", "virtio-scsi-pci,id=scsi0", "-drive", cd, "-device", "scsi-cd,drive=cd0,bootindex=1",

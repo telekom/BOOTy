@@ -18,14 +18,21 @@ Thank you for your interest in contributing! This document covers the developmen
 ## Dependency Updates
 
 Dependabot checks daily for direct and indirect Go module, workflow action, and
-base image updates in all eight Dockerfiles through the four configured Docker
+base image updates in all ten Dockerfiles through the six configured Docker
 directories. Minor/patch Go updates and action updates are grouped; Docker
 updates are grouped by dependency, with major updates separate. Base images are
 pinned as `tag@sha256` index digests, and digest-only updates are grouped per
 image in `docker-digests`. Security updates are grouped into one PR per Go module
 (`go-security`, `go-tools-security`).
-ContainerLab `*.clab.yml` topologies are not Kubernetes manifests and are not
-updated by Dependabot's Docker ecosystem.
+ContainerLab `*.clab.yml` topologies are not Kubernetes manifests, so Dependabot
+cannot read them. Their external images live as never-built, digest-pinned
+stages in `test/e2e/clab/labimages/Dockerfile` (and `frr-type5/Dockerfile`),
+and the topologies use `image: ${BOOTY_LAB_<STAGE>_IMAGE}`. Run containerlab
+through `test/e2e/clab/lab-images.sh` (`sudo test/e2e/clab/lab-images.sh
+containerlab deploy --topo ...`), which sets these variables; Go tests use
+package `labimages`. `TestTopologiesUseTrackedImages` rejects any other external
+topology image. The `# syntax=` directive of `initrd.Dockerfile` is pinned by
+hand, since Dependabot reads only `FROM` lines.
 
 The `CI Gate` workflow merges a Dependabot PR once every other check on it has
 passed, then dispatches the main-branch workflows a merge would normally start.
@@ -36,9 +43,10 @@ images, Debian EFI package versions, LVM tarballs and util-linux source refs are
 outside its supported manifest formats and require manual review. Compiler pins
 must stay consistent with the supported Go 1.27 source floor.
 
-The FRR Type-5 fixture requires a coordinated update of its exact-version
-assertions (`gobgp_type5_e2e_test.go`); 10.3.2 is the minimum with the
-encapsulation relay fix. Signed Debian EFI updates require Secure Boot proof.
+Dependabot ignores FRR major and minor releases of the lab images; they need a
+coordinated update of the Type-5 version assertion (`gobgp_type5_e2e_test.go`)
+and the lab FRR configs. Patch and digest updates come in automatically; 10.3.2
+is the minimum with the encapsulation relay fix. Signed Debian EFI updates require Secure Boot proof.
 Review LVM tags together with their independent `LVM2_SHA256`; util-linux updates
 require boot validation. Do not fabricate digests or remove integrity verification.
 

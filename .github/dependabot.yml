@@ -53,6 +53,11 @@ updates:
       - /
       - /test/e2e/clab
       - /test/e2e/clab/vrnetlab
+      # Lab images of the containerlab topologies, never built. Own directories
+      # so their FROM lines do not merge with same-named images elsewhere:
+      # test/e2e/clab/labimages/Dockerfile explains why.
+      - /test/e2e/clab/labimages
+      - /test/e2e/clab/labimages/frr-type5
       - /test/e2e/assets/busybox
     cooldown:
       default-days: 3
@@ -71,6 +76,14 @@ updates:
           - version-update:semver-major
           - version-update:semver-minor
           - version-update:semver-patch
+      # FRR major and minor releases change routing behaviour the lab
+      # assertions depend on (Type-5 needs 10.3.2+, CONTRIBUTING.md) and are
+      # moved by hand. Patch and digest updates of the lab FRR images still
+      # come in. The dependency name omits the quay.io registry.
+      - dependency-name: frrouting/frr
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
     groups:
       docker-major:
         group-by: dependency-name

@@ -1,4 +1,7 @@
-# syntax=docker/dockerfile:experimental
+# syntax=docker/dockerfile:1.27.1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+# Dependabot reads only FROM lines, not this syntax directive
+# (dependabot/dependabot-core#4078): update the frontend pin by hand. The build
+# needs only RUN --mount=type=cache, stable since dockerfile:1.2.
 
 # Build LVM2 as an init
 FROM gcc:16@sha256:9af8c7003ad451f09496c7182f320c58554e10ec080e7038e0aa5e41146c916b AS lvm

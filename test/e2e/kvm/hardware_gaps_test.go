@@ -48,6 +48,8 @@ func TestMultiDiskRAIDInQEMU(t *testing.T) {
 
 	args = append(args, "-append", runnerKernelCmdline)
 
+	args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
+
 	out := runQEMUSmoke(t, args, 2*time.Minute, "multi-disk-raid", true)
 	outStr := string(out)
 	t.Logf("Multi-disk output tail:\n%s", tail(out, 2000))
@@ -110,6 +112,8 @@ func TestBIOSVendorDetectionQEMU(t *testing.T) {
 				"-smbios", tt.smbios,
 				"-append", runnerKernelCmdline,
 			}
+
+			args = append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)
 
 			out := runQEMUSmoke(t, args, 2*time.Minute, "bios-"+strings.ToLower(tt.name), true)
 			outStr := string(out)
@@ -268,7 +272,7 @@ func TestProvisionWithMultipleDisks(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", args...)
+	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", append(args, splitExtraArgs(os.Getenv("QEMU_EXTRA_ARGS"))...)...)
 	out, _ := cmd.CombinedOutput()
 	outStr := string(out)
 	t.Logf("Multi-disk provision tail:\n%s", tail(out, 3000))
