@@ -10,7 +10,7 @@ topology:
   nodes:
     switch:
       kind: linux
-      image: ghcr.io/srl-labs/network-multitool:v0.5.0
+      image: ${BOOTY_LAB_MULTITOOL_IMAGE}
       cmd: sleep infinity
       exec:
         # Create a bridge for bonded links
@@ -24,7 +24,7 @@ topology:
 
     booty:
       kind: linux
-      image: ghcr.io/srl-labs/network-multitool:v0.5.0
+      image: ${BOOTY_LAB_MULTITOOL_IMAGE}
       cmd: sleep infinity
       exec:
         - ip link set eth1 up

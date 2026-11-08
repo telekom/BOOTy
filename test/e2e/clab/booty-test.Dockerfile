@@ -3,7 +3,7 @@
 # With a real GPT disk image (created by create-test-image.sh), provisioning
 # progresses through stream-image, partprobe, parse-partitions, mount-root,
 # and fails at grow-partition (growpart not available in Alpine).
-FROM golang:1.27.2-alpine AS builder
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
 RUN set -eu; \
     n=0; \
     until apk add --no-cache git ca-certificates gcc linux-headers musl-dev; do \
@@ -25,7 +25,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a \
     -ldflags "-linkmode external -extldflags '-static' -s -w" \
     -o /booty
 
-FROM alpine:3.24
+FROM alpine:3.24@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a
 RUN set -eu; \
     n=0; \
     until apk add --no-cache ca-certificates iproute2; do \

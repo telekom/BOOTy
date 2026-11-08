@@ -16,12 +16,15 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/telekom/BOOTy/test/e2e/clab/labimages"
 )
 
 const (
@@ -822,12 +825,22 @@ func TestType5TopologyUsesFRRWithType5EncapRelayFix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read type-5 topology: %v", err)
 	}
-	topology := string(data)
-	if strings.Contains(topology, "quay.io/frrouting/frr:10.3.1") {
-		t.Fatal("type-5 topology must not use FRR 10.3.1, which strips ET:8 from transited Type-5 routes")
+	if got := strings.Count(string(data), "image: ${BOOTY_LAB_FRR_TYPE5_IMAGE}"); got != 3 {
+		t.Fatalf("type-5 topology should run all three FRR nodes on the frr-type5 lab image, got %d", got)
 	}
-	if got := strings.Count(topology, "image: quay.io/frrouting/frr:10.3.2"); got != 3 {
-		t.Fatalf("type-5 topology should pin all three FRR nodes to 10.3.2, got %d", got)
+	image, err := labimages.Image("frr-type5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// FRR 10.3.1 strips ET:8 from transited Type-5 routes; 10.3.2 has the
+	// encapsulation relay fix. Dependabot only moves the patch release.
+	name, _, _ := strings.Cut(image, "@")
+	var major, minor, patch int
+	if _, err := fmt.Sscanf(name[strings.LastIndex(name, ":")+1:], "%d.%d.%d", &major, &minor, &patch); err != nil {
+		t.Fatalf("parse FRR version of %s: %v", image, err)
+	}
+	if major != 10 || minor != 3 || patch < 2 {
+		t.Fatalf("type-5 lab needs FRR 10.3.2 or a later 10.3 patch release, got %s", image)
 	}
 }
 

@@ -5,7 +5,7 @@
 # Build:  docker build -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
 
 # ── Stage 1: Build BOOTy static binary ────────────────────────────────
-FROM golang:1.27.2-alpine AS builder
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
 RUN set -eu; \
     n=0; \
     until apk add --no-cache git ca-certificates gcc linux-headers musl-dev; do \
@@ -28,7 +28,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a \
     -o /booty
 
 # ── Stage 2: Extract a bootable kernel ────────────────────────────────
-FROM debian:trixie-slim AS kernel
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS kernel
 # Same kernel as initrd.Dockerfile: the Debian-signed trixie kernel, or the
 # KERNEL_SUITE one (trixie-backports splits it into linux-image/-binary/
 # -modules/-base packages).
@@ -79,7 +79,7 @@ RUN if [ -n "$KERNEL_SUITE" ]; then \
     rm -rf /tmp/kernel /tmp/debs /var/lib/apt/lists/*
 
 # ── Stage 3: Assemble initramfs ───────────────────────────────────────
-FROM debian:trixie-slim AS initramfs
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS initramfs
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     cpio busybox-static curl gnupg lsb-release ca-certificates \
     e2fsprogs dosfstools gdisk parted lvm2 fdisk util-linux mdadm \
@@ -169,7 +169,7 @@ COPY test/e2e/clab/vrnetlab/init-wrapper.sh /initramfs/init
 RUN chmod +x /initramfs/init
 
 # ── Stage 4: Runtime container with QEMU ──────────────────────────────
-FROM debian:trixie-slim
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     qemu-system-x86 qemu-utils iproute2 bridge-utils cpio gzip procps \
     && rm -rf /var/lib/apt/lists/*
