@@ -22,7 +22,8 @@ base image updates in all ten Dockerfiles through the six configured Docker
 directories. Minor/patch Go updates and action updates are grouped; Docker
 updates are grouped by dependency, with major updates separate. Base images are
 pinned as `tag@sha256` index digests, and digest-only updates are grouped per
-image in `docker-digests`.
+image in `docker-digests`. Security updates are grouped into one PR per Go module
+(`go-security`, `go-tools-security`).
 ContainerLab `*.clab.yml` topologies are not Kubernetes manifests, so Dependabot
 cannot read them. Their external images live as never-built, digest-pinned
 stages in `test/e2e/clab/labimages/Dockerfile` (and `frr-type5/Dockerfile`),
