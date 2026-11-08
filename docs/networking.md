@@ -1123,7 +1123,7 @@ in CAPRF !291 (a draft, not on CAPRF `main`).
 | VTEP, VXLAN and bridge devices, MTU, `accept-ra`, forwarding | `TestProdTplKernelDevices` | MTU and ARP/ND of the leaf port in the fabric snapshot |
 | LLDP sent on every fabric NIC | `TestProdTplLLDP`, `TestProdTplLLDPLikeNetworkd` | `EVPN_EXPECT_LLDP`: each leaf receives LLDP from every host |
 | Switch faults: link flap, BGP reset, leaf down and up | `TestProdTplUplinkCarrierLoss`, `TestProdTplBFDFailover`, `TestProdTplRRRestart`, `TestProdTplOneDropPerFault`, `TestProdTplLongOutageNewLinkLocal` | `bgp-reset`, `link-flap`, `leaf-down`, and both leaves down one after the other while the image downloads |
-| Native configuration only (no netplan, no `frr.conf`) | the vars-only server in every lab test | the native variant of the fixture |
+| Native configuration only (no netplan, no `frr.conf`) | the vars-only server `native` in the lab tests that run on every server (`prodtplServers`); `TestProdTplRouteMap*`, `TestProdTplEBGPWithoutPolicy` and `TestProdTplLLDPLikeNetworkd` leave it out | the native variant of the fixture |
 
 Results (CAPRF jobs, all `success`):
 
