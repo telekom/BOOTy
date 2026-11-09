@@ -314,8 +314,14 @@ func (o *Orchestrator) restoreCheckpointDerivedState(cp *Checkpoint) {
 // restoreCheckpointPartitionLayout restores a layout from a URL or the
 // image. Without one, an interrupted load-image-partition-layout may have
 // repartitioned the disk already, so the run repeats the whole-disk write.
+// A layout that an earlier run on this orchestrator (RESCUE_MODE=retry) read
+// from a URL or the image is dropped first: only the checkpoint says whether
+// it is on the disk, otherwise the run reads it again.
 func (o *Orchestrator) restoreCheckpointPartitionLayout(cp *Checkpoint) {
 	d := &o.cfg.Provision.Disk
+	if o.sourcePartitionLayout != nil && d.PartitionLayout == o.sourcePartitionLayout {
+		d.PartitionLayout, o.sourcePartitionLayout = nil, nil
+	}
 	if cp == nil || d.PartitionLayout != nil {
 		return
 	}
@@ -1481,7 +1487,7 @@ func (o *Orchestrator) validatePartitionLayoutRuntimeSupport() error {
 	}
 	seen := map[string]bool{}
 	for _, part := range layout.Partitions {
-		if err := validateSupportedLayoutMountpoint(part.Mountpoint, seen); err != nil {
+		if err := validateSupportedLayoutMountpoint(part.Mountpoint, part.Filesystem, seen); err != nil {
 			return err
 		}
 	}
@@ -1490,7 +1496,7 @@ func (o *Orchestrator) validatePartitionLayoutRuntimeSupport() error {
 			if strings.TrimSpace(vol.Mountpoint) == "/boot/efi" {
 				return fmt.Errorf("partition layout lvm volume mountpoint \"/boot/efi\" is not supported; declare /boot/efi as a regular partition")
 			}
-			if err := validateSupportedLayoutMountpoint(vol.Mountpoint, seen); err != nil {
+			if err := validateSupportedLayoutMountpoint(vol.Mountpoint, vol.Filesystem, seen); err != nil {
 				return err
 			}
 		}
@@ -1501,9 +1507,12 @@ func (o *Orchestrator) validatePartitionLayoutRuntimeSupport() error {
 // validateSupportedLayoutMountpoint rejects the mountpoints that
 // mount-shared-data cannot mount below the target root: a non-canonical or
 // repeated path, a separate /boot (mount-boot mounts the ESP first, so /boot
-// would hide it), anything below /boot/efi and the API filesystems. Every
+// would hide it), a separate /etc (write-fstab would write the fstab onto it,
+// and the boot reads the fstab of the root before it can mount /etc),
+// anything below /boot/efi, the API filesystems and a vfat data mountpoint
+// (seeding sets owners, modes and xattrs, which vfat cannot store). Every
 // other mountpoint is seeded and mounted.
-func validateSupportedLayoutMountpoint(mountpoint string, seen map[string]bool) error {
+func validateSupportedLayoutMountpoint(mountpoint, filesystem string, seen map[string]bool) error {
 	mountpoint = strings.TrimSpace(mountpoint)
 	if mountpoint == "" {
 		return nil
@@ -1516,13 +1525,15 @@ func validateSupportedLayoutMountpoint(mountpoint string, seen map[string]bool) 
 		return fmt.Errorf("partition layout mountpoint %q is defined more than once", mountpoint)
 	}
 	seen[clean] = true
-	for _, reserved := range []string{"/boot", "/proc", "/sys", "/dev", "/run"} {
-		if clean == reserved || (reserved != "/boot" && strings.HasPrefix(clean, reserved+"/")) {
-			return fmt.Errorf("partition layout mountpoint %q is not supported in non-A/B layout provisioning; /boot, /proc, /sys, /dev, /run and mountpoints below /boot/efi cannot be mounted during provisioning", mountpoint)
-		}
+	unsupported := clean == "/boot" || clean == "/etc" || strings.HasPrefix(clean, "/boot/efi/")
+	for _, api := range []string{"/proc", "/sys", "/dev", "/run"} {
+		unsupported = unsupported || clean == api || strings.HasPrefix(clean, api+"/")
 	}
-	if strings.HasPrefix(clean, "/boot/efi/") {
-		return fmt.Errorf("partition layout mountpoint %q is not supported in non-A/B layout provisioning; /boot, /proc, /sys, /dev, /run and mountpoints below /boot/efi cannot be mounted during provisioning", mountpoint)
+	if unsupported {
+		return fmt.Errorf("partition layout mountpoint %q is not supported in non-A/B layout provisioning; /boot, /etc, /proc, /sys, /dev, /run and mountpoints below /boot/efi cannot be mounted during provisioning", mountpoint)
+	}
+	if clean != "/" && clean != "/boot/efi" && strings.EqualFold(strings.TrimSpace(filesystem), "vfat") {
+		return fmt.Errorf("partition layout mountpoint %q: vfat is supported for /boot/efi only in non-A/B layout provisioning", mountpoint)
 	}
 	return nil
 }
@@ -2957,6 +2968,7 @@ func copyTreeWithSymlinks(ctx context.Context, srcBase, destRoot string, skip ..
 		if err := ensureWithinRoot(cleanDest, destPath); err != nil {
 			return fmt.Errorf("shared data seed path %s: %w", relPath, err)
 		}
+		watchdog.Progress() // one entry copied; a large tree takes long
 		dir, isDir, err := copySeedEntry(ctx, path, destPath, d)
 		if err != nil || !isDir {
 			return err
@@ -2978,6 +2990,7 @@ func copyTreeWithSymlinks(ctx context.Context, srcBase, destRoot string, skip ..
 // attributes come after them.
 func applySeededDirMetadata(dirs []seededDir) error {
 	for i := len(dirs) - 1; i >= 0; i-- {
+		watchdog.Progress()
 		if err := applyPathMetadata(dirs[i].meta); err != nil {
 			return err
 		}
@@ -3271,9 +3284,18 @@ func (o *Orchestrator) configureGRUB(ctx context.Context) error {
 	return o.config.ConfigureGRUB(ctx, o.cfg)
 }
 
+// installEFIFallbackLoader installs the removable loader on an ESP that
+// BOOTy created empty: the A/B layout (unless preserveExisting) and a
+// non-A/B PARTITION_LAYOUT, where only the image root is written. A plain
+// whole-disk image brings its own ESP.
+//
 //nolint:nestif // bootloader policy branches are deliberately kept adjacent to the install step.
 func (o *Orchestrator) installEFIFallbackLoader(ctx context.Context) error {
-	if o.isABImageMode() && !o.cfg.Provision.AB.PreserveExisting {
+	newESP := o.isABImageMode() && !o.cfg.Provision.AB.PreserveExisting
+	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
+		newESP = true
+	}
+	if newESP {
 		if strings.TrimSpace(o.bootPartition) == "" {
 			o.log.Info("skipping EFI fallback loader installation; no boot partition detected")
 		} else {

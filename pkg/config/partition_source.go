@@ -7,24 +7,27 @@ import (
 	"strings"
 )
 
-// validatePartitionLayoutSources checks PartitionLayoutURL and
-// PartitionLayoutImagePath and trims them.
+// validatePartitionLayoutSources trims PartitionLayoutURL and
+// PartitionLayoutImagePath and checks the one that BOOTy uses: PartitionLayout
+// overrides both and the URL overrides the image path, so an overridden
+// source is never read and not checked.
 func validatePartitionLayoutSources(disk *DiskConfig, img *ImageConfig) []string {
 	disk.PartitionLayoutURL = strings.TrimSpace(disk.PartitionLayoutURL)
 	disk.PartitionLayoutImagePath = strings.TrimSpace(disk.PartitionLayoutImagePath)
+	var err error
+	switch {
+	case disk.PartitionLayout != nil:
+		return nil
+	case disk.PartitionLayoutURL != "":
+		err = validatePartitionLayoutURL(disk.PartitionLayoutURL, BoolOr(img.AllowInsecureHTTP, false))
+	case disk.PartitionLayoutImagePath != "":
+		err = validatePartitionLayoutImagePath(disk.PartitionLayoutImagePath)
+	default:
+		return nil
+	}
 	var errs []string
-	if disk.PartitionLayoutURL != "" {
-		if err := validatePartitionLayoutURL(disk.PartitionLayoutURL, BoolOr(img.AllowInsecureHTTP, false)); err != nil {
-			errs = append(errs, err.Error())
-		}
-	}
-	if disk.PartitionLayoutImagePath != "" {
-		if err := validatePartitionLayoutImagePath(disk.PartitionLayoutImagePath); err != nil {
-			errs = append(errs, err.Error())
-		}
-	}
-	if disk.PartitionLayoutURL == "" && disk.PartitionLayoutImagePath == "" {
-		return errs
+	if err != nil {
+		errs = append(errs, err.Error())
 	}
 	switch mode := strings.ToLower(strings.TrimSpace(img.Mode)); mode {
 	case "", ImageModeWholeDisk:

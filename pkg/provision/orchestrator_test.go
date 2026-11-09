@@ -1494,6 +1494,27 @@ func TestInstallEFIFallbackLoaderSkipsPreserveExistingAB(t *testing.T) {
 	}
 }
 
+// A non-A/B PARTITION_LAYOUT formats a new, empty ESP and writes only the
+// image root, so the ESP needs the fallback loader like A/B.
+func TestInstallEFIFallbackLoaderRunsForNonABPartitionLayout(t *testing.T) {
+	oldMountPoint := isMountPoint
+	isMountPoint = func(path string) bool { return path == bootEFIMountPoint() }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.installEFIFallbackLoader(context.Background()); err != nil {
+		t.Fatalf("installEFIFallbackLoader non-A/B layout: %v", err)
+	}
+	if !hasCommandName(cmd.calls, "chroot") {
+		t.Fatal("fallback installer did not run for a non-A/B partition layout")
+	}
+}
+
 func TestInstallEFIFallbackLoaderRequiresMountedESP(t *testing.T) {
 	oldMountPoint := isMountPoint
 	isMountPoint = func(string) bool { return false }

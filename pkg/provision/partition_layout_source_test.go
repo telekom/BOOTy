@@ -159,8 +159,10 @@ func TestValidateSupportedLayoutMountpoint(t *testing.T) {
 		{"/dev", true},
 		{"/sys/fs", true},
 		{"/srv", false},
+		{"/etc", true},
+		{"/etc/ssl", false},
 	} {
-		err := validateSupportedLayoutMountpoint(tc.mountpoint, map[string]bool{})
+		err := validateSupportedLayoutMountpoint(tc.mountpoint, "ext4", map[string]bool{})
 		if (err != nil) != tc.wantErr {
 			t.Errorf("validateSupportedLayoutMountpoint(%q) = %v, wantErr %v", tc.mountpoint, err, tc.wantErr)
 		}
@@ -456,12 +458,21 @@ func TestLoadImagePartitionLayoutRejectsBadImageLayouts(t *testing.T) {
 	}
 }
 
+func TestValidateSupportedLayoutMountpointVFATOnlyForESP(t *testing.T) {
+	if err := validateSupportedLayoutMountpoint("/boot/efi", "vfat", map[string]bool{}); err != nil {
+		t.Fatalf("vfat /boot/efi: %v", err)
+	}
+	if err := validateSupportedLayoutMountpoint("/boot/firmware", "VFAT", map[string]bool{}); err == nil {
+		t.Fatal("vfat data mountpoint /boot/firmware accepted")
+	}
+}
+
 func TestValidateSupportedLayoutMountpointRejectsDuplicates(t *testing.T) {
 	seen := map[string]bool{}
-	if err := validateSupportedLayoutMountpoint("/var", seen); err != nil {
+	if err := validateSupportedLayoutMountpoint("/var", "ext4", seen); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateSupportedLayoutMountpoint("/var", seen); err == nil {
+	if err := validateSupportedLayoutMountpoint("/var", "ext4", seen); err == nil {
 		t.Fatal("duplicate /var accepted")
 	}
 }
@@ -472,10 +483,14 @@ func TestResumeRepeatsWholeDiskWriteBeforeImageLayout(t *testing.T) {
 		name      string
 		loaded    bool
 		layout    bool
+		inMemory  bool
 		wantSteps string
 	}{
 		{name: "interrupted load forgets the write", wantSteps: "wipe-disks,parse-partitions"},
 		{name: "completed load keeps the steps", loaded: true, layout: true, wantSteps: strings.Join(steps, ",")},
+		// RESCUE_MODE=retry runs Provision again on the same orchestrator:
+		// the layout of the failed run must not stand in for the checkpoint.
+		{name: "retry after a failed load forgets the write", inMemory: true, wantSteps: "wipe-disks,parse-partitions"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cp := &Checkpoint{CompletedSteps: append([]string(nil), steps...)}
@@ -488,7 +503,15 @@ func TestResumeRepeatsWholeDiskWriteBeforeImageLayout(t *testing.T) {
 			cfg := &config.MachineConfig{}
 			cfg.Provision.Disk.PartitionLayoutImagePath = "/usr/share/vendor/layout/*.json"
 			o := newTestOrchestrator(t, cfg, &mockProvider{})
+			if tc.inMemory {
+				if err := o.useSourcePartitionLayout([]byte(cisLikeLayoutJSON), "PARTITION_LAYOUT_IMAGE_PATH"); err != nil {
+					t.Fatal(err)
+				}
+			}
 			o.restoreCheckpointDerivedState(cp)
+			if tc.inMemory && (cfg.Provision.Disk.PartitionLayout != nil || o.sourcePartitionLayout != nil) {
+				t.Fatal("the layout of the failed run was kept")
+			}
 			got := strings.Join(slices.DeleteFunc(cp.CompletedSteps, func(s string) bool { return s == "load-image-partition-layout" }), ",")
 			if got != tc.wantSteps {
 				t.Fatalf("completed steps = %s, want %s", got, tc.wantSteps)

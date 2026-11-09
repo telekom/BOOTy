@@ -47,7 +47,10 @@ var DefaultStepBudgets = map[string]time.Duration{
 	"apply-partition-layout": time.Hour,
 	// Writes the image a second time into the layout from the image.
 	"load-image-partition-layout": time.Hour,
-	"grow-partition":              time.Hour,
+	// Seeds the data partitions; each copied entry reports progress, the
+	// budget covers one large file.
+	"mount-shared-data": time.Hour,
+	"grow-partition":    time.Hour,
 	// Image writes with dd (A/B modes), mirroring, file system checks and
 	// operator commands.
 	"stream-image":            time.Hour,

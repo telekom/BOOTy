@@ -183,6 +183,13 @@ func TestLayeredLayoutPartitionLayoutVM(t *testing.T) {
 	assertLayeredEntries(t, root, "", false, layeredCheck{})
 	cleanupRoot()
 
+	// The layout formats a new ESP; BOOTy puts the fallback loader on it.
+	esp, cleanupESP := mountQcow2Partition(t, targetDisk, 1)
+	if loader, err := os.ReadFile(filepath.Join(esp, "EFI", "BOOT", "BOOTX64.EFI")); err != nil || string(loader) != testEFIFallbackPayload {
+		t.Errorf("ESP fallback loader = %q (%v), want the test payload", loader, err)
+	}
+	cleanupESP()
+
 	for _, m := range layeredLayoutMounts {
 		prefix := strings.TrimPrefix(m.mountpoint, "/") + "/"
 		var nested []string

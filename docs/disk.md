@@ -507,8 +507,10 @@ Layout rules (`config.ParsePartitionLayout`):
 Runtime rules for layouts outside A/B mode:
 
 - `IMAGE_MODE` must be `whole-disk` or empty.
-- A logical volume cannot use `/boot/efi`. `/boot`, `/proc`, `/sys`, `/dev`,
-  `/run` and mountpoints below `/boot/efi` are not supported.
+- A logical volume cannot use `/boot/efi`. `/boot`, `/etc`, `/proc`, `/sys`,
+  `/dev`, `/run` and mountpoints below `/boot/efi` are not supported. A
+  separate `/etc` would hold the new fstab, which the boot cannot read before
+  it mounts `/etc`. `vfat` is supported for `/boot/efi` only.
 - Mountpoints must be clean paths (`/var`, not `/var/`) and unique.
 
 `IMAGE_SOURCE_ROOT_LABEL` or `IMAGE_SOURCE_ROOT_PARTITION` selects the source
@@ -523,6 +525,12 @@ options are `defaults`, and `umask=0077` for `/boot/efi`. `mountOptions`
 replaces the default, for example `nodev,nosuid,noexec`. BOOTy writes the
 entries in layout order, partitions first; systemd orders nested mounts
 itself.
+
+BOOTy writes only the image root into the layout; the ESP of the image is
+not copied. `install-efi-fallback` puts BOOTy's removable fallback loader
+(`EFI/BOOT/BOOTX64.EFI` or `BOOTAA64.EFI`, with a `grub.cfg` that loads the
+GRUB configuration of the root) on the new ESP, as in A/B mode, and
+`create-efi-boot-entry` points the firmware at it.
 
 ### Data Mountpoints
 
