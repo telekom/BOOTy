@@ -134,12 +134,12 @@ refresh is merged.
 | 9251 | IGMP/MLD proxy | 1 | 0 | 1 | 0 | 1 | 0 |
 | 7348 | VXLAN | 6 | 0 | 1 | 0 | 0 | 0 |
 | 802.1AB | LLDP | 17 | 1 | 2 | 0 | 0 | 0 |
-| 4861 | IPv6 ND (RAs) | 11 | 4 | 1 | 0 | 0 | 0 |
+| 4861 | IPv6 ND (RAs) | 12 | 3 | 1 | 0 | 0 | 0 |
 | 4862 | IPv6 SLAAC | 2 | 0 | 0 | 0 | 0 | 0 |
 | 2131 | DHCPv4 client | 13 | 3 | 0 | 0 | 0 | 0 |
 | 2132 / 3397 / 3442 / 4039 / 4361 | DHCPv4 options | 6 | 1 | 0 | 0 | 0 | 0 |
 | 8415 | DHCPv6 | 8 | 5 | 0 | 0 | 0 | 0 |
-| **Total** | | **208** | **24** | **57** | **2** | **89** | **3** |
+| **Total** | | **209** | **23** | **57** | **2** | **89** | **3** |
 
 Kernel- and library-owned rows count as COMPLIANT or DEVIATION; the owner
 column names them. The second refresh (`5ac79521`) counted 209
@@ -169,14 +169,13 @@ COMPLIANT, 47 DEVIATION, 67 N/A, 4 NOT IMPLEMENTED, 68 GOBGP: COMPLIANT and
 | 12 | RFC7432-MOBILITY-GOBGP | 7432 §15 | GoBGP | Very low: GoBGP withdraws its local Type-2 route on a remote higher sequence only when the ESIs differ. BOOTy's MAC is its own bridge MAC and does not move. | Open. |
 | 13 | RFC8654-RX | 8654 §4 | GoBGP | Very low: GoBGP accepts UPDATEs above 4096 octets only from a peer that advertised the extended message capability, although it advertises the capability itself. BOOTy's and the fabric's routes are far smaller. | Open (GoBGP). |
 | 14 | RFC8415-DECLINE | 8415 §18.2.8 | BOOTy | Very low: a failed DAD sends no DECLINE (8415-8). | Open: DECLINE on a DAD failure. |
-| 15 | RFC4861-RA-OPTLEN | 4861 §4.6, §6.1.2 | BOOTy | Very low: in DHCP mode an RA with a zero-length option, which the kernel drops, still starts DHCPv6 (4861-15). | Open: check the option lengths in `validRA`, like `validRS`. |
-| 16 | RFC8415-ZERO-LIFETIME | 8415 §18.2.10.1 | BOOTy | Very low: an address that a REPLY to RENEW or REBIND gives valid lifetime 0 stays until its old valid lifetime ends (8415-10). | Open: expire the lease at once. |
-| 17 | RFC8415-SOL-MAX-RT | 8415 §18.2.9, §21.24 | BOOTy | Very low: a SOL_MAX_RT option of the server is requested but not applied, so SOLICIT keeps the default maximum of 3600 s (8415-11). | Open: decode option 82 and use it as the SOLICIT MRT. |
-| 18 | RFC8415-INF-OPTIONS | 8415 §18.2.6, §21.25 | BOOTy | Very low: the INFORMATION-REQUEST does not ask for options 32 and 83, and INF_MAX_RT is not applied (8415-12). | Open: request 32 and 83, use INF_MAX_RT. |
-| 19 | RFC2131-EXPIRE-SELECTING | 2131 §4.4.5 | BOOTy | Very low: an expired lease kept after a failed INIT-REBOOT can stay up to about a minute while SELECTING (2131-16). | Open: bound SELECTING by the lease expiry. |
-| 20 | RFC8415-SOL-DELAY | 8415 §18.2.1 | BOOTy | Very low: no random delay before the first SOLICIT, so hosts started by the same RA can send together (8415-13). | Open: a random delay of up to 1 s. |
-| 21 | RFC2132-OVERLOAD | 2132 §9.3 | BOOTy | Very low: an OFFER or ACK with option overload (52) is dropped instead of read (2132-3). | Open: read the options of `file` and `sname`. |
-| 22 | LLDP-TTL | 802.1AB | BOOTy | Very low: TTL 120 instead of txTTL = 4 x 30 + 1 = 121; matches systemd-networkd. | Kept for networkd parity. |
+| 15 | RFC8415-ZERO-LIFETIME | 8415 §18.2.10.1 | BOOTy | Very low: an address that a REPLY to RENEW or REBIND gives valid lifetime 0 stays until its old valid lifetime ends (8415-10). | Open: expire the lease at once. |
+| 16 | RFC8415-SOL-MAX-RT | 8415 §18.2.9, §21.24 | BOOTy | Very low: a SOL_MAX_RT option of the server is requested but not applied, so SOLICIT keeps the default maximum of 3600 s (8415-11). | Open: decode option 82 and use it as the SOLICIT MRT. |
+| 17 | RFC8415-INF-OPTIONS | 8415 §18.2.6, §21.25 | BOOTy | Very low: the INFORMATION-REQUEST does not ask for options 32 and 83, and INF_MAX_RT is not applied (8415-12). | Open: request 32 and 83, use INF_MAX_RT. |
+| 18 | RFC2131-EXPIRE-SELECTING | 2131 §4.4.5 | BOOTy | Very low: an expired lease kept after a failed INIT-REBOOT can stay up to about a minute while SELECTING (2131-16). | Open: bound SELECTING by the lease expiry. |
+| 19 | RFC8415-SOL-DELAY | 8415 §18.2.1 | BOOTy | Very low: no random delay before the first SOLICIT, so hosts started by the same RA can send together (8415-13). | Open: a random delay of up to 1 s. |
+| 20 | RFC2132-OVERLOAD | 2132 §9.3 | BOOTy | Very low: an OFFER or ACK with option overload (52) is dropped instead of read (2132-3). | Open: read the options of `file` and `sname`. |
+| 21 | LLDP-TTL | 802.1AB | BOOTy | Very low: TTL 120 instead of txTTL = 4 x 30 + 1 = 121; matches systemd-networkd. | Kept for networkd parity. |
 
 The rows without authentication (5880-39, 5881-15, 5883-4) are not
 ranked: the legacy FRR profile has none either.
@@ -209,6 +208,7 @@ ranked: the legacy FRR profile has none either.
 | RFC2131-RENEW, RFC2131-BACKOFF | 2131 §4.3.2, §4.4.5, §4.1 | [#790] | see 2131-3, 2131-9 |
 | RFC2131-RELEASE-SID, RFC2132-MAXSIZE | 2131 Table 5, 2132 §9.10 | [#908] | `TestRebootAndRelease`, `TestMaxMessageSize` |
 | RFC8415-RELEASE | 8415 §18.2.7 | [#892] | `TestDHCPv6DropsAddressBeforeRelease` |
+| RFC4861-RA-OPTLEN | 4861 §4.6, §6.1.2 | [#915] | `TestValidRA` |
 
 ## BGP
 
@@ -745,7 +745,7 @@ also reads the RAs of every DHCP NIC to start DHCPv6 ([#795]).
 | 4861-12 | 6.3 | Host processing of received RAs | Kernel | COMPLIANT | `accept_ra` 2 and `accept_ra_defrtr` 1 (`gobgp/helpers.go:47`), netplan `accept-ra: false` per NIC (`underlay.go:1279`) | reading |
 | 4861-13 | 8 | Redirects | Kernel | N/A | | reading |
 | 4861-14 | 4.2 | Router flag of Neighbor Advertisements consistent with the RAs | Kernel | COMPLIANT | the kernel sets the R flag from forwarding; with forwarding off it is 0 (`helpers.go:20` comment), which matches 4861-7 for a host | reading |
-| 4861-15 | 4.6, 6.1.2 | Host: a received RA MUST be silently discarded unless it has hop limit 255, a link-local source, a valid checksum, code 0, at least 16 octets and only options with a length greater than zero | BOOTy | DEVIATION | RFC4861-RA-OPTLEN: [#795] reads the M and O flags of RAs in DHCP mode to start DHCPv6, like networkd, and checks hop limit 255, the link-local source, code 0 and at least 16 octets first (`dhcp6_mode.go:144` `validRA`, used at `:134`; the kernel checks the checksum); `TestValidRA`. It does not walk the options: an RA with a zero-length option, which the kernel drops, still starts DHCPv6. Impact very low. Fix: check the option lengths like `validRS` (`gobgp/ra.go:231`) | test |
+| 4861-15 | 4.6, 6.1.2 | Host: a received RA MUST be silently discarded unless it has hop limit 255, a link-local source, a valid checksum, code 0, at least 16 octets and only options with a length greater than zero | BOOTy | COMPLIANT | RFC4861-RA-OPTLEN at the third refresh: [#795] reads the M and O flags of RAs in DHCP mode to start DHCPv6, like networkd, but did not walk the options, so an RA with a zero-length option, which the kernel drops, still started DHCPv6. Since [#915] `validRA` (`dhcp6_mode.go:145`, used at `:134`) checks hop limit 255, the link-local source, code 0, at least 16 octets and the option lengths like `validRS` (`gobgp/ra.go:231`); the kernel checks the checksum. `TestValidRA` | test |
 | 4861-16 | 6.3.7 | Host: up to MAX_RTR_SOLICITATIONS (3) Router Solicitations RTR_SOLICITATION_INTERVAL (4 s) apart; the first after a random delay of up to MAX_RTR_SOLICITATION_DELAY (1 s, SHOULD) | BOOTy | COMPLIANT | [#795] sends three solicitations 4 s apart with the source link-layer address when the carrier of a DHCP NIC returns (`dhcp6_mode.go:313` `solicitRA`, `:58`, `sendRS` `:85`; started at `dhcp.go:395`), the first after a random 0.5 to 1 s, like sd-ndisc (`dhcp6_mode.go:63`); the DEVIATION of the PR (no random delay) is gone. `TestDHCPv6FollowsRAAndCarrier` | test |
 
 ### RFC 4862: IPv6 stateless address autoconfiguration
@@ -934,3 +934,4 @@ parity (the row says which).
 [#884]: https://github.com/telekom/BOOTy/pull/884
 [#892]: https://github.com/telekom/BOOTy/pull/892
 [#908]: https://github.com/telekom/BOOTy/pull/908
+[#915]: https://github.com/telekom/BOOTy/pull/915
