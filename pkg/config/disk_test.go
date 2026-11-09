@@ -71,3 +71,14 @@ func TestValidateRAIDMinimumDeviceCount(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateSkipUnchangedTrimsWipeDepth: the cross-field check accepts the
+// same spellings as the wipeDepth enum check.
+func TestValidateSkipUnchangedTrimsWipeDepth(t *testing.T) {
+	var c Config
+	c.Provision.Image.SkipUnchanged = true
+	c.Provision.Disk.WipeDepth = " quick "
+	if msg := c.validateSkipUnchanged(); msg != "" {
+		t.Fatalf("validateSkipUnchanged() = %q, want no error", msg)
+	}
+}
