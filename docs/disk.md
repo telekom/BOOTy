@@ -513,8 +513,8 @@ Runtime rules for layouts outside A/B mode:
   which the boot cannot read before it mounts `/etc`. The EFI fallback loader
   reads `/boot/grub` and its marker in `/etc/booty` from the root
   filesystem. `vfat` is supported for `/boot/efi` only.
-- Mountpoints must be clean paths (`/var`, not `/var/`) without white space
-  or backslashes, and unique.
+- Mountpoints must be clean paths (`/var`, not `/var/`) without white space,
+  control characters or backslashes, and unique.
 
 `IMAGE_SOURCE_ROOT_LABEL` or `IMAGE_SOURCE_ROOT_PARTITION` selects the source
 image partition to copy. They are mutually exclusive. Without them, BOOTy uses

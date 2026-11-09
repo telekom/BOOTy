@@ -168,6 +168,12 @@ func TestValidateSupportedLayoutMountpoint(t *testing.T) {
 		{"/boot/firmware", true},
 		{`/srv/cache\040files`, true},
 		{"/srv/cache files", true},
+		{"/srv/cache\tfiles", true},
+		{"/srv/cache\nfiles", true},
+		{"/srv/cache\u00a0files", true},
+		{"/srv/cache\x7ffiles", true},
+		{"/srv/cache\x01files", true},
+		{"/srv/cache-files", false},
 	} {
 		err := validateSupportedLayoutMountpoint(tc.mountpoint, "ext4", map[string]bool{})
 		if (err != nil) != tc.wantErr {
@@ -251,17 +257,108 @@ func TestCopyXattrsDropsACLMissingInSource(t *testing.T) {
 	src, dst := filepath.Join(dir, "src"), filepath.Join(dir, "dst")
 	writeFile(t, src, "src")
 	writeFile(t, dst, "dst")
-	if err := unix.Lsetxattr(dst, "system.posix_acl_access", testPosixACL(1000), 0); err != nil {
-		if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EPERM) {
-			t.Skipf("set ACL on the test filesystem: %v", err)
-		}
-		t.Fatal(err)
-	}
+	setTestACL(t, dst, "system.posix_acl_access", testPosixACL(1000))
 	if err := copyXattrs(src, dst); err != nil {
 		t.Fatalf("copyXattrs: %v", err)
 	}
-	if _, err := getXattr(dst, "system.posix_acl_access"); !errors.Is(err, unix.ENODATA) {
-		t.Fatalf("inherited ACL kept: %v", err)
+	wantNoACL(t, dst, "system.posix_acl_access")
+}
+
+func TestCopyXattrsDropsDefaultACLMissingInSource(t *testing.T) {
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "src"), filepath.Join(dir, "dst")
+	mustMkdir(t, src, 0o755)
+	mustMkdir(t, dst, 0o755)
+	setTestACL(t, dst, "system.posix_acl_default", testPosixACL(1000))
+	if err := copyXattrs(src, dst); err != nil {
+		t.Fatalf("copyXattrs: %v", err)
+	}
+	wantNoACL(t, dst, "system.posix_acl_default")
+}
+
+// The ACLs of the source replace those of the destination.
+func TestCopyXattrsCopiesSourceACL(t *testing.T) {
+	dir := t.TempDir()
+	srcDir, dstDir := filepath.Join(dir, "srcdir"), filepath.Join(dir, "dstdir")
+	srcFile, dstFile := filepath.Join(dir, "srcfile"), filepath.Join(dir, "dstfile")
+	mustMkdir(t, srcDir, 0o755)
+	mustMkdir(t, dstDir, 0o755)
+	writeFile(t, srcFile, "src")
+	writeFile(t, dstFile, "dst")
+	setTestACL(t, srcDir, "system.posix_acl_access", testPosixACL(1000))
+	setTestACL(t, srcDir, "system.posix_acl_default", testPosixACL(1001))
+	setTestACL(t, dstDir, "system.posix_acl_default", testPosixACL(1002))
+	setTestACL(t, srcFile, "system.posix_acl_access", testPosixACL(1000))
+	for _, c := range []struct{ src, dst string }{{srcDir, dstDir}, {srcFile, dstFile}} {
+		if err := copyXattrs(c.src, c.dst); err != nil {
+			t.Fatalf("copyXattrs %s: %v", c.src, err)
+		}
+	}
+	for _, x := range []struct {
+		path, name string
+		value      []byte
+	}{
+		{dstDir, "system.posix_acl_access", testPosixACL(1000)},
+		{dstDir, "system.posix_acl_default", testPosixACL(1001)},
+		{dstFile, "system.posix_acl_access", testPosixACL(1000)},
+	} {
+		if got, err := getXattr(x.path, x.name); err != nil || !bytes.Equal(got, x.value) {
+			t.Errorf("%s %s = %x (%v), want %x", x.path, x.name, got, err, x.value)
+		}
+	}
+}
+
+// A directory at the destination of a source symlink is kept with its own
+// ACLs: the xattrs of the symlink do not apply to it.
+func TestCopyTreeWithSymlinksKeepsDirectoryACLForSourceSymlink(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	if err := os.Symlink("elsewhere", filepath.Join(src, "m")); err != nil {
+		t.Fatal(err)
+	}
+	mustMkdir(t, filepath.Join(dst, "m"), 0o755)
+	setTestACL(t, filepath.Join(dst, "m"), "system.posix_acl_default", testPosixACL(1000))
+	if err := copyTreeWithSymlinks(context.Background(), src, dst); err != nil {
+		t.Fatalf("copyTreeWithSymlinks: %v", err)
+	}
+	if got, err := getXattr(filepath.Join(dst, "m"), "system.posix_acl_default"); err != nil || !bytes.Equal(got, testPosixACL(1000)) {
+		t.Fatalf("default ACL of the kept directory = %x (%v)", got, err)
+	}
+}
+
+// A retried seed after an interrupted one: the destination root still has
+// the default ACL of the source root that the first run copied, but the
+// source no longer has it. Nothing created on the retry keeps the
+// inherited ACLs.
+func TestCopyTreeWithSymlinksDropsStaleDefaultACLOnRetry(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	mustMkdir(t, filepath.Join(src, "lib"), 0o755)
+	writeFile(t, filepath.Join(src, "lib", "state"), "state")
+	writeFile(t, filepath.Join(src, "top"), "top")
+	setTestACL(t, dst, "system.posix_acl_default", testPosixACL(1000))
+	if err := copyTreeWithSymlinks(context.Background(), src, dst); err != nil {
+		t.Fatalf("copyTreeWithSymlinks: %v", err)
+	}
+	wantNoACL(t, dst, "system.posix_acl_default")
+	for _, rel := range []string{"lib", "lib/state", "top"} {
+		wantNoACL(t, filepath.Join(dst, rel), "system.posix_acl_access")
+	}
+	wantNoACL(t, filepath.Join(dst, "lib"), "system.posix_acl_default")
+}
+
+func setTestACL(t *testing.T, path, name string, value []byte) {
+	t.Helper()
+	if err := unix.Lsetxattr(path, name, value, 0); err != nil {
+		if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EPERM) {
+			t.Skipf("set %s on the test filesystem: %v", name, err)
+		}
+		t.Fatalf("set %s on %s: %v", name, path, err)
+	}
+}
+
+func wantNoACL(t *testing.T, path, name string) {
+	t.Helper()
+	if got, err := getXattr(path, name); !errors.Is(err, unix.ENODATA) {
+		t.Errorf("%s %s = %x (%v), want none", path, name, got, err)
 	}
 }
 

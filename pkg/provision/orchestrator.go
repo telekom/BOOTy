@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	ociname "github.com/google/go-containerregistry/pkg/name"
 
@@ -1526,9 +1527,10 @@ func validateSupportedLayoutMountpoint(mountpoint, filesystem string, seen map[s
 		return nil
 	}
 	// fstab decodes \040 and friends and splits on white space, so such a
-	// mountpoint would mount somewhere else after the reboot.
-	if strings.ContainsAny(mountpoint, "\\ \t\n") {
-		return fmt.Errorf("partition layout mountpoint %q must not contain white space or a backslash", mountpoint)
+	// mountpoint would mount somewhere else after the reboot. Control
+	// characters have no place in a path either.
+	if strings.ContainsFunc(mountpoint, func(r rune) bool { return r == '\\' || unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return fmt.Errorf("partition layout mountpoint %q must not contain white space, control characters or a backslash", mountpoint)
 	}
 	clean := filepath.Clean(mountpoint)
 	if clean != mountpoint {
@@ -3046,9 +3048,20 @@ func copySeedEntry(ctx context.Context, src, dst string, d os.DirEntry) (seededD
 	if err := copyTreeEntry(ctx, src, dst, d); err != nil {
 		return seededDir{}, false, err
 	}
+	if d.Type().IsRegular() {
+		return seededDir{}, false, copyXattrs(src, dst)
+	}
 	// A symlink keeps its own xattrs too (security labels); copyXattrs does
-	// not follow links.
-	if d.Type().IsRegular() || d.Type()&os.ModeSymlink != 0 {
+	// not follow links. copySymlink keeps a directory that is already at dst,
+	// and that directory keeps its own xattrs.
+	if d.Type()&os.ModeSymlink != 0 {
+		info, err := os.Lstat(dst)
+		if err != nil {
+			return seededDir{}, false, fmt.Errorf("stat %s: %w", dst, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return seededDir{}, false, nil
+		}
 		return seededDir{}, false, copyXattrs(src, dst)
 	}
 	if !d.IsDir() {

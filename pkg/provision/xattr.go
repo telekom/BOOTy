@@ -28,8 +28,10 @@ func copyXattrs(src, dst string) error {
 		if slices.Contains(names, acl) {
 			continue
 		}
+		// ENOTSUP: the filesystem has no ACLs. EPERM is a real failure for
+		// root (immutable file, unmapped id) and is returned.
 		err := unix.Lremovexattr(dst, acl)
-		if err != nil && !errors.Is(err, unix.ENODATA) && !errors.Is(err, unix.ENOTSUP) && !errors.Is(err, unix.EPERM) {
+		if err != nil && !errors.Is(err, unix.ENODATA) && !errors.Is(err, unix.ENOTSUP) {
 			return fmt.Errorf("remove xattr %s from %s: %w", acl, dst, err)
 		}
 	}
