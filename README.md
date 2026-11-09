@@ -1036,9 +1036,17 @@ docker buildx build --platform linux/amd64 \
 echo "$(cut -d' ' -f1 default-amd64-initramfs.cpio.zst.sha256)  out/initramfs.cpio.zst" | sha256sum -c
 ```
 
-The Debian packages come from the live mirrors, so a rebuild matches only
-while the mirrors still serve the package versions of the release.
-`hack/check-reproducible.sh <platform> <target>...` runs the CI check locally.
+The Debian and Alpine packages come from the live mirrors, so a rebuild
+matches only while the mirrors still serve the package versions of the
+release. The CI check can fail for the same reason when a mirror publishes a
+new version between its two rounds; it then lists the package versions that
+differ (`--target package-versions`).
+
+`hack/check-reproducible.sh <platform> <target>...` runs the CI check locally
+on a clean checkout. Its second round builds a fresh clone of `HEAD` in
+another directory with `umask 002` and `TZ=Asia/Kolkata`, so the result may
+not depend on the checkout path, its file modes or the time zone, and each
+target gets the `BOOTY_FLAVOR` of the release.
 
 #### Ramdisk SBOMs
 

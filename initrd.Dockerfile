@@ -71,11 +71,7 @@ RUN printf '{"name":"util-linux","version":"%s","purl":"pkg:github/util-linux/ut
       "${UTIL_LINUX_REF}" "${UTIL_LINUX_REF}" "$(sha256sum sfdisk.static | cut -d' ' -f1)" > /sbom-source.json
 
 # Build BOOTy as an init
-FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS dev
-ARG BOOTY_VERSION=dev
-ARG BOOTY_BUILD=unknown
-ARG BOOTY_COMMIT_TIME=
-ARG BOOTY_FLAVOR=full
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS dev-packages
 RUN set -eu; \
     n=0; \
     until apk add --no-cache git ca-certificates gcc linux-headers musl-dev; do \
@@ -83,6 +79,9 @@ RUN set -eu; \
       if [ "$n" -ge 5 ]; then echo "apk add failed after $n attempts" >&2; exit 1; fi; \
       sleep 10; \
     done
+# The packages on their own stage, so package-versions can export their
+# database without the flavor-dependent layers below.
+FROM dev-packages AS dev
 COPY go.mod go.sum /go/src/github.com/telekom/BOOTy/
 WORKDIR /go/src/github.com/telekom/BOOTy
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
@@ -94,6 +93,12 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
       sleep 10; \
     done
 COPY . /go/src/github.com/telekom/BOOTy/
+# Declared after the package and module downloads: a build argument changes
+# the cache key of every later RUN, and the flavors share these layers.
+ARG BOOTY_VERSION=dev
+ARG BOOTY_BUILD=unknown
+ARG BOOTY_COMMIT_TIME=
+ARG BOOTY_FLAVOR=full
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
     CGO_ENABLED=1 GOOS=linux go build -a -trimpath -tags grpcnotrace -ldflags "-linkmode external -extldflags '-static' -s -w \
@@ -577,9 +582,12 @@ FROM scratch AS iso
 COPY --from=iso-builder /booty.iso .
 
 # ── Slim target: BOOTy + busybox shell + minimal tools, no FRR/LVM ────────
-FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS slim-builder
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS slim-builder-packages
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends cpio zstd ca-certificates cloud-guest-utils \
     && rm -rf /var/lib/apt/lists/*
+# The packages on their own stage, so package-versions can export their
+# database without the flavor-dependent layers below.
+FROM slim-builder-packages AS slim-builder
 WORKDIR /build/initramfs
 RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/console c 5 1 && \
@@ -662,9 +670,12 @@ FROM scratch AS slim
 COPY --from=slim-builder /initramfs.cpio.zst .
 
 # ── GoBGP target: like default but without FRR (GoBGP is in-process Go) ───
-FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS gobgp-builder
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS gobgp-builder-packages
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends cpio zstd \
     && rm -rf /var/lib/apt/lists/*
+# The packages on their own stage, so package-versions can export their
+# database without the flavor-dependent layers below.
+FROM gobgp-builder-packages AS gobgp-builder
 WORKDIR /build/initramfs
 RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/console c 5 1 && \
@@ -794,8 +805,9 @@ COPY --from=gobgp-iso-builder /booty-gobgp.iso .
 # other ISOs: BIOS (ISOLINUX) and UEFI with Secure Boot (Debian shim, GRUB
 # and kernel).
 FROM gobgp-builder AS check-iso-vars
-COPY hack/check-iso/vars /deploy-root/deploy/vars
-RUN cd /deploy-root && find . | cpio -o -H newc > /deploy.cpio
+ARG SOURCE_DATE_EPOCH=315532800
+COPY --chmod=0644 hack/check-iso/vars /deploy-root/deploy/vars
+RUN pack-initramfs.sh /deploy-root /deploy.cpio
 
 FROM iso-tools AS check-iso-builder
 ARG ISO_VOLID=BOOTY
@@ -837,9 +849,12 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
       -X github.com/telekom/BOOTy/pkg/buildinfo.commitTime=${BOOTY_COMMIT_TIME} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.flavor=${BOOTY_FLAVOR}" -o init
 
-FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS micro-builder
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS micro-builder-packages
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends cpio ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+# The packages on their own stage, so package-versions can export their
+# database without the flavor-dependent layers below.
+FROM micro-builder-packages AS micro-builder
 WORKDIR /build/initramfs
 RUN mkdir -p bin sbin dev proc run sys tmp etc && \
     mknod -m 600 dev/console c 5 1 && \
@@ -862,6 +877,27 @@ RUN pack-initramfs.sh . /initramfs.cpio.gz
 
 FROM scratch AS micro
 COPY --from=micro-builder /initramfs.cpio.gz .
+
+# ── Package versions (optional, --target=package-versions) ───────────────
+# The Debian and Alpine package databases of every stage that installs
+# packages for a ramdisk or for the tools that build and pack it.
+# hack/check-reproducible.sh lists the versions of both rounds when they
+# differ, so a mirror that served another version in between shows up.
+# Nothing here goes into a ramdisk. After the stages it copies from: a
+# stage name defined later would be taken for an image name.
+FROM scratch AS package-versions
+COPY --from=dev-packages /lib/apk/db/installed apk/dev
+COPY --from=lvm /var/lib/dpkg/status dpkg/lvm
+COPY --from=sfdisk /var/lib/dpkg/status dpkg/sfdisk
+COPY --from=efi-fallback /var/lib/dpkg/status dpkg/efi-fallback
+COPY --from=frr /var/lib/dpkg/status dpkg/frr
+COPY --from=kernel /var/lib/dpkg/status dpkg/kernel
+COPY --from=kernel /sbom-dpkg/status dpkg/kernel-packages
+COPY --from=tools /var/lib/dpkg/status dpkg/tools
+COPY --from=busybox-packages /var/lib/dpkg/status dpkg/busybox
+COPY --from=slim-builder-packages /var/lib/dpkg/status dpkg/slim-builder
+COPY --from=gobgp-builder-packages /var/lib/dpkg/status dpkg/gobgp-builder
+COPY --from=micro-builder-packages /var/lib/dpkg/status dpkg/micro-builder
 
 # Kernel that matches the shipped modules (--target kernel-image), for
 # booting a flavor initramfs in QEMU.
