@@ -440,8 +440,9 @@ func (d *DHCPMode) clientFor(iface *net.Interface, link netlink.Link, hostname s
 
 // newDHCPClient builds the client of one NIC (package dhcp4), which sends
 // the options of networkd in its order: client identifier (61), parameter
-// request list (55), maximum message size (57, the MTU less 28) and host
-// name (12) when one is set, and follows networkd's states and backoff.
+// request list (55), maximum message size (57, the MTU less 28, when at
+// least 576) and host name (12) when one is set, and follows networkd's
+// states and backoff.
 func newDHCPClient(iface *net.Interface, hostname string, clientID []byte, onBound, onExpire dhcp4.Callback) *dhcp4.Client {
 	return &dhcp4.Client{
 		Iface:    iface,

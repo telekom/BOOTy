@@ -429,8 +429,9 @@ func TestRebootAndRelease(t *testing.T) {
 	}
 	rel := msgs[2]
 	if rel.m.typ != dhcpv4.MessageTypeRelease || rel.kind != "unicast" || !rel.dst.Equal(testServer) || !rel.m.ciaddr.Equal(testAddr) ||
-		!slices.Equal(optionTypes(rel.m), []int{53, 61}) {
-		t.Errorf("RELEASE = %v %s to %s ciaddr %s", rel.m.typ, rel.kind, rel.dst, rel.m.ciaddr)
+		!slices.Equal(optionTypes(rel.m), []int{53, 54, 61}) || !net.IP(option(rel.m, dhcpv4.OptionServerIdentifier)).Equal(testServer) {
+		t.Errorf("RELEASE = %v %s to %s ciaddr %s options %v server identifier %v", rel.m.typ, rel.kind, rel.dst, rel.m.ciaddr,
+			optionTypes(rel.m), net.IP(option(rel.m, dhcpv4.OptionServerIdentifier)))
 	}
 }
 
@@ -874,5 +875,24 @@ func TestStaleRebootTokenNoInitReboot(t *testing.T) {
 	defer f.mu.Unlock()
 	if len(f.waits) <= waits {
 		t.Fatal("the bound client does not wait again after the stale token")
+	}
+}
+
+// TestMaxMessageSize: option 57 is the MTU less 28 and absent when that
+// is below the RFC 2132 minimum of 576.
+func TestMaxMessageSize(t *testing.T) {
+	for _, tc := range []struct {
+		mtu  int
+		want int // 0: no option 57
+	}{{575, 0}, {576, 0}, {603, 0}, {604, 576}, {605, 577}, {1500, 1472}, {9000, 8972}} {
+		c := newFakeNet().client()
+		c.Iface.MTU = tc.mtu
+		got := option(c.discover(1), dhcpv4.OptionMaximumDHCPMessageSize)
+		switch {
+		case tc.want == 0 && got != nil:
+			t.Errorf("MTU %d: option 57 = %v, want none", tc.mtu, got)
+		case tc.want != 0 && (len(got) != 2 || int(binary.BigEndian.Uint16(got)) != tc.want):
+			t.Errorf("MTU %d: option 57 = %v, want %d", tc.mtu, got, tc.want)
+		}
 	}
 }
