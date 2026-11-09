@@ -6,7 +6,9 @@
 # Round 1 builds the checkout. Round 2 builds a fresh clone of HEAD in
 # another directory, with umask 002 and TZ=Asia/Kolkata, so a build that
 # depends on the checkout path, the file modes of the checkout or the time
-# zone fails the check. Both rounds pass the same build arguments, with
+# zone of the host fails the check. The build containers never see the
+# host time zone (their images set none), so TZ covers the host side: git,
+# the buildx client and this script. Both rounds pass the same build arguments, with
 # BOOTY_FLAVOR per target like release-v2.yml.
 #
 # usage: check-reproducible.sh <platform> <target>...
@@ -46,10 +48,9 @@ build() {
 	for target in "$@"; do
 		target_arg=()
 		[ "$target" = default ] || target_arg=(--target "$target")
-		# The flavor of the init binary, like release-v2.yml; package-versions
-		# takes the cached dev stage of the default target.
+		# The flavor of the init binary, like release-v2.yml.
 		case "$target" in
-		default | split | package-versions) flavor=full ;;
+		default | split) flavor=full ;;
 		*) flavor=$target ;;
 		esac
 		docker buildx build --builder "$builder-$round" --platform "$platform" \
