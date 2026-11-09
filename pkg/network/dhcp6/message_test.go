@@ -303,3 +303,50 @@ func TestReplyWithErrorStatusDoesNotBind(t *testing.T) {
 		}
 	}
 }
+
+// RFC 8415 21.24 and 21.25: SOL_MAX_RT and INF_MAX_RT of 60 to 86400 s
+// count, other values and lengths are ignored; 18.2.10: also in a REPLY
+// with a failure status, which is otherwise dropped.
+func TestDecodeMaxRT(t *testing.T) {
+	base := []dhcpv6.Option{raw(optServerID, testServer), raw(optClientID, testDUID)}
+	be := func(v uint32) []byte { return binary.BigEndian.AppendUint32(nil, v) }
+	for _, tt := range []struct {
+		name string
+		data []byte
+		want time.Duration
+	}{
+		{"absent", nil, 0},
+		{"59", be(59), 0},
+		{"60", be(60), time.Minute},
+		{"3600", be(3600), time.Hour},
+		{"86400", be(86400), 86400 * time.Second},
+		{"86401", be(86401), 0},
+		{"0", be(0), 0},
+		{"3 bytes", []byte{0, 0, 60}, 0},
+		{"5 bytes", []byte{0, 0, 0, 60, 0}, 0},
+	} {
+		for _, code := range []dhcpv6.OptionCode{optSolMaxRT, optInfMaxRT} {
+			opts := slices.Clone(base)
+			if tt.data != nil {
+				opts = append(opts, raw(code, tt.data))
+			}
+			for _, failed := range []bool{false, true} {
+				o := opts
+				if failed {
+					o = append(slices.Clone(opts), raw(optStatusCode, []byte{0, 1}))
+				}
+				r, err := decode(encode(msgReply, 1, o), 7, time.Now())
+				if (err != nil) != failed {
+					t.Fatalf("%s option %d failed %v: error %v", tt.name, code, failed, err)
+				}
+				got := r.solMaxRT
+				if code == optInfMaxRT {
+					got = r.infMaxRT
+				}
+				if got != tt.want || r.xid != 1 || !slices.Equal(r.clientID, testDUID) {
+					t.Errorf("%s option %d failed %v: %s, xid %d, client %x; want %s", tt.name, code, failed, got, r.xid, r.clientID, tt.want)
+				}
+			}
+		}
+	}
+}

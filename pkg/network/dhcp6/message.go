@@ -39,6 +39,7 @@ const (
 	optClientFQDN    = dhcpv6.OptionFQDN
 	optNTPServer     = dhcpv6.OptionNTPServer
 	optSolMaxRT      = dhcpv6.OptionSolMaxRT
+	optInfMaxRT      = dhcpv6.OptionInfMaxRT
 	optCaptivePortal = dhcpv6.OptionCaptivePortal
 )
 
@@ -153,6 +154,9 @@ type reply struct {
 	// revoked are the addresses of our IA_NA with a valid lifetime of 0,
 	// which the client must stop using (RFC 8415 18.2.10.1).
 	revoked []net.IP
+	// solMaxRT and infMaxRT are the options SOL_MAX_RT (82) and INF_MAX_RT
+	// (83), 0 when absent or out of range.
+	solMaxRT, infMaxRT time.Duration
 }
 
 var (
@@ -170,11 +174,14 @@ func decode(b []byte, iaid uint32, now time.Time) (reply, error) {
 	if err := opts.FromBytesWithParser(withoutTail(b[dhcpv6.MessageHeaderSize:]), lenient); err != nil {
 		return reply{}, err //nolint:wrapcheck // the caller drops it
 	}
-	if !strict(opts) {
-		return reply{}, errInvalid
-	}
 	r := reply{typ: dhcpv6.MessageType(b[0]), xid: uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])}
 	r.clientID = optionData(opts, optClientID)
+	// RFC 8415 18.2.9 and 18.2.10: SOL_MAX_RT and INF_MAX_RT count also in
+	// a message that is otherwise ignored, or has a failure status.
+	r.solMaxRT, r.infMaxRT = maxRT(opts, optSolMaxRT), maxRT(opts, optInfMaxRT)
+	if !strict(opts) {
+		return r, errInvalid
+	}
 	r.lease.ServerID = optionData(opts, optServerID)
 	// RFC 8415 16.3 and 16.10: discard an ADVERTISE or REPLY without one.
 	if (r.typ == msgAdvertise || r.typ == msgReply) && len(r.lease.ServerID) == 0 {
@@ -244,6 +251,20 @@ func (l *Lease) ia(ia *dhcpv6.OptIANA, now time.Time) bool {
 		return true
 	}
 	return false
+}
+
+// maxRT reads SOL_MAX_RT or INF_MAX_RT: 60 to 86400 s, else 0 (RFC 8415
+// 21.24 and 21.25: the client MUST ignore other values).
+func maxRT(opts dhcpv6.Options, code dhcpv6.OptionCode) time.Duration {
+	b := optionData(opts, code)
+	if len(b) != 4 {
+		return 0
+	}
+	v := binary.BigEndian.Uint32(b)
+	if v < 60 || v > 86400 {
+		return 0
+	}
+	return time.Duration(v) * time.Second
 }
 
 // revoked returns the addresses of an IA_NA with a valid lifetime of 0.

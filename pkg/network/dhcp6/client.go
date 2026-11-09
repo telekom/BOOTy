@@ -49,6 +49,12 @@ type Client struct {
 	now          func() time.Time
 	rand         func() float64 // in [-0.1, 0.1]
 	after        func(time.Duration) <-chan time.Time
+	solDelay     func() time.Duration // before the first SOLICIT
+
+	// SOL_MAX_RT and INF_MAX_RT of the server, 0 for the defaults; only
+	// the goroutine of run uses them.
+	solMaxRT, infMaxRT time.Duration
+	solicited          bool // the first SOLICIT is out
 
 	mu    sync.Mutex
 	stop  chan struct{}
@@ -59,22 +65,39 @@ type Client struct {
 
 var errStopped = errors.New("stopped")
 
-// Retransmission parameters (RFC 8415 section 7.6).
-type params struct{ irt, mrt time.Duration }
+// Retransmission parameters (RFC 8415 section 7.6); aboveIRT makes the
+// first timeout strictly greater than IRT (SOLICIT, 18.2.1).
+type params struct {
+	irt, mrt time.Duration
+	aboveIRT bool
+}
 
 var (
-	solicitRT = params{time.Second, 3600 * time.Second}
-	requestRT = params{time.Second, 30 * time.Second}
-	renewRT   = params{10 * time.Second, 600 * time.Second}
-	infoRT    = params{time.Second, 3600 * time.Second}
+	solicitRT = params{time.Second, 3600 * time.Second, true}
+	requestRT = params{time.Second, 30 * time.Second, false}
+	renewRT   = params{10 * time.Second, 600 * time.Second, false}
+	infoRT    = params{time.Second, 3600 * time.Second, false}
 )
 
-// next is the retransmission timeout after prev (RFC 8415 section 15). The
-// first SOLICIT timeout is strictly greater than IRT (18.2.1).
+// solMaxDelay is SOL_MAX_DELAY (RFC 8415 section 7.6).
+const solMaxDelay = time.Second
+
+// solicitDelay is a random time of 0 to SOL_MAX_DELAY.
+func solicitDelay() time.Duration { return rand.N(solMaxDelay + 1) } //nolint:gosec // timing jitter
+
+// withMRT returns p with the MRT of the server, when it sent one.
+func (p params) withMRT(mrt time.Duration) params {
+	if mrt > 0 {
+		p.mrt = mrt
+	}
+	return p
+}
+
+// next is the retransmission timeout after prev (RFC 8415 section 15).
 func (c *Client) next(p params, prev time.Duration) time.Duration {
 	if prev == 0 {
 		r := c.rand()
-		if p == solicitRT {
+		if p.aboveIRT {
 			r = max(math.Abs(r), 0.01)
 		}
 		return p.irt + time.Duration(r*float64(p.irt))
@@ -103,6 +126,9 @@ func (c *Client) Start() {
 	}
 	if c.after == nil {
 		c.after = time.After
+	}
+	if c.solDelay == nil {
+		c.solDelay = solicitDelay
 	}
 	c.stop, c.done = make(chan struct{}), make(chan struct{})
 	go c.run()
@@ -164,11 +190,14 @@ func (c *Client) run() {
 // 18.2.9, like sd-dhcp6-client client_receive_advertise). A REPLY with
 // rapid commit binds at once.
 func (c *Client) solicit() {
+	if !c.delayFirstSolicit() {
+		return
+	}
 	start, xid := c.now(), rand.Uint32()&0xffffff //nolint:gosec // a transaction ID
 	var rt time.Duration
 	var best *reply
 	for n := 1; !c.stopped(); n++ {
-		rt = c.next(solicitRT, rt)
+		rt = c.next(solicitRT.withMRT(c.solMaxRT), rt)
 		var bound *Lease
 		_ = c.exchange(func() []byte { return c.solicitMsg(xid, start) }, xid, rt, func(r reply) bool {
 			switch {
@@ -194,6 +223,18 @@ func (c *Client) solicit() {
 			return
 		}
 	}
+}
+
+// delayFirstSolicit waits a random 0 to SOL_MAX_DELAY before the first
+// SOLICIT of the client (RFC 8415 18.2.1), so hosts started by the same RA
+// do not send together; it tells false when Stop ended the wait.
+func (c *Client) delayFirstSolicit() bool {
+	if c.solicited {
+		return true
+	}
+	c.solicited = true
+	d := c.solDelay()
+	return d <= 0 || !errors.Is(c.pause(d), errStopped)
 }
 
 // request asks for an advertised (or, after NoBinding, the current)
@@ -312,15 +353,17 @@ func infoRefresh(v time.Duration) time.Duration {
 }
 
 // information sends INFORMATION-REQUESTs until a REPLY, then waits for the
-// refresh time (the default of 86400 s).
+// refresh time (the default of 86400 s). The Option Request asks for the
+// information refresh time and INF_MAX_RT (RFC 8415 18.2.6).
 func (c *Client) information() {
 	start, xid := c.now(), rand.Uint32()&0xffffff //nolint:gosec // a transaction ID
 	var rt time.Duration
 	for !c.stopped() {
-		rt = c.next(infoRT, rt)
+		rt = c.next(infoRT.withMRT(c.infMaxRT), rt)
 		r, err := c.exchangeOne(func() []byte {
 			return encode(msgInformationRequest, xid, []dhcpv6.Option{
-				dhcpv6.OptRequestedOption(optDNSServers, optSNTPServers, optNTPServer, optCaptivePortal), raw(optClientID, c.DUID), elapsed(c.now().Sub(start)),
+				dhcpv6.OptRequestedOption(optDNSServers, optSNTPServers, optInfoRefresh, optNTPServer, optInfMaxRT, optCaptivePortal),
+				raw(optClientID, c.DUID), elapsed(c.now().Sub(start)),
 			})
 		}, xid, rt, msgReply)
 		if err != nil {
@@ -447,12 +490,29 @@ func (c *Client) exchange(build func() []byte, xid uint32, timeout time.Duration
 			return c.pause(left)
 		}
 		r, err := decode(b, c.IAID, c.now())
-		if err != nil || r.xid != xid || !bytes.Equal(r.clientID, c.DUID) || !slices.Contains(types, r.typ) {
+		if r.xid != xid || !bytes.Equal(r.clientID, c.DUID) {
+			continue
+		}
+		c.maxRT(&r)
+		if err != nil || !slices.Contains(types, r.typ) {
 			continue
 		}
 		if take(r) {
 			return nil
 		}
+	}
+}
+
+// maxRT keeps the SOL_MAX_RT and INF_MAX_RT of a server message for the
+// next retransmissions (RFC 8415 18.2.9, 18.2.10, 21.24, 21.25).
+func (c *Client) maxRT(r *reply) {
+	if r.solMaxRT > 0 && r.solMaxRT != c.solMaxRT {
+		c.Log.Debug("DHCPv6 SOL_MAX_RT", "value", r.solMaxRT)
+		c.solMaxRT = r.solMaxRT
+	}
+	if r.infMaxRT > 0 && r.infMaxRT != c.infMaxRT {
+		c.Log.Debug("DHCPv6 INF_MAX_RT", "value", r.infMaxRT)
+		c.infMaxRT = r.infMaxRT
 	}
 }
 

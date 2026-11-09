@@ -42,6 +42,7 @@ func (f *fakeNet) client(stateful bool) *Client {
 	c.newTransport = func(*net.Interface) (transport, error) { return &fakeTransport{f: f}, nil }
 	c.now = func() time.Time { f.mu.Lock(); defer f.mu.Unlock(); return f.now }
 	c.rand = func() float64 { return 0 }
+	c.solDelay = func() time.Duration { return 0 }
 	c.after = func(d time.Duration) <-chan time.Time {
 		f.mu.Lock()
 		f.waits = append(f.waits, d)
@@ -774,5 +775,140 @@ func TestReplyWithZeroValidLifetime(t *testing.T) {
 			close(f.stopped)
 			c.Stop()
 		})
+	}
+}
+
+// waitsAtLeast returns the waits of f once there are n of them.
+func (f *fakeNet) waitsAtLeast(t *testing.T, n int) []time.Duration {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		f.mu.Lock()
+		w := slices.Clone(f.waits)
+		f.mu.Unlock()
+		if len(w) >= n {
+			return w
+		}
+	}
+	t.Fatalf("fewer than %d waits", n)
+	return nil
+}
+
+// RFC 8415 18.2.9 and 21.24: a SOL_MAX_RT in an ADVERTISE, also one
+// without addresses that is otherwise ignored, becomes the MRT of SOLICIT;
+// values outside 60 to 86400 s are ignored. With RAND 0 the timeouts are
+// 1.01, 2.02, 4.04, ... 64.64, 129.28 s; above MRT a timeout is MRT.
+func TestSolMaxRT(t *testing.T) {
+	for _, tt := range []struct {
+		value uint32
+		want  []time.Duration // the 7th to 9th timeouts
+	}{
+		{60, []time.Duration{60 * time.Second, 60 * time.Second, 60 * time.Second}},
+		{100, []time.Duration{64640 * time.Millisecond, 100 * time.Second, 100 * time.Second}},
+		{59, []time.Duration{64640 * time.Millisecond, 129280 * time.Millisecond, 258560 * time.Millisecond}},
+		{86401, []time.Duration{64640 * time.Millisecond, 129280 * time.Millisecond, 258560 * time.Millisecond}},
+	} {
+		f := newFakeNet()
+		f.answer = func(msg []byte) []byte {
+			if dhcpv6.MessageType(msg[0]) != msgSolicit {
+				return nil
+			}
+			clientID, _ := find(msg, optClientID)
+			return encode(msgAdvertise, xidOf(msg), []dhcpv6.Option{raw(optServerID, testServer), raw(optClientID, clientID),
+				raw(optSolMaxRT, binary.BigEndian.AppendUint32(nil, tt.value))})
+		}
+		c := f.client(true)
+		c.Start()
+		waits := f.waitsAtLeast(t, 9)
+		close(f.stopped)
+		c.Stop()
+		if !slices.Equal(waits[6:9], tt.want) {
+			t.Errorf("SOL_MAX_RT %d: timeouts %v, want %v from the 7th", tt.value, waits[:9], tt.want)
+		}
+	}
+}
+
+// RFC 8415 18.2.6 and 21.25: the INFORMATION-REQUEST asks for options 32
+// and 83, and an INF_MAX_RT becomes its MRT, also from a REPLY with a
+// failure status that is otherwise dropped.
+func TestInfMaxRT(t *testing.T) {
+	f := newFakeNet()
+	f.answer = func(msg []byte) []byte {
+		clientID, _ := find(msg, optClientID)
+		return encode(msgReply, xidOf(msg), []dhcpv6.Option{raw(optServerID, testServer), raw(optClientID, clientID),
+			raw(optStatusCode, []byte{0, 1}), raw(optInfMaxRT, binary.BigEndian.AppendUint32(nil, 60))})
+	}
+	c := f.client(false)
+	c.Start()
+	waits := f.waitsAtLeast(t, 8)
+	close(f.stopped)
+	c.Stop()
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, 60 * time.Second, 60 * time.Second}
+	if !slices.Equal(waits[:8], want) {
+		t.Errorf("timeouts %v, want %v", waits[:8], want)
+	}
+	o, _ := find(f.messages()[0], dhcpv6.OptionORO)
+	if !bytes.Equal(o, []byte{0, 23, 0, 31, 0, 32, 0, 56, 0, 83, 0, 103}) {
+		t.Errorf("INFORMATION-REQUEST ORO = %x, want 23,31,32,56,83,103", o)
+	}
+}
+
+// RFC 8415 18.2.1: the first SOLICIT waits a random 0 to SOL_MAX_DELAY
+// (1 s); later ones, after the lease ends, do not.
+func TestFirstSolicitDelay(t *testing.T) {
+	for range 1000 {
+		if d := solicitDelay(); d < 0 || d > time.Second {
+			t.Fatalf("solicitDelay() = %s, want 0 to 1 s", d)
+		}
+	}
+	for _, delay := range []time.Duration{time.Nanosecond, 300 * time.Millisecond, time.Second} {
+		f := newFakeNet()
+		f.answer = func(msg []byte) []byte {
+			if dhcpv6.MessageType(msg[0]) == msgSolicit {
+				return serverReply(msg, msgReply, true)
+			}
+			return nil
+		}
+		bound, expired := make(chan *Lease, 2), make(chan *Lease, 1)
+		c := f.client(true)
+		c.solDelay = func() time.Duration { return delay }
+		c.OnBound = func(l *Lease) { bound <- l }
+		c.OnExpire = func(l *Lease) { expired <- l }
+		c.Start()
+		f.waitsAtLeast(t, 1)
+		if n := f.countType(msgSolicit); n != 0 {
+			t.Fatalf("delay %s: %d SOLICITs during the delay", delay, n)
+		}
+		f.tick(t) // the delay
+		<-bound
+		f.tick(t) // T1; nothing answers RENEW and REBIND
+		<-expired
+		<-bound
+		close(f.stopped)
+		c.Stop()
+		f.mu.Lock()
+		first, delays := f.waits[0], 0
+		for _, w := range f.waits {
+			if w == delay {
+				delays++
+			}
+		}
+		f.mu.Unlock()
+		if first != delay || delays != 1 {
+			t.Errorf("delay %s: first wait %s, %d delays; want one before the first SOLICIT", delay, first, delays)
+		}
+	}
+}
+
+// Stop during the delay before the first SOLICIT sends nothing.
+func TestStopDuringSolicitDelay(t *testing.T) {
+	f := newFakeNet()
+	c := f.client(true)
+	c.solDelay = func() time.Duration { return time.Second }
+	c.Start()
+	f.waitsAtLeast(t, 1)
+	c.Stop()
+	close(f.stopped)
+	if n := len(f.messages()); n != 0 {
+		t.Errorf("%d messages after Stop during the delay", n)
 	}
 }
