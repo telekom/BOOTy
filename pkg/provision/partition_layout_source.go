@@ -63,7 +63,7 @@ func (o *Orchestrator) fetchPartitionLayout(ctx context.Context) error {
 func fetchPartitionLayoutURL(ctx context.Context, rawURL string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
 	if err != nil {
-		return nil, &PermanentError{Err: fmt.Errorf("partition layout URL %s: invalid request", image.RedactURL(rawURL))}
+		return nil, &PermanentError{Err: fmt.Errorf("partition layout URL %s: invalid request: %s", image.RedactURL(rawURL), image.RedactSourceError(err, rawURL))}
 	}
 	resp, err := partitionLayoutHTTPClient().Do(req) //nolint:gosec // configured layout URL
 	if err != nil {
