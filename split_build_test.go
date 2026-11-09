@@ -1,8 +1,13 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -68,14 +73,96 @@ func TestWorkflowsPublishSplitRamdisk(t *testing.T) {
 	}
 	for _, want := range []string{
 		"flavor: split",
-		"for part in base frr; do",
+		`hack/release-split-assets.sh out-split "${{ matrix.arch }}"`,
 		"split-${{ matrix.arch }}-*.cpio.zst",
 		"split-${{ matrix.arch }}-vmlinuz",
-		"split-${{ matrix.arch }}-SHA256SUMS",
+		"split-${{ matrix.arch }}-SHA256SUMS\n",
+		"split-${{ matrix.arch }}-SHA256SUMS.sha256",
 		`-o -name "split-*"`,
 	} {
 		if !strings.Contains(string(release), want) {
 			t.Errorf("release workflow lacks %q", want)
 		}
+	}
+}
+
+// The release manifest names the released split-<arch>-* files, so
+// `sha256sum -c split-<arch>-SHA256SUMS` works next to the downloads, and it
+// has a .sha256 that the sign job covers.
+func TestReleaseSplitAssetsNameTheReleasedFiles(t *testing.T) {
+	if _, err := exec.LookPath("sha256sum"); err != nil {
+		t.Skip("sha256sum not installed")
+	}
+	script, err := filepath.Abs("hack/release-split-assets.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	var sums strings.Builder
+	for _, f := range []string{"base.cpio.zst", "frr.cpio.zst", "vmlinuz"} {
+		if err := os.WriteFile(filepath.Join(out, f), []byte(f), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256([]byte(f))
+		sums.WriteString(hex.EncodeToString(sum[:]) + "  " + f + "\n")
+	}
+	if err := os.WriteFile(filepath.Join(out, "SHA256SUMS"), []byte(sums.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rel := t.TempDir()
+	cmd := exec.Command(script, out, "amd64")
+	cmd.Dir = rel
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("release-split-assets.sh: %v\n%s", err, b)
+	}
+	entries, err := os.ReadDir(rel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	want := []string{
+		"split-amd64-SHA256SUMS", "split-amd64-SHA256SUMS.sha256",
+		"split-amd64-base.cpio.zst", "split-amd64-base.cpio.zst.sha256",
+		"split-amd64-frr.cpio.zst", "split-amd64-frr.cpio.zst.sha256",
+		"split-amd64-vmlinuz", "split-amd64-vmlinuz.sha256",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("released files = %v, want %v", got, want)
+	}
+	manifest, err := os.ReadFile(filepath.Join(rel, "split-amd64-SHA256SUMS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []string
+	for line := range strings.Lines(string(manifest)) {
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			t.Fatalf("bad manifest line %q", line)
+		}
+		listed = append(listed, f[1])
+	}
+	if want := []string{"split-amd64-base.cpio.zst", "split-amd64-frr.cpio.zst", "split-amd64-vmlinuz"}; !slices.Equal(listed, want) {
+		t.Fatalf("manifest lists %v, want %v", listed, want)
+	}
+	for _, sums := range []string{"split-amd64-SHA256SUMS", "split-amd64-SHA256SUMS.sha256"} {
+		check := exec.Command("sha256sum", "-c", "--quiet", sums)
+		check.Dir = rel
+		if b, err := check.CombinedOutput(); err != nil {
+			t.Errorf("sha256sum -c %s next to the released files: %v\n%s", sums, err, b)
+		}
+	}
+
+	// A build output that does not match its SHA256SUMS is not released.
+	if err := os.WriteFile(filepath.Join(out, "frr.cpio.zst"), []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command(script, out, "amd64")
+	cmd.Dir = t.TempDir()
+	if err := cmd.Run(); err == nil {
+		t.Error("release-split-assets.sh accepted a build output that fails its SHA256SUMS")
 	}
 }

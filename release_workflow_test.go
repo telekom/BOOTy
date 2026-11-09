@@ -95,7 +95,6 @@ func TestReleaseWorkflowAttestsBuildProvenance(t *testing.T) {
 		t.Fatal("missing sign job")
 	}
 	requireWorkflowStepRunContains(t, sign, "Collect provenance subjects", "sha256sum -c --quiet")
-	requireWorkflowStepRunContains(t, sign, "Collect provenance subjects", "split-*-SHA256SUMS")
 	attest := requireAction(t, sign, "actions/attest-build-provenance")
 	assertStepWith(t, attest, "subject-checksums", "${{ runner.temp }}/provenance-subjects.sha256")
 
