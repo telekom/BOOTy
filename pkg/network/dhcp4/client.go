@@ -566,9 +566,10 @@ func (c *Client) request(xid uint32, ciaddr, server, addr net.IP) *message {
 	return &message{typ: dhcpv4.MessageTypeRequest, xid: xid, ciaddr: ciaddr, mac: c.Iface.HardwareAddr, options: c.withHostname(opts)}
 }
 
-// common returns 61, 55 and 57: the MTU of the NIC now less 28, but at
-// least 576, the minimum of RFC 2132 section 9.10. A NIC below an MTU of
-// 576 sends no option 57, so the server uses 576.
+// common returns 61, 55 and 57, the MTU of the NIC now less 28. Option 57
+// is left out when that is below 576, the minimum of RFC 2132 section
+// 9.10 (an MTU below 604): the server then uses 576, and the client does
+// not claim more than the link carries.
 func (c *Client) common() []dhcpv4.Option {
 	var opts []dhcpv4.Option
 	if len(c.ClientID) > 0 {
@@ -581,8 +582,8 @@ func (c *Client) common() []dhcpv4.Option {
 	if ifi, err := net.InterfaceByIndex(c.Iface.Index); err == nil {
 		mtu = ifi.MTU
 	}
-	if mtu >= 576 {
-		opts = append(opts, dhcpv4.OptMaxMessageSize(uint16(max(mtu-28, 576)))) //nolint:gosec // an MTU fits 16 bits
+	if size := mtu - 28; size >= 576 {
+		opts = append(opts, dhcpv4.OptMaxMessageSize(uint16(size))) //nolint:gosec // an MTU fits 16 bits
 	}
 	return opts
 }
