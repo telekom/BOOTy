@@ -188,8 +188,15 @@ func TestCopyTreeWithSymlinksKeepsXattrsAndSkipsNested(t *testing.T) {
 		{"lib", "user.booty.test", []byte("dir")},
 		{"lib/state", "user.booty.test", []byte("file")},
 		{"lib/state", "system.posix_acl_access", acl},
-		{"lib/helper", "security.capability", capability},
 		{"log", "user.booty.test", []byte("mountpoint")},
+	}
+	// Setting a file capability needs CAP_SETFCAP; the kvm scenario covers
+	// it for unprivileged runs.
+	if os.Geteuid() == 0 {
+		xattrs = append(xattrs, struct {
+			path, name string
+			value      []byte
+		}{"lib/helper", "security.capability", capability})
 	}
 	for _, x := range xattrs {
 		if err := unix.Lsetxattr(filepath.Join(src, x.path), x.name, x.value, 0); err != nil {
