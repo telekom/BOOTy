@@ -46,7 +46,9 @@ server identifier (2131-10) and option 57 values below 576 for MTUs 576
 to 603 (2132-2), both fixed by [#908]. [#892] fixed 8415-7. It added
 two very-low-impact deviations that the earlier refreshes missed
 (4861-15: RA options of length zero; 8415-10: an address revoked with
-valid lifetime 0) and corrected the text of 4271-4 and 3442-1.
+valid lifetime 0) and a GoBGP one (8654-1: extended messages received
+only from a peer that advertised the capability), and corrected the
+text of 4271-4, 3442-1, 8654-2 and 7348-4.
 
 Each row has an owner:
 
@@ -106,7 +108,7 @@ refresh is merged.
 | 4724 | Graceful restart | 1 | 0 | 2 | 0 | 9 | 0 |
 | 7313 | Enhanced route refresh | 0 | 0 | 0 | 0 | 5 | 0 |
 | 2918 | Route refresh | 1 | 0 | 0 | 0 | 3 | 0 |
-| 8654 | Extended message | 0 | 0 | 0 | 0 | 2 | 0 |
+| 8654 | Extended message | 0 | 0 | 0 | 0 | 1 | 1 |
 | 9234 | BGP roles | 0 | 0 | 2 | 0 | 0 | 0 |
 | 5492 | Capabilities | 0 | 0 | 0 | 0 | 5 | 0 |
 | 7606 | UPDATE error handling | 2 | 0 | 0 | 0 | 7 | 0 |
@@ -132,11 +134,12 @@ refresh is merged.
 | 2131 | DHCPv4 client | 14 | 1 | 0 | 0 | 0 | 0 |
 | 2132 / 3397 / 3442 / 4039 / 4361 | DHCPv4 options | 6 | 0 | 0 | 0 | 0 | 0 |
 | 8415 | DHCPv6 | 8 | 2 | 0 | 0 | 0 | 0 |
-| **Total** | | **209** | **18** | **57** | **2** | **90** | **2** |
+| **Total** | | **209** | **18** | **57** | **2** | **89** | **3** |
 
 Kernel- and library-owned rows count as COMPLIANT or DEVIATION; the owner
 column names them. The second refresh (`5ac79521`) counted 209
-COMPLIANT and 17 DEVIATION, the other columns as now. The first refresh (`f1e0e72e`, fork tag
+COMPLIANT, 17 DEVIATION, 90 GOBGP: COMPLIANT and 2 GOBGP:
+DEVIATION, the other columns as now. The first refresh (`f1e0e72e`, fork tag
 `v4.10.0-booty.10`) counted 176 COMPLIANT, 27 DEVIATION (16 with an open
 fix), 60 N/A, 3 NOT IMPLEMENTED, 19 PENDING, 89 GOBGP: COMPLIANT and 3
 GOBGP: DEVIATION. The first audit (`03abb09f`, GoBGP 3.37.0) counted 149
@@ -158,10 +161,11 @@ COMPLIANT, 47 DEVIATION, 67 N/A, 4 NOT IMPLEMENTED, 68 GOBGP: COMPLIANT and
 | 9 | RFC4271-NH-RESOLVE | 4271 §9.1.2.1 | GoBGP | Low: no next hop tracking in the decision process; BOOTy's FIB writer skips unresolvable next hops instead. | Open. |
 | 10 | RFC7432-PMSI-ID | 7432 §11.2, 6514 §5 | BOOTy | Very low: the ingress replication destination is the originating router IP, not the PMSI Tunnel Identifier; in VXLAN fabrics both are the VTEP. | Kept like FRR, documented. |
 | 11 | RFC7432-MOBILITY-GOBGP | 7432 §15 | GoBGP | Very low: GoBGP withdraws its local Type-2 route on a remote higher sequence only when the ESIs differ. BOOTy's MAC is its own bridge MAC and does not move. | Open. |
-| 12 | RFC8415-DECLINE | 8415 §18.2.8 | BOOTy | Very low: a failed DAD sends no DECLINE (8415-8). | Open: DECLINE on a DAD failure. |
-| 13 | RFC4861-RA-OPTLEN | 4861 §4.6, §6.1.2 | BOOTy | Very low: in DHCP mode an RA with a zero-length option, which the kernel drops, still starts DHCPv6 (4861-15). | Open: check the option lengths in `validRA`, like `validRS`. |
-| 14 | RFC8415-ZERO-LIFETIME | 8415 §18.2.10.1 | BOOTy | Very low: an address that a REPLY to RENEW or REBIND gives valid lifetime 0 stays until its old valid lifetime ends (8415-10). | Open: expire the lease at once. |
-| 15 | LLDP-TTL | 802.1AB | BOOTy | Very low: TTL 120 instead of txTTL = 4 x 30 + 1 = 121; matches systemd-networkd. | Kept for networkd parity. |
+| 12 | RFC8654-RX | 8654 §4 | GoBGP | Very low: GoBGP accepts UPDATEs above 4096 octets only from a peer that advertised the extended message capability, although it advertises the capability itself. BOOTy's and the fabric's routes are far smaller. | Open (GoBGP). |
+| 13 | RFC8415-DECLINE | 8415 §18.2.8 | BOOTy | Very low: a failed DAD sends no DECLINE (8415-8). | Open: DECLINE on a DAD failure. |
+| 14 | RFC4861-RA-OPTLEN | 4861 §4.6, §6.1.2 | BOOTy | Very low: in DHCP mode an RA with a zero-length option, which the kernel drops, still starts DHCPv6 (4861-15). | Open: check the option lengths in `validRA`, like `validRS`. |
+| 15 | RFC8415-ZERO-LIFETIME | 8415 §18.2.10.1 | BOOTy | Very low: an address that a REPLY to RENEW or REBIND gives valid lifetime 0 stays until its old valid lifetime ends (8415-10). | Open: expire the lease at once. |
+| 16 | LLDP-TTL | 802.1AB | BOOTy | Very low: TTL 120 instead of txTTL = 4 x 30 + 1 = 121; matches systemd-networkd. | Kept for networkd parity. |
 
 The rows without authentication (5880-39, 5881-15, 5883-4) are not
 ranked: the legacy FRR profile has none either.
@@ -331,8 +335,8 @@ ranked: the legacy FRR profile has none either.
 
 | ID | § | Requirement | Owner | Status | Evidence, impact, fix | Verified |
 |---|---|---|---|---|---|---|
-| 8654-1 | 3, 4 | Capability; messages up to 65535 octets only after both sides advertised it | GoBGP | GOBGP: COMPLIANT | GoBGP 4 sends the capability in every OPEN (`fsm.go:1651`) and raises the limit only when the peer sent it too (`fsm.go:912`, `:1927`); GoBGP tests `TestExtendedMessage_AdvertisedUnconditionally`, `TestIsExtendedMessageSerialization`. Not used by BOOTy's routes | GoBGP test |
-| 8654-2 | 5 | MUST NOT accept or send messages above 4096 octets without the capability | GoBGP | GOBGP: COMPLIANT | `bgp.go:17818` (`BGP_MAX_MESSAGE_LENGTH`), `fsm.go:1927` | reading |
+| 8654-1 | 3, 4 | A speaker that advertises the capability MUST be able to receive messages up to 65535 octets (from any peer); it MAY send them only to a peer that advertised it | GoBGP | GOBGP: DEVIATION | RFC8654-RX: GoBGP 4 sends the capability in every OPEN (`fsm.go:1651`) and sends extended messages only to a peer that sent it too, as required. But it also raises its receive limit only when the peer sent the capability (`fsm.go:912`, `:1927`): an UPDATE above 4096 octets from a peer that did not advertise it, which section 4 allows, ends in Bad Message Length. GoBGP tests `TestExtendedMessage_AdvertisedUnconditionally`, `TestIsExtendedMessageSerialization`. Impact very low: BOOTy's routes and the fabric's EVPN routes are far below 4096 octets, and FRR advertises the capability. Fix in GoBGP: accept up to 65535 octets for UPDATE, NOTIFICATION and ROUTE-REFRESH whenever the capability was advertised | reading |
+| 8654-2 | 5 | A speaker that has not advertised the capability MUST NOT accept extended messages; a NOTIFICATION to a peer that did not advertise it MUST NOT exceed 4096 octets | GoBGP | GOBGP: COMPLIANT | GoBGP always advertises the capability, so the first case does not arise; messages to a peer without it, NOTIFICATION included, are limited to 4096 octets (`bgp.go:17818` `BGP_MAX_MESSAGE_LENGTH`, `fsm.go:1927`) | reading |
 
 ### RFC 9234: BGP roles
 
@@ -662,7 +666,7 @@ The rows map them to what BOOTy implements.
 | 7348-1 | 5 | UDP destination port 4789 | BOOTy, Kernel | COMPLIANT | `overlay.go:35`, `:563`; lab `TestGoBGPUnnumberedVXLANInterface` | lab |
 | 7348-2 | 5 | 24-bit VNI, I flag set, reserved bits zero | Kernel | COMPLIANT | Linux vxlan driver | reading |
 | 7348-3 | 5 | Outer UDP source port from a hash of the inner frame (SHOULD); UDP checksum 0 for IPv4 (SHOULD) | Kernel | COMPLIANT | kernel defaults (source port range, `udpcsum` off) | reading |
-| 7348-4 | 4.3 | VTEPs MUST NOT fragment VXLAN packets | BOOTy, Kernel | COMPLIANT | inner MTU = NIC MTU - 50 (`overlay.go:573`), so outer packets fit the NIC; lab `TestType5JumboMTU` | lab |
+| 7348-4 | 4.3 | VTEPs MUST NOT fragment VXLAN packets | BOOTy, Kernel | COMPLIANT | With the default MTU only: the VXLAN device MTU is the NIC MTU - 50 (`overlay.go:573` `vxlanMTU`), so the outer packets fit the NIC and the kernel does not fragment them; `TestVXLANDeviceMTU`. An explicit `network.overlay.vxlanMTU` (the netplan tunnel MTU) is used unchanged (`devices.go:25` `vxlanDeviceMTU`, validated only as 576 to 65535): a value above the NIC MTU - 50 makes the kernel fragment outer packets, as with networkd and the same netplan; keeping it below is the operator's job. No test checks fragmentation on the wire; lab `TestType5JumboMTU` checks only the interface MTUs of the fabric | test |
 | 7348-5 | 4.1 | Remote learning by the data plane | BOOTy | COMPLIANT | off on purpose (`overlay.go:564`); EVPN control plane instead (RFC 8365) | reading |
 | 7348-6 | 4.2 | BUM to a multicast group or by head-end replication | Kernel | COMPLIANT | head-end replication through the all-zero FDB entries | reading |
 | 7348-7 | 6 | IPv6 outer header | BOOTy | N/A | IPv4 VTEP only (`config.go:452`) | reading |
