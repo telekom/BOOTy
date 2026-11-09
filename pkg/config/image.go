@@ -6,6 +6,12 @@ const (
 	ChecksumScopeDecompressed = "decompressed"
 )
 
+// Values of ImageConfig.SparseWrite.
+const (
+	SparseWriteOff  = "off"
+	SparseWriteAuto = "auto"
+)
+
 // ImageConfig defines the OS image to stream onto the target disk.
 // Supports multiple image formats (raw, OCI) and integrity verification
 // via checksums and GPG signatures.
@@ -49,6 +55,23 @@ type ImageConfig struct {
 	// behavior does not change.
 	// Default: false (qcow2 and Mode "partition" stage in tmpfs)
 	Stream bool `yaml:"stream" json:"stream"`
+
+	// SparseWrite selects how whole-disk streaming writes all-zero blocks
+	// of the image. "off" writes them. "auto" zeroes each run of zero
+	// blocks with a hole punch (WRITE ZEROES or deallocate) that the device
+	// must guarantee to read back as zeros, and writes the zeros when the
+	// device cannot.
+	// Valid values: "off", "auto"
+	// Default: "" (off)
+	SparseWrite string `yaml:"sparseWrite,omitempty" json:"sparseWrite,omitempty"`
+
+	// SkipUnchanged makes whole-disk streaming read each block of the
+	// target first and skip the write when the target already holds it.
+	// Reinstalling the same image then writes only the blocks that differ.
+	// The download and the checksum still cover the whole image.
+	// Needs Disk.WipeDepth "quick" without SecureErase and DiscardNVMe.
+	// Default: false
+	SkipUnchanged bool `yaml:"skipUnchanged,omitempty" json:"skipUnchanged,omitempty"`
 
 	// Mode controls how the image is written to disk.
 	// Valid values: "whole-disk" (default), "partition", "ab"

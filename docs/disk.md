@@ -712,3 +712,34 @@ Failures of a stream:
   image without `IMAGE_CHECKSUM` is only as complete as the HTTP response
   (`Content-Length` or chunked end); set `IMAGE_CHECKSUM` to detect a short
   raw image.
+
+### Faster Image Writes
+
+Two options skip image writes that do not change what the disk reads back.
+Both are off by default and apply only to whole-disk streaming of raw and
+compressed raw images (not to QCOW2 images, `ab`, `partition` or a
+`PARTITION_LAYOUT` root):
+
+- `IMAGE_SPARSE_WRITE=auto`: BOOTy checks the image in 64 KiB blocks and does
+  not write the all-zero blocks. It zeroes each run of them with one
+  `fallocate(PUNCH_HOLE)` on the disk. The kernel sends that to the device as
+  WRITE ZEROES, which the device may carry out by deallocating, and fails
+  instead of writing zeros itself when the device cannot guarantee that the
+  range reads back as zeros. So the option does not depend on an earlier
+  wipe: old data never shows through a skipped block. When a punch fails,
+  BOOTy logs `hole punch failed, writing zeros from here on` and writes the
+  zeros, as with `off`.
+- `IMAGE_SKIP_UNCHANGED=true`: BOOTy reads each 64 KiB block of the disk and
+  writes it only when it differs. A reinstall of the image that is already on
+  the disk writes only the blocks that the quick wipe or the last boot
+  changed. It still downloads the whole image. On a disk that holds a
+  different image it reads every block in addition to writing it. The option
+  needs `WIPE_DEPTH=quick` without `SECURE_ERASE` and `DISCARD_NVME`: after a
+  discard or an erase a block need not read back the same after the reboot,
+  so the config is invalid otherwise.
+
+Both options log `image write skipped blocks` with `punched_zero_bytes`,
+`unchanged_bytes` and `written_bytes`. `IMAGE_CHECKSUM` is computed from the
+stream before the write, so it still covers every byte of the image.
+`BenchmarkStreamZstd` in `pkg/image` measures the options on a synthetic image
+(`-image.bench-target` selects a block device).

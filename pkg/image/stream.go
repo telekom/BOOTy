@@ -49,6 +49,13 @@ type StreamOpts struct {
 	// StreamOnly forbids staging the image in RAM (IMAGE_STREAM): a qcow2
 	// image fails with ErrStagingForbidden before anything is written.
 	StreamOnly bool
+	// SparseWrite zeroes all-zero blocks with a hole punch where the device
+	// guarantees zeros (IMAGE_SPARSE_WRITE=auto). Whole-disk Stream only.
+	SparseWrite bool
+	// SkipUnchanged reads each block of the target before writing it and
+	// skips blocks that it already holds (IMAGE_SKIP_UNCHANGED). Whole-disk
+	// Stream only.
+	SkipUnchanged bool
 
 	// download is set by withDownloadChecksum.
 	download *downloadChecksum
@@ -84,7 +91,11 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 		return convertQCOW2Hook(ctx, decompressed, url, device, opt)
 	}
 
-	out, err := os.OpenFile(device, os.O_WRONLY, 0) //nolint:gosec // device path from config
+	flag := os.O_WRONLY
+	if opt.SkipUnchanged {
+		flag = os.O_RDWR
+	}
+	out, err := os.OpenFile(device, flag, 0) //nolint:gosec // device path from config
 	if err != nil {
 		return fmt.Errorf("opening device %s: %w", device, err)
 	}
@@ -99,8 +110,7 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 		return err
 	}
 
-	// *os.File implements io.ReaderFrom, which ignores a CopyBuffer buffer.
-	written, err := io.Copy(out, io.TeeReader(src, counter))
+	written, err := writeImage(out, io.TeeReader(src, counter), opt)
 	stopProgress()
 	if errors.Is(err, ErrChecksumMismatch) {
 		slog.Error("checksum mismatch: wiping partition table to prevent booting corrupt image",
