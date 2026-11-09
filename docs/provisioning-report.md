@@ -84,10 +84,10 @@ fields it does not know.
 | `verification.signature` | `method` `gpg` and `result` `verified` with `IMAGE_SIGNATURE_URL`, else `result` `not-configured`. Other signature methods add their own `method`. |
 | `disk.layout` | The applied `PARTITION_LAYOUT`, or the layout that A/B mode generated. Not set for a whole-disk image without a layout. |
 | `ab` | Only in `IMAGE_MODE=ab`: the same values as `/etc/booty/ab-slot.env`. |
-| `encryption.luks` | `present` when the installed `/etc/crypttab` names a volume, `absent` when it names none or does not exist, `unknown` when it can not be read. |
+| `encryption.luks` | `present` when the installed `/etc/crypttab` names a volume, `absent` when it names none or does not exist, `unknown` when it can not be read or is not a regular file of at most 64 KiB below the target root (a symlink, a FIFO or a device is not read). |
 | `encryption.tpm` | `present` when the ramdisk sees a TPM (`/sys/class/tpm/tpm0`), else `absent`. |
 | `secureBoot.state` | Firmware Secure Boot during provisioning: `enabled`, `disabled`, or `unknown` without EFI variables. `reEnable` is `SECUREBOOT_REENABLE`. |
-| `sysexts` | The configured system extensions that `apply-sysexts` installed, with their mode. |
+| `sysexts` | The configured system extensions that `apply-sysexts` installed, with the mode they were installed in (`preload` when neither the layer nor `provision.sysext.defaultMode` sets one). |
 | `timings` | The step summary of the [telemetry metrics](../README.md#telemetry-and-metrics) up to the report. |
 
 The report holds no tokens, passwords or keys. It is written before

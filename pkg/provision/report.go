@@ -3,15 +3,15 @@
 package provision
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/telekom/BOOTy/pkg/buildinfo"
@@ -201,7 +201,7 @@ func (o *Orchestrator) reportImage() ReportImage {
 }
 
 func reportEncryption(root string) ReportEncryption {
-	enc := ReportEncryption{LUKS: crypttabState(filepath.Join(root, "etc", "crypttab")), TPM: ReportStateAbsent}
+	enc := ReportEncryption{LUKS: crypttabState(root), TPM: ReportStateAbsent}
 	if info := reportDetectTPM(); info != nil && info.Present {
 		enc.TPM = ReportStatePresent
 		enc.TPMVersion = info.Version
@@ -209,18 +209,41 @@ func reportEncryption(root string) ReportEncryption {
 	return enc
 }
 
-// crypttabState is "present" when the crypttab names at least one volume.
-func crypttabState(path string) string {
-	data, err := os.ReadFile(path) //nolint:gosec // path below the target root
+// maxCrypttabBytes bounds the crypttab read; a real one is a few lines.
+const maxCrypttabBytes = 64 * 1024
+
+// crypttabState is "present" when the installed /etc/crypttab names at
+// least one volume. The file comes from the image, so a symlink, a
+// non-regular file, a path that leaves root or an oversized file is
+// "unknown": it is neither followed nor read without bound.
+func crypttabState(root string) string {
+	path := filepath.Join(root, "etc", "crypttab")
+	if err := ensureTargetParentWithinRoot(root, filepath.Dir(path)); err != nil {
+		return ReportStateUnknown
+	}
+	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return ReportStateAbsent
 	}
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxCrypttabBytes {
+		return ReportStateUnknown
+	}
+	// O_NOFOLLOW and O_NONBLOCK keep a file swapped after the Lstat from
+	// being followed or blocking the open; Stat checks it again.
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) //nolint:gosec // path checked below the target root
 	if err != nil {
 		return ReportStateUnknown
 	}
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	for sc.Scan() {
-		if line := strings.TrimSpace(sc.Text()); line != "" && !strings.HasPrefix(line, "#") {
+	defer func() { _ = f.Close() }()
+	if info, err = f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return ReportStateUnknown
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxCrypttabBytes+1))
+	if err != nil || len(data) > maxCrypttabBytes {
+		return ReportStateUnknown
+	}
+	for line := range strings.Lines(string(data)) {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
 			return ReportStatePresent
 		}
 	}
@@ -245,11 +268,7 @@ func reportSysexts(cfg *config.SysextConfig) []ReportSysext {
 	out := make([]ReportSysext, 0, len(cfg.Layers))
 	for i := range cfg.Layers {
 		l := &cfg.Layers[i]
-		mode := l.Mode
-		if mode == "" {
-			mode = cfg.DefaultMode
-		}
-		out = append(out, ReportSysext{Name: l.Name, Version: l.Version, Mode: mode, SHA256: l.SHA256})
+		out = append(out, ReportSysext{Name: l.Name, Version: l.Version, Mode: sysextLayerMode(cfg, l), SHA256: l.SHA256})
 	}
 	return out
 }

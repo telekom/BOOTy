@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -270,24 +271,99 @@ func TestReportSuccessLogsReport(t *testing.T) {
 }
 
 func TestCrypttabState(t *testing.T) {
-	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "crypttab")
+	if err := os.WriteFile(outside, []byte("data /dev/vdb2 none luks\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file := func(content string) func(string) error {
+		return func(etc string) error { return os.WriteFile(filepath.Join(etc, "crypttab"), []byte(content), 0o600) }
+	}
+	link := func(target string) func(string) error {
+		return func(etc string) error { return os.Symlink(target, filepath.Join(etc, "crypttab")) }
+	}
 	for name, tc := range map[string]struct {
-		content *string
-		want    string
+		setup func(etc string) error
+		want  string
 	}{
-		"missing":  {nil, ReportStateAbsent},
-		"comments": {new("# none\n\n"), ReportStateAbsent},
-		"volume":   {new("data /dev/vdb2 none luks\n"), ReportStatePresent},
+		"missing":       {nil, ReportStateAbsent},
+		"comments":      {file("# none\n\n"), ReportStateAbsent},
+		"volume":        {file("data /dev/vdb2 none luks\n"), ReportStatePresent},
+		"volume no EOL": {file("data /dev/vdb2 none luks"), ReportStatePresent},
+		"at limit":      {file(strings.Repeat("#", maxCrypttabBytes-1) + "\n"), ReportStateAbsent},
+		"oversize":      {file(strings.Repeat("#", maxCrypttabBytes) + "\ndata /dev/vdb2 none luks\n"), ReportStateUnknown},
+		"fifo":          {func(etc string) error { return syscall.Mkfifo(filepath.Join(etc, "crypttab"), 0o600) }, ReportStateUnknown},
+		"directory":     {func(etc string) error { return os.Mkdir(filepath.Join(etc, "crypttab"), 0o755) }, ReportStateUnknown},
+		"symlink out":   {link(outside), ReportStateUnknown},
+		"dev zero":      {link("/dev/zero"), ReportStateUnknown},
+		"symlink in":    {link("crypttab.real"), ReportStateUnknown},
 	} {
-		path := filepath.Join(dir, name)
-		if tc.content != nil {
-			if err := os.WriteFile(path, []byte(*tc.content), 0o600); err != nil {
+		root := t.TempDir()
+		etc := filepath.Join(root, "etc")
+		if err := os.Mkdir(etc, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if tc.setup != nil {
+			if err := tc.setup(etc); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if got := crypttabState(path); got != tc.want {
+		if got := crypttabState(root); got != tc.want {
 			t.Errorf("%s: crypttabState = %q, want %q", name, got, tc.want)
 		}
+	}
+}
+
+func TestCrypttabStateRefusesEtcOutOfRoot(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "crypttab"), []byte("data /dev/vdb2 none luks\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	if got := crypttabState(root); got != ReportStateUnknown {
+		t.Fatalf("crypttabState through /etc out of root = %q, want unknown", got)
+	}
+}
+
+// A FIFO crypttab must not block the report, also when no file is written:
+// the log line still carries the encryption state.
+func TestWriteProvisionReportFIFOCrypttabWithReportPathNone(t *testing.T) {
+	withReportHost(t, nil, nil)
+	cfg := &config.MachineConfig{}
+	cfg.Provision.ReportPath = config.ReportPathNone
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	etc := filepath.Join(o.config.rootDir, "etc")
+	if err := os.MkdirAll(etc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(etc, "crypttab"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- o.writeProvisionReport(context.Background()) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("writeProvisionReport blocked on a FIFO crypttab")
+	}
+	if o.report.Encryption.LUKS != ReportStateUnknown {
+		t.Fatalf("luks = %q, want unknown", o.report.Encryption.LUKS)
+	}
+}
+
+func TestReportSysextsDefaultMode(t *testing.T) {
+	cfg := &config.SysextConfig{Enabled: true, Layers: []config.SysextLayerConfig{
+		{Name: "tools"},
+		{Name: "debug", Mode: "Active"},
+	}}
+	got := reportSysexts(cfg)
+	if len(got) != 2 || got[0].Mode != sysextModePreload || got[1].Mode != sysextModeActive {
+		t.Fatalf("sysexts = %+v, want tools preload and debug active", got)
 	}
 }
 
