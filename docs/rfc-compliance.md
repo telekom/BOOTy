@@ -8,12 +8,12 @@ that BOOTy configures in the kernel.
 
 | Item | Value |
 |---|---|
-| Audited tree | `main` at `5ac795214a6b3a1baf24a6d6dbcc85628e4cd3f6` (second refresh, after v0.2.0-rc.19); the first refresh read `f1e0e72e`, the first audit `03abb09f` |
+| Audited tree | `main` at `5a47f1cbd1b3bbb6a01441bc64fe4d6c705758f8` (third refresh, with [#892] and [#908]); the second refresh read `5ac79521`, the first refresh `f1e0e72e`, the first audit `03abb09f` |
 | GoBGP | `github.com/osrg/gobgp/v4 v4.11.0`, replaced by the fork tag `github.com/MaxRink/gobgp/v4 v4.11.0-booty.6` (go.mod): upstream v4.11.0 ([#874]) plus [#851], [#876] and [#884]; source read at that tag. The first refresh read `v4.10.0-booty.10`, the first audit `v3.37.0` |
 | Other libraries | `gopacket/gopacket v1.7.4`, replaced by the fork `MaxRink/gopacket v1.7.4-booty.2`; `vishvananda/netlink v1.3.1`, replaced by the fork `MaxRink/netlink v1.3.1-booty.1` ([dependency-forks.md](dependency-forks.md)). `digineo/go-dhclient` is gone: [#790] added BOOTy's own DHCPv4 client (`pkg/network/dhcp4`) |
 | Open PRs | none: every fix PR that the first refresh listed as open is merged |
 | Kernel | Linux VXLAN, bridge, neighbor and IPv6 ND/SLAAC code (not audited, owner noted) |
-| Date | 2026-11-07 (second refresh); first refresh 2026-10-19, first audit 2026-10-18 |
+| Date | 2026-11-09 (third refresh); second refresh 2026-11-07, first refresh 2026-10-19, first audit 2026-10-18 |
 
 ## Method
 
@@ -37,6 +37,13 @@ the first refresh (`v4.10.0-booty.N`) are history: many of their changes
 are upstream in v4.11.0, and the rows say which code provides a behaviour
 now. [networking.md](networking.md#gobgp-version-and-fork) lists every
 change of the current fork.
+
+The third refresh checked every file and line reference again at the
+audited tree (the GoBGP fork tag is unchanged) and corrected the ones
+that had moved or pointed next to the cited code. It found two DHCPv4
+rows that were marked COMPLIANT but were not: a DHCPRELEASE without the
+server identifier (2131-10) and option 57 values below 576 for MTUs 576
+to 603 (2132-2), both fixed by [#908]. [#892] fixed 8415-7.
 
 Each row has an owner:
 
@@ -121,11 +128,12 @@ refresh is merged.
 | 4862 | IPv6 SLAAC | 2 | 0 | 0 | 0 | 0 | 0 |
 | 2131 | DHCPv4 client | 14 | 1 | 0 | 0 | 0 | 0 |
 | 2132 / 3397 / 3442 / 4039 / 4361 | DHCPv4 options | 6 | 0 | 0 | 0 | 0 | 0 |
-| 8415 | DHCPv6 | 7 | 2 | 0 | 0 | 0 | 0 |
-| **Total** | | **209** | **17** | **57** | **2** | **90** | **2** |
+| 8415 | DHCPv6 | 8 | 1 | 0 | 0 | 0 | 0 |
+| **Total** | | **210** | **16** | **57** | **2** | **90** | **2** |
 
 Kernel- and library-owned rows count as COMPLIANT or DEVIATION; the owner
-column names them. The first refresh (`f1e0e72e`, fork tag
+column names them. The second refresh (`5ac79521`) counted 209
+COMPLIANT and 17 DEVIATION, the other columns as now. The first refresh (`f1e0e72e`, fork tag
 `v4.10.0-booty.10`) counted 176 COMPLIANT, 27 DEVIATION (16 with an open
 fix), 60 N/A, 3 NOT IMPLEMENTED, 19 PENDING, 89 GOBGP: COMPLIANT and 3
 GOBGP: DEVIATION. The first audit (`03abb09f`, GoBGP 3.37.0) counted 149
@@ -147,7 +155,7 @@ COMPLIANT, 47 DEVIATION, 67 N/A, 4 NOT IMPLEMENTED, 68 GOBGP: COMPLIANT and
 | 9 | RFC4271-NH-RESOLVE | 4271 §9.1.2.1 | GoBGP | Low: no next hop tracking in the decision process; BOOTy's FIB writer skips unresolvable next hops instead. | Open. |
 | 10 | RFC7432-PMSI-ID | 7432 §11.2, 6514 §5 | BOOTy | Very low: the ingress replication destination is the originating router IP, not the PMSI Tunnel Identifier; in VXLAN fabrics both are the VTEP. | Kept like FRR, documented. |
 | 11 | RFC7432-MOBILITY-GOBGP | 7432 §15 | GoBGP | Very low: GoBGP withdraws its local Type-2 route on a remote higher sequence only when the ESIs differ. BOOTy's MAC is its own bridge MAC and does not move. | Open. |
-| 12 | RFC8415-RELEASE, RFC8415-DECLINE | 8415 §18.2.7, §18.2.8 | BOOTy | Very low: the DHCPv6 address is removed after the RELEASE instead of before it (8415-7), and a failed DAD sends no DECLINE (8415-8). | Open: drop the address before `Stop`; DECLINE on a DAD failure. |
+| 12 | RFC8415-DECLINE | 8415 §18.2.8 | BOOTy | Very low: a failed DAD sends no DECLINE (8415-8). | Open: DECLINE on a DAD failure. |
 | 13 | LLDP-TTL | 802.1AB | BOOTy | Very low: TTL 120 instead of txTTL = 4 x 30 + 1 = 121; matches systemd-networkd. | Kept for networkd parity. |
 
 The rows without authentication (5880-39, 5881-15, 5883-4) are not
@@ -179,6 +187,8 @@ ranked: the legacy FRR profile has none either.
 | RFC4861-ALLROUTERS | 4861 §6.2.2 | [#846] | `TestListenRSJoinsAllRouters` |
 | RFC2131-EXPIRE | 2131 §4.4.5, §3.2 | [#751], [#790] | see 2131-5, 2131-6 |
 | RFC2131-RENEW, RFC2131-BACKOFF | 2131 §4.3.2, §4.4.5, §4.1 | [#790] | see 2131-3, 2131-9 |
+| RFC2131-RELEASE-SID, RFC2132-MAXSIZE | 2131 Table 5, 2132 §9.10 | [#908] | `TestRebootAndRelease`, `TestMaxMessageSize` |
+| RFC8415-RELEASE | 8415 §18.2.7 | [#892] | `TestDHCPv6DropsAddressBeforeRelease` |
 
 ## BGP
 
@@ -202,7 +212,7 @@ ranked: the legacy FRR profile has none either.
 | 4271-14 | 6.2 | OPEN errors: Bad Peer AS, Bad BGP Identifier (RFC 6286 rules) | GoBGP | GOBGP: COMPLIANT | `validate.go:401` to `:422`. Unnumbered peers take any peer AS (remote AS from OPEN, FRR `remote-as external` style) | reading |
 | 4271-15 | 6.3 | UPDATE errors: malformed attribute list, missing well-known attribute, invalid ORIGIN, invalid NEXT_HOP, AS loop | GoBGP | GOBGP: COMPLIANT | `validate.go:11` to `:109`, revised by RFC 7606 (see below) | reading |
 | 4271-16 | 6.5 | Hold timer expiry MUST send NOTIFICATION Hold Timer Expired | GoBGP | GOBGP: COMPLIANT | `fsm.go:2248` (OpenSent), `:2563` (OpenConfirm), `:3000` (Established); `TestFSMHandlerOpensent_HoldTimerExpired` | GoBGP test |
-| 4271-17 | 6.8 | Connection collision detection MUST compare BGP Identifiers and close one connection | GoBGP | GOBGP: COMPLIANT | RFC4271-COLLISION at the first audit: GoBGP 3.37.0 closed every new connection. GoBGP 4 compares the BGP Identifiers and closes the losing connection with Cease/Connection Collision Resolution (`fsm.go:707`, `resolveCollision`). Upstream v4.11.0 resolves collisions in OpenSent and OpenConfirm and keeps the surviving connection ([osrg/gobgp#3741](https://github.com/osrg/gobgp/issues/3741), [osrg/gobgp#3751](https://github.com/osrg/gobgp/issues/3751)). The fork closes the losing incoming connection only after the peer's OPEN arrives on it (`fsm.go:1145`, `loserAnswer`, [osrg/gobgp#3863](https://github.com/osrg/gobgp/issues/3863)) and, since [#884], closes the peer's connection at once when GoBGP's OPEN is out on its own one, like FRR `bgp_collision_detect`. GoBGP tests `TestResolveCollision`, `TestFSMHandlerOpenconfirm_Collision`, `TestOpensentCollisionWithOurOpenSent`, `TestCollisionResolvedByGoBGPKeepsSurvivingConnection`, `TestCollisionSimultaneousOpenFRRTiming`, `TestCollisionBothConnectionsDropped`, `TestCollisionLoserClosedOnlyAfterItsOpen`, `TestCollisionLoserAnswers`; BOOTy `TestCollisionAfterCarrierLoss`; lab `TestProdTplOneDropPerFault`. See 4271-31 for the dialed connection ([#831]) | test, lab, GoBGP test |
+| 4271-17 | 6.8 | Connection collision detection MUST compare BGP Identifiers and close one connection | GoBGP | GOBGP: COMPLIANT | RFC4271-COLLISION at the first audit: GoBGP 3.37.0 closed every new connection. GoBGP 4 compares the BGP Identifiers and closes the losing connection with Cease/Connection Collision Resolution (`fsm.go:707`, `resolveCollision`). Upstream v4.11.0 resolves collisions in OpenSent and OpenConfirm and keeps the surviving connection ([osrg/gobgp#3741](https://github.com/osrg/gobgp/issues/3741), [osrg/gobgp#3751](https://github.com/osrg/gobgp/issues/3751)). The fork closes the losing incoming connection only after the peer's OPEN arrives on it (`fsm.go:1149`, `loserAnswer`, [osrg/gobgp#3863](https://github.com/osrg/gobgp/issues/3863)) and, since [#884], closes the peer's connection at once when GoBGP's OPEN is out on its own one, like FRR `bgp_collision_detect`. GoBGP tests `TestResolveCollision`, `TestFSMHandlerOpenconfirm_Collision`, `TestOpensentCollisionWithOurOpenSent`, `TestCollisionResolvedByGoBGPKeepsSurvivingConnection`, `TestCollisionSimultaneousOpenFRRTiming`, `TestCollisionBothConnectionsDropped`, `TestCollisionLoserClosedOnlyAfterItsOpen`, `TestCollisionLoserAnswers`; BOOTy `TestCollisionAfterCarrierLoss`; lab `TestProdTplOneDropPerFault`. See 4271-31 for the dialed connection ([#831]) | test, lab, GoBGP test |
 | 4271-18 | 8 | FSM: ConnectRetryTimer, IdleHoldTimer, states and events | GoBGP, BOOTy | GOBGP: COMPLIANT | connect retry and idle hold from BOOTy (`families.go:32`, idle hold after reset 1 s like FRR, `families.go:29`). [#745] (merged) restarts a peer at once after a session end. Idle hold: 4271-33; start: 4271-34 | reading |
 | 4271-19 | 9 | Adj-RIB-In / Loc-RIB / Adj-RIB-Out processing | GoBGP | GOBGP: COMPLIANT | GoBGP RIB | reading |
 | 4271-20 | 9.1.2.1 | A route with an unresolvable NEXT_HOP SHOULD be excluded from the decision process | GoBGP, BOOTy | GOBGP: DEVIATION | RFC4271-NH-RESOLVE: GoBGP has no next hop tracking. BOOTy's FIB writer resolves each next hop and skips unresolvable ones (`pkg/network/gobgp/fib.go:349`), but a resolvable second-best path is not used then. Impact low | reading |
@@ -341,8 +351,8 @@ ranked: the legacy FRR profile has none either.
 | ID | § | Requirement | Owner | Status | Evidence, impact, fix | Verified |
 |---|---|---|---|---|---|---|
 | 7606-1 | 2, 3 | Treat-as-withdraw instead of session reset for attribute errors | GoBGP | GOBGP: COMPLIANT | on by default (`gobgp@v4.11.0-booty.6/pkg/config/oc/default.go:125`), handled in `fsm.go:1879` (`handlingError`) | reading |
-| 7606-2 | 3 (c), (g) | Duplicate attributes: discard all but the first; duplicate MP_REACH/MP_UNREACH: session reset | GoBGP | GOBGP: COMPLIANT | `validate.go:29` to `:66` | reading |
-| 7606-3 | 3 (d) | Missing well-known mandatory attribute: treat-as-withdraw | GoBGP | GOBGP: COMPLIANT | `validate.go:72` to `:100` | reading |
+| 7606-2 | 3 (c), (g) | Duplicate attributes: discard all but the first; duplicate MP_REACH/MP_UNREACH: session reset | GoBGP | GOBGP: COMPLIANT | `validate.go:29` to `:72` | reading |
+| 7606-3 | 3 (d) | Missing well-known mandatory attribute: treat-as-withdraw | GoBGP | GOBGP: COMPLIANT | `validate.go:84` to `:102` | reading |
 | 7606-4 | 7.x | Per-attribute handling (ORIGIN, AS_PATH, NEXT_HOP, MED, LOCAL_PREF, communities: treat-as-withdraw; ATOMIC_AGGREGATE, AGGREGATOR: attribute discard; MP_REACH/MP_UNREACH: AFI/SAFI disable) | GoBGP | GOBGP: COMPLIANT | `bgp.go:18000` | reading |
 | 7606-5 | 5.3 | A malformed NLRI in MP_REACH_NLRI ends in session reset or AFI/SAFI disable | GoBGP | GOBGP: COMPLIANT | RFC7606-EVPN-PANIC at the first audit: GoBGP 3.37.0 panicked in the EVPN route type decoders for short route types 1 to 4, before any check of the negotiated families, so any BGP peer could end BOOTy (PID 1). GoBGP 4.10.0 ([#699]) returns a MessageError (`bgp.go:2893` and the other decoders); `TestEVPNDecodeTruncatedNLRIReturnsError` pins it. Defence in depth: [#765] and [#787] (merged) reboot after a kernel panic (`panic=10`). The panic regression test of [#755] (closed) is on `main` as `pkg/network/gobgp/rfc7606_decode_test.go` | test |
 | 7606-6 | 5.4 | Routes with unrecognized NLRI types of a typed family (EVPN) MUST be discarded | GoBGP | GOBGP: COMPLIANT | RFC7606-TYPED-NLRI at the first audit (an unknown EVPN route type disabled L2VPN EVPN on the session, in 3.37.0 and 4.10.0). Upstream v4.11.0 skips the NLRI by its length (`bgp.go:3582`; 97833030, [osrg/gobgp#3742](https://github.com/osrg/gobgp/issues/3742)); GoBGP tests `Test_EVPNUnknownRouteTypeIsDiscarded`, `TestProcessMessageEVPNUnknownRouteTypeOnly` | GoBGP test |
@@ -519,7 +529,7 @@ BOOTy processes the EAD (Type-1) routes of remote Ethernet segments.
 | 8365-7 | 5.1.3 | VNI carried in the MPLS label field (24 bits) | GoBGP, BOOTy | GOBGP: COMPLIANT | `gobgp@v4.11.0-booty.6/pkg/packet/bgp/bgp.go:2760` (no shift); `TestRFCWireType5`, `TestRFCWireType3`, `TestRFCWireType2` | test |
 | 8365-8 | 5.1.3 | BGP Encapsulation extended community with all EVPN routes | BOOTy | COMPLIANT | RFC8365-ENCAP at the first audit (only on Type-5). [#746] adds it to Type-2 and Type-3 routes (`overlay.go:2766`, `vxlanEncapCommunity`); `TestEVPNRoutesCarryVXLANEncapsulation`, `TestRFCWireType2`, `TestRFCWireType3`, `TestRFCWireType5` | test |
 | 8365-9 | 5.1.3 | Next hop MUST be the IPv4 or IPv6 address of the NVE | BOOTy | COMPLIANT | router ID (VTEP) in every route; `TestRFCWireType*` | test |
-| 8365-10 | 5.1.3, 6 | Receiver uses the VNI of the route (and the advertised encapsulation) | BOOTy | DEVIATION | RFC8365-RX-VNI, partly fixed by [#773]: in Type-5-only (L3VNI) mode a Type-5 route without gateway IP whose VNI is not the provision VNI is treated as withdrawn, like zebra (`overlay.go:1008`, `type5LocalVNI`); `TestProcessRouteUpdateType5L3VNI`. In the other modes the Type-5 label is not checked, and Type-2 and Type-3 FDB entries use the VXLAN device VNI (`overlay.go:2375`), as FRR does. Impact only with different VNIs for the same BD/VRF. Kept like FRR | test |
+| 8365-10 | 5.1.3, 6 | Receiver uses the VNI of the route (and the advertised encapsulation) | BOOTy | DEVIATION | RFC8365-RX-VNI, partly fixed by [#773]: in Type-5-only (L3VNI) mode a Type-5 route without gateway IP whose VNI is not the provision VNI is treated as withdrawn, like zebra (`overlay.go:1008`, `:1020` `type5LocalVNI`); `TestProcessRouteUpdateType5L3VNI`. In the other modes the Type-5 label is not checked, and Type-2 and Type-3 FDB entries use the VXLAN device VNI (`overlay.go:2375`), as FRR does. Impact only with different VNIs for the same BD/VRF. Kept like FRR | test |
 | 8365-11 | 6 | Advertised encapsulations use the same EVPN procedures; never VXLAN and MPLS together | BOOTy | COMPLIANT | VXLAN only | reading |
 | 8365-19 | 6 | An ingress NVE sends to an egress NVE only with an encapsulation that both support; without the BGP Encapsulation community the receiver assumes MPLS or a configured encapsulation | BOOTy | COMPLIANT | RFC8365-ENCAP-RX at the first refresh. [#771]: an update whose encapsulation communities do not include VXLAN (tunnel type 8) is treated as a withdraw of its route key, for Type-2, Type-3 and Type-5 (`overlay.go:934`, `notVXLAN`); a route without the community counts as VXLAN, the configured encapsulation, as in FRR 10.7.1. `TestProcessRouteUpdateHonoursEncapsulation` | test |
 | 8365-12 | 5.2 | MPLS over GRE | BOOTy | N/A | | reading |
@@ -584,7 +594,7 @@ BOOTy processes the EAD (Type-1) routes of remote Ethernet segments.
 | ID | § | Requirement | Owner | Status | Evidence, impact, fix | Verified |
 |---|---|---|---|---|---|---|
 | 9047-1 | 2 | Receive the EVPN ARP/ND Extended Community (type 0x06, sub-type 0x08) with the R, O and I flags | GoBGP | GOBGP: COMPLIANT | fork booty.2 decodes it (`ArpNdExtended`); FRR sends it with the MAC/IP routes of IPv6 neighbors. GoBGP tests `Test_UpdateWithEvpnArpNdExtended`, `Test_ArpNdExtended` | GoBGP test |
-| 9047-2 | 3.2 | An IPv6 MAC/IP route: MUST add the R and O flags to the ND entry; IPv4: MUST ignore them; I flag: SHOULD install an immutable binding | BOOTy | COMPLIANT | RFC9047-FLAGS at the first refresh. [#798]: an IPv6 neighbor entry gets `NTF_ROUTER` from the R flag of the best route, like zebra; IPv4 entries never get it (`overlay.go:2067`, `:2073`, `arpNdRouter`). The kernel has no O flag; the NOARP `extern_learn` entry replaces what the kernel had. The I flag is not used, as in FRR. `TestType2NeighborRouterFlag`, `TestType2NeighborRouterFollowsBestPath` | test |
+| 9047-2 | 3.2 | An IPv6 MAC/IP route: MUST add the R and O flags to the ND entry; IPv4: MUST ignore them; I flag: SHOULD install an immutable binding | BOOTy | COMPLIANT | RFC9047-FLAGS at the first refresh. [#798]: an IPv6 neighbor entry gets `NTF_ROUTER` from the R flag of the best route, like zebra; IPv4 entries never get it (`overlay.go:2067`, `:2073`, `:2325` `arpNdRouter`). The kernel has no O flag; the NOARP `extern_learn` entry replaces what the kernel had. The I flag is not used, as in FRR. `TestType2NeighborRouterFlag`, `TestType2NeighborRouterFollowsBestPath` | test |
 
 ### RFC 6514: PMSI Tunnel attribute (as used by RFC 7432)
 
@@ -716,7 +726,7 @@ also reads the RAs of every DHCP NIC to start DHCPv6 ([#795]).
 | 4861-13 | 8 | Redirects | Kernel | N/A | | reading |
 | 4861-14 | 4.2 | Router flag of Neighbor Advertisements consistent with the RAs | Kernel | COMPLIANT | the kernel sets the R flag from forwarding; with forwarding off it is 0 (`helpers.go:20` comment), which matches 4861-7 for a host | reading |
 | 4861-15 | 6.1.2 | Host: a received RA is valid only with hop limit 255 and a link-local source | BOOTy | COMPLIANT | [#795] reads the M and O flags of RAs in DHCP mode to start DHCPv6, like networkd, and checks them first (`dhcp6_mode.go:144` `validRA`, used at `:134`); `TestValidRA` | test |
-| 4861-16 | 6.3.7 | Host: up to MAX_RTR_SOLICITATIONS (3) Router Solicitations RTR_SOLICITATION_INTERVAL (4 s) apart; the first after a random delay of up to MAX_RTR_SOLICITATION_DELAY (1 s, SHOULD) | BOOTy | COMPLIANT | [#795] sends three solicitations 4 s apart with the source link-layer address when the carrier of a DHCP NIC returns (`dhcp6_mode.go:308` `solicitRA`, `:58`, `sendRS` `:85`; started at `dhcp.go:395`), the first after a random 0.5 to 1 s, like sd-ndisc (`dhcp6_mode.go:63`); the DEVIATION of the PR (no random delay) is gone. `TestDHCPv6FollowsRAAndCarrier` | test |
+| 4861-16 | 6.3.7 | Host: up to MAX_RTR_SOLICITATIONS (3) Router Solicitations RTR_SOLICITATION_INTERVAL (4 s) apart; the first after a random delay of up to MAX_RTR_SOLICITATION_DELAY (1 s, SHOULD) | BOOTy | COMPLIANT | [#795] sends three solicitations 4 s apart with the source link-layer address when the carrier of a DHCP NIC returns (`dhcp6_mode.go:313` `solicitRA`, `:58`, `sendRS` `:85`; started at `dhcp.go:395`), the first after a random 0.5 to 1 s, like sd-ndisc (`dhcp6_mode.go:63`); the DEVIATION of the PR (no random delay) is gone. `TestDHCPv6FollowsRAAndCarrier` | test |
 
 ### RFC 4862: IPv6 stateless address autoconfiguration
 
@@ -739,16 +749,16 @@ timers and checks.
 |---|---|---|---|---|---|---|
 | 2131-1 | 4.1, 4.4.1 | DISCOVER/OFFER/REQUEST/ACK exchange, xid, broadcast from 0.0.0.0 | BOOTy | COMPLIANT | [#790] `dhcp4/client.go:197` `initState`, `:228` `selecting` (broadcast, server identifier and requested IP); `TestDiscoverBackoffAndOptions`, `TestSelectingIgnoresOtherTypesAndRetriesFiveTimes`, `TestTransportOnVeth` (build tag `linux_e2e`), `TestDHCPMode_Setup` | test |
 | 2131-2 | 4.4.1 | Client SHOULD check the offered address (ARP) and MUST send DHCPDECLINE if in use | BOOTy | DEVIATION | RFC2131-ARP: the own client of [#790] binds an ACK at once (`dhcp4/client.go:237`, `:351` `bind`); no ARP probe and no DHCPDECLINE anywhere in `pkg/network`. Impact low. Fix: an ARP probe (RFC 5227) before `bind` and a DECLINE on a conflict | reading |
-| 2131-3 | 4.3.2, 4.4.5 | RENEWING: unicast REQUEST with ciaddr, without server identifier and requested IP; REBINDING: broadcast | BOOTy | COMPLIANT | RFC2131-RENEW at the first audit (go-dhclient). [#790]: unicast from the lease address to the server of the lease with ciaddr and neither option, broadcast when rebinding (`dhcp4/client.go:302` `renewState`, `:310` `rebindState`, `:557` `request`); `TestRenewUnicastRebindBroadcast`, `TestRenewWait` | test |
+| 2131-3 | 4.3.2, 4.4.5 | RENEWING: unicast REQUEST with ciaddr, without server identifier and requested IP; REBINDING: broadcast | BOOTy | COMPLIANT | RFC2131-RENEW at the first audit (go-dhclient). [#790]: unicast from the lease address to the server of the lease with ciaddr and neither option, broadcast when rebinding (`dhcp4/client.go:302` `renewState`, `:310` `rebindState`, `:558` `request`); `TestRenewUnicastRebindBroadcast`, `TestRenewWait` | test |
 | 2131-4 | 4.4.5 | T1 and T2 defaults 0.5 and 0.875 of the lease | BOOTy | COMPLIANT | `dhcp4/message.go:302` (`leaseTimes.set`, also for a T1 or T2 past the lease, like networkd); `TestLeaseTimes` | test |
-| 2131-5 | 4.4.5 | Lease expiry before renewal or rebind: MUST stop using the address, back to INIT | BOOTy | COMPLIANT | RFC2131-EXPIRE at the first audit. The client ends the lease at expiry (`dhcp4/client.go:328`, `:385` `expire`, also in INIT after failed INIT-REBOOTs `:204`); [#751] removes address, routes, DNS, NTP and MTU (`dhcp.go:543` `onExpire`, `:553` `endLease`); `TestExpiryAndNak`, `TestLeaseExpiresInInitAfterFailedReboot`, `TestOnExpireRemovesLeaseState` | test |
-| 2131-6 | 3.2 | DHCPNAK: stop using the address, restart | BOOTy | COMPLIANT | Fixed by [#751] and [#790]: a NAK ends the lease (`dhcp4/client.go:270`, `:344`) and BOOTy removes it (`dhcp.go:543`); a NAK counts only from the server of the offer or lease, like networkd (`dhcp4/client.go:452`); `TestExpiryAndNak`, `TestNakFromOtherServerIgnored`, `TestNakFromOtherServerIgnoredInRequesting`, `TestNakFromOtherServerIgnoredInRebooting` | test |
-| 2131-7 | 4.4.5 | A renewed lease updates address and router | BOOTy | COMPLIANT | `dhcp.go:596` `apply` for every ACK, `:734` `applyRoutes`; `TestOnBoundAppliesRenewal`, `TestOnBoundAppliesEveryNIC` | test |
-| 2131-8 | 3.3 | Lease without router option drops the default route | BOOTy | COMPLIANT | `dhcp_options.go:113` `leaseRouteSet` (no default route without a non-zero router), `dhcp.go:734` removes the routes the new lease lacks; `TestLeaseRoutesTable`, `TestOnBoundRenewalDropsRouteAndRestoresMask` | test |
+| 2131-5 | 4.4.5 | Lease expiry before renewal or rebind: MUST stop using the address, back to INIT | BOOTy | COMPLIANT | RFC2131-EXPIRE at the first audit. The client ends the lease at expiry (`dhcp4/client.go:328`, `:385` `expire`, also in INIT after failed INIT-REBOOTs `:204`); [#751] removes address, routes, DNS, NTP and MTU (`dhcp.go:544` `onExpire`, `:554` `endLease`); `TestExpiryAndNak`, `TestLeaseExpiresInInitAfterFailedReboot`, `TestOnExpireRemovesLeaseState` | test |
+| 2131-6 | 3.2 | DHCPNAK: stop using the address, restart | BOOTy | COMPLIANT | Fixed by [#751] and [#790]: a NAK ends the lease (`dhcp4/client.go:270`, `:344`) and BOOTy removes it (`dhcp.go:544`); a NAK counts only from the server of the offer or lease, like networkd (`dhcp4/client.go:452`); `TestExpiryAndNak`, `TestNakFromOtherServerIgnored`, `TestNakFromOtherServerIgnoredInRequesting`, `TestNakFromOtherServerIgnoredInRebooting` | test |
+| 2131-7 | 4.4.5 | A renewed lease updates address and router | BOOTy | COMPLIANT | `dhcp.go:597` `apply` for every ACK, `:735` `applyRoutes`; `TestOnBoundAppliesRenewal`, `TestOnBoundAppliesEveryNIC` | test |
+| 2131-8 | 3.3 | Lease without router option drops the default route | BOOTy | COMPLIANT | `dhcp_options.go:113` `leaseRouteSet` (no default route without a non-zero router), `dhcp.go:735` removes the routes the new lease lacks; `TestLeaseRoutesTable`, `TestOnBoundRenewalDropsRouteAndRestoresMask` | test |
 | 2131-9 | 4.1 | Retransmission with randomized exponential backoff (SHOULD) | BOOTy | COMPLIANT | RFC2131-BACKOFF at the first audit (go-dhclient, fixed 1 s). [#790]: 2, 4, 8, 16, 32, then 64 s, each +-1 s, like networkd (`dhcp4/client.go:76` `timeout`); `TestDiscoverBackoffAndOptions` | test |
-| 2131-10 | 4.4.6 | DHCPRELEASE on shutdown (MAY) | BOOTy | COMPLIANT | [#790] releases a bound lease at stop, unicast with ciaddr and client identifier, like networkd SendRelease=yes (`dhcp4/client.go:512` `release`, `dhcp.go:455`); `TestRebootAndRelease` | test |
-| 2131-11 | 4.4.1 | Parameter request list, hostname option | BOOTy | COMPLIANT | [#776] networkd's list and options 61, 55, 57, 12 (`dhcp_options.go:27` `networkdParams`, `dhcp.go:445` `newDHCPClient`, `dhcp4/client.go:569`); `TestNewDHCPClientSendsNetworkdOptions`, `TestDiscoverBackoffAndOptions` | test |
-| 2131-12 | 3.1 | Client identifier, chaddr | BOOTy | COMPLIANT | N/A at the first audit (chaddr only). [#776] sends networkd's client identifier in every message with chaddr (`dhcp_options.go:43`, `dhcp4/client.go:571`), see 4361-1; `TestNewDHCPClientSendsNetworkdOptions` | test |
+| 2131-10 | 4.4.6, Table 5 | DHCPRELEASE on shutdown (MAY); a DHCPRELEASE MUST carry the server identifier (54) | BOOTy | COMPLIANT | [#790] releases a bound lease at stop, unicast with ciaddr, like networkd SendRelease=yes (`dhcp4/client.go:512` `release`, `dhcp.go:456`); [#908] adds the server identifier of the lease, which the release sent without before, to the client identifier; `TestRebootAndRelease`, `TestGolden` | test |
+| 2131-11 | 4.4.1 | Parameter request list, hostname option | BOOTy | COMPLIANT | [#776] networkd's list and options 61, 55, 57, 12 (`dhcp_options.go:27` `networkdParams`, `dhcp.go:446` `newDHCPClient`, `dhcp4/client.go:573`); `TestNewDHCPClientSendsNetworkdOptions`, `TestDiscoverBackoffAndOptions` | test |
+| 2131-12 | 3.1 | Client identifier, chaddr | BOOTy | COMPLIANT | N/A at the first audit (chaddr only). [#776] sends networkd's client identifier in every message with chaddr (`dhcp_options.go:43`, `dhcp4/client.go:576`), see 4361-1; `TestNewDHCPClientSendsNetworkdOptions` | test |
 | 2131-13 | 3.2, 4.4.2 | INIT-REBOOT: confirm the last address with a broadcast REQUEST (requested IP, no server identifier); NAK: back to INIT | BOOTy | COMPLIANT | [#790] `dhcp4/client.go:250` `rebootState`, started by [#793] when the carrier returns, like networkd (`dhcp.go:400`); `TestRebootTriesOnce`, `TestRebootEndsRenewal`, `TestCarrierLossKeepsLeaseAndReturnReboots` | test |
 | 2131-14 | 4.1 | secs: the time since the client began the exchange | BOOTy | COMPLIANT | [#790] `dhcp4/client.go:506` `secs`, set on each send (`:413`); no test checks the value | reading |
 | 2131-15 | 4.1 | Replies are matched by xid and chaddr | BOOTy | COMPLIANT | [#790] `dhcp4/client.go:448` `wanted`; `TestIgnoresForeignReplies` | test |
@@ -760,11 +770,11 @@ ramdisk ([#753], [#776], [#790], [#819], [#820]).
 
 | ID | § | Requirement | Owner | Status | Evidence, impact, fix | Verified |
 |---|---|---|---|---|---|---|
-| 2132-1 | RFC 2132 3.8, 5.1 | DNS servers (option 6) and interface MTU (option 26, at least 68) of the lease | BOOTy | COMPLIANT | [#753] writes the DNS servers of the lease and sets the MTU, clamped to 576 (1280 with IPv6) and the NIC maximum, like networkd (`dhcp.go:625` `leaseDNS`, `:638` `applyMTU`, `:886` `clampMTU`); [#819] asks every server at once, like the legacy resolver (`dns_fanout.go:102`); `TestOnBoundWritesLeaseDNS`, `TestOnBoundSetsLeaseMTU`, `TestClampMTU`, `TestDNSFanout` | test |
-| 2132-2 | RFC 2132 5.8, 9.10 | Static routes (option 33, classful, no default route) and maximum message size (option 57, at least 576) | BOOTy | COMPLIANT | [#776] `dhcp_options.go:76` `staticRoutes`; [#790] option 57 = NIC MTU - 28, only from MTU 576 (`dhcp4/client.go:581`); `TestLeaseRoutesTable`, `TestMalformedRouteAndSearchOptions`, `TestDiscoverBackoffAndOptions` | test |
+| 2132-1 | RFC 2132 3.8, 5.1 | DNS servers (option 6) and interface MTU (option 26, at least 68) of the lease | BOOTy | COMPLIANT | [#753] writes the DNS servers of the lease and sets the MTU, clamped to 576 (1280 with IPv6) and the NIC maximum, like networkd (`dhcp.go:626` `leaseDNS`, `:639` `applyMTU`, `:887` `clampMTU`); [#819] asks every server at once, like the legacy resolver (`dns_fanout.go:102`); `TestOnBoundWritesLeaseDNS`, `TestOnBoundSetsLeaseMTU`, `TestClampMTU`, `TestDNSFanout` | test |
+| 2132-2 | RFC 2132 5.8, 9.10 | Static routes (option 33, classful, no default route) and maximum message size (option 57, at least 576) | BOOTy | COMPLIANT | [#776] `dhcp_options.go:76` `staticRoutes`; [#790] option 57 = NIC MTU - 28; [#908] leaves it out when that is below 576 (an MTU below 604; before, MTUs 576 to 603 sent 548 to 575) (`dhcp4/client.go:585`); `TestLeaseRoutesTable`, `TestMalformedRouteAndSearchOptions`, `TestMaxMessageSize` | test |
 | 3442-1 | RFC 3442 | Classless static routes (option 121): MUST ignore the Router (3) and Static Routes (33) options when present; a malformed option is ignored | BOOTy | COMPLIANT | [#776] `dhcp_options.go:113` `leaseRouteSet`, `:95` `classlessRoutes`; `TestOnBoundAppliesClasslessRoutes`, `TestMalformedRouteAndSearchOptions`, `FuzzClasslessRoutes` | test |
 | 3397-1 | RFC 3397 | Domain search (option 119) with compression pointers; a malformed option is ignored | BOOTy | COMPLIANT | [#776] `dhcp4/message.go:249` `SearchDomains`, `dhcp_options.go:230` `leaseSearchDomains`; `TestLeaseSearchDomains`, `FuzzDomainSearch`, `TestMalformedRouteAndSearchOptions` | test |
-| 4039-1 | RFC 4039 | Rapid commit: option 80 in DISCOVER; an ACK with rapid commit binds at once | BOOTy | COMPLIANT | [#790] `dhcp4/client.go:550`, `:218`, like networkd; `TestDiscoverBackoffAndOptions` | test |
+| 4039-1 | RFC 4039 | Rapid commit: option 80 in DISCOVER; an ACK with rapid commit binds at once | BOOTy | COMPLIANT | [#790] `dhcp4/client.go:551`, `:218`, like networkd; `TestDiscoverBackoffAndOptions` | test |
 | 4361-1 | RFC 4361 | Client identifier type 255: IAID and DUID | BOOTy | COMPLIANT | [#776] `dhcp_options.go:43` `dhcpClientID`: IAID of the NIC and a DUID-EN from the machine ID, like networkd; DHCPv6 uses the same IAID and DUID (`dhcp6_mode.go:203`); `TestClientIDWithoutMachineID`, `TestNewDHCPClientSendsNetworkdOptions` | test |
 
 ### RFC 8415: DHCPv6
@@ -775,15 +785,15 @@ ramdisk ([#753], [#776], [#790], [#819], [#820]).
 | 8415-2 | 15, 18.2.1 | Retransmission: IRT, MRT, RAND; the first SOLICIT timeout greater than IRT | BOOTy | COMPLIANT | [#795], [#825] `dhcp6/client.go:74` `next`, `:66` to `:69`; `TestSolicitLikeNetworkd`, `TestFirstSolicitAboveIRT` | test |
 | 8415-3 | 18.2.1, 18.2.9 | SOLICIT with rapid commit; collect ADVERTISEs for the first timeout and take the highest preference, 255 at once; ignore an ADVERTISE with NoAddrsAvail | BOOTy | COMPLIANT | [#825] `dhcp6/client.go:166` `solicit`, like sd-dhcp6-client; an ADVERTISE without a usable address is skipped (`dhcp6/message.go:198`, `:210`); `TestAdvertisePreference`, `TestLateAdvertiseSameSocket`, `TestRequestRetriesAndAdvertiseStatus` | test |
 | 8415-4 | 18.2.2 | REQUEST up to REQ_MAX_RC (10) times | BOOTy | COMPLIANT | [#795] `dhcp6/client.go:203` `request`; `TestRequestRetriesAndAdvertiseStatus` | test |
-| 8415-5 | 18.2.4, 18.2.5, 18.2.10.1 | RENEW at T1, REBIND at T2, stop using the address at the end of its valid lifetime; NoBinding in a REPLY to RENEW or REBIND: REQUEST | BOOTy | COMPLIANT | [#795], [#825] `dhcp6/client.go:232` `extend`, `:263` `phase`; the address goes at expiry (`dhcp6_mode.go:249` `onExpire6`); `TestRenewRebindExpire`, `TestRenewNeedsAddress`, `TestRenewNoBindingRequests` | test |
+| 8415-5 | 18.2.4, 18.2.5, 18.2.10.1 | RENEW at T1, REBIND at T2, stop using the address at the end of its valid lifetime; NoBinding in a REPLY to RENEW or REBIND: REQUEST | BOOTy | COMPLIANT | [#795], [#825] `dhcp6/client.go:232` `extend`, `:263` `phase`; the address goes at expiry (`dhcp6_mode.go:253` `onExpire6`); `TestRenewRebindExpire`, `TestRenewNeedsAddress`, `TestRenewNoBindingRequests` | test |
 | 8415-6 | 18.2.6, 21.23 | INFORMATION-REQUEST (O flag); refresh after the Information Refresh Time, at least IRT_MINIMUM (600 s), default 86400 s | BOOTy | COMPLIANT | [#795] `dhcp6/client.go:309` `information`, `:300` `infoRefresh`, `dhcp6/message.go:191`; `TestInformationRequest`, `TestInfoRefresh`, `TestInformationWaitsRefreshTime` | test |
-| 8415-7 | 18.2.7 | RELEASE of a bound address, wait for the REPLY; the address MUST be removed from the interface before the RELEASE | BOOTy | DEVIATION | [#795] releases at stop and waits up to REL_TIMEOUT (1 s) for the REPLY, without retransmission (the RFC says SHOULD retransmit one or more times but MAY terminate early, e.g. on power down; BOOTy stops before the handoff) (`dhcp6/client.go:366` `release`); `TestAdvertiseRequestAndRelease`. But `stop6` removes the address only after the RELEASE (`dhcp6_mode.go:293` `c.Stop()`, then `:296` `dropAddr6`). Impact very low: the RELEASE goes from the link-local address and the handoff follows. Fix: `dropAddr6` before `Stop` | reading |
-| 8415-8 | 18.2.10.1, 18.2.8 | DAD on each received address before use; an address found in use is declined with a DECLINE (no keyword: "the client sends a Decline message") | BOOTy | DEVIATION | [#795] adds the address with kernel DAD (`dhcp6_mode.go:227`) but sends no DECLINE when DAD fails (no DECLINE in `pkg/network/dhcp6`). Impact very low | reading |
-| 8415-9 | 21.24, RFC 3646 | DNS servers (option 23) and domain list (option 24) used | BOOTy | COMPLIANT | [#795] adds them after the DHCPv4 servers, a link-local server with its zone (`dhcp6_mode.go:216` `onBound6`, `:240`; `dhcp.go:665` `writeResolvers`); `TestDomainList`, `TestDHCPv6LinkLocalDNSAndDomains` | test |
+| 8415-7 | 18.2.7 | RELEASE of a bound address, wait for the REPLY; the address MUST be removed from the interface before the RELEASE | BOOTy | COMPLIANT | [#795] releases at stop and waits up to REL_TIMEOUT (1 s) for the REPLY, without retransmission (the RFC says SHOULD retransmit one or more times but MAY terminate early, e.g. on power down; BOOTy stops before the handoff) (`dhcp6/client.go:366` `release`); `TestAdvertiseRequestAndRelease`. Fixed by [#892]: `stop6` removes the address and DNS servers first (`dhcp6_mode.go:292` `dropAddr6`), then stops the client, which sends the RELEASE (`:303` `c.Stop()`); late callbacks of the stopping client are ignored; `TestDHCPv6DropsAddressBeforeRelease`, `TestDHCPv6IgnoresLeaseWhileStopping` | test |
+| 8415-8 | 18.2.10.1, 18.2.8 | DAD on each received address before use; an address found in use is declined with a DECLINE (no keyword: "the client sends a Decline message") | BOOTy | DEVIATION | [#795] adds the address with kernel DAD (`dhcp6_mode.go:231`) but sends no DECLINE when DAD fails (no DECLINE in `pkg/network/dhcp6`). Impact very low | reading |
+| 8415-9 | 21.24, RFC 3646 | DNS servers (option 23) and domain list (option 24) used | BOOTy | COMPLIANT | [#795] adds them after the DHCPv4 servers, a link-local server with its zone (`dhcp6_mode.go:220` `onBound6`, `:244`; `dhcp.go:666` `writeResolvers`); `TestDomainList`, `TestDHCPv6LinkLocalDNSAndDomains` | test |
 
 ## Fix PRs and fork tags
 
-State on 2026-11-07. Every PR in this table is merged and on `main` at the
+State on 2026-11-09. Every PR in this table is merged and on `main` at the
 audited tree, except [#755] (closed; its test is on `main`).
 
 | PR or tag | Findings |
@@ -809,6 +819,8 @@ audited tree, except [#755] (closed; its test is on `main`).
 | [#798] | RFC9047-FLAGS |
 | [#765], [#787] | defence in depth for RFC7606-EVPN-PANIC (`panic=10`) |
 | [#750], [#751], [#753], [#776], [#788], [#790], [#793], [#795], [#819], [#820], [#825] | RFC2131-EXPIRE ([#751]), RFC2131-RENEW and RFC2131-BACKOFF ([#790]), the former PENDING rows of RFC 2131, the DHCPv4 options, RFC 8415 and 4861-15, 4861-16 |
+| [#892] | RFC8415-RELEASE |
+| [#908] | RFC2131-RELEASE-SID, RFC2132-MAXSIZE (found by the third refresh of this audit) |
 
 ### Fork branches on GoBGP 3.37.0
 
@@ -894,3 +906,5 @@ parity (the row says which).
 [#874]: https://github.com/telekom/BOOTy/pull/874
 [#876]: https://github.com/telekom/BOOTy/pull/876
 [#884]: https://github.com/telekom/BOOTy/pull/884
+[#892]: https://github.com/telekom/BOOTy/pull/892
+[#908]: https://github.com/telekom/BOOTy/pull/908
