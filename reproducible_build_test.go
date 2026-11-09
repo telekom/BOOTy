@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +18,7 @@ func TestDockerfilePackStagesDeclareSourceDateEpoch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, stage := range []string{"busybox", "slim-builder", "gobgp-builder", "micro-builder", "split-builder"} {
+	for _, stage := range []string{"busybox", "slim-builder", "gobgp-builder", "micro-builder", "split-builder", "check-iso-vars"} {
 		instructions := dockerfileInstructions(dockerfileStageBlock(t, string(data), stage))
 		arg, pack := -1, -1
 		for i, in := range instructions {
@@ -55,7 +56,8 @@ func TestPackInitramfsIsReproducible(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pack := func(mtime time.Time, out string) []byte {
+	// packCmd packs a small tree with the given file times to dest.
+	packCmd := func(mtime time.Time, dest string) *exec.Cmd {
 		t.Helper()
 		root := t.TempDir()
 		for _, d := range []string{"bin", "etc", "modules"} {
@@ -77,10 +79,14 @@ func TestPackInitramfsIsReproducible(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		dest := filepath.Join(t.TempDir(), out)
 		cmd := exec.CommandContext(t.Context(), "sh", script, root, dest)
 		cmd.Env = append(os.Environ(), "SOURCE_DATE_EPOCH=1700000000")
-		if b, err := cmd.CombinedOutput(); err != nil {
+		return cmd
+	}
+	pack := func(mtime time.Time, out string) []byte {
+		t.Helper()
+		dest := filepath.Join(t.TempDir(), out)
+		if b, err := packCmd(mtime, dest).CombinedOutput(); err != nil {
 			t.Fatalf("pack-initramfs.sh: %v\n%s", err, b)
 		}
 		data, err := os.ReadFile(dest)
@@ -115,6 +121,33 @@ func TestPackInitramfsIsReproducible(t *testing.T) {
 			}
 		})
 	}
+
+	// Runs at the same time keep their scratch files apart.
+	t.Run("concurrent", func(t *testing.T) {
+		want := pack(time.Unix(1, 0), "initramfs.cpio")
+		dir := t.TempDir()
+		var cmds []*exec.Cmd
+		for i := range 4 {
+			cmd := packCmd(time.Now(), filepath.Join(dir, fmt.Sprintf("%d.cpio", i)))
+			cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			cmds = append(cmds, cmd)
+		}
+		for i, cmd := range cmds {
+			if err := cmd.Wait(); err != nil {
+				t.Fatalf("pack-initramfs.sh run %d: %v", i, err)
+			}
+			got, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("%d.cpio", i)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Errorf("run %d packed different bytes", i)
+			}
+		}
+	})
 }
 
 // CI builds the released ramdisk targets twice and compares them.

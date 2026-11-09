@@ -72,10 +72,6 @@ RUN printf '{"name":"util-linux","version":"%s","purl":"pkg:github/util-linux/ut
 
 # Build BOOTy as an init
 FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS dev
-ARG BOOTY_VERSION=dev
-ARG BOOTY_BUILD=unknown
-ARG BOOTY_COMMIT_TIME=
-ARG BOOTY_FLAVOR=full
 RUN set -eu; \
     n=0; \
     until apk add --no-cache git ca-certificates gcc linux-headers musl-dev; do \
@@ -94,6 +90,12 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
       sleep 10; \
     done
 COPY . /go/src/github.com/telekom/BOOTy/
+# Declared after the package and module downloads: a build argument changes
+# the cache key of every later RUN, and the flavors share these layers.
+ARG BOOTY_VERSION=dev
+ARG BOOTY_BUILD=unknown
+ARG BOOTY_COMMIT_TIME=
+ARG BOOTY_FLAVOR=full
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
     CGO_ENABLED=1 GOOS=linux go build -a -trimpath -tags grpcnotrace -ldflags "-linkmode external -extldflags '-static' -s -w \
@@ -794,8 +796,9 @@ COPY --from=gobgp-iso-builder /booty-gobgp.iso .
 # other ISOs: BIOS (ISOLINUX) and UEFI with Secure Boot (Debian shim, GRUB
 # and kernel).
 FROM gobgp-builder AS check-iso-vars
-COPY hack/check-iso/vars /deploy-root/deploy/vars
-RUN cd /deploy-root && find . | cpio -o -H newc > /deploy.cpio
+ARG SOURCE_DATE_EPOCH=315532800
+COPY --chmod=0644 hack/check-iso/vars /deploy-root/deploy/vars
+RUN pack-initramfs.sh /deploy-root /deploy.cpio
 
 FROM iso-tools AS check-iso-builder
 ARG ISO_VOLID=BOOTY
@@ -862,6 +865,27 @@ RUN pack-initramfs.sh . /initramfs.cpio.gz
 
 FROM scratch AS micro
 COPY --from=micro-builder /initramfs.cpio.gz .
+
+# ── Package versions (optional, --target=package-versions) ───────────────
+# The Debian and Alpine package databases of every stage that installs
+# packages for a ramdisk or for the tools that build and pack it.
+# hack/check-reproducible.sh lists the versions of both rounds when they
+# differ, so a mirror that served another version in between shows up.
+# Nothing here goes into a ramdisk. After the stages it copies from: a
+# stage name defined later would be taken for an image name.
+FROM scratch AS package-versions
+COPY --from=dev /lib/apk/db/installed apk/dev
+COPY --from=lvm /var/lib/dpkg/status dpkg/lvm
+COPY --from=sfdisk /var/lib/dpkg/status dpkg/sfdisk
+COPY --from=efi-fallback /var/lib/dpkg/status dpkg/efi-fallback
+COPY --from=frr /var/lib/dpkg/status dpkg/frr
+COPY --from=kernel /var/lib/dpkg/status dpkg/kernel
+COPY --from=kernel /sbom-dpkg/status dpkg/kernel-packages
+COPY --from=tools /var/lib/dpkg/status dpkg/tools
+COPY --from=busybox-packages /var/lib/dpkg/status dpkg/busybox
+COPY --from=slim-builder /var/lib/dpkg/status dpkg/slim-builder
+COPY --from=gobgp-builder /var/lib/dpkg/status dpkg/gobgp-builder
+COPY --from=micro-builder /var/lib/dpkg/status dpkg/micro-builder
 
 # Kernel that matches the shipped modules (--target kernel-image), for
 # booting a flavor initramfs in QEMU.
