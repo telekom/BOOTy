@@ -27,12 +27,23 @@ const imageCopyBufferSize = 16 << 20 // 16 MiB
 // imageHTTPClient is the HTTP client used for image downloads.
 // It sets connect and TLS timeouts to prevent hanging on broken connections
 // while leaving the response body read timeout unlimited (for large images).
-var imageHTTPClient = network.NewHTTPClient(0)
+var imageHTTPClient = newImageHTTPClient()
+
+// newImageHTTPClient keeps up to 17 idle connections per server, so that
+// IMAGE_PARALLEL_RANGES (at most 16) reuses its connections instead of
+// dialing one per range.
+func newImageHTTPClient() *http.Client {
+	c := network.NewHTTPClient(0)
+	if t, ok := c.Transport.(*http.Transport); ok {
+		t.MaxIdleConnsPerHost = 17
+	}
+	return c
+}
 
 // RefreshHTTPClients rebuilds the image download clients so they pick up
 // network.SetSkipTLSVerify and proxy settings from the environment.
 func RefreshHTTPClients() {
-	imageHTTPClient = network.NewHTTPClient(0)
+	imageHTTPClient = newImageHTTPClient()
 	gpgHTTPClient = network.NewHTTPClient(0)
 }
 
@@ -422,7 +433,7 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 		}
 
 		if resp.StatusCode == http.StatusOK {
-			return newIdleTimeoutBody(resp.Body, cancel, imageIdleReadTimeout), nil
+			return wrapDownload(ctx, url, resp, cancel), nil
 		}
 		_ = resp.Body.Close()
 		cancel()

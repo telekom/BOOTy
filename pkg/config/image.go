@@ -6,6 +6,10 @@ const (
 	ChecksumScopeDecompressed = "decompressed"
 )
 
+// MaxImageParallelRanges bounds ImageConfig.ParallelRanges: each range holds
+// an 8 MiB chunk in RAM.
+const MaxImageParallelRanges = 16
+
 // Values of ImageConfig.SparseWrite.
 const (
 	SparseWriteOff  = "off"
@@ -74,6 +78,23 @@ type ImageConfig struct {
 	// OS trimmed may compare equal now and read back differently later).
 	// Default: false
 	SkipUnchanged bool `yaml:"skipUnchanged,omitempty" json:"skipUnchanged,omitempty"`
+
+	// Resume continues an HTTP download that breaks mid-body with a ranged
+	// GET from the last byte received, bound to the strong ETag of the
+	// first response (If-Range, If-Match), so the bytes come from the same
+	// image. Servers without ranges, a strong ETag or a Content-Length
+	// download in one GET.
+	// Default: false (a break fails the attempt; the step retry downloads
+	// from the first byte)
+	Resume bool `yaml:"resume,omitempty" json:"resume,omitempty"`
+
+	// ParallelRanges downloads an HTTP image as that many ranged GETs of
+	// 8 MiB at a time and passes the bytes on in order. It helps when one
+	// connection cannot fill the link. A failed range is fetched again.
+	// Needs the same server support as Resume.
+	// Valid values: 0 to 16
+	// Default: 0 (one GET)
+	ParallelRanges int `yaml:"parallelRanges,omitempty" json:"parallelRanges,omitempty"`
 
 	// Mode controls how the image is written to disk.
 	// Valid values: "whole-disk" (default), "partition", "ab"
