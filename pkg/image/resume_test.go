@@ -355,3 +355,43 @@ func TestRangesFollowTheRedirect(t *testing.T) {
 		}
 	}
 }
+
+// TestRangesDoNotFollowRedirects: the pinned URL answers the first GET and
+// then redirects to another image with the same ETag and size. Ranged GETs
+// must fail instead of mixing the two images.
+func TestRangesDoNotFollowRedirects(t *testing.T) {
+	origChunk := rangeChunkSize
+	rangeChunkSize = 64 << 10
+	t.Cleanup(func() { rangeChunkSize = origChunk })
+	v1, v2 := testPayload(1<<20), bytes.Repeat([]byte{0xee}, 1<<20)
+	for _, opts := range []DownloadOptions{{Resume: true}, {ParallelRanges: 3}} {
+		withDownloadOptions(t, opts)
+		var requests atomic.Int32
+		srv1 := &faultServer{data: v1}
+		srv1.cuts.Store(1) // the first GET breaks, so Resume requests a range
+		mux := http.NewServeMux()
+		mux.Handle("/v2", &faultServer{data: v2})
+		mux.HandleFunc("/v1", func(w http.ResponseWriter, r *http.Request) {
+			if requests.Add(1) == 1 {
+				srv1.ServeHTTP(w, r)
+				return
+			}
+			http.Redirect(w, r, "/v2", http.StatusFound)
+		})
+		srv := httptest.NewServer(mux)
+		body, err := httpGetWithRetry(t.Context(), srv.URL+"/v1")
+		if err != nil {
+			srv.Close()
+			t.Fatalf("%+v: httpGetWithRetry() = %v", opts, err)
+		}
+		got, err := io.ReadAll(body)
+		_ = body.Close()
+		srv.Close()
+		if !errors.Is(err, errImageChanged) {
+			t.Errorf("%+v: ReadAll() = %d bytes, %v; want errImageChanged", opts, len(got), err)
+		}
+		if bytes.Contains(got, v2[:1024]) {
+			t.Errorf("%+v: bytes of /v2 were mixed into /v1", opts)
+		}
+	}
+}

@@ -42,8 +42,9 @@ func currentDownloadOptions() DownloadOptions {
 const maxResumes = 5
 
 // errImageChanged is the error of a ranged GET that does not continue the
-// same object: the ETag no longer matches, or the server ignores Range.
-var errImageChanged = errors.New("the server did not continue the same image (it changed, or it ignores Range)")
+// same object: the ETag no longer matches, the server ignores Range, or the
+// URL now redirects.
+var errImageChanged = errors.New("the server did not continue the same image (it changed, ignores Range, or redirects)")
 
 // errRangeRejected is the error of a ranged GET that the server refuses
 // with a client error (expired URL, missing object): retrying cannot help.
@@ -68,7 +69,8 @@ func rangeValidator(resp *http.Response) string {
 // getRange GETs bytes start to end (end < 0: to the end) of an object of
 // total bytes with the strong ETag etag. If-Range and
 // If-Match both bind the request to that version, and the Content-Range
-// must match. The body is guarded by the idle timeout.
+// must match. A redirect is not followed: its target may be another image
+// with the same ETag and size. The body is guarded by the idle timeout.
 func getRange(ctx context.Context, url, etag string, start, end, total int64) (io.ReadCloser, error) {
 	reqCtx, cancel := context.WithCancel(ctx)
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, http.NoBody)
@@ -85,7 +87,9 @@ func getRange(ctx context.Context, url, etag string, start, end, total int64) (i
 	req.Header.Set("If-Match", etag)
 	// A transparently decompressed body would not match its Content-Range.
 	req.Header.Set("Accept-Encoding", "identity")
-	resp, err := imageHTTPClient.Do(req) //nolint:gosec // URL from trusted config
+	client := *imageHTTPClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("range request %s: %w", spec, &redactedSourceError{rawSource: url, err: err})
@@ -98,7 +102,8 @@ func getRange(ctx context.Context, url, etag string, start, end, total int64) (i
 	code := resp.StatusCode
 	prefix := fmt.Sprintf("range request %s of %s: status %d", spec, RedactURL(url), code)
 	switch {
-	case code == http.StatusOK || code == http.StatusPartialContent || code == http.StatusPreconditionFailed:
+	case code == http.StatusOK || code == http.StatusPartialContent || code == http.StatusPreconditionFailed ||
+		(code >= 300 && code < 400):
 		return nil, fmt.Errorf("%s: %w", prefix, errImageChanged)
 	case code >= 400 && code < 500 && code != http.StatusRequestTimeout && code != http.StatusTooManyRequests:
 		return nil, fmt.Errorf("%s: %w", prefix, errRangeRejected)
@@ -134,6 +139,7 @@ func wrapDownload(ctx context.Context, url string, resp *http.Response, cancel c
 	etag := rangeValidator(resp)
 	// Ranges go to the resource that answered, not to a URL that redirects
 	// and may point to another image with the same ETag and size later.
+	// getRange does not follow a redirect from there either.
 	if resp.Request != nil && resp.Request.URL != nil {
 		url = resp.Request.URL.String()
 	}
