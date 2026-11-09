@@ -526,8 +526,10 @@ jobs:
             *) base="${PART}-${ARCH}-initramfs" ;;
           esac
           cd artifacts
-          shopt -s nullglob
-          ramdisks=("${base}".cpio.zst "${base}".cpio.gz)
+          # A glob, not literal names: nullglob drops only patterns that
+          # match nothing.
+          shopt -s nullglob extglob
+          ramdisks=("${base}".cpio.@(zst|gz))
           if [ "${#ramdisks[@]}" -ne 1 ]; then
             echo "::error::want one ramdisk archive ${base}.cpio.*, found ${#ramdisks[@]}"
             ls -l

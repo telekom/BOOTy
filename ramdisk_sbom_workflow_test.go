@@ -1,7 +1,11 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -127,4 +131,83 @@ func TestReleaseWorkflowAttestsRamdiskSBOMs(t *testing.T) {
 		t.Fatal("missing oci-artifacts job")
 	}
 	requireWorkflowStepRunContains(t, oci, "Publish initramfs artifacts", `cosign attest --yes --type cyclonedx --predicate "${SBOM}" "${REF}"`)
+}
+
+// Runs the locate step the way the runner does: it must pick the one
+// archive of each part, zstd or gzip, and refuse zero or two.
+func TestReleaseWorkflowLocatesRamdiskArchive(t *testing.T) {
+	for _, tool := range []string{"bash", "sha256sum"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not found", tool)
+		}
+	}
+	wf := loadWorkflow(t, ".github/workflows/release-v2.yml")
+	job := wf.Jobs["sbom-attest"]
+	if job == nil {
+		t.Fatal("missing sbom-attest job")
+	}
+	script := requireWorkflowStep(t, job, "Locate the ramdisk and its SBOMs").Run
+
+	for _, tc := range []struct {
+		name, part, arch string
+		archives         []string
+		want             string // empty: the step must fail
+	}{
+		{"zstd", "default", "amd64", []string{"default-amd64-initramfs.cpio.zst"}, "default-amd64-initramfs.cpio.zst"},
+		{"gzip", "micro", "arm64", []string{"micro-arm64-initramfs.cpio.gz"}, "micro-arm64-initramfs.cpio.gz"},
+		{"split", "split-frr", "amd64", []string{"split-amd64-frr.cpio.zst"}, "split-amd64-frr.cpio.zst"},
+		{"none", "slim", "amd64", nil, ""},
+		{"two", "gobgp", "amd64", []string{"gobgp-amd64-initramfs.cpio.zst", "gobgp-amd64-initramfs.cpio.gz"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			artifacts := filepath.Join(dir, "artifacts")
+			if err := os.Mkdir(artifacts, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			base := strings.TrimSuffix(strings.TrimSuffix(tc.want, ".cpio.zst"), ".cpio.gz")
+			files := append([]string{}, tc.archives...)
+			if base != "" {
+				files = append(files, base+".cdx.json", base+".spdx.json")
+			}
+			for _, f := range files {
+				writeWithChecksum(t, artifacts, f)
+			}
+			output := filepath.Join(dir, "output")
+			cmd := exec.CommandContext(t.Context(), "bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "PART="+tc.part, "ARCH="+tc.arch, "GITHUB_OUTPUT="+output)
+			out, err := cmd.CombinedOutput()
+			if tc.want == "" {
+				if err == nil {
+					t.Fatalf("step succeeded with archives %v:\n%s", tc.archives, out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("step failed: %v\n%s", err, out)
+			}
+			got, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "ramdisk=artifacts/" + tc.want + "\ncdx=artifacts/" + base + ".cdx.json\nspdx=artifacts/" + base + ".spdx.json\n"
+			if string(got) != want {
+				t.Fatalf("GITHUB_OUTPUT = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func writeWithChecksum(t *testing.T, dir, name string) {
+	t.Helper()
+	data := []byte(name)
+	if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	line := hex.EncodeToString(sum[:]) + "  " + name + "\n"
+	if err := os.WriteFile(filepath.Join(dir, name+".sha256"), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
