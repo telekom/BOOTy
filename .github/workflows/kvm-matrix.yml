@@ -240,7 +240,7 @@ jobs:
           - scenario: image-write
             qemu_extra: ""
             test_tag: e2e
-            test_regex: "^TestProvisionImage(WriteOptions|DownloadOptions)QEMU$"
+            test_regex: "^TestProvisionImage.*OptionsQEMU$"
             privileged: true
             setup: ""
             go_timeout: 35m
