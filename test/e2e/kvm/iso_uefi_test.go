@@ -132,6 +132,30 @@ func TestISOFirmwareUEFIUSB(t *testing.T) {
 	runQEMUSmoke(t, isoQEMUArgs(t, "uefi", isoUSBArgs(iso)), 4*time.Minute, "iso-uefi-usb", true)
 }
 
+// TestISOFirmwareUEFIUSBXHCI keeps the USB 3 (xHCI) path covered despite
+// the QEMU/OVMF flake described at isoUSBArgs: it fails only when three
+// boots in a row fail, as a broken image would, and logs every failed boot.
+func TestISOFirmwareUEFIUSBXHCI(t *testing.T) {
+	qemuAvailable(t)
+	iso := bootyISO(t)
+	media := []string{
+		"-device", "qemu-xhci",
+		"-drive", fmt.Sprintf("file=%s,format=raw,if=none,id=usb0,readonly=on", iso),
+		"-device", "usb-storage,drive=usb0,bootindex=1",
+	}
+	var out []byte
+	for attempt := 1; attempt <= 3; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		out, _ = exec.CommandContext(ctx, "qemu-system-x86_64", isoQEMUArgs(t, "uefi", media)...).CombinedOutput()
+		cancel()
+		if bytes.Contains(out, []byte(bootyStartMarker)) {
+			return
+		}
+		t.Logf("xHCI USB boot %d/3 did not start BOOTy; tail:\n%s", attempt, tail(out, 1500))
+	}
+	t.Fatalf("xHCI USB boot failed 3 times in a row. Console:\n%s", out)
+}
+
 // TestISOFirmwareBIOSUSB boots the ISO as a disk on BIOS: the isohybrid MBR
 // starts ISOLINUX.
 func TestISOFirmwareBIOSUSB(t *testing.T) {
