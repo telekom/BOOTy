@@ -44,12 +44,13 @@ that had moved or pointed next to the cited code. It found two DHCPv4
 rows that were marked COMPLIANT but were not: a DHCPRELEASE without the
 server identifier (2131-10) and option 57 values below 576 for MTUs 576
 to 603 (2132-2), both fixed by [#908]. [#892] fixed 8415-7. It added
-two very-low-impact deviations that the earlier refreshes missed
+deviations that the earlier refreshes missed: three of very low impact
 (4861-15: RA options of length zero; 8415-10: an address revoked with
-valid lifetime 0), one low-impact one (2131-13: a DHCPNAK from another
-server is ignored in INIT-REBOOT and REBINDING) and a GoBGP one (8654-1: extended messages received
-only from a peer that advertised the capability), and corrected the
-text of 4271-4, 3442-1, 8654-2 and 7348-4.
+valid lifetime 0; 8415-11: SOL_MAX_RT not applied), one of low impact
+(2131-13: a DHCPNAK from another server is ignored in INIT-REBOOT and
+REBINDING) and one in GoBGP (8654-1: extended messages received only
+from a peer that advertised the capability). It also corrected the text
+of 4271-4, 3442-1, 8654-2 and 7348-4.
 
 Each row has an owner:
 
@@ -134,8 +135,8 @@ refresh is merged.
 | 4862 | IPv6 SLAAC | 2 | 0 | 0 | 0 | 0 | 0 |
 | 2131 | DHCPv4 client | 13 | 2 | 0 | 0 | 0 | 0 |
 | 2132 / 3397 / 3442 / 4039 / 4361 | DHCPv4 options | 6 | 0 | 0 | 0 | 0 | 0 |
-| 8415 | DHCPv6 | 8 | 2 | 0 | 0 | 0 | 0 |
-| **Total** | | **208** | **19** | **57** | **2** | **89** | **3** |
+| 8415 | DHCPv6 | 8 | 3 | 0 | 0 | 0 | 0 |
+| **Total** | | **208** | **20** | **57** | **2** | **89** | **3** |
 
 Kernel- and library-owned rows count as COMPLIANT or DEVIATION; the owner
 column names them. The second refresh (`5ac79521`) counted 209
@@ -167,7 +168,8 @@ COMPLIANT, 47 DEVIATION, 67 N/A, 4 NOT IMPLEMENTED, 68 GOBGP: COMPLIANT and
 | 14 | RFC8415-DECLINE | 8415 §18.2.8 | BOOTy | Very low: a failed DAD sends no DECLINE (8415-8). | Open: DECLINE on a DAD failure. |
 | 15 | RFC4861-RA-OPTLEN | 4861 §4.6, §6.1.2 | BOOTy | Very low: in DHCP mode an RA with a zero-length option, which the kernel drops, still starts DHCPv6 (4861-15). | Open: check the option lengths in `validRA`, like `validRS`. |
 | 16 | RFC8415-ZERO-LIFETIME | 8415 §18.2.10.1 | BOOTy | Very low: an address that a REPLY to RENEW or REBIND gives valid lifetime 0 stays until its old valid lifetime ends (8415-10). | Open: expire the lease at once. |
-| 17 | LLDP-TTL | 802.1AB | BOOTy | Very low: TTL 120 instead of txTTL = 4 x 30 + 1 = 121; matches systemd-networkd. | Kept for networkd parity. |
+| 17 | RFC8415-SOL-MAX-RT | 8415 §18.2.9, §21.24 | BOOTy | Very low: a SOL_MAX_RT option of the server is requested but not applied, so SOLICIT keeps the default maximum of 3600 s (8415-11). | Open: decode option 82 and use it as the SOLICIT MRT. |
+| 18 | LLDP-TTL | 802.1AB | BOOTy | Very low: TTL 120 instead of txTTL = 4 x 30 + 1 = 121; matches systemd-networkd. | Kept for networkd parity. |
 
 The rows without authentication (5880-39, 5881-15, 5883-4) are not
 ranked: the legacy FRR profile has none either.
@@ -792,8 +794,8 @@ ramdisk ([#753], [#776], [#790], [#819], [#820]).
 
 | ID | § | Requirement | Owner | Status | Evidence, impact, fix | Verified |
 |---|---|---|---|---|---|---|
-| 8415-1 | all | DHCPv6 client | BOOTy | COMPLIANT | NOT IMPLEMENTED at the first audit. [#795] adds BOOTy's own client (`pkg/network/dhcp6`), started by the M or O flag of an RA on every DHCP NIC, like networkd `DHCPv6Client=yes` (`dhcp6_mode.go:170` `onRA`); rows 8415-2 to 8415-10 | test |
-| 8415-2 | 15, 18.2.1 | Retransmission: IRT, MRT, RAND; the first SOLICIT timeout greater than IRT | BOOTy | COMPLIANT | [#795], [#825] `dhcp6/client.go:74` `next`, `:66` to `:69`; `TestSolicitLikeNetworkd`, `TestFirstSolicitAboveIRT` | test |
+| 8415-1 | all | DHCPv6 client | BOOTy | COMPLIANT | NOT IMPLEMENTED at the first audit. [#795] adds BOOTy's own client (`pkg/network/dhcp6`), started by the M or O flag of an RA on every DHCP NIC, like networkd `DHCPv6Client=yes` (`dhcp6_mode.go:170` `onRA`); rows 8415-2 to 8415-11 | test |
+| 8415-2 | 15, 18.2.1 | Retransmission: IRT, MRT, RAND; the first SOLICIT timeout greater than IRT | BOOTy | COMPLIANT | [#795], [#825] `dhcp6/client.go:74` `next`, `:66` to `:69`; `TestSolicitLikeNetworkd`, `TestFirstSolicitAboveIRT`; a SOL_MAX_RT option of the server is not applied, see 8415-11 | test |
 | 8415-3 | 18.2.1, 18.2.9 | SOLICIT with rapid commit; collect ADVERTISEs for the first timeout and take the highest preference, 255 at once; ignore an ADVERTISE with NoAddrsAvail | BOOTy | COMPLIANT | [#825] `dhcp6/client.go:166` `solicit`, like sd-dhcp6-client; an ADVERTISE without a usable address is skipped (`dhcp6/message.go:198`, `:210`); `TestAdvertisePreference`, `TestLateAdvertiseSameSocket`, `TestRequestRetriesAndAdvertiseStatus` | test |
 | 8415-4 | 18.2.2 | REQUEST up to REQ_MAX_RC (10) times | BOOTy | COMPLIANT | [#795] `dhcp6/client.go:203` `request`; `TestRequestRetriesAndAdvertiseStatus` | test |
 | 8415-5 | 18.2.4, 18.2.5, 18.2.10.1 | RENEW at T1, REBIND at T2, stop using the address at the end of its valid lifetime; NoBinding in a REPLY to RENEW or REBIND: REQUEST | BOOTy | COMPLIANT | [#795], [#825] `dhcp6/client.go:232` `extend`, `:263` `phase`; the address goes at expiry (`dhcp6_mode.go:253` `onExpire6`); `TestRenewRebindExpire`, `TestRenewNeedsAddress`, `TestRenewNoBindingRequests` | test |
@@ -802,6 +804,7 @@ ramdisk ([#753], [#776], [#790], [#819], [#820]).
 | 8415-8 | 18.2.10.1, 18.2.8 | DAD on each received address before use; an address found in use is declined with a DECLINE (no keyword: "the client sends a Decline message") | BOOTy | DEVIATION | [#795] adds the address with kernel DAD (`dhcp6_mode.go:231`) but sends no DECLINE when DAD fails (no DECLINE in `pkg/network/dhcp6`). Impact very low | reading |
 | 8415-9 | 21.24, RFC 3646 | DNS servers (option 23) and domain list (option 24) used | BOOTy | COMPLIANT | [#795] adds them after the DHCPv4 servers, a link-local server with its zone (`dhcp6_mode.go:220` `onBound6`, `:244`; `dhcp.go:666` `writeResolvers`); `TestDomainList`, `TestDHCPv6LinkLocalDNSAndDomains` | test |
 | 8415-10 | 18.2.10.1 | REPLY to RENEW or REBIND: discard the leases with a valid lifetime of 0 (no keyword: "Discard any leases from the IA ... that have a valid lifetime of 0") | BOOTy | DEVIATION | RFC8415-ZERO-LIFETIME: an address with valid lifetime 0 is skipped (`dhcp6/message.go:224`), so a REPLY whose IA_NA has only such addresses counts as no answer (`dhcp6/client.go:283` `phase`): the address stays on the NIC and BOOTy renews and rebinds it until its old valid lifetime ends (`dhcp6_mode.go:253` `onExpire6`). An IA with a new address and the old one at 0 works (`onBound6` replaces the address, `dhcp6_mode.go:234`). Impact very low: only a server that revokes the address. Fix: expire the lease at once when the IA_NA has the bound address with valid lifetime 0 | reading |
+| 8415-11 | 18.2.9, 21.24 | The client MUST include SOL_MAX_RT in the Option Request of a SOLICIT and MUST process a SOL_MAX_RT option (60 to 86400 s) in an ADVERTISE, also one that it otherwise ignores | BOOTy | DEVIATION | RFC8415-SOL-MAX-RT: [#795] requests option 82 (`dhcp6/client.go:351`), but the reply decoder does not read it (`dhcp6/message.go:162` to `:201`), so SOLICIT keeps the default maximum of 3600 s (`dhcp6/client.go:66`). Impact very low: a server can not lower the SOLICIT backoff, and BOOTy runs only for the provisioning. Fix: decode option 82 from every ADVERTISE and use a valid value as the SOLICIT MRT | reading |
 
 ## Fix PRs and fork tags
 
