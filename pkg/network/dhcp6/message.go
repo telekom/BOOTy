@@ -246,11 +246,21 @@ func (l *Lease) ia(ia *dhcpv6.OptIANA, now time.Time) bool {
 	return false
 }
 
-// revoked returns the addresses of an IA_NA with a valid lifetime of 0.
+// revoked returns the addresses of an IA_NA with a valid lifetime of 0,
+// with the checks of ia: an IA with T1 > T2 is discarded, an address with
+// a preferred lifetime over its valid lifetime or an error status is
+// skipped.
 func revoked(ia *dhcpv6.OptIANA) []net.IP {
+	if ia.T1 > 0 && ia.T2 > 0 && ia.T1 > ia.T2 {
+		return nil
+	}
 	var out []net.IP
 	for _, o := range ia.Options.Get(optIAAddr) {
-		if a, ok := o.(*dhcpv6.OptIAAddress); ok && a.ValidLifetime == 0 {
+		a, ok := o.(*dhcpv6.OptIAAddress)
+		if !ok || a.ValidLifetime != 0 || a.PreferredLifetime != 0 {
+			continue
+		}
+		if st := a.Options.Status(); st == nil || st.StatusCode == iana.StatusSuccess {
 			out = append(out, a.IPv6Addr)
 		}
 	}

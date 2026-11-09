@@ -562,7 +562,7 @@ func TestRenewNoBindingRequests(t *testing.T) {
 		}
 		close(f.stopped)
 		c.Stop()
-		var types []dhcpv6.MessageType
+		types := make([]dhcpv6.MessageType, 0, 3)
 		for _, m := range f.messages() {
 			if typ := dhcpv6.MessageType(m[0]); len(types) == 0 || types[len(types)-1] != typ {
 				types = append(types, typ)
@@ -775,4 +775,74 @@ func TestReplyWithZeroValidLifetime(t *testing.T) {
 			c.Stop()
 		})
 	}
+}
+
+// A REPLY to REQUEST that gives the requested address valid lifetime 0
+// stops the REQUESTs: after an ADVERTISE the client solicits again; after
+// NoBinding to a RENEW the lease ends at once, at T1 (60 s).
+func TestRequestReplyWithZeroValidLifetime(t *testing.T) {
+	revoke := func(msg []byte) []byte { return replyIA(msg, iaAddr(testAddr.String(), 0, 0)) }
+	t.Run("after ADVERTISE", func(t *testing.T) {
+		f := newFakeNet()
+		f.answer = func(msg []byte) []byte {
+			switch dhcpv6.MessageType(msg[0]) {
+			case msgSolicit:
+				return serverReply(msg, msgAdvertise, false)
+			case msgRequest:
+				return revoke(msg)
+			}
+			return nil
+		}
+		c := f.client(true)
+		c.OnBound = func(*Lease) { t.Error("bound a revoked address") }
+		c.Start()
+		for deadline := time.Now().Add(5 * time.Second); f.countType(msgSolicit) < 2; time.Sleep(time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatal("no new SOLICIT after the revoking REPLY")
+			}
+		}
+		close(f.stopped)
+		c.Stop()
+		types := make([]dhcpv6.MessageType, 0, 3)
+		for _, m := range f.messages()[:3] {
+			types = append(types, dhcpv6.MessageType(m[0]))
+		}
+		if !slices.Equal(types, []dhcpv6.MessageType{msgSolicit, msgRequest, msgSolicit}) {
+			t.Errorf("messages %v, want SOLICIT, one REQUEST, SOLICIT", types)
+		}
+	})
+	t.Run("after NoBinding", func(t *testing.T) {
+		f := newFakeNet()
+		f.answer = func(msg []byte) []byte {
+			switch dhcpv6.MessageType(msg[0]) {
+			case msgSolicit:
+				return serverReply(msg, msgReply, true)
+			case msgRenew:
+				return noBinding(msg)
+			case msgRequest:
+				return revoke(msg)
+			}
+			return nil
+		}
+		bound, expired := make(chan *Lease, 4), make(chan time.Time, 1)
+		c := f.client(true)
+		c.OnBound = func(l *Lease) { bound <- l }
+		c.OnExpire = func(*Lease) { expired <- c.now() }
+		c.Start()
+		l := <-bound
+		f.tick(t)
+		select {
+		case at := <-expired:
+			if got := at.Sub(l.Bound); got != 60*time.Second {
+				t.Errorf("the lease ended %s after the bind, want 60s (T1)", got)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the lease did not end")
+		}
+		close(f.stopped)
+		c.Stop()
+		if n := f.countType(msgRequest); n != 1 {
+			t.Errorf("%d REQUESTs, want 1", n)
+		}
+	})
 }

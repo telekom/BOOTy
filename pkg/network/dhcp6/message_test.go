@@ -303,3 +303,36 @@ func TestReplyWithErrorStatusDoesNotBind(t *testing.T) {
 		}
 	}
 }
+
+// RFC 8415 18.2.10.1, 21.4 and 21.6: an address with valid lifetime 0
+// counts as revoked only where ia would read it: not in an IA with
+// T1 > T2, not with a preferred lifetime over the valid one or an error
+// status.
+func TestDecodeRevoked(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		ia   dhcpv6.Option
+		want []string
+	}{
+		{"valid 0", iaNAOpt(60, 96, iaAddr("fd00::1", 0, 0)), []string{"fd00::1"}},
+		{"two", iaNAOpt(0, 0, iaAddr("fd00::1", 0, 0), iaAddr("fd00::2", 120, 180), iaAddr("fd00::3", 0, 0)), []string{"fd00::1", "fd00::3"}},
+		{"valid 1", iaNAOpt(60, 96, iaAddr("fd00::1", 0, 1)), nil},
+		{"preferred over valid", iaNAOpt(60, 96, iaAddr("fd00::1", 120, 0)), nil},
+		{"error status", iaNAOpt(60, 96, iaAddr("fd00::1", 0, 0, 2)), nil},
+		{"success status", iaNAOpt(60, 96, iaAddr("fd00::1", 0, 0, 0)), []string{"fd00::1"}},
+		{"T1 > T2", iaNAOpt(96, 60, iaAddr("fd00::1", 0, 0)), nil},
+		{"T1 = T2", iaNAOpt(60, 60, iaAddr("fd00::1", 0, 0)), []string{"fd00::1"}},
+	} {
+		r, err := decode(encode(msgReply, 1, []dhcpv6.Option{raw(optServerID, testServer), raw(optClientID, testDUID), tt.ia}), 7, time.Now())
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		var got []string
+		for _, ip := range r.revoked {
+			got = append(got, ip.String())
+		}
+		if !slices.Equal(got, tt.want) {
+			t.Errorf("%s: revoked %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
