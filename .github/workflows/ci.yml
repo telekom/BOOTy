@@ -521,6 +521,37 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  reproducible-initramfs:
+    name: Reproducible Initramfs (amd64, path-filtered)
+    # Builds the default, split and micro targets twice, each time in a new
+    # builder with an empty cache, and fails if one byte differs.
+    runs-on: ubuntu-latest
+    needs: [lint, detect-initramfs-flavor-changes]
+    if: needs.detect-initramfs-flavor-changes.outputs.should-build == 'true'
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build twice and compare
+        run: bash hack/check-reproducible.sh linux/amd64 default split micro
+
+      - name: Upload both builds
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reproducible-initramfs-diff
+          path: |
+            repro-out/1/
+            repro-out/2/
+          if-no-files-found: ignore
+          retention-days: 7
+
   kvm-boot:
     name: KVM Boot Validation
     runs-on: ubuntu-latest

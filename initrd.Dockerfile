@@ -448,6 +448,9 @@ COPY --from=frr /frr-libs/ .
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
 
+# pack-initramfs.sh stamps every entry with this time (reproducible builds).
+ARG SOURCE_DATE_EPOCH=315532800
+
 # Drop the libraries that no shipped executable loads, then check in a chroot
 # that every dynamic executable resolves its libraries from the tree alone.
 # Nothing may change the tree between this step and cpio.
@@ -469,6 +472,7 @@ RUN pack-initramfs.sh . /initramfs.cpio.zst
 # SHA256SUMS lists every file, so one pin covers the set.
 FROM busybox AS split-builder
 ARG BOOTY_BUILD=unknown
+ARG SOURCE_DATE_EPOCH=315532800
 COPY hack/split-initramfs.sh /usr/local/bin/
 RUN split-initramfs.sh /build/initramfs /split "$BOOTY_BUILD"
 COPY --from=kernel /vmlinuz /split/vmlinuz
@@ -587,6 +591,9 @@ COPY --from=tools /tool-libs/ .
 # of the Debian kernel, and slim ships mdadm and the disk tools.
 COPY --from=kernel /modules/ modules/
 
+# pack-initramfs.sh stamps every entry with this time (reproducible builds).
+ARG SOURCE_DATE_EPOCH=315532800
+
 # Drop the libraries of the tools that slim does not ship, then check in a
 # chroot that every dynamic executable resolves its libraries from the tree
 # alone. Nothing may change the tree between this step and cpio.
@@ -694,6 +701,9 @@ COPY --from=tools /tool-libs-full/ .
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
 
+# pack-initramfs.sh stamps every entry with this time (reproducible builds).
+ARG SOURCE_DATE_EPOCH=315532800
+
 # Drop the libraries that no shipped executable loads, then check in a chroot
 # that every dynamic executable resolves its libraries from the tree alone.
 # Nothing may change the tree between this step and cpio.
@@ -789,10 +799,9 @@ RUN ln -sf ../init bin/booty
 RUN mkdir -p etc/ssl/certs && cp /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
 
 # Package micro initramfs
-RUN find . -print0 > ../initramfs.files \
-    && cpio --null -ov --format=newc < ../initramfs.files > ../initramfs.cpio \
-    && rm ../initramfs.files \
-    && gzip ../initramfs.cpio && mv ../initramfs.cpio.gz /
+ARG SOURCE_DATE_EPOCH=315532800
+COPY hack/pack-initramfs.sh /usr/local/bin/
+RUN pack-initramfs.sh . /initramfs.cpio.gz
 
 FROM scratch AS micro
 COPY --from=micro-builder /initramfs.cpio.gz .
