@@ -126,8 +126,9 @@ func TestPackInitramfsIsReproducible(t *testing.T) {
 	t.Run("concurrent", func(t *testing.T) {
 		want := pack(t, time.Unix(1, 0), "initramfs.cpio")
 		dir := t.TempDir()
-		var cmds []*exec.Cmd
-		for i := range 4 {
+		const runs = 4
+		cmds := make([]*exec.Cmd, 0, runs)
+		for i := range runs {
 			cmd := packCmd(t, time.Now(), filepath.Join(dir, fmt.Sprintf("%d.cpio", i)))
 			cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 			if err := cmd.Start(); err != nil {
