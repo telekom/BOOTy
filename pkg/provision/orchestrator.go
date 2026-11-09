@@ -336,8 +336,9 @@ func (o *Orchestrator) restoreCheckpointPartitionLayout(cp *Checkpoint) {
 		return
 	}
 	if d.PartitionLayoutImagePath != "" && !cp.IsCompleted("load-image-partition-layout") {
-		// disable-lvm too: the layout may have activated its volumes.
-		cp.ForgetSteps("disable-lvm", "apply-partition-layout", "stream-image", "partprobe")
+		// disable-lvm and wipe-disks too: the layout may have activated its
+		// volumes, and its partitions reach beyond the end of the image.
+		cp.ForgetSteps("disable-lvm", "wipe-disks", "apply-partition-layout", "stream-image", "partprobe")
 	}
 }
 

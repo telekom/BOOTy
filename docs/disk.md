@@ -579,7 +579,7 @@ BOOTy takes the layout from the first of these that is set:
    `IMAGE_SOURCE_ROOT_PARTITION`, so set both to the same partition in an
    image with more than one root. The image root must be a plain partition
    filesystem, not LVM or LUKS. If this step stops, a resumed run
-   (`BOOTY_RESUME`) writes the image whole-disk again.
+   (`BOOTY_RESUME`) wipes the disk and writes the image whole-disk again.
 
 A layout from a URL or the image must not set `device`; select the disk with
 `DISK_DEVICE` or `DISK_SERIAL_NUMBER`. These two sources need

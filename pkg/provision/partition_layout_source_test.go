@@ -491,11 +491,11 @@ func TestResumeRepeatsWholeDiskWriteBeforeImageLayout(t *testing.T) {
 		inMemory  bool
 		wantSteps string
 	}{
-		{name: "interrupted load forgets the write", wantSteps: "wipe-disks,parse-partitions"},
+		{name: "interrupted load forgets the write", wantSteps: "parse-partitions"},
 		{name: "completed load keeps the steps", loaded: true, layout: true, wantSteps: strings.Join(steps, ",")},
 		// RESCUE_MODE=retry runs Provision again on the same orchestrator:
 		// the layout of the failed run must not stand in for the checkpoint.
-		{name: "retry after a failed load forgets the write", inMemory: true, wantSteps: "wipe-disks,parse-partitions"},
+		{name: "retry after a failed load forgets the write", inMemory: true, wantSteps: "parse-partitions"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cp := &Checkpoint{CompletedSteps: append([]string(nil), steps...)}
