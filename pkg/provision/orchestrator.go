@@ -113,6 +113,7 @@ type Orchestrator struct {
 	// done: the step then rebuilds the report but keeps the file, which
 	// copy-machine-files or a machine command may have replaced.
 	reportWritten    bool
+	reportLogged     bool // logProvisionReport sent the report; a retried report-success does not send it again
 	nvmeTargetDevice string
 	firmwareChanged  bool // true if any step changed firmware values requiring hard reboot
 	// separateBootMounted is true while mount-boot owns a separate /boot mount.

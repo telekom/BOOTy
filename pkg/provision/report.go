@@ -302,7 +302,7 @@ func (o *Orchestrator) writeProvisionReport(_ context.Context) error {
 // log line, which LOG_URL receives as "[INFO] provisioning report ...
 // report=<json>".
 func (o *Orchestrator) logProvisionReport() {
-	if o.report == nil {
+	if o.report == nil || o.reportLogged {
 		return
 	}
 	o.refreshReportTimings(o.report)
@@ -312,4 +312,5 @@ func (o *Orchestrator) logProvisionReport() {
 		return
 	}
 	o.log.Info("provisioning report", "report", string(data))
+	o.reportLogged = true
 }

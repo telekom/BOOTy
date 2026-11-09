@@ -742,10 +742,11 @@ saves the checkpoint to `/tmp/booty-checkpoint.json` after each step. The file
 is in the ramdisk, so it helps only when provisioning runs again in the same
 boot, for example with `RESCUE_MODE=retry`. A new run skips the completed
 steps, except the steps that rebuild runtime state or check safety rules:
-`validate-provision-inputs`, `verify-image`, `mount-efivarfs`,
+`release-stale-mounts`, `validate-provision-inputs`, `verify-image`, `mount-efivarfs`,
 `setup-mellanox`, `configure-sriov`, `detect-disk`, `parse-partitions`, `mirror-root`, `enable-lvm`,
 `mount-root`, `mount-boot`, `mount-shared-data`, `setup-chroot-binds`,
-`configure-serial-console`, `configure-grub` and `teardown-chroot`.
+`configure-serial-console`, `configure-grub`, `write-provision-report` (it
+rebuilds the report but does not write the file again) and `teardown-chroot`.
 
 When no checkpoint exists, BOOTy starts a new one. When the checkpoint file
 can not be read or decoded, provisioning fails with `load checkpoint`. Remove

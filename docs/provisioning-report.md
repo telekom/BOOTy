@@ -10,7 +10,7 @@ The report goes to two places:
 | Where | When | Content |
 |-------|------|---------|
 | Installed OS, `PROVISION_REPORT_PATH` (default `/etc/booty/provision.json`) | `write-provision-report` step, after `inject-cloudinit` and before `copy-machine-files` | Pretty-printed JSON, mode `0644`. Step timings up to this step. |
-| `LOG_URL` (and the console) | `report-success`, before the success status | One log line `[INFO] provisioning report component=provision report=<json>`. Step timings up to `report-success`. |
+| `LOG_URL` (and the console) | `report-success`, before the success status | One log line, also when `report-success` is retried `[INFO] provisioning report component=provision report=<json>`. Step timings up to `report-success`. |
 
 The file sits next to the A/B slot state (`/etc/booty/ab-slot.env`), so
 `copy-machine-files` and the machine commands can still read or replace it.
@@ -77,7 +77,7 @@ fields it does not know.
 | Field | Meaning |
 |-------|---------|
 | `image.reference` | The image source that `verify-image` selected. Credentials, query and fragment are removed. |
-| `image.digest` | OCI sources: the manifest digest that the reference resolved to in `verify-image`; for a multi-platform index, the digest of the selected platform image, not of the index. Pin the reference by digest to make sure that `stream-image` writes the same image. Empty for HTTP sources. |
+| `image.digest` | OCI sources: the manifest digest that the reference resolved to in `verify-image`; for a multi-platform index, the digest of the selected platform image, not of the index. Pin the reference by digest to make sure that `stream-image` writes the same image; a resumed run (`BOOTY_RESUME`) resolves the reference again in `verify-image`, also when `stream-image` is skipped. Empty for HTTP sources. |
 | `image.mode` | `IMAGE_MODE`: `whole-disk`, `partition` or `ab`. |
 | `image.checksum` | `IMAGE_CHECKSUM`, its type and scope. Not set without a checksum. |
 | `verification.checksum` | `verified` when a checksum is configured (a mismatch fails the run), else `not-configured`. |

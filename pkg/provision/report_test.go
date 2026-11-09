@@ -270,6 +270,20 @@ func TestReportSuccessLogsReport(t *testing.T) {
 	}
 }
 
+// A retried report-success sends the report once.
+func TestLogProvisionReportOnce(t *testing.T) {
+	withReportHost(t, nil, nil)
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	var buf bytes.Buffer
+	o.log = slog.New(slog.NewJSONHandler(&buf, nil))
+	o.report = o.buildReport()
+	o.logProvisionReport()
+	o.logProvisionReport()
+	if n := strings.Count(buf.String(), `"msg":"provisioning report"`); n != 1 {
+		t.Fatalf("report logged %d times, want 1:\n%s", n, buf.String())
+	}
+}
+
 func TestCrypttabState(t *testing.T) {
 	outside := filepath.Join(t.TempDir(), "crypttab")
 	if err := os.WriteFile(outside, []byte("data /dev/vdb2 none luks\n"), 0o600); err != nil {
