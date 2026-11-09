@@ -1001,8 +1001,9 @@ entries, stamps every entry with `SOURCE_DATE_EPOCH` and owner root, numbers
 the inodes in archive order (`cpio --reproducible`) and compresses without
 names or times. The release passes the commit time as `SOURCE_DATE_EPOCH`;
 other builds use 1980-01-01. The `Reproducible Initramfs` CI job builds the
-default, split and micro targets twice, each in a new builder with an empty
-cache, and fails if one byte differs.
+default, split, slim, gobgp and micro targets for amd64 twice, each in a new
+builder with an empty cache, and fails if one byte differs; arm64 uses the
+same packing.
 
 To rebuild a release file and compare it with the published checksum, check
 out the tag and build the flavor with the same arguments as `release-v2.yml`:

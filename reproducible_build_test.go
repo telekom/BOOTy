@@ -129,7 +129,7 @@ func TestCIWorkflowChecksReproducibleInitramfs(t *testing.T) {
 	}
 	assertWorkflowActionPinned(t, requireWorkflowAction(t, job, "actions/checkout"), "actions/checkout")
 	assertWorkflowActionPinned(t, requireWorkflowAction(t, job, "docker/setup-buildx-action"), "docker/setup-buildx-action")
-	requireWorkflowStepRunContains(t, job, "Build twice and compare", "hack/check-reproducible.sh linux/amd64 default split micro")
+	requireWorkflowStepRunContains(t, job, "Build twice and compare", "hack/check-reproducible.sh linux/amd64 default split slim gobgp micro")
 }
 
 // The release passes the commit time, so a rebuild of a tag reproduces it.

@@ -352,8 +352,9 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/ttyS0 c 4 64
 # Users and groups: root, and frr and frrvty, which the FRR daemons switch
 # to (zebra: "could not lookup user frr" without them). Every flavor gets
-# them, so a ramdisk with FRR never lacks them.
-COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
+# them, so a ramdisk with FRR never lacks them. --chmod: the mode must not
+# depend on the umask of the checkout (reproducible builds).
+COPY --chmod=0644 hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Pre-built static busybox binary from Docker Hub (cached by Docker layer cache)
 COPY --from=busybox-bin /bin/busybox bin/busybox
@@ -533,8 +534,9 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/ttyS0 c 4 64
 # Users and groups: root, and frr and frrvty, which the FRR daemons switch
 # to (zebra: "could not lookup user frr" without them). Every flavor gets
-# them, so a ramdisk with FRR never lacks them.
-COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
+# them, so a ramdisk with FRR never lacks them. --chmod: the mode must not
+# depend on the umask of the checkout (reproducible builds).
+COPY --chmod=0644 hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Copy busybox binary and create all applet symlinks (same as default variant).
 # This ensures utilities like tail, grep, dmesg, hostname, ps, and xargs are
@@ -617,8 +619,9 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/ttyS0 c 4 64
 # Users and groups: root, and frr and frrvty, which the FRR daemons switch
 # to (zebra: "could not lookup user frr" without them). Every flavor gets
-# them, so a ramdisk with FRR never lacks them.
-COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
+# them, so a ramdisk with FRR never lacks them. --chmod: the mode must not
+# depend on the umask of the checkout (reproducible builds).
+COPY --chmod=0644 hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Copy busybox binary and create all applet symlinks (same as default variant).
 # This ensures utilities like tail, pgrep, dmesg, lsblk, hostname, ps, grep,
@@ -791,8 +794,9 @@ RUN mkdir -p bin sbin dev proc run sys tmp etc && \
     mknod -m 600 dev/ttyS0 c 4 64
 # Users and groups: root, and frr and frrvty, which the FRR daemons switch
 # to (zebra: "could not lookup user frr" without them). Every flavor gets
-# them, so a ramdisk with FRR never lacks them.
-COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
+# them, so a ramdisk with FRR never lacks them. --chmod: the mode must not
+# depend on the umask of the checkout (reproducible builds).
+COPY --chmod=0644 hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 COPY --from=micro-dev /go/src/github.com/telekom/BOOTy/init .
 # "booty lldp ..." and other commands in the rescue shell run the agent binary.
 RUN ln -sf ../init bin/booty

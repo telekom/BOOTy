@@ -26,7 +26,7 @@ for round in 1 2; do
 		target_arg=()
 		[ "$target" = default ] || target_arg=(--target "$target")
 		docker buildx build --builder "$builder-$round" --platform "$platform" \
-			"${target_arg[@]}" \
+			${target_arg[@]+"${target_arg[@]}"} \
 			--build-arg "SOURCE_DATE_EPOCH=$epoch" \
 			--build-arg "BOOTY_VERSION=repro" \
 			--build-arg "BOOTY_BUILD=$commit" \
