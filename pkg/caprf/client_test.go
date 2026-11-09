@@ -2527,6 +2527,17 @@ func TestParseVarsImageWriteOptions(t *testing.T) {
 		!strings.Contains(err.Error(), "WIPE_DEPTH=quick") {
 		t.Fatalf("ParseVars(IMAGE_SKIP_UNCHANGED=true) with the thorough wipe = %v, want an error naming WIPE_DEPTH=quick", err)
 	}
+	cfg, err = ParseVars(strings.NewReader("IMAGE_RESUME=true\nIMAGE_PARALLEL_RANGES=4\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Provision.Image.Resume || cfg.Provision.Image.ParallelRanges != 4 {
+		t.Fatalf("Resume %v ParallelRanges %d, want true and 4", cfg.Provision.Image.Resume, cfg.Provision.Image.ParallelRanges)
+	}
+	if _, err := ParseVars(strings.NewReader("IMAGE_PARALLEL_RANGES=17\n")); err == nil ||
+		!strings.Contains(err.Error(), "IMAGE_PARALLEL_RANGES") {
+		t.Fatalf("ParseVars(IMAGE_PARALLEL_RANGES=17) = %v, want an error naming IMAGE_PARALLEL_RANGES", err)
+	}
 	if _, err := ParseVars(strings.NewReader("IMAGE_SPARSE_WRITE=always\n")); err == nil ||
 		!strings.Contains(err.Error(), "IMAGE_SPARSE_WRITE") {
 		t.Fatalf("ParseVars(IMAGE_SPARSE_WRITE=always) = %v, want an error naming IMAGE_SPARSE_WRITE", err)

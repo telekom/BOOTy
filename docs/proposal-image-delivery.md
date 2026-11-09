@@ -9,6 +9,9 @@ Proposal. Partly implemented:
 - Sparse writes (`IMAGE_SPARSE_WRITE=auto`) and skipping unchanged blocks
   (`IMAGE_SKIP_UNCHANGED`), whole-disk streaming only. See
   [disk.md](disk.md#faster-image-writes).
+- In-process resume with `Range` and `If-Range` (`IMAGE_RESUME`, default off)
+  and parallel ranged downloads (`IMAGE_PARALLEL_RANGES`, default one GET),
+  for `http(s)://` sources.
 - Decoder concurrency: measured, not changed. With the default of the zstd
   library (up to 4 goroutines) `BenchmarkStreamZstd` was not faster than with
   one, so `pkg/image/format.go` keeps one.
