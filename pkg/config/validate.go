@@ -428,7 +428,7 @@ func validatePersistenceVLANConfig(vlanConfig string) []string {
 func (c *Config) validateSkipUnchanged() string {
 	d := c.Provision.Disk
 	if !c.Provision.Image.SkipUnchanged ||
-		(strings.EqualFold(d.WipeDepth, WipeDepthQuick) && !d.SecureErase && !BoolOr(d.DiscardNVMe, false)) {
+		(strings.EqualFold(strings.TrimSpace(d.WipeDepth), WipeDepthQuick) && !d.SecureErase && !BoolOr(d.DiscardNVMe, false)) {
 		return ""
 	}
 	return "provision.image.skipUnchanged (IMAGE_SKIP_UNCHANGED) needs provision.disk.wipeDepth quick (WIPE_DEPTH=quick) " +

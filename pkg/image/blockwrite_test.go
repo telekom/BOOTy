@@ -152,12 +152,36 @@ func (o *oddReader) Read(p []byte) (int, error) {
 }
 
 // TestWriteImageFailsOnTruncatedStream: a decompressor reports a truncated
-// image as io.ErrUnexpectedEOF; the write must fail, not end early.
+// image as io.ErrUnexpectedEOF; the write must fail, not end early, with every
+// write option.
 func TestWriteImageFailsOnTruncatedStream(t *testing.T) {
+	for _, opt := range []StreamOpts{{}, {SparseWrite: true}, {SkipUnchanged: true}, {SparseWrite: true, SkipUnchanged: true}} {
+		f := targetFile(t, nil)
+		src := io.MultiReader(bytes.NewReader([]byte("partial")), errReader{io.ErrUnexpectedEOF})
+		if _, err := writeImage(f, src, opt); !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("writeImage(%+v) = %v, want io.ErrUnexpectedEOF", opt, err)
+		}
+	}
+}
+
+// TestBlockWriterExtendsShortFile: a punch keeps the size of a regular file,
+// so an image that ends in a zero run must still leave a file of full size.
+func TestBlockWriterExtendsShortFile(t *testing.T) {
+	const b = writeBlockSize
+	orig := punchZeroes
+	punchZeroes = func(*os.File, int64, int64) error { return nil } // like FALLOC_FL_KEEP_SIZE past EOF
+	t.Cleanup(func() { punchZeroes = orig })
+	img := append(bytes.Repeat([]byte{0xab}, b), make([]byte, 2*b)...)
 	f := targetFile(t, nil)
-	src := io.MultiReader(bytes.NewReader([]byte("partial")), errReader{io.ErrUnexpectedEOF})
-	if _, err := writeImage(f, src, StreamOpts{}); !errors.Is(err, io.ErrUnexpectedEOF) {
-		t.Fatalf("writeImage() = %v, want io.ErrUnexpectedEOF", err)
+	if _, err := writeImage(f, bytes.NewReader(img), StreamOpts{SparseWrite: true}); err != nil {
+		t.Fatalf("writeImage() = %v", err)
+	}
+	got, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, img) {
+		t.Fatalf("target is %d bytes, want the %d-byte image", len(got), len(img))
 	}
 }
 
