@@ -332,7 +332,7 @@ jobs:
           python3 -I hack/ramdisk_sbom.py "${SYFT}" sbom-empty micro-amd64-initramfs.cpio.gz
 
           has() { # <sbom-base> <jq condition on a non-file component>
-            jq -e "any(.components[]; .type != \"file\" and ($2))" "$1.cdx.json" >/dev/null \
+            jq -e "any(.components[] | .purl //= \"\"; .type != \"file\" and ($2))" "$1.cdx.json" >/dev/null \
               || { echo "::error::$1 SBOM lacks a component with $2"; exit 1; }
           }
           # Debian packages of the tools, FRR (from the FRR repository) and
