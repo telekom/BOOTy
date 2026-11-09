@@ -44,9 +44,10 @@ that had moved or pointed next to the cited code. It found two DHCPv4
 rows that were marked COMPLIANT but were not: a DHCPRELEASE without the
 server identifier (2131-10) and option 57 values below 576 for MTUs 576
 to 603 (2132-2), both fixed by [#908]. [#892] fixed 8415-7. It added
-deviations that the earlier refreshes missed: three of very low impact
+deviations that the earlier refreshes missed: five of very low impact
 (4861-15: RA options of length zero; 8415-10: an address revoked with
-valid lifetime 0; 8415-11: SOL_MAX_RT not applied), one of low impact
+valid lifetime 0; 8415-11: SOL_MAX_RT not applied; 8415-12: options 32
+and 83 not requested; 2131-16: no expiry check while SELECTING), one of low impact
 (2131-13: a DHCPNAK from another server is ignored in INIT-REBOOT and
 REBINDING) and one in GoBGP (8654-1: extended messages received only
 from a peer that advertised the capability). It also corrected the text
@@ -133,10 +134,10 @@ refresh is merged.
 | 802.1AB | LLDP | 17 | 1 | 2 | 0 | 0 | 0 |
 | 4861 | IPv6 ND (RAs) | 11 | 4 | 1 | 0 | 0 | 0 |
 | 4862 | IPv6 SLAAC | 2 | 0 | 0 | 0 | 0 | 0 |
-| 2131 | DHCPv4 client | 13 | 2 | 0 | 0 | 0 | 0 |
+| 2131 | DHCPv4 client | 13 | 3 | 0 | 0 | 0 | 0 |
 | 2132 / 3397 / 3442 / 4039 / 4361 | DHCPv4 options | 6 | 0 | 0 | 0 | 0 | 0 |
-| 8415 | DHCPv6 | 8 | 3 | 0 | 0 | 0 | 0 |
-| **Total** | | **208** | **20** | **57** | **2** | **89** | **3** |
+| 8415 | DHCPv6 | 8 | 4 | 0 | 0 | 0 | 0 |
+| **Total** | | **208** | **22** | **57** | **2** | **89** | **3** |
 
 Kernel- and library-owned rows count as COMPLIANT or DEVIATION; the owner
 column names them. The second refresh (`5ac79521`) counted 209
@@ -169,7 +170,9 @@ COMPLIANT, 47 DEVIATION, 67 N/A, 4 NOT IMPLEMENTED, 68 GOBGP: COMPLIANT and
 | 15 | RFC4861-RA-OPTLEN | 4861 §4.6, §6.1.2 | BOOTy | Very low: in DHCP mode an RA with a zero-length option, which the kernel drops, still starts DHCPv6 (4861-15). | Open: check the option lengths in `validRA`, like `validRS`. |
 | 16 | RFC8415-ZERO-LIFETIME | 8415 §18.2.10.1 | BOOTy | Very low: an address that a REPLY to RENEW or REBIND gives valid lifetime 0 stays until its old valid lifetime ends (8415-10). | Open: expire the lease at once. |
 | 17 | RFC8415-SOL-MAX-RT | 8415 §18.2.9, §21.24 | BOOTy | Very low: a SOL_MAX_RT option of the server is requested but not applied, so SOLICIT keeps the default maximum of 3600 s (8415-11). | Open: decode option 82 and use it as the SOLICIT MRT. |
-| 18 | LLDP-TTL | 802.1AB | BOOTy | Very low: TTL 120 instead of txTTL = 4 x 30 + 1 = 121; matches systemd-networkd. | Kept for networkd parity. |
+| 18 | RFC8415-INF-OPTIONS | 8415 §18.2.6, §21.25 | BOOTy | Very low: the INFORMATION-REQUEST does not ask for options 32 and 83, and INF_MAX_RT is not applied (8415-12). | Open: request 32 and 83, use INF_MAX_RT. |
+| 19 | RFC2131-EXPIRE-SELECTING | 2131 §4.4.5 | BOOTy | Very low: an expired lease kept after a failed INIT-REBOOT can stay up to about a minute while SELECTING (2131-16). | Open: bound SELECTING by the lease expiry. |
+| 20 | LLDP-TTL | 802.1AB | BOOTy | Very low: TTL 120 instead of txTTL = 4 x 30 + 1 = 121; matches systemd-networkd. | Kept for networkd parity. |
 
 The rows without authentication (5880-39, 5881-15, 5883-4) are not
 ranked: the legacy FRR profile has none either.
@@ -764,7 +767,7 @@ timers and checks.
 | 2131-2 | 4.4.1 | Client SHOULD check the offered address (ARP) and MUST send DHCPDECLINE if in use | BOOTy | DEVIATION | RFC2131-ARP: the own client of [#790] binds an ACK at once (`dhcp4/client.go:237`, `:351` `bind`); no ARP probe and no DHCPDECLINE anywhere in `pkg/network`. Impact low. Fix: an ARP probe (RFC 5227) before `bind` and a DECLINE on a conflict | reading |
 | 2131-3 | 4.3.2, 4.4.5 | RENEWING: unicast REQUEST with ciaddr, without server identifier and requested IP; REBINDING: broadcast | BOOTy | COMPLIANT | RFC2131-RENEW at the first audit (go-dhclient). [#790]: unicast from the lease address to the server of the lease with ciaddr and neither option, broadcast when rebinding (`dhcp4/client.go:302` `renewState`, `:310` `rebindState`, `:558` `request`); `TestRenewUnicastRebindBroadcast`, `TestRenewWait` | test |
 | 2131-4 | 4.4.5 | T1 and T2 defaults 0.5 and 0.875 of the lease | BOOTy | COMPLIANT | `dhcp4/message.go:302` (`leaseTimes.set`, also for a T1 or T2 past the lease, like networkd); `TestLeaseTimes` | test |
-| 2131-5 | 4.4.5 | Lease expiry before renewal or rebind: MUST stop using the address, back to INIT | BOOTy | COMPLIANT | RFC2131-EXPIRE at the first audit. The client ends the lease at expiry (`dhcp4/client.go:328`, `:385` `expire`, also in INIT after failed INIT-REBOOTs `:204`); [#751] removes address, routes, DNS, NTP and MTU (`dhcp.go:544` `onExpire`, `:554` `endLease`); `TestExpiryAndNak`, `TestLeaseExpiresInInitAfterFailedReboot`, `TestOnExpireRemovesLeaseState` | test |
+| 2131-5 | 4.4.5 | Lease expiry before renewal or rebind: MUST stop using the address, back to INIT | BOOTy | COMPLIANT | RFC2131-EXPIRE at the first audit. The client ends the lease at expiry (`dhcp4/client.go:328`, `:385` `expire`, also in INIT after failed INIT-REBOOTs `:204`); [#751] removes address, routes, DNS, NTP and MTU (`dhcp.go:544` `onExpire`, `:554` `endLease`); `TestExpiryAndNak`, `TestLeaseExpiresInInitAfterFailedReboot`, `TestOnExpireRemovesLeaseState`; not checked during SELECTING, see 2131-16 | test |
 | 2131-6 | 3.2 | DHCPNAK: stop using the address, restart | BOOTy | COMPLIANT | Fixed by [#751] and [#790]: a NAK ends the lease (`dhcp4/client.go:270`, `:344`) and BOOTy removes it (`dhcp.go:544`); a NAK counts only from the server of the offer or lease, like networkd (`dhcp4/client.go:452`; in INIT-REBOOT and REBINDING this is a deviation, see 2131-13); `TestExpiryAndNak`, `TestNakFromOtherServerIgnored`, `TestNakFromOtherServerIgnoredInRequesting`, `TestNakFromOtherServerIgnoredInRebooting` | test |
 | 2131-7 | 4.4.5 | A renewed lease updates address and router | BOOTy | COMPLIANT | `dhcp.go:597` `apply` for every ACK, `:735` `applyRoutes`; `TestOnBoundAppliesRenewal`, `TestOnBoundAppliesEveryNIC` | test |
 | 2131-8 | 3.3 | Lease without router option drops the default route | BOOTy | COMPLIANT | `dhcp_options.go:113` `leaseRouteSet` (no default route without a non-zero router), `dhcp.go:735` removes the routes the new lease lacks; `TestLeaseRoutesTable`, `TestOnBoundRenewalDropsRouteAndRestoresMask` | test |
@@ -775,6 +778,7 @@ timers and checks.
 | 2131-13 | 3.2, 4.4.2, 4.4.5 | INIT-REBOOT: confirm the last address with a broadcast REQUEST (requested IP, no server identifier); NAK: back to INIT. INIT-REBOOT and REBINDING ask any server, so a DHCPNAK from any server ends the lease | BOOTy | DEVIATION | RFC2131-NAK-SERVER: [#790] `dhcp4/client.go:250` `rebootState`, started by [#793] when the carrier returns, like networkd (`dhcp.go:400`); `TestRebootTriesOnce`, `TestRebootEndsRenewal`, `TestCarrierLossKeepsLeaseAndReturnReboots`. But `rebootState` and `extend` (also REBINDING) pass the server of the lease to `wanted` (`dhcp4/client.go:261`, `:335`, `:452`), which ignores a NAK from another server, like networkd; `TestNakFromOtherServerIgnoredInRebooting`. On a changed network the client then keeps the old address until a new lease or its expiry instead of restarting at once. Impact low. Fix: accept a NAK from any server in INIT-REBOOT and REBINDING (kept for networkd parity so far) | test |
 | 2131-14 | 4.1 | secs: the time since the client began the exchange | BOOTy | COMPLIANT | [#790] `dhcp4/client.go:506` `secs`, set on each send (`:413`); no test checks the value | reading |
 | 2131-15 | 4.1 | Replies are matched by xid and chaddr | BOOTy | COMPLIANT | [#790] `dhcp4/client.go:448` `wanted`; `TestIgnoresForeignReplies` | test |
+| 2131-16 | 4.4.5 | Lease expiry also while SELECTING after a failed INIT-REBOOT: MUST stop using the address | BOOTy | DEVIATION | RFC2131-EXPIRE-SELECTING: INIT checks the kept lease's expiry before each DISCOVER (`dhcp4/client.go:204`), but `selecting` sends up to five REQUESTs without that check (`dhcp4/client.go:228` to `:245`): with an OFFER just before the expiry and no ACK, the expired address and routes stay up to about a minute. Impact very low. Fix: bound the SELECTING timeouts by the lease and expire it like `initState` | reading |
 
 ### DHCPv4 options (RFC 2132, 3397, 3442, 4039, 4361)
 
@@ -794,17 +798,18 @@ ramdisk ([#753], [#776], [#790], [#819], [#820]).
 
 | ID | § | Requirement | Owner | Status | Evidence, impact, fix | Verified |
 |---|---|---|---|---|---|---|
-| 8415-1 | all | DHCPv6 client | BOOTy | COMPLIANT | NOT IMPLEMENTED at the first audit. [#795] adds BOOTy's own client (`pkg/network/dhcp6`), started by the M or O flag of an RA on every DHCP NIC, like networkd `DHCPv6Client=yes` (`dhcp6_mode.go:170` `onRA`); rows 8415-2 to 8415-11 | test |
+| 8415-1 | all | DHCPv6 client | BOOTy | COMPLIANT | NOT IMPLEMENTED at the first audit. [#795] adds BOOTy's own client (`pkg/network/dhcp6`), started by the M or O flag of an RA on every DHCP NIC, like networkd `DHCPv6Client=yes` (`dhcp6_mode.go:170` `onRA`); rows 8415-2 to 8415-12 | test |
 | 8415-2 | 15, 18.2.1 | Retransmission: IRT, MRT, RAND; the first SOLICIT timeout greater than IRT | BOOTy | COMPLIANT | [#795], [#825] `dhcp6/client.go:74` `next`, `:66` to `:69`; `TestSolicitLikeNetworkd`, `TestFirstSolicitAboveIRT`; a SOL_MAX_RT option of the server is not applied, see 8415-11 | test |
 | 8415-3 | 18.2.1, 18.2.9 | SOLICIT with rapid commit; collect ADVERTISEs for the first timeout and take the highest preference, 255 at once; ignore an ADVERTISE with NoAddrsAvail | BOOTy | COMPLIANT | [#825] `dhcp6/client.go:166` `solicit`, like sd-dhcp6-client; an ADVERTISE without a usable address is skipped (`dhcp6/message.go:198`, `:210`); `TestAdvertisePreference`, `TestLateAdvertiseSameSocket`, `TestRequestRetriesAndAdvertiseStatus` | test |
 | 8415-4 | 18.2.2 | REQUEST up to REQ_MAX_RC (10) times | BOOTy | COMPLIANT | [#795] `dhcp6/client.go:203` `request`; `TestRequestRetriesAndAdvertiseStatus` | test |
 | 8415-5 | 18.2.4, 18.2.5, 18.2.10.1 | RENEW at T1, REBIND at T2, stop using the address at the end of its valid lifetime; NoBinding in a REPLY to RENEW or REBIND: REQUEST | BOOTy | COMPLIANT | [#795], [#825] `dhcp6/client.go:232` `extend`, `:263` `phase`; the address goes at expiry (`dhcp6_mode.go:253` `onExpire6`); `TestRenewRebindExpire`, `TestRenewNeedsAddress`, `TestRenewNoBindingRequests` | test |
-| 8415-6 | 18.2.6, 21.23 | INFORMATION-REQUEST (O flag); refresh after the Information Refresh Time, at least IRT_MINIMUM (600 s), default 86400 s | BOOTy | COMPLIANT | [#795] `dhcp6/client.go:309` `information`, `:300` `infoRefresh`, `dhcp6/message.go:191`; `TestInformationRequest`, `TestInfoRefresh`, `TestInformationWaitsRefreshTime` | test |
+| 8415-6 | 18.2.6, 21.23 | INFORMATION-REQUEST (O flag); refresh after the Information Refresh Time, at least IRT_MINIMUM (600 s), default 86400 s | BOOTy | COMPLIANT | [#795] `dhcp6/client.go:309` `information`, `:300` `infoRefresh`, `dhcp6/message.go:191`; `TestInformationRequest`, `TestInfoRefresh`, `TestInformationWaitsRefreshTime`; options 32 and 83 not requested, see 8415-12 | test |
 | 8415-7 | 18.2.7 | RELEASE of a bound address, wait for the REPLY; the address MUST be removed from the interface before the RELEASE | BOOTy | COMPLIANT | [#795] releases at stop and waits up to REL_TIMEOUT (1 s) for the REPLY, without retransmission (the RFC says SHOULD retransmit one or more times but MAY terminate early, e.g. on power down; BOOTy stops before the handoff) (`dhcp6/client.go:366` `release`); `TestAdvertiseRequestAndRelease`. Fixed by [#892]: `stop6` removes the address and DNS servers first (`dhcp6_mode.go:292` `dropAddr6`), then stops the client, which sends the RELEASE (`:303` `c.Stop()`); late callbacks of the stopping client are ignored; `TestDHCPv6DropsAddressBeforeRelease`, `TestDHCPv6IgnoresLeaseWhileStopping` | test |
 | 8415-8 | 18.2.10.1, 18.2.8 | DAD on each received address before use; an address found in use is declined with a DECLINE (no keyword: "the client sends a Decline message") | BOOTy | DEVIATION | [#795] adds the address with kernel DAD (`dhcp6_mode.go:231`) but sends no DECLINE when DAD fails (no DECLINE in `pkg/network/dhcp6`). Impact very low | reading |
 | 8415-9 | 21.24, RFC 3646 | DNS servers (option 23) and domain list (option 24) used | BOOTy | COMPLIANT | [#795] adds them after the DHCPv4 servers, a link-local server with its zone (`dhcp6_mode.go:220` `onBound6`, `:244`; `dhcp.go:666` `writeResolvers`); `TestDomainList`, `TestDHCPv6LinkLocalDNSAndDomains` | test |
 | 8415-10 | 18.2.10.1 | REPLY to RENEW or REBIND: discard the leases with a valid lifetime of 0 (no keyword: "Discard any leases from the IA ... that have a valid lifetime of 0") | BOOTy | DEVIATION | RFC8415-ZERO-LIFETIME: an address with valid lifetime 0 is skipped (`dhcp6/message.go:224`), so a REPLY whose IA_NA has only such addresses counts as no answer (`dhcp6/client.go:283` `phase`): the address stays on the NIC and BOOTy renews and rebinds it until its old valid lifetime ends (`dhcp6_mode.go:253` `onExpire6`). An IA with a new address and the old one at 0 works (`onBound6` replaces the address, `dhcp6_mode.go:234`). Impact very low: only a server that revokes the address. Fix: expire the lease at once when the IA_NA has the bound address with valid lifetime 0 | reading |
 | 8415-11 | 18.2.9, 21.24 | The client MUST include SOL_MAX_RT in the Option Request of a SOLICIT and MUST process a SOL_MAX_RT option (60 to 86400 s) in an ADVERTISE, also one that it otherwise ignores | BOOTy | DEVIATION | RFC8415-SOL-MAX-RT: [#795] requests option 82 (`dhcp6/client.go:351`), but the reply decoder does not read it (`dhcp6/message.go:162` to `:201`), so SOLICIT keeps the default maximum of 3600 s (`dhcp6/client.go:66`). Impact very low: a server can not lower the SOLICIT backoff, and BOOTy runs only for the provisioning. Fix: decode option 82 from every ADVERTISE and use a valid value as the SOLICIT MRT | reading |
+| 8415-12 | 18.2.6, 21.25 | INFORMATION-REQUEST: the Option Request MUST ask for INF_MAX_RT (83) and the Information Refresh Time (32); the client MUST process INF_MAX_RT | BOOTy | DEVIATION | RFC8415-INF-OPTIONS: the Option Request of the INFORMATION-REQUEST has only 23, 31, 56 and 103 (`dhcp6/client.go:316`); option 32 is applied when a server sends it anyway (`dhcp6/message.go:191`), option 83 is not decoded, so the maximum stays at 3600 s (`dhcp6/client.go:69`). Impact very low: a server can not shorten or lengthen the INFORMATION-REQUEST backoff, and must send option 32 unasked. Fix: request 32 and 83 and use a valid INF_MAX_RT as the MRT | reading |
 
 ## Fix PRs and fork tags
 
