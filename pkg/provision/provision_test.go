@@ -1324,8 +1324,8 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 	// resolution, EFI fallback install, secureboot chain verification, and the
 	// disk mirroring steps (mirror-root, configure-mdadm, install-esp-sync, mirror EFI entry)
 	// and configure-sriov.
-	if len(steps) != 52 {
-		t.Errorf("expected 52 provisioning steps, got %d", len(steps))
+	if len(steps) != 53 {
+		t.Errorf("expected 53 provisioning steps, got %d", len(steps))
 	}
 }
 

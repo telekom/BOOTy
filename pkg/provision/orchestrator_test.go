@@ -246,8 +246,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 52 {
-		t.Fatalf("expected 52 provisioning steps, got %d", len(steps))
+	if len(steps) != 53 {
+		t.Fatalf("expected 53 provisioning steps, got %d", len(steps))
 	}
 }
 
@@ -3159,7 +3159,7 @@ func TestVerifyImageSignatureOCIProbeUsesTimeout(t *testing.T) {
 
 	const ref = "registry.example.invalid/team/node:latest"
 	var called bool
-	probeOCIReference = func(ctx context.Context, gotRef string) error {
+	probeOCIReference = func(ctx context.Context, gotRef string) (string, error) {
 		called = true
 		if gotRef != ref {
 			t.Fatalf("probe ref = %q, want %q", gotRef, ref)
@@ -3172,7 +3172,7 @@ func TestVerifyImageSignatureOCIProbeUsesTimeout(t *testing.T) {
 		if remaining <= 0 || remaining > ociPreflightProbeTimeout {
 			t.Fatalf("probe deadline remaining = %v, want within %v", remaining, ociPreflightProbeTimeout)
 		}
-		return errors.New("stop probe")
+		return "", errors.New("stop probe")
 	}
 
 	cfg := &config.MachineConfig{}

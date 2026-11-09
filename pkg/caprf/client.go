@@ -1222,10 +1222,7 @@ func applyLogFlushTimeoutVar(cfg *config.MachineConfig, value string) error {
 }
 
 func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
-	if applyNetworkStringVar(cfg, key, value) {
-		return true
-	}
-	if applySecureBootDigestVar(cfg, key, value) {
+	if applyNetworkStringVar(cfg, key, value) || applySecureBootDigestVar(cfg, key, value) {
 		return true
 	}
 	if applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) || applyCheckStringVar(cfg, key, value) {
@@ -1295,6 +1292,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"AB_ACTIVE_SLOT":              &cfg.Provision.AB.ActiveSlot,
 		"AB_TARGET_SLOT":              &cfg.Provision.AB.TargetSlot,
 		"AB_SOURCE_ROOT_LABEL":        &cfg.Provision.AB.SourceRootLabel,
+		"PROVISION_REPORT_PATH":       &cfg.Provision.ReportPath,
 	}
 
 	if ptr, ok := strFields[key]; ok {

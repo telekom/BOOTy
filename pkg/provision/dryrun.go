@@ -213,7 +213,7 @@ func probeOCIImageReachability(ctx context.Context, imgURL, redactedURL string) 
 	ref := trimDryRunOCIScheme(imgURL)
 	probeCtx, cancel := context.WithTimeout(ctx, ociPreflightProbeTimeout)
 	defer cancel()
-	if err := probeOCIReference(probeCtx, ref); err != nil {
+	if _, err := probeOCIReference(probeCtx, ref); err != nil {
 		errMsg := redactURLError(err, imgURL)
 		return &DryRunResult{Status: DryRunFail,
 			Message: fmt.Sprintf("OCI image unreachable %s: %s", redactedURL, errMsg)}

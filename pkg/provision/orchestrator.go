@@ -52,7 +52,7 @@ var (
 	collectFirmwareFn  = firmware.Collect
 	validateFirmwareFn = firmware.Validate
 	loadCheckpointFn   = LoadCheckpoint
-	probeOCIReference  = image.ProbeOCIReference
+	probeOCIReference  = image.ResolveOCIReference
 	secureBootRoot     = newroot
 	mountBootPart      = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
 		return mgr.MountPartition(ctx, device, mountpoint)
@@ -106,7 +106,13 @@ type Orchestrator struct {
 	rootPartition    string
 	bootPartition    string
 	sharedMounts     []string
-	bestImageURL     string // resolved by verify-image, reused by stream-image
+	bestImageURL     string           // resolved by verify-image, reused by stream-image
+	imageDigest      string           // OCI manifest digest that verify-image resolved
+	report           *ProvisionReport // built by write-provision-report
+	// reportWritten is true when a resumed run finds write-provision-report
+	// done: the step then rebuilds the report but keeps the file, which
+	// copy-machine-files or a machine command may have replaced.
+	reportWritten    bool
 	nvmeTargetDevice string
 	firmwareChanged  bool // true if any step changed firmware values requiring hard reboot
 	// separateBootMounted is true while mount-boot owns a separate /boot mount.
@@ -187,6 +193,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		// GRUB and EFI fallback mutations, before firmware boot entries point to them.
 		{"verify-secureboot-chain", o.verifySecureBootChain},
 		{"inject-cloudinit", o.injectCloudInit},
+		{"write-provision-report", o.writeProvisionReport},
 		// copy-machine-files keeps symlinks, so it must stay after every
 		// host-side writer into the target root (TestNoHostWriterRunsAfterCopyMachineFiles).
 		{"copy-machine-files", o.copyMachineFiles},
@@ -212,6 +219,7 @@ func (o *Orchestrator) Provision(ctx context.Context) error {
 		return err
 	}
 	o.restoreCheckpointDerivedState(cp)
+	o.reportWritten = cp.IsCompleted("write-provision-report")
 
 	// stateSteps must always re-run on resume because they rebuild in-memory
 	// runtime fields that later steps depend on (firmwareChanged, bestImageURL,
@@ -262,7 +270,10 @@ func resumeStateSteps() map[string]struct{} {
 		// resume because the selected console is cached only in memory.
 		"configure-serial-console": {},
 		"configure-grub":           {},
-		"teardown-chroot":          {},
+		// The report lives in memory until report-success logs it; the
+		// file is not written again (see reportWritten).
+		"write-provision-report": {},
+		"teardown-chroot":        {},
 	}
 }
 
@@ -2234,9 +2245,11 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 		ref := image.TrimOCIScheme(bestURL)
 		probeCtx, cancel := context.WithTimeout(ctx, ociPreflightProbeTimeout)
 		defer cancel()
-		if err := probeOCIReference(probeCtx, ref); err != nil {
+		digest, err := probeOCIReference(probeCtx, ref)
+		if err != nil {
 			return fmt.Errorf("probing OCI image source: %w", err)
 		}
+		o.imageDigest = digest
 	}
 
 	if o.cfg.Provision.Image.SignatureURL == "" {
@@ -3423,6 +3436,7 @@ func (o *Orchestrator) logHealthCheckResults(results []health.CheckResult) {
 }
 
 func (o *Orchestrator) reportSuccess(ctx context.Context) error {
+	o.logProvisionReport()
 	// The handoff goes before the notes, which start with "; ".
 	message := successStatusMessage(o.cfg) + " handoff=" + PlannedHandoff(o.cfg, o.firmwareChanged, newroot) + o.eraseFallbackNote()
 	return o.reportTerminalSuccess(ctx, "provisioning", message)

@@ -23,7 +23,7 @@ const SystemdSysextMediaType types.MediaType = "application/vnd.systemd.sysext.i
 // (e.g. "ghcr.io/org/image:tag"). Auth uses the default Docker keychain
 // (~/.docker/config.json).
 func FetchOCILayer(ctx context.Context, reference string) (io.ReadCloser, error) {
-	layer, err := selectOCIImageLayer(ctx, reference)
+	_, layer, err := selectOCIImageLayer(ctx, reference)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +57,7 @@ func FetchOCIImageBlob(ctx context.Context, reference string) (io.ReadCloser, er
 }
 
 func fetchOCIImageBlob(ctx context.Context, reference string) (io.ReadCloser, error) {
-	layer, err := selectOCIImageLayer(ctx, reference)
+	_, layer, err := selectOCIImageLayer(ctx, reference)
 	if err != nil {
 		return nil, err
 	}
@@ -82,36 +82,50 @@ func fetchOCIImageBlob(ctx context.Context, reference string) (io.ReadCloser, er
 // ProbeOCIReference verifies that an OCI image reference resolves and has a
 // usable payload layer without downloading the layer content.
 func ProbeOCIReference(ctx context.Context, reference string) error {
-	_, err := selectOCIImageLayer(ctx, reference)
+	_, err := ResolveOCIReference(ctx, reference)
 	return err
 }
 
+// ResolveOCIReference probes reference like ProbeOCIReference and returns the
+// digest of the image manifest that it resolved to (sha256:...).
+func ResolveOCIReference(ctx context.Context, reference string) (string, error) {
+	img, _, err := selectOCIImageLayer(ctx, reference)
+	if err != nil {
+		return "", err
+	}
+	digest, err := img.Digest()
+	if err != nil {
+		return "", fmt.Errorf("digest of %q: %w", RedactOCIRef(reference), wrapRedactedOCIRefError(err, reference))
+	}
+	return digest.String(), nil
+}
+
 // selectOCIImageLayer resolves an OCI image and selects its payload layer.
-func selectOCIImageLayer(ctx context.Context, reference string) (v1.Layer, error) {
+func selectOCIImageLayer(ctx context.Context, reference string) (v1.Image, v1.Layer, error) {
 	redactedRef := RedactOCIRef(reference)
 	ref, err := name.ParseReference(reference)
 	if err != nil {
-		return nil, fmt.Errorf("parse OCI reference %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
+		return nil, nil, fmt.Errorf("parse OCI reference %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
 
 	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
 	if err != nil {
-		return nil, fmt.Errorf("pull OCI image %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
+		return nil, nil, fmt.Errorf("pull OCI image %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
 
 	layers, err := img.Layers()
 	if err != nil {
-		return nil, fmt.Errorf("get layers for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
+		return nil, nil, fmt.Errorf("get layers for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
 	if len(layers) == 0 {
-		return nil, fmt.Errorf("OCI image %q has no layers", redactedRef)
+		return nil, nil, fmt.Errorf("OCI image %q has no layers", redactedRef)
 	}
 
 	layer, err := selectDefaultOCILayer(layers)
 	if err != nil {
-		return nil, fmt.Errorf("select content layer for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
+		return nil, nil, fmt.Errorf("select content layer for %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
-	return layer, nil
+	return img, layer, nil
 }
 
 // tcaasRawImageMediaType prefixes the media type of the raw image layer that
