@@ -88,7 +88,7 @@ fields it does not know.
 | `encryption.tpm` | `present` when the ramdisk sees a TPM (`/sys/class/tpm/tpm0`), else `absent`. |
 | `secureBoot.state` | Firmware Secure Boot during provisioning: `enabled`, `disabled`, or `unknown` without EFI variables. `reEnable` is `SECUREBOOT_REENABLE`. |
 | `sysexts` | The configured system extensions that `apply-sysexts` installed, with the mode they were installed in (`preload` when neither the layer nor `provision.sysext.defaultMode` sets one). |
-| `timings` | The step summary of the [telemetry metrics](../README.md#telemetry-and-metrics) up to the report. |
+| `timings` | The step summary of the [telemetry metrics](../README.md#telemetry-and-metrics) up to the report, without the error text of failed steps (which can hold command output); a failed step keeps its `status` and failure `code`. |
 
 The report holds no tokens, passwords or keys. It is written before
 `copy-machine-files`, so steps after it do not appear in the file but in

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -316,6 +317,32 @@ func TestBuildReportDetectedRootFilesystem(t *testing.T) {
 	}
 	if cfg.Provision.Disk.PartitionLayout.Partitions[0].Filesystem != "xfs" {
 		t.Fatal("configured layout mutated")
+	}
+}
+
+// A failed step of an earlier attempt keeps its status in the report but
+// not its error text, which can hold command output.
+func TestReportTimingsDropStepErrors(t *testing.T) {
+	withReportHost(t, nil, nil)
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	o.collector.Steps().StartStep("post-provision-cmds")
+	o.collector.Steps().EndStep("post-provision-cmds", errors.New("command failed: password=hunter2"))
+
+	r := o.buildReport(context.Background())
+
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "hunter2") {
+		t.Fatalf("report holds the step error: %s", data)
+	}
+	steps := r.Timings.Steps
+	if len(steps) != 1 || steps[0].Status != "failed" {
+		t.Fatalf("steps = %+v, want the failed step", steps)
+	}
+	if s := o.collector.Summarize().Steps; len(s) != 1 || s[0].Error == "" {
+		t.Fatal("collector lost the step error")
 	}
 }
 

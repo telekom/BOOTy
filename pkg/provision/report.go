@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -180,7 +181,14 @@ func (o *Orchestrator) buildReport(ctx context.Context) *ProvisionReport {
 
 func (o *Orchestrator) refreshReportTimings(r *ProvisionReport) {
 	s := o.collector.Summarize()
-	r.Timings = ReportTimings{StartTime: s.StartTime.UTC(), TotalDurationMs: s.TotalDurMs, Steps: s.Steps}
+	// A step error is free text that can hold command output (a rescue
+	// retry keeps the failures of the earlier attempt); the report keeps
+	// only the status and the stable failure code.
+	steps := slices.Clone(s.Steps)
+	for i := range steps {
+		steps[i].Error = ""
+	}
+	r.Timings = ReportTimings{StartTime: s.StartTime.UTC(), TotalDurationMs: s.TotalDurMs, Steps: steps}
 }
 
 // reportLayout is the layout that write-fstab applied: a custom layout
