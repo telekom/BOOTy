@@ -734,7 +734,12 @@ compressed raw images (not to QCOW2 images, `ab`, `partition` or a
   `IMAGE_SPARSE_WRITE=auto` by a punch) or written: the old OS may have
   trimmed them, and a deallocated block need not read back as zeros later. A reinstall of the image that is already on
   the disk writes only the blocks that the quick wipe or the last boot
-  changed. It still downloads the whole image. On a disk that holds a
+  changed. Use it only on disks that read a deallocated block the same way
+  every time (NVMe with deterministic read after deallocate, SATA with DRAT),
+  or where the installed OS never discards: a data block that the old OS
+  trimmed may still return its old content when BOOTy compares it, and other
+  content later. BOOTy cannot tell from the block device which blocks are
+  deallocated. It still downloads the whole image. On a disk that holds a
   different image it reads every block in addition to writing it. The option
   needs `WIPE_DEPTH=quick` without `SECURE_ERASE` and `DISCARD_NVME`: after a
   discard or an erase a block need not read back the same after the reboot,

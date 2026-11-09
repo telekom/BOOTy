@@ -69,7 +69,9 @@ type ImageConfig struct {
 	// target first and skip the write when the target already holds it.
 	// Reinstalling the same image then writes only the blocks that differ.
 	// The download and the checksum still cover the whole image.
-	// Needs Disk.WipeDepth "quick" without SecureErase and DiscardNVMe.
+	// Needs Disk.WipeDepth "quick" without SecureErase and DiscardNVMe, and
+	// a disk that reads deallocated blocks deterministically (a block the old
+	// OS trimmed may compare equal now and read back differently later).
 	// Default: false
 	SkipUnchanged bool `yaml:"skipUnchanged,omitempty" json:"skipUnchanged,omitempty"`
 
