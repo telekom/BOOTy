@@ -310,6 +310,83 @@ jobs:
           fi
           echo "PASS: micro < slim < gobgp < default"
 
+      - name: Test the ramdisk SBOM generator
+        run: python3 -B hack/ramdisk_sbom_test.py
+
+      - name: Download Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c
+
+      - name: Verify ramdisk SBOMs
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: |
+          # The release writes these SBOMs for every ramdisk (release-v2.yml).
+          docker buildx build --platform linux/amd64 --target sbom-inputs \
+            --output type=local,dest=sbom-inputs -f initrd.Dockerfile .
+          mkdir -p sbom-empty
+          cp out-default/initramfs.cpio.zst default-amd64-initramfs.cpio.zst
+          cp out-slim/initramfs.cpio.zst slim-amd64-initramfs.cpio.zst
+          cp out-gobgp/initramfs.cpio.zst gobgp-amd64-initramfs.cpio.zst
+          cp out-micro/initramfs.cpio.gz micro-amd64-initramfs.cpio.gz
+          python3 -I hack/ramdisk_sbom.py "${SYFT}" sbom-inputs default-amd64-initramfs.cpio.zst slim-amd64-initramfs.cpio.zst gobgp-amd64-initramfs.cpio.zst
+          python3 -I hack/ramdisk_sbom.py "${SYFT}" sbom-empty micro-amd64-initramfs.cpio.gz
+
+          has() { # <sbom-base> <jq condition on a non-file component>
+            jq -e "any(.components[] | .purl //= \"\"; .type != \"file\" and ($2))" "$1.cdx.json" >/dev/null \
+              || { echo "::error::$1 SBOM lacks a component with $2"; exit 1; }
+          }
+          # Debian packages of the tools, FRR (from the FRR repository) and
+          # the kernel, the builds from source, busybox and the BOOTy module.
+          for want in e2fsprogs mdadm iproute2 libc6 busybox github.com/telekom/BOOTy; do
+            has default-amd64-initramfs ".name == \"${want}\""
+            jq -e --arg n "${want}" 'any(.packages[]; .name == $n)' default-amd64-initramfs.spdx.json >/dev/null \
+              || { echo "::error::default ramdisk SBOM (SPDX) lacks ${want}"; exit 1; }
+          done
+          has default-amd64-initramfs '.purl | startswith("pkg:deb/frrouting/frr@")'
+          has default-amd64-initramfs '(.name | startswith("linux-image-")) and (.purl | startswith("pkg:deb/debian/"))'
+          has default-amd64-initramfs '.purl | startswith("pkg:generic/lvm2@")'
+          has default-amd64-initramfs '.purl | startswith("pkg:github/util-linux/util-linux@")'
+          has default-amd64-initramfs '.purl | test("^pkg:deb/debian/grub-efi-amd64-bin@")'
+          # growpart, a script that the busybox and slim-builder stages copy.
+          has default-amd64-initramfs '.name == "cloud-guest-utils"'
+          has slim-amd64-initramfs '.name == "cloud-guest-utils"'
+          # slim ships Debian's sfdisk, not the source build.
+          has slim-amd64-initramfs '.purl | startswith("pkg:deb/debian/fdisk@")'
+          if jq -e 'any(.components[]; (.purl // "") | startswith("pkg:github/util-linux/"))' slim-amd64-initramfs.cdx.json >/dev/null; then
+            echo "::error::slim SBOM claims the source-built sfdisk"; exit 1
+          fi
+          has micro-amd64-initramfs '.name == "github.com/telekom/BOOTy"'
+          has gobgp-amd64-initramfs '.name == "cloud-guest-utils"'
+          # Debian packages own their ramdisk files (from the md5sums).
+          jq -e '(.packages[] | select(.name == "e2fsprogs") | .SPDXID) as $p
+            | any(.relationships[]; .spdxElementId == $p and .relationshipType == "CONTAINS")' \
+            default-amd64-initramfs.spdx.json >/dev/null \
+            || { echo "::error::default ramdisk SBOM (SPDX): e2fsprogs owns no files"; exit 1; }
+          # The built components contain their files in SPDX too.
+          for want in lvm2 util-linux; do
+            jq -e --arg n "${want}" 'any(.packages[]; .name == $n and .filesAnalyzed and .packageVerificationCode)' \
+              default-amd64-initramfs.spdx.json >/dev/null \
+              || { echo "::error::default ramdisk SBOM (SPDX): ${want} contains no files"; exit 1; }
+          done
+
+          # Every regular file of the ramdisk, and nothing else, is listed.
+          for r in default-amd64-initramfs.cpio.zst slim-amd64-initramfs.cpio.zst gobgp-amd64-initramfs.cpio.zst micro-amd64-initramfs.cpio.gz; do
+            case "${r}" in *.zst) cat=(zstd -dc) ;; *) cat=(gzip -dc) ;; esac
+            "${cat[@]}" "${r}" | cpio -itv --quiet | awk '/^-/ {sub(/^\.?\/?/, "/", $9); print $9}' | sort > want-files.txt
+            jq -r '.components[] | select(.type == "file") | .name' "${r%.cpio.*}.cdx.json" | sort > got-files.txt
+            diff -u want-files.txt got-files.txt || { echo "::error::${r}: SBOM file list differs from the ramdisk"; exit 1; }
+            # SPDX also lists directories and links: every regular file,
+            # and none of the files the generator adds for syft.
+            jq -r '.files[].fileName | "/" + ltrimstr("/")' "${r%.cpio.*}.spdx.json" | sort -u > got-files.txt
+            missing=$(comm -23 want-files.txt got-files.txt)
+            added=$(grep -E '^(/var/lib/dpkg/|/etc/os-release$)' got-files.txt || true)
+            if [ -n "${missing}${added}" ]; then
+              echo "::error::${r}: SPDX lacks ${missing:-nothing} and lists ${added:-nothing}"; exit 1
+            fi
+            echo "${r}: $(wc -l < got-files.txt) files"
+          done
+
       - name: Verify slim contents
         run: |
           zstd -dc out-slim/initramfs.cpio.zst | cpio -t 2>/dev/null > slim-files.txt
@@ -412,6 +489,8 @@ jobs:
             slim-files.txt
             micro-files.txt
             gobgp-files.txt
+            default-amd64-initramfs.cdx.json
+            default-amd64-initramfs.spdx.json
           if-no-files-found: ignore
           retention-days: 7
 

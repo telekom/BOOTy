@@ -2512,6 +2512,27 @@ func TestParseVarsImageStream(t *testing.T) {
 	}
 }
 
+func TestParseVarsImageWriteOptions(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("IMAGE_SPARSE_WRITE=AUTO\nIMAGE_SKIP_UNCHANGED=true\nWIPE_DEPTH=quick\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Provision.Image.SparseWrite; got != config.SparseWriteAuto {
+		t.Fatalf("SparseWrite = %q, want %q", got, config.SparseWriteAuto)
+	}
+	if !cfg.Provision.Image.SkipUnchanged {
+		t.Fatal("IMAGE_SKIP_UNCHANGED=true did not set provision.image.skipUnchanged")
+	}
+	if _, err := ParseVars(strings.NewReader("IMAGE_SKIP_UNCHANGED=true\n")); err == nil ||
+		!strings.Contains(err.Error(), "WIPE_DEPTH=quick") {
+		t.Fatalf("ParseVars(IMAGE_SKIP_UNCHANGED=true) with the thorough wipe = %v, want an error naming WIPE_DEPTH=quick", err)
+	}
+	if _, err := ParseVars(strings.NewReader("IMAGE_SPARSE_WRITE=always\n")); err == nil ||
+		!strings.Contains(err.Error(), "IMAGE_SPARSE_WRITE") {
+		t.Fatalf("ParseVars(IMAGE_SPARSE_WRITE=always) = %v, want an error naming IMAGE_SPARSE_WRITE", err)
+	}
+}
+
 func TestParseVarsDiskSettleTimeout(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader("DISK_SETTLE_TIMEOUT_SEC=0\n"))
 	if err != nil {

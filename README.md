@@ -553,6 +553,8 @@ root is mounted.
 | `IMAGE_CHECKSUM_SCOPE` | `download` | `download` (file as downloaded) or `decompressed` (decompressed image) |
 | `IMAGE_MODE` | `whole-disk` | Image write mode: `whole-disk`, `partition`, or `ab`; with a declarative partition layout, `whole-disk` streams the selected root filesystem into the declared root partition |
 | `IMAGE_STREAM` | `false` | Forbid staging the image in RAM: QCOW2 images, also an `oci://` QCOW2 layer, fail before the disk wipe, `IMAGE_MODE=partition` is invalid; raw and compressed raw images stream anyway ([docs/disk.md](docs/disk.md#streaming-and-staging)) |
+| `IMAGE_SPARSE_WRITE` | `off` | `auto`: zero the all-zero blocks of a whole-disk image with a hole punch the device guarantees, instead of writing them ([docs/disk.md](docs/disk.md#faster-image-writes)) |
+| `IMAGE_SKIP_UNCHANGED` | `false` | Whole-disk streaming skips the blocks the target already holds; needs `WIPE_DEPTH=quick` ([docs/disk.md](docs/disk.md#faster-image-writes)) |
 | `IMAGE_SOURCE_ROOT_LABEL` | — | Source-image GPT partition label to stream into a declarative partition layout root |
 | `IMAGE_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number for declarative partition layout root streaming |
 | `OCI_PREPULL_ENABLED` | `false` | Pull configured OCI images during provisioning and install a first-boot runtime importer |
@@ -1023,6 +1025,46 @@ echo "$(cut -d' ' -f1 default-amd64-initramfs.cpio.zst.sha256)  out/initramfs.cp
 The Debian packages come from the live mirrors, so a rebuild matches only
 while the mirrors still serve the package versions of the release.
 `hack/check-reproducible.sh <platform> <target>...` runs the CI check locally.
+
+#### Ramdisk SBOMs
+
+Every released ramdisk archive has two SBOMs of its content next to it, in
+CycloneDX and SPDX: `<flavor>-<arch>-initramfs.cdx.json` and
+`.spdx.json`, and `split-<arch>-<part>.cdx.json` and `.spdx.json` for the
+split parts. Each one lists every regular file in the ramdisk with its
+SHA-256, and these components:
+
+- the Debian packages whose files the ramdisk ships, with the ramdisk paths
+  they own (the tools, the shared libraries, the kernel modules, and FRR
+  from the FRR repository as `pkg:deb/frrouting/...`);
+- LVM2 and util-linux (`sfdisk`), which are built from source, and the GRUB
+  package that the EFI fallback loader is built from;
+- busybox and the Go modules of the BOOTy binaries.
+
+The ramdisk has no package database, so `hack/ramdisk_sbom.py` builds one
+for the scan from the build stages (`--target sbom-inputs`). It matches a
+file to a Debian package by content (dpkg md5sums), or, for files that the
+build strips or decompresses, by name. It matches the files built in the
+build by their SHA-256. It then runs syft. The SBOMs have `.sha256` files, so they are signed and have build
+provenance like the other release files. `sbom.spdx.json` still describes
+the release files and the Go modules of the binaries.
+
+Each ramdisk archive also carries a CycloneDX and an SPDX SBOM attestation
+that binds its SBOM to its digest, and each OCI initramfs artifact carries
+a cosign CycloneDX attestation:
+
+```bash
+gh attestation verify default-amd64-initramfs.cpio.zst \
+  --repo telekom/BOOTy \
+  --signer-workflow telekom/BOOTy/.github/workflows/release-v2.yml \
+  --source-ref "refs/tags/${VERSION}" \
+  --predicate-type https://cyclonedx.org/bom   # SPDX: https://spdx.dev/Document/v2.3
+
+cosign verify-attestation --type cyclonedx \
+  --certificate-identity "${IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  "ghcr.io/telekom/booty/initramfs:${VERSION_NO_V}-default-amd64"
+```
 
 ### Telemetry and Metrics
 
