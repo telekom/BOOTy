@@ -273,18 +273,31 @@ def add_sources_cdx(bom, sources, built):
         )
 
 
+def verification_code(files):
+    """The SPDX 2.x package verification code of files: the SHA-1 of their
+    sorted SHA-1s."""
+    sha1s = sorted(c["checksumValue"] for f in files for c in f.get("checksums", []) if c.get("algorithm") == "SHA1")
+    if len(sha1s) != len(files):
+        sys.exit("ramdisk-sbom: syft wrote a file without a SHA-1")
+    return {"packageVerificationCodeValue": hashlib.sha1("".join(sha1s).encode()).hexdigest()}
+
+
 def add_sources_spdx(doc, sources, built):
     root = next(r["relatedSpdxElement"] for r in doc["relationships"] if r["relationshipType"] == "DESCRIBES")
-    files = {"/" + f.get("fileName", "").lstrip("/"): f["SPDXID"] for f in doc.get("files", [])}
+    files = {"/" + f.get("fileName", "").lstrip("/"): f for f in doc.get("files", [])}
     for s in sources:
         spdxid = "SPDXRef-Package-built-" + re.sub(r"[^A-Za-z0-9.-]", "-", s["name"])
+        contained = [files[f] for f in built[s["name"]] if f in files]
+        # SPDX: a package that contains files has them analyzed and carries
+        # their verification code.
+        analyzed = {"filesAnalyzed": True, "packageVerificationCode": verification_code(contained)} if contained else {"filesAnalyzed": False}
         doc["packages"].append(
             {
                 "name": s["name"],
                 "SPDXID": spdxid,
                 "versionInfo": s["version"],
                 "downloadLocation": "NOASSERTION",
-                "filesAnalyzed": False,
+                **analyzed,
                 "licenseConcluded": "NOASSERTION",
                 "licenseDeclared": "NOASSERTION",
                 "copyrightText": "NOASSERTION",
@@ -294,11 +307,10 @@ def add_sources_spdx(doc, sources, built):
             }
         )
         doc["relationships"].append({"spdxElementId": root, "relatedSpdxElement": spdxid, "relationshipType": "CONTAINS"})
-        for f in built[s["name"]]:
-            if f in files:
-                doc["relationships"].append(
-                    {"spdxElementId": spdxid, "relatedSpdxElement": files[f], "relationshipType": "CONTAINS"}
-                )
+        for f in contained:
+            doc["relationships"].append(
+                {"spdxElementId": spdxid, "relatedSpdxElement": f["SPDXID"], "relationshipType": "CONTAINS"}
+            )
 
 
 def sbom(syft, inputs, ramdisk):
@@ -307,8 +319,11 @@ def sbom(syft, inputs, ramdisk):
         rootfs = pathlib.Path(tmp).resolve()
         with open_ramdisk(ramdisk) as stream:
             unpack(stream, rootfs)
-        if os.path.lexists(rootfs / DPKG) or os.path.lexists(rootfs / "etc/os-release"):
-            sys.exit(f"ramdisk-sbom: {ramdisk} already has a package database or /etc/os-release")
+        # The files this script adds must be new and, through any link on
+        # their path (var, var/lib, etc), stay inside the tree.
+        for added in (DPKG, "etc/os-release"):
+            if os.path.lexists(rootfs / added) or not (rootfs / added).resolve().is_relative_to(rootfs):
+                sys.exit(f"ramdisk-sbom: {ramdisk} already has /{added}, or a link on its path leaves the tree")
 
         packages, digests, owners, frrouting = read_dpkg(inputs)
         sources = read_sources(inputs)
@@ -323,7 +338,7 @@ def sbom(syft, inputs, ramdisk):
         for rel in unowned:
             print(f"ramdisk-sbom: {ramdisk}: no single Debian package ships {rel}")
 
-        env = dict(os.environ, SYFT_CHECK_FOR_APP_UPDATE="false", SYFT_FILE_METADATA_SELECTION="all", SYFT_FILE_METADATA_DIGESTS="sha256")
+        env = dict(os.environ, SYFT_CHECK_FOR_APP_UPDATE="false", SYFT_FILE_METADATA_SELECTION="all", SYFT_FILE_METADATA_DIGESTS="sha1,sha256")
         cdx, spdx = prefix + ".cdx.json", prefix + ".spdx.json"
         subprocess.run(
             # The dpkg database covers the Debian files better than their

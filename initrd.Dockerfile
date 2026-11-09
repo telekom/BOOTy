@@ -515,11 +515,14 @@ COPY --from=split-builder /split/ .
 # databases of the stages whose Debian files the ramdisks ship, the kernel
 # packages, and the components built in the build (LVM2, sfdisk, the GRUB
 # EFI loader), each with the SHA-256 of its file. Nothing here goes into a
-# ramdisk.
+# ramdisk. The busybox stage ships growpart (cloud-guest-utils); slim-builder
+# installs the same package from the same mirror.
 FROM scratch AS sbom-inputs
 COPY --from=tools /usr/lib/os-release os-release
 COPY --from=tools /var/lib/dpkg/status dpkg/tools/status
 COPY --from=tools /var/lib/dpkg/info/ dpkg/tools/info/
+COPY --from=busybox /var/lib/dpkg/status dpkg/busybox/status
+COPY --from=busybox /var/lib/dpkg/info/ dpkg/busybox/info/
 COPY --from=frr /var/lib/dpkg/status dpkg/frr/status
 COPY --from=frr /var/lib/dpkg/info/ dpkg/frr/info/
 COPY --from=frr /frrouting-packages dpkg/frr/frrouting-packages

@@ -20,7 +20,7 @@ ELF = b"\x7fELF\x02\x01\x01"
 # with file metadata enabled, and records the dpkg status it saw.
 FAKE_SYFT = textwrap.dedent(
     """\
-    import json, os, pathlib, sys
+    import hashlib, json, os, pathlib, sys
     args = sys.argv[1:]
     root = pathlib.Path(args[args.index("--base-path") + 1])
     outs = dict(a.split("=", 1) for a in args if "=" in a and a.split("=")[0].endswith("-json"))
@@ -30,7 +30,8 @@ FAKE_SYFT = textwrap.dedent(
         [{"type": "file", "name": f} for f in files]}))
     pathlib.Path(outs["spdx-json"]).write_text(json.dumps({
         "packages": [{"SPDXID": "SPDXRef-root", "name": "root"}],
-        "files": [{"SPDXID": "SPDXRef-File-%d" % i, "fileName": f} for i, f in enumerate(files)],
+        "files": [{"SPDXID": "SPDXRef-File-%d" % i, "fileName": f, "checksums": [
+            {"algorithm": "SHA1", "checksumValue": hashlib.sha1((root / f[1:]).read_bytes()).hexdigest()}]} for i, f in enumerate(files)],
         "relationships": [{"spdxElementId": "SPDXRef-DOCUMENT", "relatedSpdxElement": "SPDXRef-root", "relationshipType": "DESCRIBES"}]
             + [{"spdxElementId": "SPDXRef-root", "relatedSpdxElement": "SPDXRef-File-%d" % i, "relationshipType": "CONTAINS"} for i, _ in enumerate(files)]}))
     """
@@ -256,11 +257,31 @@ class RamdiskSBOMTest(unittest.TestCase):
             {"spdxElementId": pkg["SPDXID"], "relatedSpdxElement": sfdisk, "relationshipType": "CONTAINS"},
             spdx["relationships"],
         )
+        self.assertTrue(pkg["filesAnalyzed"])
+        self.assertEqual(
+            pkg["packageVerificationCode"]["packageVerificationCodeValue"],
+            hashlib.sha1(hashlib.sha1(SFDISK_BUILT).hexdigest().encode()).hexdigest(),
+        )
 
     def test_refuses_a_tree_with_os_release(self):
         (self.rootfs / "etc/os-release").symlink_to("/nonexistent")
         with self.assertRaises(SystemExit):
             self.run_sbom()
+
+    def test_refuses_links_out_of_the_tree_on_the_added_paths(self):
+        for link in ("var", "var/lib", "etc"):
+            with self.subTest(link=link):
+                outside = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+                path = self.rootfs / link
+                (path / "passwd").unlink(missing_ok=True)
+                if path.is_dir() and not path.is_symlink():
+                    path.rmdir()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.symlink_to(outside)
+                with self.assertRaises(SystemExit):
+                    self.run_sbom()
+                self.assertEqual(list(outside.iterdir()), [])
+                path.unlink()
 
     def test_frr_repository_packages_get_their_own_purl_namespace(self):
         frr = {"frr"}

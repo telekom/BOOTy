@@ -347,6 +347,9 @@ jobs:
           has default-amd64-initramfs '.purl | startswith("pkg:generic/lvm2@")'
           has default-amd64-initramfs '.purl | startswith("pkg:github/util-linux/util-linux@")'
           has default-amd64-initramfs '.purl | test("^pkg:deb/debian/grub-efi-amd64-bin@")'
+          # growpart, a script that the busybox and slim-builder stages copy.
+          has default-amd64-initramfs '.name == "cloud-guest-utils"'
+          has slim-amd64-initramfs '.name == "cloud-guest-utils"'
           # slim ships Debian's sfdisk, not the source build.
           has slim-amd64-initramfs '.purl | startswith("pkg:deb/debian/fdisk@")'
           if jq -e 'any(.components[]; (.purl // "") | startswith("pkg:github/util-linux/"))' slim-amd64-initramfs.cdx.json >/dev/null; then
