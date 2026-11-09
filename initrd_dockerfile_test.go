@@ -567,7 +567,7 @@ func TestDockerfileShipsFRRUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, stage := range []string{"busybox", "slim-builder", "gobgp-builder", "micro-builder"} {
-		if !strings.Contains(dockerfileStageBlock(t, string(data), stage), "COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/") {
+		if !strings.Contains(dockerfileStageBlock(t, string(data), stage), "COPY --chmod=0644 hack/initramfs-etc/passwd hack/initramfs-etc/group etc/") {
 			t.Errorf("stage %s does not copy /etc/passwd and /etc/group", stage)
 		}
 	}

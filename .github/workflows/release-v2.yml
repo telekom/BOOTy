@@ -196,9 +196,12 @@ jobs:
           if [ "${{ matrix.flavor }}" != "default" ]; then
             TARGET_ARG="--target=${{ matrix.flavor }}"
           fi
+          # The commit time stamps every ramdisk entry, so a rebuild of the
+          # tag gives the same bytes (README.md, Reproducible builds).
           docker buildx build \
             ${TARGET_ARG} \
             --platform linux/${{ matrix.arch }} \
+            --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" \
             --build-arg "BOOTY_VERSION=${VERSION}" \
             --build-arg "BOOTY_BUILD=${{ github.sha }}" \
             --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" \
