@@ -136,7 +136,7 @@ func TestProvisionImageDownloadOptionsQEMU(t *testing.T) {
 			output := runQEMUProvision(t, findKernel(t), buildProvisionInitramfs(t, map[string]string{
 				"HOSTNAME":                  hostname,
 				"IMAGE_ALLOW_INSECURE_HTTP": "true",
-				"IMAGE":                     baseURL + "/image.gz",
+				"IMAGE":                     baseURL + "/image.gz", // BOOTy detects the format by magic
 				"MODE":                      "provision",
 				"DISK_DEVICE":               "/dev/vda",
 				tt.key:                      tt.value,
