@@ -557,6 +557,8 @@ root is mounted.
 | `IMAGE_STREAM` | `false` | Forbid staging the image in RAM: QCOW2 images, also an `oci://` QCOW2 layer, fail before the disk wipe, `IMAGE_MODE=partition` is invalid; raw and compressed raw images stream anyway ([docs/disk.md](docs/disk.md#streaming-and-staging)) |
 | `IMAGE_SPARSE_WRITE` | `off` | `auto`: zero the all-zero blocks of a whole-disk image with a hole punch the device guarantees, instead of writing them ([docs/disk.md](docs/disk.md#faster-image-writes)) |
 | `IMAGE_SKIP_UNCHANGED` | `false` | Whole-disk streaming skips the blocks the target already holds; needs `WIPE_DEPTH=quick` ([docs/disk.md](docs/disk.md#faster-image-writes)) |
+| `IMAGE_RESUME` | `false` | Continue a broken HTTP image download with a ranged GET bound to the ETag of the image ([docs/disk.md](docs/disk.md#faster-image-writes)) |
+| `IMAGE_PARALLEL_RANGES` | `0` | Download an HTTP image as that many parallel 8 MiB ranged GETs, `0` to `16` ([docs/disk.md](docs/disk.md#faster-image-writes)) |
 | `IMAGE_SOURCE_ROOT_LABEL` | — | Source-image GPT partition label to stream into a declarative partition layout root |
 | `IMAGE_SOURCE_ROOT_PARTITION` | — | 1-based source-image partition number for declarative partition layout root streaming |
 | `OCI_PREPULL_ENABLED` | `false` | Pull configured OCI images during provisioning and install a first-boot runtime importer |
