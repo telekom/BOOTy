@@ -43,7 +43,10 @@ audited tree (the GoBGP fork tag is unchanged) and corrected the ones
 that had moved or pointed next to the cited code. It found two DHCPv4
 rows that were marked COMPLIANT but were not: a DHCPRELEASE without the
 server identifier (2131-10) and option 57 values below 576 for MTUs 576
-to 603 (2132-2), both fixed by [#908]. [#892] fixed 8415-7.
+to 603 (2132-2), both fixed by [#908]. [#892] fixed 8415-7. It added
+two very-low-impact deviations that the earlier refreshes missed
+(4861-15: RA options of length zero; 8415-10: an address revoked with
+valid lifetime 0) and corrected the text of 4271-4 and 3442-1.
 
 Each row has an owner:
 
@@ -124,12 +127,12 @@ refresh is merged.
 | 9251 | IGMP/MLD proxy | 1 | 0 | 1 | 0 | 1 | 0 |
 | 7348 | VXLAN | 6 | 0 | 1 | 0 | 0 | 0 |
 | 802.1AB | LLDP | 17 | 1 | 2 | 0 | 0 | 0 |
-| 4861 | IPv6 ND (RAs) | 12 | 3 | 1 | 0 | 0 | 0 |
+| 4861 | IPv6 ND (RAs) | 11 | 4 | 1 | 0 | 0 | 0 |
 | 4862 | IPv6 SLAAC | 2 | 0 | 0 | 0 | 0 | 0 |
 | 2131 | DHCPv4 client | 14 | 1 | 0 | 0 | 0 | 0 |
 | 2132 / 3397 / 3442 / 4039 / 4361 | DHCPv4 options | 6 | 0 | 0 | 0 | 0 | 0 |
-| 8415 | DHCPv6 | 8 | 1 | 0 | 0 | 0 | 0 |
-| **Total** | | **210** | **16** | **57** | **2** | **90** | **2** |
+| 8415 | DHCPv6 | 8 | 2 | 0 | 0 | 0 | 0 |
+| **Total** | | **209** | **18** | **57** | **2** | **90** | **2** |
 
 Kernel- and library-owned rows count as COMPLIANT or DEVIATION; the owner
 column names them. The second refresh (`5ac79521`) counted 209
@@ -156,7 +159,9 @@ COMPLIANT, 47 DEVIATION, 67 N/A, 4 NOT IMPLEMENTED, 68 GOBGP: COMPLIANT and
 | 10 | RFC7432-PMSI-ID | 7432 §11.2, 6514 §5 | BOOTy | Very low: the ingress replication destination is the originating router IP, not the PMSI Tunnel Identifier; in VXLAN fabrics both are the VTEP. | Kept like FRR, documented. |
 | 11 | RFC7432-MOBILITY-GOBGP | 7432 §15 | GoBGP | Very low: GoBGP withdraws its local Type-2 route on a remote higher sequence only when the ESIs differ. BOOTy's MAC is its own bridge MAC and does not move. | Open. |
 | 12 | RFC8415-DECLINE | 8415 §18.2.8 | BOOTy | Very low: a failed DAD sends no DECLINE (8415-8). | Open: DECLINE on a DAD failure. |
-| 13 | LLDP-TTL | 802.1AB | BOOTy | Very low: TTL 120 instead of txTTL = 4 x 30 + 1 = 121; matches systemd-networkd. | Kept for networkd parity. |
+| 13 | RFC4861-RA-OPTLEN | 4861 §4.6, §6.1.2 | BOOTy | Very low: in DHCP mode an RA with a zero-length option, which the kernel drops, still starts DHCPv6 (4861-15). | Open: check the option lengths in `validRA`, like `validRS`. |
+| 14 | RFC8415-ZERO-LIFETIME | 8415 §18.2.10.1 | BOOTy | Very low: an address that a REPLY to RENEW or REBIND gives valid lifetime 0 stays until its old valid lifetime ends (8415-10). | Open: expire the lease at once. |
+| 15 | LLDP-TTL | 802.1AB | BOOTy | Very low: TTL 120 instead of txTTL = 4 x 30 + 1 = 121; matches systemd-networkd. | Kept for networkd parity. |
 
 The rows without authentication (5880-39, 5881-15, 5883-4) are not
 ranked: the legacy FRR profile has none either.
@@ -197,9 +202,9 @@ ranked: the legacy FRR profile has none either.
 | ID | § | Requirement | Owner | Status | Evidence, impact, fix | Verified |
 |---|---|---|---|---|---|---|
 | 4271-1 | 4.2 | OPEN Version MUST be 4; Unsupported Version Number otherwise | GoBGP | GOBGP: COMPLIANT | `gobgp@v4.11.0-booty.6/pkg/packet/bgp/validate.go:377` | reading |
-| 4271-2 | 4.2, 6.2 | Hold Time MUST be 0 or at least 3; Unacceptable Hold Time otherwise | GoBGP, BOOTy | GOBGP: COMPLIANT | receive: `validate.go:425`; send: BOOTy rejects 1 and 2, and also 0 (FRR `timers 0 0`, which GoBGP would replace with 30/90; a local choice the RFC allows) (`pkg/network/gobgp/config.go:517`, `:497`), tests `TestScenarioBGPTimers`, `TestValidateSessions` | test |
+| 4271-2 | 4.2, 6.2 | Hold Time MUST be 0 or at least 3; Unacceptable Hold Time otherwise | GoBGP, BOOTy | GOBGP: COMPLIANT | receive: `validate.go:425`; send: BOOTy rejects 1 and 2, and also 0 (FRR `timers 0 0`, which GoBGP would replace with 30/90; a local choice the RFC allows) (`pkg/network/gobgp/config.go:518`, `:497`), tests `TestScenarioBGPTimers`, `TestValidateSessions` | test |
 | 4271-3 | 4.2 | BGP Identifier MUST be an IPv4 address of the speaker, the same for every peer | BOOTy | COMPLIANT | router ID = underlay IPv4, validated in `config.go:448`; one router ID for all peers (`underlay.go:528`) | reading |
-| 4271-4 | 4.4, 10 | KEEPALIVE not more often than once per second; RECOMMENDED one third of the hold time | BOOTy, GoBGP | COMPLIANT | BOOTy rejects a keepalive above hold/3 (`config.go:521`). GoBGP keeps the configured keepalive and uses hold/3 only when the negotiated hold time is below the configured one (`gobgp@v4.11.0-booty.6/pkg/server/fsm.go:927` to `:931`) | reading |
+| 4271-4 | 4.4, 10 | KEEPALIVE MUST NOT be sent more often than once per second; "a reasonable maximum time between KEEPALIVE messages would be one third of the Hold Time" (no keyword) | BOOTy, GoBGP | COMPLIANT | A keepalive of 0 is rejected for the global timers and every session (`config.go:492`, `pkg/config/validate.go:1325`). A keepalive above hold/3 is rejected only for `BGP_KEEPALIVE`/`BGP_HOLD` (`config.go:521`); a session takes any keepalive (`config.go:486` `validateSessions`, `families.go:169`). GoBGP keeps it and uses hold/3 only when the negotiated hold time is below the configured one (`gobgp@v4.11.0-booty.6/pkg/server/fsm.go:927` to `:931`), so a session with `timers 30 9` sends a keepalive every 30 s against a 9 s hold time and loses an idle session. Not an RFC requirement; possible improvement: cap the session keepalive at hold/3 in `buildSessionPeer` | reading |
 | 4271-5 | 4.2 | Hold timer MUST be the smaller of the configured and received hold time | GoBGP | GOBGP: COMPLIANT | `fsm.go:914` | reading |
 | 4271-6 | 4.3 | UPDATE: withdrawn routes, path attributes, NLRI encoding | GoBGP | GOBGP: COMPLIANT | GoBGP encoder; lab `TestProdTplLeafSessions`, `TestProdTplRRSessions` | lab |
 | 4271-7 | 4.5, 6 | NOTIFICATION codes and subcodes for each error | GoBGP | GOBGP: COMPLIANT | `validate.go:376` (OPEN), `bgp.go` MessageError codes | reading |
@@ -725,7 +730,7 @@ also reads the RAs of every DHCP NIC to start DHCPv6 ([#795]).
 | 4861-12 | 6.3 | Host processing of received RAs | Kernel | COMPLIANT | `accept_ra` 2 and `accept_ra_defrtr` 1 (`gobgp/helpers.go:47`), netplan `accept-ra: false` per NIC (`underlay.go:1279`) | reading |
 | 4861-13 | 8 | Redirects | Kernel | N/A | | reading |
 | 4861-14 | 4.2 | Router flag of Neighbor Advertisements consistent with the RAs | Kernel | COMPLIANT | the kernel sets the R flag from forwarding; with forwarding off it is 0 (`helpers.go:20` comment), which matches 4861-7 for a host | reading |
-| 4861-15 | 6.1.2 | Host: a received RA is valid only with hop limit 255 and a link-local source | BOOTy | COMPLIANT | [#795] reads the M and O flags of RAs in DHCP mode to start DHCPv6, like networkd, and checks them first (`dhcp6_mode.go:144` `validRA`, used at `:134`); `TestValidRA` | test |
+| 4861-15 | 4.6, 6.1.2 | Host: a received RA MUST be silently discarded unless it has hop limit 255, a link-local source, a valid checksum, code 0, at least 16 octets and only options with a length greater than zero | BOOTy | DEVIATION | RFC4861-RA-OPTLEN: [#795] reads the M and O flags of RAs in DHCP mode to start DHCPv6, like networkd, and checks hop limit 255, the link-local source, code 0 and at least 16 octets first (`dhcp6_mode.go:144` `validRA`, used at `:134`; the kernel checks the checksum); `TestValidRA`. It does not walk the options: an RA with a zero-length option, which the kernel drops, still starts DHCPv6. Impact very low. Fix: check the option lengths like `validRS` (`gobgp/ra.go:231`) | test |
 | 4861-16 | 6.3.7 | Host: up to MAX_RTR_SOLICITATIONS (3) Router Solicitations RTR_SOLICITATION_INTERVAL (4 s) apart; the first after a random delay of up to MAX_RTR_SOLICITATION_DELAY (1 s, SHOULD) | BOOTy | COMPLIANT | [#795] sends three solicitations 4 s apart with the source link-layer address when the carrier of a DHCP NIC returns (`dhcp6_mode.go:313` `solicitRA`, `:58`, `sendRS` `:85`; started at `dhcp.go:395`), the first after a random 0.5 to 1 s, like sd-ndisc (`dhcp6_mode.go:63`); the DEVIATION of the PR (no random delay) is gone. `TestDHCPv6FollowsRAAndCarrier` | test |
 
 ### RFC 4862: IPv6 stateless address autoconfiguration
@@ -772,7 +777,7 @@ ramdisk ([#753], [#776], [#790], [#819], [#820]).
 |---|---|---|---|---|---|---|
 | 2132-1 | RFC 2132 3.8, 5.1 | DNS servers (option 6) and interface MTU (option 26, at least 68) of the lease | BOOTy | COMPLIANT | [#753] writes the DNS servers of the lease and sets the MTU, clamped to 576 (1280 with IPv6) and the NIC maximum, like networkd (`dhcp.go:626` `leaseDNS`, `:639` `applyMTU`, `:887` `clampMTU`); [#819] asks every server at once, like the legacy resolver (`dns_fanout.go:102`); `TestOnBoundWritesLeaseDNS`, `TestOnBoundSetsLeaseMTU`, `TestClampMTU`, `TestDNSFanout` | test |
 | 2132-2 | RFC 2132 5.8, 9.10 | Static routes (option 33, classful, no default route) and maximum message size (option 57, at least 576) | BOOTy | COMPLIANT | [#776] `dhcp_options.go:76` `staticRoutes`; [#790] option 57 = NIC MTU - 28; [#908] leaves it out when that is below 576 (an MTU below 604; before, MTUs 576 to 603 sent 548 to 575) (`dhcp4/client.go:585`); `TestLeaseRoutesTable`, `TestMalformedRouteAndSearchOptions`, `TestMaxMessageSize` | test |
-| 3442-1 | RFC 3442 | Classless static routes (option 121): MUST ignore the Router (3) and Static Routes (33) options when present; a malformed option is ignored | BOOTy | COMPLIANT | [#776] `dhcp_options.go:113` `leaseRouteSet`, `:95` `classlessRoutes`; `TestOnBoundAppliesClasslessRoutes`, `TestMalformedRouteAndSearchOptions`, `FuzzClasslessRoutes` | test |
+| 3442-1 | RFC 3442 | Classless static routes (option 121): MUST install its routes; with option 121 present MUST ignore the Router (3) and Static Routes (33) options; MUST zero the host bits of each destination. The RFC says nothing on a malformed option | BOOTy | COMPLIANT | [#776] `dhcp_options.go:113` `leaseRouteSet`, `:95` `classlessRoutes` (destinations masked, `:102`). [#835] cuts a malformed option 121 after its last whole route, like networkd `lease_parse_classless_routes` (`dhcp4/message.go:181` `classless`, from `prepare` `:157`): those routes are installed and options 3 and 33 ignored. Only a 121 without a whole route is ignored (`message.go:151`), and BOOTy then uses option 33 and the router option, as without 121. `TestLeaseRoutesTable`, `TestOnBoundAppliesClasslessRoutes`, `TestOptionsKeepLastValidCopy`, `TestDecodeReplyRepeatedOptions`, `FuzzClasslessRoutes` | test |
 | 3397-1 | RFC 3397 | Domain search (option 119) with compression pointers; a malformed option is ignored | BOOTy | COMPLIANT | [#776] `dhcp4/message.go:249` `SearchDomains`, `dhcp_options.go:230` `leaseSearchDomains`; `TestLeaseSearchDomains`, `FuzzDomainSearch`, `TestMalformedRouteAndSearchOptions` | test |
 | 4039-1 | RFC 4039 | Rapid commit: option 80 in DISCOVER; an ACK with rapid commit binds at once | BOOTy | COMPLIANT | [#790] `dhcp4/client.go:551`, `:218`, like networkd; `TestDiscoverBackoffAndOptions` | test |
 | 4361-1 | RFC 4361 | Client identifier type 255: IAID and DUID | BOOTy | COMPLIANT | [#776] `dhcp_options.go:43` `dhcpClientID`: IAID of the NIC and a DUID-EN from the machine ID, like networkd; DHCPv6 uses the same IAID and DUID (`dhcp6_mode.go:203`); `TestClientIDWithoutMachineID`, `TestNewDHCPClientSendsNetworkdOptions` | test |
@@ -781,7 +786,7 @@ ramdisk ([#753], [#776], [#790], [#819], [#820]).
 
 | ID | § | Requirement | Owner | Status | Evidence, impact, fix | Verified |
 |---|---|---|---|---|---|---|
-| 8415-1 | all | DHCPv6 client | BOOTy | COMPLIANT | NOT IMPLEMENTED at the first audit. [#795] adds BOOTy's own client (`pkg/network/dhcp6`), started by the M or O flag of an RA on every DHCP NIC, like networkd `DHCPv6Client=yes` (`dhcp6_mode.go:170` `onRA`); rows 8415-2 to 8415-9 | test |
+| 8415-1 | all | DHCPv6 client | BOOTy | COMPLIANT | NOT IMPLEMENTED at the first audit. [#795] adds BOOTy's own client (`pkg/network/dhcp6`), started by the M or O flag of an RA on every DHCP NIC, like networkd `DHCPv6Client=yes` (`dhcp6_mode.go:170` `onRA`); rows 8415-2 to 8415-10 | test |
 | 8415-2 | 15, 18.2.1 | Retransmission: IRT, MRT, RAND; the first SOLICIT timeout greater than IRT | BOOTy | COMPLIANT | [#795], [#825] `dhcp6/client.go:74` `next`, `:66` to `:69`; `TestSolicitLikeNetworkd`, `TestFirstSolicitAboveIRT` | test |
 | 8415-3 | 18.2.1, 18.2.9 | SOLICIT with rapid commit; collect ADVERTISEs for the first timeout and take the highest preference, 255 at once; ignore an ADVERTISE with NoAddrsAvail | BOOTy | COMPLIANT | [#825] `dhcp6/client.go:166` `solicit`, like sd-dhcp6-client; an ADVERTISE without a usable address is skipped (`dhcp6/message.go:198`, `:210`); `TestAdvertisePreference`, `TestLateAdvertiseSameSocket`, `TestRequestRetriesAndAdvertiseStatus` | test |
 | 8415-4 | 18.2.2 | REQUEST up to REQ_MAX_RC (10) times | BOOTy | COMPLIANT | [#795] `dhcp6/client.go:203` `request`; `TestRequestRetriesAndAdvertiseStatus` | test |
@@ -790,6 +795,7 @@ ramdisk ([#753], [#776], [#790], [#819], [#820]).
 | 8415-7 | 18.2.7 | RELEASE of a bound address, wait for the REPLY; the address MUST be removed from the interface before the RELEASE | BOOTy | COMPLIANT | [#795] releases at stop and waits up to REL_TIMEOUT (1 s) for the REPLY, without retransmission (the RFC says SHOULD retransmit one or more times but MAY terminate early, e.g. on power down; BOOTy stops before the handoff) (`dhcp6/client.go:366` `release`); `TestAdvertiseRequestAndRelease`. Fixed by [#892]: `stop6` removes the address and DNS servers first (`dhcp6_mode.go:292` `dropAddr6`), then stops the client, which sends the RELEASE (`:303` `c.Stop()`); late callbacks of the stopping client are ignored; `TestDHCPv6DropsAddressBeforeRelease`, `TestDHCPv6IgnoresLeaseWhileStopping` | test |
 | 8415-8 | 18.2.10.1, 18.2.8 | DAD on each received address before use; an address found in use is declined with a DECLINE (no keyword: "the client sends a Decline message") | BOOTy | DEVIATION | [#795] adds the address with kernel DAD (`dhcp6_mode.go:231`) but sends no DECLINE when DAD fails (no DECLINE in `pkg/network/dhcp6`). Impact very low | reading |
 | 8415-9 | 21.24, RFC 3646 | DNS servers (option 23) and domain list (option 24) used | BOOTy | COMPLIANT | [#795] adds them after the DHCPv4 servers, a link-local server with its zone (`dhcp6_mode.go:220` `onBound6`, `:244`; `dhcp.go:666` `writeResolvers`); `TestDomainList`, `TestDHCPv6LinkLocalDNSAndDomains` | test |
+| 8415-10 | 18.2.10.1 | REPLY to RENEW or REBIND: discard the leases with a valid lifetime of 0 (no keyword: "Discard any leases from the IA ... that have a valid lifetime of 0") | BOOTy | DEVIATION | RFC8415-ZERO-LIFETIME: an address with valid lifetime 0 is skipped (`dhcp6/message.go:224`), so a REPLY whose IA_NA has only such addresses counts as no answer (`dhcp6/client.go:283` `phase`): the address stays on the NIC and BOOTy renews and rebinds it until its old valid lifetime ends (`dhcp6_mode.go:253` `onExpire6`). An IA with a new address and the old one at 0 works (`onBound6` replaces the address, `dhcp6_mode.go:234`). Impact very low: only a server that revokes the address. Fix: expire the lease at once when the IA_NA has the bound address with valid lifetime 0 | reading |
 
 ## Fix PRs and fork tags
 
@@ -818,7 +824,7 @@ audited tree, except [#755] (closed; its test is on `main`).
 | [#775] | RFC9136-GWIP |
 | [#798] | RFC9047-FLAGS |
 | [#765], [#787] | defence in depth for RFC7606-EVPN-PANIC (`panic=10`) |
-| [#750], [#751], [#753], [#776], [#788], [#790], [#793], [#795], [#819], [#820], [#825] | RFC2131-EXPIRE ([#751]), RFC2131-RENEW and RFC2131-BACKOFF ([#790]), the former PENDING rows of RFC 2131, the DHCPv4 options, RFC 8415 and 4861-15, 4861-16 |
+| [#750], [#751], [#753], [#776], [#788], [#790], [#793], [#795], [#819], [#820], [#825] | RFC2131-EXPIRE ([#751]), RFC2131-RENEW and RFC2131-BACKOFF ([#790]), the former PENDING rows of RFC 2131, the DHCPv4 options, RFC 8415 and 4861-15 (in part, see RFC4861-RA-OPTLEN), 4861-16 |
 | [#892] | RFC8415-RELEASE |
 | [#908] | RFC2131-RELEASE-SID, RFC2132-MAXSIZE (found by the third refresh of this audit) |
 
