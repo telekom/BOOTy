@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -150,9 +151,16 @@ func TestValidateSupportedLayoutMountpoint(t *testing.T) {
 		{"/home", false},
 		{"/boot", true},
 		{"/boot/", true},
+		{"/var/", true},
+		{"//var", true},
 		{"/boot/efi/EFI", true},
+		{"/proc", true},
+		{"/run/user", true},
+		{"/dev", true},
+		{"/sys/fs", true},
+		{"/srv", false},
 	} {
-		err := validateSupportedLayoutMountpoint(tc.mountpoint)
+		err := validateSupportedLayoutMountpoint(tc.mountpoint, map[string]bool{})
 		if (err != nil) != tc.wantErr {
 			t.Errorf("validateSupportedLayoutMountpoint(%q) = %v, wantErr %v", tc.mountpoint, err, tc.wantErr)
 		}
@@ -388,5 +396,96 @@ func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadImagePartitionLayoutRejectsBadImageLayouts(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		files   map[string]string
+		wantErr string
+	}{
+		{name: "missing file", wantErr: "matches 0 files"},
+		{name: "device in layout", files: map[string]string{
+			"usr/share/vendor/layout/cis.json": `{"device":"/dev/sda","partitions":[{"label":"root","filesystem":"ext4","mountpoint":"/"}]}`,
+		}, wantErr: "must not set device"},
+		{name: "invalid layout", files: map[string]string{
+			"usr/share/vendor/layout/cis.json": `{"partitions":[{"label":"data","filesystem":"ext4","mountpoint":"/data"}]}`,
+		}, wantErr: "mountpoint \"/\""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Disk.PartitionLayoutImagePath = "/usr/share/vendor/layout/*.json"
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+			o.rootPartition = "/dev/vda2"
+			oldMount := mountReadOnlyPart
+			mountReadOnlyPart = func(_ context.Context, _ *disk.Manager, device, mountpoint string) error {
+				if device != "/dev/vda2" {
+					t.Errorf("mounted %s, want the image root /dev/vda2", device)
+				}
+				t.Cleanup(func() { _ = os.RemoveAll(mountpoint) })
+				for rel, content := range tc.files {
+					mustMkdir(t, filepath.Join(mountpoint, filepath.Dir(rel)), 0o755)
+					writeFile(t, filepath.Join(mountpoint, rel), content)
+				}
+				return nil
+			}
+			t.Cleanup(func() { mountReadOnlyPart = oldMount })
+			oldUnmount := unmountSharedDataPart
+			unmountSharedDataPart = func(*disk.Manager, string) error { return nil }
+			t.Cleanup(func() { unmountSharedDataPart = oldUnmount })
+
+			err := o.loadImagePartitionLayout(context.Background())
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want %q", err, tc.wantErr)
+			}
+			if !isPermanent(err) {
+				t.Fatalf("err = %v, want a permanent error", err)
+			}
+			if cfg.Provision.Disk.PartitionLayout != nil {
+				t.Fatal("a rejected image layout was kept")
+			}
+		})
+	}
+}
+
+func TestValidateSupportedLayoutMountpointRejectsDuplicates(t *testing.T) {
+	seen := map[string]bool{}
+	if err := validateSupportedLayoutMountpoint("/var", seen); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSupportedLayoutMountpoint("/var", seen); err == nil {
+		t.Fatal("duplicate /var accepted")
+	}
+}
+
+func TestResumeRepeatsWholeDiskWriteBeforeImageLayout(t *testing.T) {
+	steps := []string{"wipe-disks", "apply-partition-layout", "stream-image", "partprobe", "parse-partitions"}
+	for _, tc := range []struct {
+		name      string
+		loaded    bool
+		layout    bool
+		wantSteps string
+	}{
+		{name: "interrupted load forgets the write", wantSteps: "wipe-disks,parse-partitions"},
+		{name: "completed load keeps the steps", loaded: true, layout: true, wantSteps: strings.Join(steps, ",")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cp := &Checkpoint{CompletedSteps: append([]string(nil), steps...)}
+			if tc.loaded {
+				cp.MarkStep("load-image-partition-layout")
+			}
+			if tc.layout {
+				cp.PartitionLayout = mustParseLayout(t, cisLikeLayoutJSON)
+			}
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Disk.PartitionLayoutImagePath = "/usr/share/vendor/layout/*.json"
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+			o.restoreCheckpointDerivedState(cp)
+			got := strings.Join(slices.DeleteFunc(cp.CompletedSteps, func(s string) bool { return s == "load-image-partition-layout" }), ",")
+			if got != tc.wantSteps {
+				t.Fatalf("completed steps = %s, want %s", got, tc.wantSteps)
+			}
+		})
 	}
 }

@@ -4,6 +4,7 @@ package provision
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,15 +15,31 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/network"
+	"github.com/telekom/BOOTy/pkg/watchdog"
 )
+
+var errLayoutTooLarge = errors.New("layout document is larger than the limit")
 
 // maxPartitionLayoutSize bounds a layout document from a URL or the image.
 const maxPartitionLayoutSize = 1 << 20
 
-var (
-	partitionLayoutHTTPClient = network.NewHTTPClient(2 * time.Minute)
-	fetchPartitionLayoutFn    = fetchPartitionLayoutURL
-)
+var fetchPartitionLayoutFn = fetchPartitionLayoutURL
+
+// partitionLayoutHTTPClient is built per fetch, so SKIP_TLS_VERIFY applies.
+// It refuses redirects from HTTPS to plain HTTP.
+func partitionLayoutHTTPClient() *http.Client {
+	client := network.NewHTTPClient(2 * time.Minute)
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if req.URL.Scheme != "https" && via[0].URL.Scheme == "https" {
+			return errors.New("redirect from HTTPS to plain HTTP")
+		}
+		return nil
+	}
+	return client
+}
 
 // fetchPartitionLayout fetches PARTITION_LAYOUT_URL before any disk is
 // changed. PARTITION_LAYOUT, set in the host vars, overrides it.
@@ -48,7 +65,7 @@ func fetchPartitionLayoutURL(ctx context.Context, rawURL string) ([]byte, error)
 	if err != nil {
 		return nil, &PermanentError{Err: fmt.Errorf("partition layout URL %s: invalid request", image.RedactURL(rawURL))}
 	}
-	resp, err := partitionLayoutHTTPClient.Do(req) //nolint:gosec // configured layout URL
+	resp, err := partitionLayoutHTTPClient().Do(req) //nolint:gosec // configured layout URL
 	if err != nil {
 		return nil, &TransientError{Err: fmt.Errorf("fetch partition layout %s: %s", image.RedactURL(rawURL), image.RedactSourceError(err, rawURL))}
 	}
@@ -61,6 +78,9 @@ func fetchPartitionLayoutURL(ctx context.Context, rawURL string) ([]byte, error)
 		return nil, &PermanentError{Err: err}
 	}
 	data, err := readBounded(resp.Body, maxPartitionLayoutSize)
+	if errors.Is(err, errLayoutTooLarge) {
+		return nil, &PermanentError{Err: fmt.Errorf("partition layout %s: %w", image.RedactURL(rawURL), err)}
+	}
 	if err != nil {
 		return nil, &TransientError{Err: fmt.Errorf("read partition layout %s: %w", image.RedactURL(rawURL), err)}
 	}
@@ -94,18 +114,23 @@ func (o *Orchestrator) loadImagePartitionLayout(ctx context.Context) error {
 	if err := o.validatePartitionLayoutConfig(); err != nil {
 		return &PermanentError{Err: err}
 	}
+	// The partitions of the whole-disk write are gone after the layout.
+	o.targetPartitions, o.bootPartition, o.rootPartition = nil, "", ""
 	for _, step := range []Step{
 		{"apply-partition-layout", o.applyPartitionLayout},
 		{"stream-image", o.streamImage},
 		{"partprobe", o.partprobe},
 		{"parse-partitions", o.parsePartitions},
 	} {
-		err := step.Fn(ctx)
-		if policy, ok := DefaultPolicies[step.Name]; ok && err != nil {
+		watchdog.Step(step.Name) // keep the budget of the inner step
+		var err error
+		if policy, ok := DefaultPolicies[step.Name]; ok {
 			err = WithRetry(ctx, step.Name, policy, step.Fn)
+		} else {
+			err = step.Fn(ctx)
 		}
 		if err != nil {
-			return fmt.Errorf("%s with the image partition layout: %w", step.Name, err)
+			return WithCode(step.Name, fmt.Errorf("%s with the image partition layout: %w", step.Name, err))
 		}
 	}
 	return nil
@@ -114,7 +139,8 @@ func (o *Orchestrator) loadImagePartitionLayout(ctx context.Context) error {
 // readImagePartitionLayout mounts the written root read-only and reads the
 // one file that pattern matches. The file and its parent directories must
 // not be symlinks, so the read stays in the image root.
-func (o *Orchestrator) readImagePartitionLayout(ctx context.Context, pattern string) ([]byte, error) {
+// An unmount error fails the step: the next steps repartition the disk.
+func (o *Orchestrator) readImagePartitionLayout(ctx context.Context, pattern string) (data []byte, err error) {
 	mnt, err := os.MkdirTemp("", "booty-image-layout-*")
 	if err != nil {
 		return nil, fmt.Errorf("create image layout mountpoint: %w", err)
@@ -124,8 +150,8 @@ func (o *Orchestrator) readImagePartitionLayout(ctx context.Context, pattern str
 		return nil, fmt.Errorf("mount image root %s: %w", o.rootPartition, err)
 	}
 	defer func() {
-		if err := o.disk.Unmount(mnt); err != nil {
-			o.log.Warn("failed to unmount image root after reading the layout", "mountpoint", mnt, "error", err)
+		if uerr := unmountSharedDataPart(o.disk, mnt); uerr != nil {
+			err = errors.Join(err, fmt.Errorf("unmount image root %s: %w", mnt, uerr))
 		}
 	}()
 	return readPartitionLayoutFile(mnt, pattern)
@@ -180,7 +206,7 @@ func readBounded(r io.Reader, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("read: %w", err)
 	}
 	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("larger than %d bytes", limit)
+		return nil, fmt.Errorf("%w (%d bytes)", errLayoutTooLarge, limit)
 	}
 	return data, nil
 }

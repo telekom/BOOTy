@@ -1315,7 +1315,8 @@ func splitVarList(value string) []string {
 	return out
 }
 
-// applyCheckStringVar handles the check mode keys.
+// applyPartitionLayoutSourceVar handles PARTITION_LAYOUT_URL and
+// PARTITION_LAYOUT_IMAGE_PATH.
 func applyPartitionLayoutSourceVar(cfg *config.MachineConfig, key, value string) bool {
 	switch key {
 	case "PARTITION_LAYOUT_URL":
@@ -1328,6 +1329,7 @@ func applyPartitionLayoutSourceVar(cfg *config.MachineConfig, key, value string)
 	return true
 }
 
+// applyCheckStringVar handles the check mode keys.
 func applyCheckStringVar(cfg *config.MachineConfig, key, value string) bool {
 	switch key {
 	case "CHECK_HOLD":

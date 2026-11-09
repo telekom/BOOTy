@@ -290,11 +290,7 @@ func (o *Orchestrator) loadOrCreateCheckpoint() (*Checkpoint, error) {
 }
 
 func (o *Orchestrator) restoreCheckpointDerivedState(cp *Checkpoint) {
-	if cp != nil && cp.PartitionLayout != nil && o.cfg.Provision.Disk.PartitionLayout == nil {
-		o.cfg.Provision.Disk.PartitionLayout = cp.PartitionLayout
-		o.sourcePartitionLayout = cp.PartitionLayout
-		o.log.Info("restored partition layout from checkpoint")
-	}
+	o.restoreCheckpointPartitionLayout(cp)
 	if cp == nil || o.cfg.Provision.Disk.Device != "" {
 		return
 	}
@@ -312,6 +308,25 @@ func (o *Orchestrator) restoreCheckpointDerivedState(cp *Checkpoint) {
 		o.cfg.Provision.Disk.Device = cp.NVMeTargetDevice
 		o.nvmeTargetDevice = cp.NVMeTargetDevice
 		o.log.Info("restored nvme target device from checkpoint", "device", cp.NVMeTargetDevice)
+	}
+}
+
+// restoreCheckpointPartitionLayout restores a layout from a URL or the
+// image. Without one, an interrupted load-image-partition-layout may have
+// repartitioned the disk already, so the run repeats the whole-disk write.
+func (o *Orchestrator) restoreCheckpointPartitionLayout(cp *Checkpoint) {
+	d := &o.cfg.Provision.Disk
+	if cp == nil || d.PartitionLayout != nil {
+		return
+	}
+	if cp.PartitionLayout != nil {
+		d.PartitionLayout = cp.PartitionLayout
+		o.sourcePartitionLayout = cp.PartitionLayout
+		o.log.Info("restored partition layout from checkpoint")
+		return
+	}
+	if d.PartitionLayoutImagePath != "" && !cp.IsCompleted("load-image-partition-layout") {
+		cp.ForgetSteps("apply-partition-layout", "stream-image", "partprobe")
 	}
 }
 
@@ -1464,8 +1479,9 @@ func (o *Orchestrator) validatePartitionLayoutRuntimeSupport() error {
 	if layout == nil || o.isABImageMode() || config.IsDeprovisionMode(o.cfg.Mode) {
 		return nil
 	}
+	seen := map[string]bool{}
 	for _, part := range layout.Partitions {
-		if err := validateSupportedLayoutMountpoint(part.Mountpoint); err != nil {
+		if err := validateSupportedLayoutMountpoint(part.Mountpoint, seen); err != nil {
 			return err
 		}
 	}
@@ -1474,7 +1490,7 @@ func (o *Orchestrator) validatePartitionLayoutRuntimeSupport() error {
 			if strings.TrimSpace(vol.Mountpoint) == "/boot/efi" {
 				return fmt.Errorf("partition layout lvm volume mountpoint \"/boot/efi\" is not supported; declare /boot/efi as a regular partition")
 			}
-			if err := validateSupportedLayoutMountpoint(vol.Mountpoint); err != nil {
+			if err := validateSupportedLayoutMountpoint(vol.Mountpoint, seen); err != nil {
 				return err
 			}
 		}
@@ -1483,13 +1499,30 @@ func (o *Orchestrator) validatePartitionLayoutRuntimeSupport() error {
 }
 
 // validateSupportedLayoutMountpoint rejects the mountpoints that
-// mount-shared-data cannot mount below the target root: a separate /boot
-// (mount-boot mounts the ESP first, so /boot would hide it) and anything
-// below /boot/efi. Every other mountpoint is seeded and mounted.
-func validateSupportedLayoutMountpoint(mountpoint string) error {
-	clean := filepath.Clean(strings.TrimSpace(mountpoint))
-	if clean == "/boot" || strings.HasPrefix(clean, "/boot/efi/") {
-		return fmt.Errorf("partition layout mountpoint %q is not supported in non-A/B layout provisioning; /boot and mountpoints below /boot/efi cannot be mounted during provisioning", mountpoint)
+// mount-shared-data cannot mount below the target root: a non-canonical or
+// repeated path, a separate /boot (mount-boot mounts the ESP first, so /boot
+// would hide it), anything below /boot/efi and the API filesystems. Every
+// other mountpoint is seeded and mounted.
+func validateSupportedLayoutMountpoint(mountpoint string, seen map[string]bool) error {
+	mountpoint = strings.TrimSpace(mountpoint)
+	if mountpoint == "" {
+		return nil
+	}
+	clean := filepath.Clean(mountpoint)
+	if clean != mountpoint {
+		return fmt.Errorf("partition layout mountpoint %q must be a clean path (%q)", mountpoint, clean)
+	}
+	if seen[clean] {
+		return fmt.Errorf("partition layout mountpoint %q is defined more than once", mountpoint)
+	}
+	seen[clean] = true
+	for _, reserved := range []string{"/boot", "/proc", "/sys", "/dev", "/run"} {
+		if clean == reserved || (reserved != "/boot" && strings.HasPrefix(clean, reserved+"/")) {
+			return fmt.Errorf("partition layout mountpoint %q is not supported in non-A/B layout provisioning; /boot, /proc, /sys, /dev, /run and mountpoints below /boot/efi cannot be mounted during provisioning", mountpoint)
+		}
+	}
+	if strings.HasPrefix(clean, "/boot/efi/") {
+		return fmt.Errorf("partition layout mountpoint %q is not supported in non-A/B layout provisioning; /boot, /proc, /sys, /dev, /run and mountpoints below /boot/efi cannot be mounted during provisioning", mountpoint)
 	}
 	return nil
 }

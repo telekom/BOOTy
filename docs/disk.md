@@ -507,8 +507,9 @@ Layout rules (`config.ParsePartitionLayout`):
 Runtime rules for layouts outside A/B mode:
 
 - `IMAGE_MODE` must be `whole-disk` or empty.
-- A logical volume cannot use `/boot/efi`. `/boot` and mountpoints below
-  `/boot/efi` are not supported.
+- A logical volume cannot use `/boot/efi`. `/boot`, `/proc`, `/sys`, `/dev`,
+  `/run` and mountpoints below `/boot/efi` are not supported.
+- Mountpoints must be clean paths (`/var`, not `/var/`) and unique.
 
 `IMAGE_SOURCE_ROOT_LABEL` or `IMAGE_SOURCE_ROOT_PARTITION` selects the source
 image partition to copy. They are mutually exclusive. Without them, BOOTy uses
@@ -552,8 +553,9 @@ BOOTy takes the layout from the first of these that is set:
 1. `PARTITION_LAYOUT` (the JSON in the vars).
 2. `PARTITION_LAYOUT_URL`: an HTTPS URL of the JSON document. Plain HTTP needs
    `IMAGE_ALLOW_INSECURE_HTTP=true`. `fetch-partition-layout` fetches it
-   (at most 1 MiB, retried on network errors and HTTP 5xx) before any disk
-   is changed.
+   (at most 1 MiB, retried on network and read errors and on HTTP 408, 429
+   and 5xx) before any disk is changed. A redirect from HTTPS to plain HTTP
+   fails.
 3. `PARTITION_LAYOUT_IMAGE_PATH`: the absolute path of the JSON document in
    the root of the image, for example `/usr/share/vendor/layout/*.json`. A
    pattern (Go `filepath.Match` syntax) must match exactly one regular file;
@@ -561,7 +563,13 @@ BOOTy takes the layout from the first of these that is set:
    whole-disk, finds its root as usual (`ROOT_PARTITION_LABEL`,
    `ROOT_PARTITION_NUMBER`), reads the file from the root mounted read-only,
    then creates the layout and writes the image root into it. The image is
-   downloaded and written twice.
+   downloaded and written twice. The root that BOOTy reads the file from is
+   the partition of the whole-disk write that root detection selects; the
+   root that it copies is selected by `IMAGE_SOURCE_ROOT_LABEL` or
+   `IMAGE_SOURCE_ROOT_PARTITION`, so set both to the same partition in an
+   image with more than one root. The image root must be a plain partition
+   filesystem, not LVM or LUKS. If this step stops, a resumed run
+   (`BOOTY_RESUME`) writes the image whole-disk again.
 
 A layout from a URL or the image must not set `device`; select the disk with
 `DISK_DEVICE` or `DISK_SERIAL_NUMBER`. These two sources need

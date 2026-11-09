@@ -45,7 +45,9 @@ var DefaultStepBudgets = map[string]time.Duration{
 	"setup-raid":             time.Hour,
 	"setup-nvme-namespaces":  time.Hour,
 	"apply-partition-layout": time.Hour,
-	"grow-partition":         time.Hour,
+	// Writes the image a second time into the layout from the image.
+	"load-image-partition-layout": time.Hour,
+	"grow-partition":              time.Hour,
 	// Image writes with dd (A/B modes), mirroring, file system checks and
 	// operator commands.
 	"stream-image":            time.Hour,

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/telekom/BOOTy/pkg/config"
 )
@@ -121,6 +122,12 @@ func (c *Checkpoint) MarkStep(name string) {
 		return
 	}
 	c.CompletedSteps = append(c.CompletedSteps, name)
+}
+
+// ForgetSteps marks the named steps as not completed, so a resumed run
+// repeats them.
+func (c *Checkpoint) ForgetSteps(names ...string) {
+	c.CompletedSteps = slices.DeleteFunc(c.CompletedSteps, func(s string) bool { return slices.Contains(names, s) })
 }
 
 // IsCompleted returns true if the named step was already completed.
