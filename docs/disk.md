@@ -35,7 +35,8 @@ See [docs/configuration.md](configuration.md) for each variable:
   `DISCARD_NVME`, `RAID_SUPERBLOCK_CLEAR`, `DRY_RUN`, `CAPRF_LEGACY_COMPAT`
   (presets `DISK_SELECTION=lsblk`, `WIPE_DEPTH=quick`, `WIPE_ALL_DISKS=true`,
   `DISCARD_NVME=true` and `RAID_SUPERBLOCK_CLEAR=all`)
-- Layout: `PARTITION_LAYOUT`, `IMAGE_MODE`, `IMAGE_SOURCE_ROOT_LABEL`,
+- Layout: `PARTITION_LAYOUT`, `PARTITION_LAYOUT_URL`,
+  `PARTITION_LAYOUT_IMAGE_PATH`, `IMAGE_MODE`, `IMAGE_SOURCE_ROOT_LABEL`,
   `IMAGE_SOURCE_ROOT_PARTITION`
 - Root partition: `ROOT_PARTITION_LABEL`, `ROOT_PARTITION_NUMBER`
 - NVMe: `NVME_NAMESPACES`
@@ -47,6 +48,9 @@ Before any disk step, `release-stale-mounts` runs right after `report-init`.
 It unmounts the target root and everything below it that a failed earlier
 attempt left mounted, for example before a `RESCUE_MODE=retry` run. If this
 fails, the run stops before any disk is changed and BOOTy reports the error.
+
+`fetch-partition-layout` fetches `PARTITION_LAYOUT_URL` before the inputs
+are validated (see [Layout Sources](#layout-sources)).
 
 The provisioning pipeline then runs the disk steps in this order:
 
@@ -64,8 +68,11 @@ The provisioning pipeline then runs the disk steps in this order:
 7. `stream-image`: write the image.
 8. `partprobe`, `parse-partitions`: read the new partition table and find the
    boot and root partitions.
-9. `check-filesystem`, `enable-lvm`, `mount-root`, `mount-boot`.
-10. `grow-partition` and `resize-filesystem`, after the target root is mounted.
+9. `load-image-partition-layout`: with `PARTITION_LAYOUT_IMAGE_PATH`, read the
+   layout from the written image and repeat steps 6 to 8 with it.
+10. `check-filesystem`, `enable-lvm`, `mount-root`, `mount-boot`,
+    `mount-shared-data`.
+11. `grow-partition` and `resize-filesystem`, after the target root is mounted.
 
 ## Target Disk Selection
 
@@ -500,8 +507,14 @@ Layout rules (`config.ParsePartitionLayout`):
 Runtime rules for layouts outside A/B mode:
 
 - `IMAGE_MODE` must be `whole-disk` or empty.
-- Only the mountpoints `/` and `/boot/efi` are supported. A logical volume
-  cannot use `/boot/efi`.
+- A logical volume cannot use `/boot/efi`. `/boot` and the mountpoints below
+  it other than `/boot/efi`, `/etc`, `/etc/booty`, `/proc`, `/sys`, `/dev`
+  and `/run` are not supported. A separate `/etc` would hold the new fstab,
+  which the boot cannot read before it mounts `/etc`. The EFI fallback loader
+  reads `/boot/grub` and its marker in `/etc/booty` from the root
+  filesystem. `vfat` is supported for `/boot/efi` only.
+- Mountpoints must be clean paths (`/var`, not `/var/`) without white space,
+  control characters or backslashes, and unique.
 
 `IMAGE_SOURCE_ROOT_LABEL` or `IMAGE_SOURCE_ROOT_PARTITION` selects the source
 image partition to copy. They are mutually exclusive. Without them, BOOTy uses
@@ -509,9 +522,78 @@ the source root selection rules of
 [docs/ab-partitioning.md](ab-partitioning.md#source-root-selection).
 
 After `mount-root`, BOOTy writes `/etc/fstab` in the target root. Each entry
-uses `PARTLABEL=<label>`. BOOTy reads the root filesystem type of the streamed
-image with `blkid`. Default options are `defaults`, and `umask=0077` for
-`/boot/efi`. `mountOptions` replaces the default.
+uses `PARTLABEL=<label>`, a logical volume `/dev/<volumeGroup>/<name>`. BOOTy
+reads the root filesystem type of the streamed image with `blkid`. Default
+options are `defaults`, and `umask=0077` for `/boot/efi`. `mountOptions`
+replaces the default, for example `nodev,nosuid,noexec`. BOOTy writes the
+entries in layout order, partitions first; systemd orders nested mounts
+itself.
+
+BOOTy writes only the image root into the layout; the ESP of the image is
+not copied. `install-efi-fallback` puts BOOTy's removable fallback loader
+(`EFI/BOOT/BOOTX64.EFI` or `BOOTAA64.EFI`, with a `grub.cfg` that loads the
+GRUB configuration of the root) on the new ESP, as in A/B mode, and
+`create-efi-boot-entry` points the firmware at it.
+
+### Data Mountpoints
+
+Every partition and logical volume with a mountpoint other than `/` and
+`/boot/efi` is a data mountpoint, for example `/var`, `/var/log`,
+`/var/log/audit`, `/var/tmp`, `/home` and `/tmp` of a CIS layout. In
+`mount-shared-data`, after `mount-boot`, BOOTy:
+
+1. Seeds each new, empty data filesystem from the directory with the same
+   path in the written root: files, directories and symlinks with owners,
+   modes, timestamps and extended attributes, so POSIX ACLs, file
+   capabilities and security labels are kept. A nested mountpoint (`/var/log`
+   below `/var`) is created as an empty directory in its parent; its content
+   goes to its own filesystem. A missing directory leaves the filesystem
+   empty.
+2. Mounts the data filesystems below the target root, parents first, without
+   the `mountOptions`, so the later steps can write to them. The installed
+   system mounts them with the options from `/etc/fstab`.
+
+The root keeps its copy of these directories under the mounts. Size the root
+for the full image root. A seed that stops halfway is cleaned and repeated on
+the next run.
+
+### Layout Sources
+
+BOOTy takes the layout from the first of these that is set:
+
+1. `PARTITION_LAYOUT` (the JSON in the vars).
+2. `PARTITION_LAYOUT_URL`: an HTTPS URL of the JSON document. Plain HTTP needs
+   `IMAGE_ALLOW_INSECURE_HTTP=true`. `fetch-partition-layout` fetches it
+   (at most 1 MiB, retried on network and read errors and on HTTP 408, 429
+   and 5xx) before any disk is changed. A redirect from HTTPS to plain HTTP
+   fails.
+3. `PARTITION_LAYOUT_IMAGE_PATH`: the absolute path of the JSON document in
+   the root of the image, for example `/usr/share/vendor/layout/*.json`. A
+   pattern (Go `filepath.Match` syntax) must match exactly one regular file;
+   the file and its directories must not be symlinks. BOOTy writes the image
+   whole-disk, finds its root as usual (`ROOT_PARTITION_LABEL`,
+   `ROOT_PARTITION_NUMBER`), reads the file from the root mounted read-only,
+   then creates the layout and writes the image root into it. The image is
+   downloaded and written twice. The root that BOOTy reads the file from is
+   the partition of the whole-disk write that root detection selects; the
+   root that it copies is selected by `IMAGE_SOURCE_ROOT_LABEL` or
+   `IMAGE_SOURCE_ROOT_PARTITION`, so set both to the same partition in an
+   image with more than one root. The image root must be a plain partition
+   filesystem, not LVM or LUKS. If this step stops, a resumed run
+   (`BOOTY_RESUME`) wipes the disk and writes the image whole-disk again.
+
+A layout from a URL or the image must not set `device`; select the disk with
+`DISK_DEVICE` or `DISK_SERIAL_NUMBER`. These two sources need
+`IMAGE_MODE=whole-disk` and cannot be combined with `DISK_MIRRORING_MODE`.
+So an image can ship its default layout, and the vars of a host override it
+with `PARTITION_LAYOUT` or `PARTITION_LAYOUT_URL`. With `BOOTY_RESUME`, the
+checkpoint keeps a layout from a URL or the image, so a resumed run uses the
+layout on the disk.
+
+```sh
+export PARTITION_LAYOUT_IMAGE_PATH="/usr/share/vendor/layout/*.json"
+export IMAGE_SOURCE_ROOT_LABEL="cloudimg-rootfs"
+```
 
 In A/B mode, BOOTy generates the layout from the `AB_*` variables and ignores
 `PARTITION_LAYOUT`.

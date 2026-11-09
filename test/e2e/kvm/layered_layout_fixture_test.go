@@ -20,28 +20,40 @@ import (
 
 // The layered-layout fixture is a small Ubuntu-like whole-disk image (ESP +
 // one ext4 root) whose root carries content for the directories that a
-// layered layout puts on their own partitions (/var, /home, /tmp), with the
-// metadata that a file-level copy can lose: extended attributes, POSIX ACLs
-// and file capabilities. It also ships a multi-mountpoint layout description
-// in BOOTy's PARTITION_LAYOUT format. Scenarios that split the root into
-// partitions, sign modules or encrypt data volumes build on it.
+// CIS-like layout puts on their own partitions (/var, /var/log,
+// /var/log/audit, /var/tmp, /home, /tmp), with the metadata that a
+// file-level copy can lose: extended attributes, POSIX ACLs and file
+// capabilities. It also ships that layout in BOOTy's PARTITION_LAYOUT format.
+// Scenarios that split the root into partitions, sign modules or encrypt data
+// volumes build on it.
 
 // layeredLayoutJSONPath is where the fixture image ships its layout
 // description, relative to the root.
 const layeredLayoutJSONPath = "usr/lib/booty/partition-layout.json"
 
-// layeredLayoutJSON describes the layered layout of the fixture.
+// layeredLayoutJSON describes the CIS-like layout of the fixture, with the
+// nested mountpoints in a different order than their parents.
 const layeredLayoutJSON = `{
   "table": "gpt",
   "partitions": [
     {"label": "EFI", "sizeMB": 64, "filesystem": "vfat", "mountpoint": "/boot/efi"},
-    {"label": "ROOT", "sizeMB": 768, "filesystem": "ext4", "mountpoint": "/", "mountOptions": "ro"},
+    {"label": "ROOT", "sizeMB": 768, "filesystem": "ext4", "mountpoint": "/"},
+    {"label": "AUDIT", "sizeMB": 32, "filesystem": "ext4", "mountpoint": "/var/log/audit", "mountOptions": "nodev,nosuid,noexec"},
+    {"label": "LOG", "sizeMB": 32, "filesystem": "ext4", "mountpoint": "/var/log", "mountOptions": "nodev,nosuid,noexec"},
+    {"label": "VARTMP", "sizeMB": 32, "filesystem": "ext4", "mountpoint": "/var/tmp", "mountOptions": "nodev,nosuid,noexec"},
+    {"label": "VAR", "sizeMB": 96, "filesystem": "ext4", "mountpoint": "/var", "mountOptions": "nodev,nosuid"},
     {"label": "HOME", "sizeMB": 32, "filesystem": "ext4", "mountpoint": "/home", "mountOptions": "nodev,nosuid"},
-    {"label": "TMP", "sizeMB": 32, "filesystem": "ext4", "mountpoint": "/tmp", "mountOptions": "nodev,nosuid,noexec"},
-    {"label": "VAR", "sizeMB": 0, "filesystem": "ext4", "mountpoint": "/var", "mountOptions": "nodev,nosuid"}
+    {"label": "TMP", "sizeMB": 0, "filesystem": "ext4", "mountpoint": "/tmp", "mountOptions": "nodev,nosuid,noexec"}
   ]
 }
 `
+
+// layeredLayoutMounts are the data mountpoints of layeredLayoutJSON with
+// their 1-based partition numbers.
+var layeredLayoutMounts = []struct {
+	part       int
+	mountpoint string
+}{{3, "/var/log/audit"}, {4, "/var/log"}, {5, "/var/tmp"}, {6, "/var"}, {7, "/home"}, {8, "/tmp"}}
 
 // layeredLayoutDataPartitions are the shared data partitions of the
 // system-ab scenario (AB_DATA_PARTITIONS): the layered directories of the
@@ -72,9 +84,6 @@ type layeredEntry struct {
 	xattrs  map[string][]byte
 }
 
-// hasExtendedMetadata reports xattrs, ACLs or file capabilities.
-func (e *layeredEntry) hasExtendedMetadata() bool { return len(e.xattrs) > 0 }
-
 // layeredLayoutEntries returns the fixture content. Directories come before
 // their children.
 func layeredLayoutEntries() []layeredEntry {
@@ -87,6 +96,13 @@ func layeredLayoutEntries() []layeredEntry {
 		{path: "var/lib/layered/ping-helper", content: "#!/bin/sh\nexit 0\n", mode: 0o755,
 			xattrs: map[string][]byte{xattrCapability: fileCapability(capNetRaw)}},
 		{path: "var/log/layered.log", content: "fixture log line\n", mode: 0o644},
+		{path: "var/log/audit", dir: true, mode: 0o750,
+			xattrs: map[string][]byte{xattrUserTest: []byte("audit-dir")}},
+		{path: "var/log/audit/audit.log", content: "type=DAEMON_START\n", mode: 0o600,
+			xattrs: map[string][]byte{xattrUserTest: []byte("audit-file")}},
+		{path: "var/tmp", dir: true, mode: 0o777 | os.ModeSticky},
+		{path: "var/tmp/cache-helper", content: "#!/bin/sh\nexit 0\n", mode: 0o755,
+			xattrs: map[string][]byte{xattrCapability: fileCapability(capNetBindSvc)}},
 		{path: "home/tester", dir: true, mode: 0o750, uid: fixtureUID, gid: fixtureGID,
 			xattrs: map[string][]byte{xattrUserTest: []byte("home-dir")}},
 		{path: "home/tester/.profile", content: "export FIXTURE=1\n", mode: 0o640, uid: fixtureUID, gid: fixtureGID,
@@ -201,6 +217,18 @@ func writeLayeredEntry(t *testing.T, root string, e *layeredEntry) {
 type layeredCheck struct {
 	// skipXattrs leaves xattrs, ACLs and file capabilities out.
 	skipXattrs bool
+	// exclude leaves out the entries below these prefixes (for example
+	// "var/log/"), which are on a nested mount.
+	exclude []string
+}
+
+func (c layeredCheck) excludes(path string) bool {
+	for _, prefix := range c.exclude {
+		if strings.HasPrefix(path+"/", prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // assertLayeredEntries checks the fixture entries below prefix (for
@@ -210,7 +238,7 @@ func assertLayeredEntries(t *testing.T, root, prefix string, strip bool, check l
 	t.Helper()
 	found := 0
 	for _, e := range layeredLayoutEntries() {
-		if !strings.HasPrefix(e.path+"/", prefix) {
+		if !strings.HasPrefix(e.path+"/", prefix) || check.excludes(e.path) {
 			continue
 		}
 		found++
@@ -258,29 +286,6 @@ func assertLayeredEntry(t *testing.T, p string, e *layeredEntry, check layeredCh
 	}
 }
 
-// extendedMetadataKept splits the fixture xattrs below prefix into those
-// root has and those it lost, as "path:name".
-func extendedMetadataKept(t *testing.T, root, prefix string) (kept, lost []string) {
-	t.Helper()
-	for _, e := range layeredLayoutEntries() {
-		if !strings.HasPrefix(e.path+"/", prefix) || !e.hasExtendedMetadata() {
-			continue
-		}
-		rel := strings.TrimPrefix(strings.TrimPrefix(e.path, strings.TrimSuffix(prefix, "/")), "/")
-		for name, want := range e.xattrs {
-			if got, err := getXattr(filepath.Join(root, rel), name); err == nil && bytes.Equal(got, want) {
-				kept = append(kept, e.path+":"+name)
-			} else {
-				lost = append(lost, e.path+":"+name)
-			}
-		}
-	}
-	if len(kept)+len(lost) == 0 {
-		t.Fatalf("no fixture xattrs below %q", prefix)
-	}
-	return kept, lost
-}
-
 func getXattr(path, name string) ([]byte, error) {
 	buf := make([]byte, 256)
 	n, err := unix.Lgetxattr(path, name, buf)
@@ -309,7 +314,7 @@ func assertLayeredLayoutJSON(t *testing.T, root string) {
 	for _, p := range layout.Partitions {
 		mountpoints = append(mountpoints, p.Mountpoint)
 	}
-	if got := strings.Join(mountpoints, ","); got != "/boot/efi,/,/home,/tmp,/var" {
+	if got := strings.Join(mountpoints, ","); got != "/boot/efi,/,/var/log/audit,/var/log,/var/tmp,/var,/home,/tmp" {
 		t.Fatalf("fixture layout mountpoints = %s", got)
 	}
 }

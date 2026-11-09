@@ -1225,7 +1225,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	if applyNetworkStringVar(cfg, key, value) {
 		return true
 	}
-	if applySecureBootDigestVar(cfg, key, value) || applyImageWriteVar(cfg, key, value) {
+	if applySecureBootDigestVar(cfg, key, value) || applyPartitionLayoutSourceVar(cfg, key, value) || applyImageWriteVar(cfg, key, value) {
 		return true
 	}
 	if applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) || applyCheckStringVar(cfg, key, value) {
@@ -1328,6 +1328,20 @@ func splitVarList(value string) []string {
 		}
 	}
 	return out
+}
+
+// applyPartitionLayoutSourceVar handles PARTITION_LAYOUT_URL and
+// PARTITION_LAYOUT_IMAGE_PATH.
+func applyPartitionLayoutSourceVar(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
+	case "PARTITION_LAYOUT_URL":
+		cfg.Provision.Disk.PartitionLayoutURL = value
+	case "PARTITION_LAYOUT_IMAGE_PATH":
+		cfg.Provision.Disk.PartitionLayoutImagePath = value
+	default:
+		return false
+	}
+	return true
 }
 
 // applyCheckStringVar handles the check mode keys.

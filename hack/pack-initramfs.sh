@@ -1,8 +1,9 @@
 #!/bin/sh
-# Pack a ramdisk tree as a newc cpio archive compressed with zstd, or with
-# gzip for an output name that ends in .gz.
+# Pack a ramdisk tree as a newc cpio archive compressed with zstd, with
+# gzip for an output name that ends in .gz, or not compressed for a name
+# that ends in .cpio.
 #
-# usage: pack-initramfs.sh <root> <out.cpio.zst|out.cpio.gz>
+# usage: pack-initramfs.sh <root> <out.cpio.zst|out.cpio.gz|out.cpio>
 #
 # The kernel decompresses the ramdisk in one thread before /init starts,
 # and slow BMC virtual media streams every byte of it. zstd is the codec
@@ -24,9 +25,14 @@
 # archive order and zeroes the device numbers, and gzip -n leaves out the
 # name and time of the input.
 set -eu
-root=${1:?usage: pack-initramfs.sh <root> <out.cpio.zst|out.cpio.gz>}
-out=${2:?usage: pack-initramfs.sh <root> <out.cpio.zst|out.cpio.gz>}
+root=${1:?usage: pack-initramfs.sh <root> <out.cpio.zst|out.cpio.gz|out.cpio>}
+out=${2:?usage: pack-initramfs.sh <root> <out.cpio.zst|out.cpio.gz|out.cpio>}
 epoch=${SOURCE_DATE_EPOCH:-315532800}
+
+# Own scratch files, so runs at the same time do not overwrite each other.
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
 
 cd "$root"
 {
@@ -36,21 +42,20 @@ cd "$root"
 	find . -type f -name '*.so*' ! -name '*.ko' -print0 | LC_ALL=C sort -z
 	find . -type f -perm /111 ! -name '*.ko' ! -name '*.so*' -print0 | LC_ALL=C sort -z
 	find . -type f ! -perm /111 ! -name '*.ko' ! -name '*.so*' -print0 | LC_ALL=C sort -z
-} > /tmp/initramfs.files
+} > "$tmp/initramfs.files"
 
 # Every entry once: the groups must cover the tree exactly.
-listed=$(tr '\0' '\n' < /tmp/initramfs.files | sort | uniq | wc -l)
+listed=$(tr '\0' '\n' < "$tmp/initramfs.files" | sort | uniq | wc -l)
 total=$(find . | wc -l)
-if [ "$listed" -ne "$total" ] || [ "$(tr -cd '\0' < /tmp/initramfs.files | wc -c)" -ne "$total" ]; then
+if [ "$listed" -ne "$total" ] || [ "$(tr -cd '\0' < "$tmp/initramfs.files" | wc -c)" -ne "$total" ]; then
 	echo "pack-initramfs: file list has $listed unique of $total entries" >&2
 	exit 1
 fi
 
 find . -exec touch -h -d "@$epoch" {} +
-cpio --null -o --quiet --format=newc --reproducible --owner=0:0 < /tmp/initramfs.files > /tmp/initramfs.cpio
-rm /tmp/initramfs.files
+cpio --null -o --quiet --format=newc --reproducible --owner=0:0 < "$tmp/initramfs.files" > "$tmp/initramfs.cpio"
 case "$out" in
-*.gz) gzip -n -c /tmp/initramfs.cpio > "$out" ;;
-*) zstd -q --ultra -22 --long /tmp/initramfs.cpio -o "$out" ;;
+*.gz) gzip -n -c "$tmp/initramfs.cpio" > "$out" ;;
+*.cpio) cat "$tmp/initramfs.cpio" > "$out" ;;
+*) zstd -q --ultra -22 --long "$tmp/initramfs.cpio" -o "$out" ;;
 esac
-rm /tmp/initramfs.cpio

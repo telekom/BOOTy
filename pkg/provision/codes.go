@@ -96,6 +96,8 @@ var failureCodes = []FailureCode{
 	{"BOOTY-DSK-021", ClassConfig, "configure-mdadm", "Writing the mdadm configuration failed."},
 	{"BOOTY-DSK-022", ClassConfig, "select-deprovision-disk", "Deprovision disk selection failed."},
 	{"BOOTY-DSK-023", ClassHardware, "decommission-wipe", "Decommission disk wipe failed."},
+	{"BOOTY-DSK-024", ClassTransient, "fetch-partition-layout", "Fetching the partition layout from PARTITION_LAYOUT_URL failed."},
+	{"BOOTY-DSK-025", ClassPermanent, "load-image-partition-layout", "Reading or applying the partition layout from the image failed."},
 
 	{"BOOTY-EFI-001", ClassEnvironment, "mount-efivarfs", "Mounting efivarfs failed."},
 	{"BOOTY-EFI-002", ClassEnvironment, AnyStep, "EFI variables unavailable."},
