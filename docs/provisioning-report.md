@@ -82,7 +82,7 @@ fields it does not know.
 | `image.checksum` | `IMAGE_CHECKSUM`, its type and scope. Not set without a checksum. |
 | `verification.checksum` | `verified` when a checksum is configured (a mismatch fails the run), else `not-configured`. |
 | `verification.signature` | `method` `gpg` and `result` `verified` with `IMAGE_SIGNATURE_URL`, else `result` `not-configured`. Other signature methods add their own `method`. |
-| `disk.layout` | The applied `PARTITION_LAYOUT`, or the layout that A/B mode generated. Not set for a whole-disk image without a layout. |
+| `disk.layout` | The applied `PARTITION_LAYOUT` with the root filesystem of the streamed image (as in fstab), or the layout that A/B mode generated. Not set for a whole-disk image without a layout. |
 | `ab` | Only in `IMAGE_MODE=ab`: the same values as `/etc/booty/ab-slot.env`. |
 | `encryption.luks` | `present` when the installed `/etc/crypttab` names a volume, `absent` when it names none or does not exist, `unknown` when it can not be read or is not a regular file of at most 64 KiB below the target root (a symlink, a FIFO or a device is not read). |
 | `encryption.tpm` | `present` when the ramdisk sees a TPM (`/sys/class/tpm/tpm0`), else `absent`. |

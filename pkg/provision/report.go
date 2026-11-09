@@ -145,7 +145,7 @@ type ReportTimings struct {
 
 // buildReport collects the report. It reads the target root, so it runs
 // while the root is mounted.
-func (o *Orchestrator) buildReport() *ProvisionReport {
+func (o *Orchestrator) buildReport(ctx context.Context) *ProvisionReport {
 	info := buildinfo.Get()
 	cfg := &o.cfg.Provision
 	r := &ProvisionReport{
@@ -158,7 +158,7 @@ func (o *Orchestrator) buildReport() *ProvisionReport {
 			Checksum:  ReportStateNotConfigured,
 			Signature: ReportSignatureResult{Result: ReportStateNotConfigured},
 		},
-		Disk:       ReportDisk{Device: o.targetDisk, RootPartition: o.rootPartition, Layout: cfg.Disk.PartitionLayout},
+		Disk:       ReportDisk{Device: o.targetDisk, RootPartition: o.rootPartition, Layout: o.reportLayout(ctx)},
 		Encryption: reportEncryption(o.config.rootDir),
 		SecureBoot: ReportSecureBoot{State: reportSecureBootState(), ReEnable: cfg.SecureBoot.ReEnable},
 		Sysexts:    reportSysexts(&cfg.Sysext),
@@ -181,6 +181,22 @@ func (o *Orchestrator) buildReport() *ProvisionReport {
 func (o *Orchestrator) refreshReportTimings(r *ProvisionReport) {
 	s := o.collector.Summarize()
 	r.Timings = ReportTimings{StartTime: s.StartTime.UTC(), TotalDurationMs: s.TotalDurMs, Steps: s.Steps}
+}
+
+// reportLayout is the layout that write-fstab applied: a custom layout
+// with the root filesystem that the streamed image has. When that can not
+// be detected, it is the configured layout.
+func (o *Orchestrator) reportLayout(ctx context.Context) *config.PartitionLayout {
+	layout := o.cfg.Provision.Disk.PartitionLayout
+	if !o.shouldDetectPartitionLayoutRootFilesystem() {
+		return layout
+	}
+	detected, err := o.partitionLayoutWithDetectedRootFilesystem(ctx, layout)
+	if err != nil {
+		o.log.Warn("provisioning report: reporting the configured partition layout", "error", err)
+		return layout
+	}
+	return detected
 }
 
 func (o *Orchestrator) reportImage() ReportImage {
@@ -277,8 +293,8 @@ func reportSysexts(cfg *config.SysextConfig) []ReportSysext {
 // OS at provision.reportPath, unless that is "none". The file is best
 // effort, like the other reports: a failed write logs a warning and the
 // report still reaches LOG_URL through report-success.
-func (o *Orchestrator) writeProvisionReport(_ context.Context) error {
-	o.report = o.buildReport()
+func (o *Orchestrator) writeProvisionReport(ctx context.Context) error {
+	o.report = o.buildReport(ctx)
 	path := o.cfg.Provision.ReportTargetPath()
 	switch {
 	case path == "":

@@ -74,7 +74,7 @@ func TestBuildReport(t *testing.T) {
 	o.collector.Steps().StartStep("stream-image")
 	o.collector.Steps().EndStep("stream-image", nil)
 
-	r := o.buildReport()
+	r := o.buildReport(context.Background())
 
 	if r.Schema != ReportSchemaVersion || r.Hostname != "node-1" || r.Booty.Version == "" {
 		t.Fatalf("header = %+v", r)
@@ -118,7 +118,7 @@ func TestBuildReportDefaults(t *testing.T) {
 	o.bestImageURL = "oci://registry.example.invalid/node:1"
 	o.imageDigest = "sha256:" + strings.Repeat("0", 64)
 
-	r := o.buildReport()
+	r := o.buildReport(context.Background())
 
 	if r.Image.Mode != config.ImageModeWholeDisk || r.Image.Digest != o.imageDigest || r.Image.Checksum != nil {
 		t.Fatalf("image = %+v", r.Image)
@@ -276,11 +276,33 @@ func TestLogProvisionReportOnce(t *testing.T) {
 	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
 	var buf bytes.Buffer
 	o.log = slog.New(slog.NewJSONHandler(&buf, nil))
-	o.report = o.buildReport()
+	o.report = o.buildReport(context.Background())
 	o.logProvisionReport()
 	o.logProvisionReport()
 	if n := strings.Count(buf.String(), `"msg":"provisioning report"`); n != 1 {
 		t.Fatalf("report logged %d times, want 1:\n%s", n, buf.String())
+	}
+}
+
+// The report has the root filesystem of the streamed image, like fstab.
+func TestBuildReportDetectedRootFilesystem(t *testing.T) {
+	withReportHost(t, nil, nil)
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{{Label: "root", Filesystem: "xfs", Mountpoint: "/"}},
+	}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk, o.rootPartition = "/dev/sda", "/dev/sda1"
+	cmd.setResult("blkid -o", []byte("ext4\n"), nil)
+
+	r := o.buildReport(context.Background())
+
+	if got := r.Disk.Layout.Partitions[0].Filesystem; got != "ext4" {
+		t.Fatalf("reported root filesystem = %q, want detected ext4", got)
+	}
+	if cfg.Provision.Disk.PartitionLayout.Partitions[0].Filesystem != "xfs" {
+		t.Fatal("configured layout mutated")
 	}
 }
 
