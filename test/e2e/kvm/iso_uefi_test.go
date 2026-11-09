@@ -80,17 +80,17 @@ func isoCDArgs(iso string) []string {
 	}
 }
 
-// isoUSBArgs attaches the ISO as a USB stick on an EHCI controller. OVMF
-// with QEMU's xHCI (qemu-xhci, nec-usb-xhci) under KVM sometimes hands shim
-// corrupt data when it reads GRUB from the stick ("Platform does not support
-// this image", "Failed to read header"): about 1 in 5 boots of the same ISO
-// on the GitHub runners, independent of the image. EHCI and xHCI under TCG
-// boot the same ISO every time.
-func isoUSBArgs(iso string) []string {
+// isoUSBArgs attaches the ISO as a USB stick on the given controller
+// (usb-ehci, qemu-xhci). Tests use EHCI: OVMF with QEMU's xHCI (qemu-xhci,
+// nec-usb-xhci) under KVM sometimes hands shim corrupt data when it reads
+// GRUB from the stick ("Platform does not support this image", "Failed to
+// read header"), in 1 to 3 of 10 boots of one unchanged ISO on the GitHub
+// runners. EHCI under KVM and xHCI under TCG did not fail in 60 and 20 boots.
+func isoUSBArgs(iso, controller string) []string {
 	return []string{
-		"-device", "usb-ehci,id=ehci",
+		"-device", controller + ",id=usb",
 		"-drive", fmt.Sprintf("file=%s,format=raw,if=none,id=usb0,readonly=on", iso),
-		"-device", "usb-storage,bus=ehci.0,drive=usb0,bootindex=1",
+		"-device", "usb-storage,bus=usb.0,drive=usb0,bootindex=1",
 	}
 }
 
@@ -129,31 +129,28 @@ func TestISOFirmwareUEFI(t *testing.T) {
 func TestISOFirmwareUEFIUSB(t *testing.T) {
 	qemuAvailable(t)
 	iso := bootyISO(t)
-	runQEMUSmoke(t, isoQEMUArgs(t, "uefi", isoUSBArgs(iso)), 4*time.Minute, "iso-uefi-usb", true)
+	runQEMUSmoke(t, isoQEMUArgs(t, "uefi", isoUSBArgs(iso, "usb-ehci")), 4*time.Minute, "iso-uefi-usb", true)
 }
 
 // TestISOFirmwareUEFIUSBXHCI keeps the USB 3 (xHCI) path covered despite
-// the QEMU/OVMF flake described at isoUSBArgs: it fails only when three
+// the QEMU/OVMF flake described at isoUSBArgs: it fails only when five
 // boots in a row fail, as a broken image would, and logs every failed boot.
+// A KVM boot reaches BOOTy in about 15 s; a flaky one hangs until the timeout.
 func TestISOFirmwareUEFIUSBXHCI(t *testing.T) {
 	qemuAvailable(t)
 	iso := bootyISO(t)
-	media := []string{
-		"-device", "qemu-xhci",
-		"-drive", fmt.Sprintf("file=%s,format=raw,if=none,id=usb0,readonly=on", iso),
-		"-device", "usb-storage,drive=usb0,bootindex=1",
-	}
+	const attempts = 5
 	var out []byte
-	for attempt := 1; attempt <= 3; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		out, _ = exec.CommandContext(ctx, "qemu-system-x86_64", isoQEMUArgs(t, "uefi", media)...).CombinedOutput()
+	for attempt := 1; attempt <= attempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		out, _ = exec.CommandContext(ctx, "qemu-system-x86_64", isoQEMUArgs(t, "uefi", isoUSBArgs(iso, "qemu-xhci"))...).CombinedOutput()
 		cancel()
 		if bytes.Contains(out, []byte(bootyStartMarker)) {
 			return
 		}
-		t.Logf("xHCI USB boot %d/3 did not start BOOTy; tail:\n%s", attempt, tail(out, 1500))
+		t.Logf("xHCI USB boot %d/%d did not start BOOTy; tail:\n%s", attempt, attempts, tail(out, 1500))
 	}
-	t.Fatalf("xHCI USB boot failed 3 times in a row. Console:\n%s", out)
+	t.Fatalf("xHCI USB boot failed %d times in a row. Console:\n%s", attempts, out)
 }
 
 // TestISOFirmwareBIOSUSB boots the ISO as a disk on BIOS: the isohybrid MBR
@@ -209,7 +206,7 @@ func TestISOFirmwareIgnoresOtherBootyDisk(t *testing.T) {
 		"-drive", fmt.Sprintf("file=%s,format=raw,if=none,id=decoy,readonly=on", decoy),
 		"-device", "virtio-blk-pci,drive=decoy,bootindex=2", // in the boot order, so OVMF connects it
 	}
-	for name, media := range map[string][]string{"cd": isoCDArgs(iso), "usb": isoUSBArgs(iso)} {
+	for name, media := range map[string][]string{"cd": isoCDArgs(iso), "usb": isoUSBArgs(iso, "usb-ehci")} {
 		t.Run(name, func(t *testing.T) {
 			args := isoQEMUArgs(t, "secureboot", append(append([]string{}, decoyArgs...), media...))
 			out := runQEMUSmoke(t, args, 4*time.Minute, "iso-decoy-"+name, true)
