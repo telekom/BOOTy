@@ -91,7 +91,7 @@ func TestBlockWriter(t *testing.T) {
 			name:          "skip unchanged writes only the changed block",
 			opt:           StreamOpts{SkipUnchanged: true},
 			target:        oneBlockChanged,
-			wantUnchanged: int64(len(img)) - b,
+			wantUnchanged: 2 * b, // the data blocks 0 and 5; zero blocks are always written
 		},
 		{
 			name:          "skip unchanged on a stale target writes everything",
@@ -105,7 +105,15 @@ func TestBlockWriter(t *testing.T) {
 			target:        oneBlockChanged,
 			wantPunches:   []punchCall{{b, 2 * b}, {4 * b, b}},
 			wantPunched:   3 * b,
-			wantUnchanged: 2*b + 100,
+			wantUnchanged: 2 * b,
+		},
+		{
+			name:          "skip unchanged then a failing punch writes the zeros",
+			opt:           StreamOpts{SparseWrite: true, SkipUnchanged: true},
+			target:        img,
+			punchErr:      errors.ErrUnsupported,
+			wantPunches:   []punchCall{{b, 2 * b}},
+			wantUnchanged: 3 * b,
 		},
 	}
 	for _, tt := range tests {

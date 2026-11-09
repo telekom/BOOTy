@@ -56,7 +56,8 @@ func TestProvisionImageWriteOptionsQEMU(t *testing.T) {
 		{
 			name: "skip-unchanged",
 			// IMAGE_SKIP_UNCHANGED needs the quick wipe, which keeps the data.
-			vars: map[string]string{"IMAGE_SKIP_UNCHANGED": "true", "WIPE_DEPTH": "quick"},
+			// Zero blocks are never compared, so punch them.
+			vars: map[string]string{"IMAGE_SKIP_UNCHANGED": "true", "IMAGE_SPARSE_WRITE": "auto", "WIPE_DEPTH": "quick"},
 			check: func(t *testing.T, _, unchanged, written int64) {
 				t.Helper()
 				if unchanged < 9*written {

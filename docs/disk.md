@@ -729,8 +729,10 @@ compressed raw images (not to QCOW2 images, `ab`, `partition` or a
   wipe: old data never shows through a skipped block. When a punch fails,
   BOOTy logs `hole punch failed, writing zeros from here on` and writes the
   zeros, as with `off`.
-- `IMAGE_SKIP_UNCHANGED=true`: BOOTy reads each 64 KiB block of the disk and
-  writes it only when it differs. A reinstall of the image that is already on
+- `IMAGE_SKIP_UNCHANGED=true`: BOOTy reads each 64 KiB data block of the disk
+  and writes it only when it differs. All-zero blocks are always zeroed (with
+  `IMAGE_SPARSE_WRITE=auto` by a punch) or written: the old OS may have
+  trimmed them, and a deallocated block need not read back as zeros later. A reinstall of the image that is already on
   the disk writes only the blocks that the quick wipe or the last boot
   changed. It still downloads the whole image. On a disk that holds a
   different image it reads every block in addition to writing it. The option
