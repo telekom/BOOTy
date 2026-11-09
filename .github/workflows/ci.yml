@@ -327,8 +327,9 @@ jobs:
           mkdir -p sbom-empty
           cp out-default/initramfs.cpio.zst default-amd64-initramfs.cpio.zst
           cp out-slim/initramfs.cpio.zst slim-amd64-initramfs.cpio.zst
+          cp out-gobgp/initramfs.cpio.zst gobgp-amd64-initramfs.cpio.zst
           cp out-micro/initramfs.cpio.gz micro-amd64-initramfs.cpio.gz
-          python3 -I hack/ramdisk_sbom.py "${SYFT}" sbom-inputs default-amd64-initramfs.cpio.zst slim-amd64-initramfs.cpio.zst
+          python3 -I hack/ramdisk_sbom.py "${SYFT}" sbom-inputs default-amd64-initramfs.cpio.zst slim-amd64-initramfs.cpio.zst gobgp-amd64-initramfs.cpio.zst
           python3 -I hack/ramdisk_sbom.py "${SYFT}" sbom-empty micro-amd64-initramfs.cpio.gz
 
           has() { # <sbom-base> <jq condition on a non-file component>
@@ -356,13 +357,22 @@ jobs:
             echo "::error::slim SBOM claims the source-built sfdisk"; exit 1
           fi
           has micro-amd64-initramfs '.name == "github.com/telekom/BOOTy"'
+          has gobgp-amd64-initramfs '.name == "cloud-guest-utils"'
+          # The built components contain their files in SPDX too.
+          for want in lvm2 util-linux; do
+            jq -e --arg n "${want}" 'any(.packages[]; .name == $n and .filesAnalyzed and .packageVerificationCode)' \
+              default-amd64-initramfs.spdx.json >/dev/null \
+              || { echo "::error::default ramdisk SBOM (SPDX): ${want} contains no files"; exit 1; }
+          done
 
           # Every regular file of the ramdisk, and nothing else, is listed.
-          for r in default-amd64-initramfs.cpio.zst slim-amd64-initramfs.cpio.zst micro-amd64-initramfs.cpio.gz; do
+          for r in default-amd64-initramfs.cpio.zst slim-amd64-initramfs.cpio.zst gobgp-amd64-initramfs.cpio.zst micro-amd64-initramfs.cpio.gz; do
             case "${r}" in *.zst) cat=(zstd -dc) ;; *) cat=(gzip -dc) ;; esac
             "${cat[@]}" "${r}" | cpio -itv --quiet | awk '/^-/ {sub(/^\.?\/?/, "/", $9); print $9}' | sort > want-files.txt
             jq -r '.components[] | select(.type == "file") | .name' "${r%.cpio.*}.cdx.json" | sort > got-files.txt
             diff -u want-files.txt got-files.txt || { echo "::error::${r}: SBOM file list differs from the ramdisk"; exit 1; }
+            jq -r '.files[].fileName | "/" + ltrimstr("/")' "${r%.cpio.*}.spdx.json" | sort > got-files.txt
+            diff -u want-files.txt got-files.txt || { echo "::error::${r}: SPDX file list differs from the ramdisk"; exit 1; }
             echo "${r}: $(wc -l < got-files.txt) files"
           done
 

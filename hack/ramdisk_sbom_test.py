@@ -102,6 +102,15 @@ class UnpackTest(unittest.TestCase):
         self.assertEqual(stat.S_IMODE((dest / "bin/e1").stat().st_mode), 0o644)
         self.assertFalse((dest / "dev/console").exists())
 
+    def test_read_only_hard_links_and_unreadable_files(self):
+        ro = stat.S_IFREG | 0o444
+        dest = self.unpack([
+            ("r1", ro, b"", 2, 100), ("r2", ro, b"R", 2, 100),
+            ("x", stat.S_IFREG | 0o111, b"X"),
+        ])
+        self.assertEqual((dest / "r1").read_bytes(), b"R")
+        self.assertEqual((dest / "x").read_bytes(), b"X")
+
     def test_refuses_paths_out_of_the_tree(self):
         outside = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
         for items in (

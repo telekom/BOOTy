@@ -61,7 +61,9 @@ def write_file(path, data, mode):
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "wb") as f:
         f.write(data)
-        os.fchmod(f.fileno(), stat.S_IMODE(mode))
+        # Owner read/write on top: a hard link set may be written again,
+        # and attribute() reads every file. Nothing reads the mode back.
+        os.fchmod(f.fileno(), stat.S_IMODE(mode) | 0o600)
 
 
 def unpack(stream, dest):
