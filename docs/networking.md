@@ -1516,7 +1516,9 @@ The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
   sent once and at once: `Reboot` ends any wait of the client (a renewal
   or rebind that cannot reach the server while the NIC has no carrier,
   the INIT backoff), like networkd restarts its client when the carrier
-  returns; without an answer the client goes to INIT.
+  returns; without an answer the client goes to INIT. The lease it keeps
+  still ends at its expiry, also while INIT or SELECTING waits for a
+  reply.
 - DHCPRELEASE at stop (Teardown, before kexec or reboot) from the lease
   address to the server, with the server identifier (option 54, which
   RFC 2131 Table 5 requires) and the client identifier, like networkd
