@@ -507,10 +507,12 @@ Layout rules (`config.ParsePartitionLayout`):
 Runtime rules for layouts outside A/B mode:
 
 - `IMAGE_MODE` must be `whole-disk` or empty.
-- A logical volume cannot use `/boot/efi`. `/boot`, `/etc`, `/proc`, `/sys`,
-  `/dev`, `/run` and mountpoints below `/boot/efi` are not supported. A
-  separate `/etc` would hold the new fstab, which the boot cannot read before
-  it mounts `/etc`. `vfat` is supported for `/boot/efi` only.
+- A logical volume cannot use `/boot/efi`. `/boot` and the mountpoints below
+  it other than `/boot/efi`, `/etc`, `/etc/booty`, `/proc`, `/sys`, `/dev`
+  and `/run` are not supported. A separate `/etc` would hold the new fstab,
+  which the boot cannot read before it mounts `/etc`. The EFI fallback loader
+  reads `/boot/grub` and its marker in `/etc/booty` from the root
+  filesystem. `vfat` is supported for `/boot/efi` only.
 - Mountpoints must be clean paths (`/var`, not `/var/`) and unique.
 
 `IMAGE_SOURCE_ROOT_LABEL` or `IMAGE_SOURCE_ROOT_PARTITION` selects the source

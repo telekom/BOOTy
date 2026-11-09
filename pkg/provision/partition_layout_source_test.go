@@ -161,6 +161,11 @@ func TestValidateSupportedLayoutMountpoint(t *testing.T) {
 		{"/srv", false},
 		{"/etc", true},
 		{"/etc/ssl", false},
+		{"/etc/booty", true},
+		{"/etc/booty/keys", true},
+		{"/etc/bootyx", false},
+		{"/boot/grub", true},
+		{"/boot/firmware", true},
 	} {
 		err := validateSupportedLayoutMountpoint(tc.mountpoint, "ext4", map[string]bool{})
 		if (err != nil) != tc.wantErr {
@@ -478,7 +483,7 @@ func TestValidateSupportedLayoutMountpointRejectsDuplicates(t *testing.T) {
 }
 
 func TestResumeRepeatsWholeDiskWriteBeforeImageLayout(t *testing.T) {
-	steps := []string{"wipe-disks", "apply-partition-layout", "stream-image", "partprobe", "parse-partitions"}
+	steps := []string{"disable-lvm", "wipe-disks", "apply-partition-layout", "stream-image", "partprobe", "parse-partitions"}
 	for _, tc := range []struct {
 		name      string
 		loaded    bool
@@ -517,5 +522,47 @@ func TestResumeRepeatsWholeDiskWriteBeforeImageLayout(t *testing.T) {
 				t.Fatalf("completed steps = %s, want %s", got, tc.wantSteps)
 			}
 		})
+	}
+}
+
+// An image root mount that load-image-partition-layout could not unmount is
+// released by release-stale-mounts before a retry writes the disk again.
+func TestReleaseStaleMountsUnmountsImageLayoutMount(t *testing.T) {
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	mnt := t.TempDir()
+	unmountErr := errors.New("device busy")
+	var unmounted []string
+	oldMountPoint, oldUnmount, oldTree := isMountPoint, unmountSharedDataPart, unmountTargetTree
+	t.Cleanup(func() { isMountPoint, unmountSharedDataPart, unmountTargetTree = oldMountPoint, oldUnmount, oldTree })
+	isMountPoint = func(path string) bool { return path == mnt }
+	unmountSharedDataPart = func(_ *disk.Manager, path string) error {
+		unmounted = append(unmounted, path)
+		return unmountErr
+	}
+	unmountTargetTree = func(*disk.Manager, string) error { return nil }
+
+	// The read fails to unmount: the mount is kept for the retry.
+	oldMount := mountReadOnlyPart
+	t.Cleanup(func() { mountReadOnlyPart = oldMount })
+	mountReadOnlyPart = func(_ context.Context, _ *disk.Manager, _, mountpoint string) error {
+		mnt = mountpoint
+		return nil
+	}
+	o.rootPartition = "/dev/vda2"
+	if _, err := o.readImagePartitionLayout(context.Background(), "/layout.json"); !errors.Is(err, unmountErr) {
+		t.Fatalf("readImagePartitionLayout err = %v, want the unmount error", err)
+	}
+	if o.imageLayoutMount != mnt {
+		t.Fatalf("imageLayoutMount = %q, want %q", o.imageLayoutMount, mnt)
+	}
+	if err := o.releaseStaleTargetMounts(context.Background()); !errors.Is(err, unmountErr) {
+		t.Fatalf("releaseStaleTargetMounts err = %v, want the unmount error", err)
+	}
+	unmountErr = nil
+	if err := o.releaseStaleTargetMounts(context.Background()); err != nil {
+		t.Fatalf("releaseStaleTargetMounts: %v", err)
+	}
+	if o.imageLayoutMount != "" || len(unmounted) != 3 {
+		t.Fatalf("imageLayoutMount = %q, unmounts %v", o.imageLayoutMount, unmounted)
 	}
 }

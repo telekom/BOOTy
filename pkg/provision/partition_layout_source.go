@@ -140,6 +140,7 @@ func (o *Orchestrator) loadImagePartitionLayout(ctx context.Context) error {
 // one file that pattern matches. The file and its parent directories must
 // not be symlinks, so the read stays in the image root.
 // An unmount error fails the step: the next steps repartition the disk.
+// The mount is then left in imageLayoutMount for release-stale-mounts.
 func (o *Orchestrator) readImagePartitionLayout(ctx context.Context, pattern string) (data []byte, err error) {
 	mnt, err := os.MkdirTemp("", "booty-image-layout-*")
 	if err != nil {
@@ -149,10 +150,13 @@ func (o *Orchestrator) readImagePartitionLayout(ctx context.Context, pattern str
 	if err := mountReadOnlyPart(ctx, o.disk, o.rootPartition, mnt); err != nil {
 		return nil, fmt.Errorf("mount image root %s: %w", o.rootPartition, err)
 	}
+	o.imageLayoutMount = mnt
 	defer func() {
 		if uerr := unmountSharedDataPart(o.disk, mnt); uerr != nil {
 			err = errors.Join(err, fmt.Errorf("unmount image root %s: %w", mnt, uerr))
+			return
 		}
+		o.imageLayoutMount = ""
 	}()
 	return readPartitionLayoutFile(mnt, pattern)
 }

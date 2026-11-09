@@ -109,9 +109,13 @@ type Orchestrator struct {
 	// sourcePartitionLayout is the layout read from PARTITION_LAYOUT_URL or
 	// the image. The checkpoint keeps it for a resumed run.
 	sourcePartitionLayout *config.PartitionLayout
-	bestImageURL          string // resolved by verify-image, reused by stream-image
-	nvmeTargetDevice      string
-	firmwareChanged       bool // true if any step changed firmware values requiring hard reboot
+	// imageLayoutMount is the read-only mount of the image root that
+	// load-image-partition-layout could not unmount; release-stale-mounts
+	// unmounts it before a retry writes the disk again.
+	imageLayoutMount string
+	bestImageURL     string // resolved by verify-image, reused by stream-image
+	nvmeTargetDevice string
+	firmwareChanged  bool // true if any step changed firmware values requiring hard reboot
 	// separateBootMounted is true while mount-boot owns a separate /boot mount.
 	separateBootMounted bool
 	// disksSettled is true after waitForDisks ran.
@@ -332,7 +336,8 @@ func (o *Orchestrator) restoreCheckpointPartitionLayout(cp *Checkpoint) {
 		return
 	}
 	if d.PartitionLayoutImagePath != "" && !cp.IsCompleted("load-image-partition-layout") {
-		cp.ForgetSteps("apply-partition-layout", "stream-image", "partprobe")
+		// disable-lvm too: the layout may have activated its volumes.
+		cp.ForgetSteps("disable-lvm", "apply-partition-layout", "stream-image", "partprobe")
 	}
 }
 
@@ -1506,8 +1511,10 @@ func (o *Orchestrator) validatePartitionLayoutRuntimeSupport() error {
 
 // validateSupportedLayoutMountpoint rejects the mountpoints that
 // mount-shared-data cannot mount below the target root: a non-canonical or
-// repeated path, a separate /boot (mount-boot mounts the ESP first, so /boot
-// would hide it), a separate /etc (write-fstab would write the fstab onto it,
+// repeated path, a separate /boot or a mountpoint below it other than
+// /boot/efi (mount-boot mounts the ESP first, so /boot would hide it, and
+// /boot/grub holds the GRUB configuration that the EFI fallback loader reads
+// from the root), /etc/booty (the marker of that loader), a separate /etc (write-fstab would write the fstab onto it,
 // and the boot reads the fstab of the root before it can mount /etc),
 // anything below /boot/efi, the API filesystems and a vfat data mountpoint
 // (seeding sets owners, modes and xattrs, which vfat cannot store). Every
@@ -1525,17 +1532,31 @@ func validateSupportedLayoutMountpoint(mountpoint, filesystem string, seen map[s
 		return fmt.Errorf("partition layout mountpoint %q is defined more than once", mountpoint)
 	}
 	seen[clean] = true
-	unsupported := clean == "/boot" || clean == "/etc" || strings.HasPrefix(clean, "/boot/efi/")
-	for _, api := range []string{"/proc", "/sys", "/dev", "/run"} {
-		unsupported = unsupported || clean == api || strings.HasPrefix(clean, api+"/")
-	}
-	if unsupported {
-		return fmt.Errorf("partition layout mountpoint %q is not supported in non-A/B layout provisioning; /boot, /etc, /proc, /sys, /dev, /run and mountpoints below /boot/efi cannot be mounted during provisioning", mountpoint)
+	if reservedLayoutMountpoint(clean) {
+		return fmt.Errorf("partition layout mountpoint %q is not supported in non-A/B layout provisioning; /boot and the mountpoints below it other than /boot/efi, /etc, /etc/booty, /proc, /sys, /dev and /run cannot be mounted during provisioning", mountpoint)
 	}
 	if clean != "/" && clean != "/boot/efi" && strings.EqualFold(strings.TrimSpace(filesystem), "vfat") {
 		return fmt.Errorf("partition layout mountpoint %q: vfat is supported for /boot/efi only in non-A/B layout provisioning", mountpoint)
 	}
 	return nil
+}
+
+// reservedLayoutMountpoint reports the mountpoints that a non-A/B layout
+// cannot mount. /boot/grub and /etc/booty hold the GRUB configuration and
+// the marker that the EFI fallback loader looks for on the root filesystem.
+func reservedLayoutMountpoint(clean string) bool {
+	if clean == "/boot/efi" {
+		return false
+	}
+	if clean == "/etc" {
+		return true
+	}
+	for _, tree := range []string{"/boot", "/etc/booty", "/proc", "/sys", "/dev", "/run"} {
+		if clean == tree || strings.HasPrefix(clean, tree+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // waitForDisks waits once per run for the block devices to settle
@@ -3517,6 +3538,15 @@ func (o *Orchestrator) releaseStaleTargetMounts(_ context.Context) error {
 	if err := o.unmountSharedData(); err != nil {
 		// The recursive unmount below also covers these mounts.
 		o.log.Warn("failed to unmount shared data from earlier attempt", "error", err)
+	}
+	if mnt := o.imageLayoutMount; mnt != "" {
+		if isMountPoint(mnt) {
+			if err := unmountSharedDataPart(o.disk, mnt); err != nil {
+				return fmt.Errorf("unmounting image root %s left by an earlier attempt: %w", mnt, err)
+			}
+		}
+		_ = os.Remove(mnt)
+		o.imageLayoutMount = ""
 	}
 	if err := unmountTargetTree(o.disk, newroot); err != nil {
 		return fmt.Errorf("unmounting target root %s left by an earlier attempt: %w", newroot, err)
