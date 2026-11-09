@@ -125,7 +125,7 @@ RUN set -eux; \
       > /tmp/booty-efi-fallback.cfg && \
     grub-mkstandalone -O "${grub_platform}" -o "/out/${efi_loader}" \
       --locales="" --fonts="" \
-      --modules="part_gpt part_msdos fat ext2 search search_fs_file configfile normal" \
+      --modules="part_gpt part_msdos fat ext2 xfs lvm search search_fs_file configfile normal" \
       "boot/grub/grub.cfg=/tmp/booty-efi-fallback.cfg"
 
 # Build FRR (BGP/BFD/Zebra) for EVPN networking — use FRR official stable repo

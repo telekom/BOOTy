@@ -614,3 +614,23 @@ func TestDockerfileFlavorsLinkBootyCommand(t *testing.T) {
 		t.Fatalf("found %d BOOTy /init copies, want one per flavor", copies)
 	}
 }
+
+// TestDockerfileEFIFallbackLoaderReadsLayoutRoots: the bundled EFI fallback
+// loader searches the root for its marker and grub.cfg. A PARTITION_LAYOUT
+// root can be ext4 or xfs, on a partition or an LVM volume.
+func TestDockerfileEFIFallbackLoaderReadsLayoutRoots(t *testing.T) {
+	data, err := os.ReadFile("initrd.Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`--modules="([^"]*)"`).FindSubmatch(data)
+	if m == nil {
+		t.Fatal("no grub-mkstandalone --modules in initrd.Dockerfile")
+	}
+	modules := strings.Fields(string(m[1]))
+	for _, want := range []string{"part_gpt", "fat", "ext2", "xfs", "lvm", "search_fs_file", "configfile"} {
+		if !slices.Contains(modules, want) {
+			t.Errorf("EFI fallback loader modules %v lack %s", modules, want)
+		}
+	}
+}
