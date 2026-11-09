@@ -66,7 +66,7 @@ func rangeValidator(resp *http.Response) string {
 }
 
 // getRange GETs bytes start to end (end < 0: to the end) of an object of
-// total bytes (total < 0: unknown) with the strong ETag etag. If-Range and
+// total bytes with the strong ETag etag. If-Range and
 // If-Match both bind the request to that version, and the Content-Range
 // must match. The body is guarded by the idle timeout.
 func getRange(ctx context.Context, url, etag string, start, end, total int64) (io.ReadCloser, error) {
@@ -106,13 +106,9 @@ func getRange(ctx context.Context, url, etag string, start, end, total int64) (i
 }
 
 // contentRangeMatches reports whether the Content-Range value v starts at
-// start and, when total >= 0, belongs to an object of total bytes.
+// start and belongs to an object of total bytes.
 func contentRangeMatches(v string, start, total int64) bool {
 	var gotStart, gotEnd, gotTotal int64
-	if total < 0 {
-		_, err := fmt.Sscanf(v, "bytes %d-", &gotStart)
-		return err == nil && gotStart == start
-	}
 	_, err := fmt.Sscanf(v, "bytes %d-%d/%d", &gotStart, &gotEnd, &gotTotal)
 	return err == nil && gotStart == start && gotTotal == total
 }
@@ -128,8 +124,9 @@ func wrapDownload(ctx context.Context, url string, resp *http.Response, cancel c
 	}
 	etag := rangeValidator(resp)
 	// A transparently decompressed body has other offsets than its ranges.
-	if etag == "" || resp.Uncompressed || resp.Header.Get("Content-Encoding") != "" {
-		slog.Info("image server does not offer ranges with a strong ETag: one GET without resume", "url", RedactURL(url))
+	// Without a Content-Length a resumed body could end early unnoticed.
+	if etag == "" || resp.ContentLength < 0 || resp.Uncompressed || resp.Header.Get("Content-Encoding") != "" {
+		slog.Info("image server does not offer ranges with a strong ETag and a length: one GET without resume", "url", RedactURL(url))
 		return body
 	}
 	if opts.ParallelRanges > 1 && resp.ContentLength > rangeChunkSize {
@@ -161,7 +158,7 @@ type resumingBody struct {
 	ctx     context.Context
 	url     string
 	etag    string
-	size    int64 // Content-Length of the first response, -1 if unknown
+	size    int64 // Content-Length of the first response
 	body    io.ReadCloser
 	off     int64
 	resumes int
@@ -174,7 +171,7 @@ func (b *resumingBody) Read(p []byte) (int, error) {
 		b.off += int64(n)
 		// net/http reports a body shorter than its Content-Length as
 		// io.ErrUnexpectedEOF; a plain io.EOF ends a complete body.
-		if err == nil || (err == io.EOF && (b.size < 0 || b.off == b.size)) || b.ctx.Err() != nil { //nolint:errorlint // io.EOF is never wrapped
+		if err == nil || (err == io.EOF && b.off == b.size) || b.ctx.Err() != nil { //nolint:errorlint // io.EOF is never wrapped
 			return n, err //nolint:wrapcheck // io.EOF must stay unwrapped
 		}
 		if b.err = b.resume(err); b.err != nil || n > 0 {

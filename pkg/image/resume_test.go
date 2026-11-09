@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -199,5 +200,67 @@ func TestRangeReaderCloseStopsWorkers(t *testing.T) {
 			t.Fatalf("%d goroutines after Close, %d before", runtime.NumGoroutine(), before)
 		}
 		runtime.Gosched()
+	}
+}
+
+// TestFetchRangeEmptyBody: an empty 206 body is a short range, not the end
+// of the image; readers above take a plain io.EOF as the end.
+func TestFetchRangeEmptyBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Range", "bytes 0-99/100")
+		w.Header().Set("Content-Length", "0")
+		w.WriteHeader(http.StatusPartialContent)
+	}))
+	defer srv.Close()
+	c := fetchRange(t.Context(), srv.URL, `"v1"`, 0, 99, 100, time.Millisecond)
+	if !errors.Is(c.err, io.ErrUnexpectedEOF) {
+		t.Fatalf("fetchRange() error = %v, want io.ErrUnexpectedEOF", c.err)
+	}
+}
+
+// TestResumeNeedsContentLength: without a Content-Length a resumed body
+// could end early unnoticed, so the download does not resume.
+func TestResumeNeedsContentLength(t *testing.T) {
+	withDownloadOptions(t, DownloadOptions{Resume: true})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("ETag", `"v1"`)
+		_, _ = w.Write([]byte("chunked"))
+		w.(http.Flusher).Flush() // no Content-Length: chunked
+	}))
+	defer srv.Close()
+	body, err := httpGetWithRetry(t.Context(), srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = body.Close() }()
+	if _, ok := body.(*resumingBody); ok {
+		t.Fatal("a body of unknown length resumes")
+	}
+}
+
+// TestRangeReaderFailsFast: a range that fails for good cancels the others,
+// so a stalled earlier range does not delay the error.
+func TestRangeReaderFailsFast(t *testing.T) {
+	withDownloadOptions(t, DownloadOptions{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.Header.Get("Range"), "bytes=0-") {
+			<-r.Context().Done() // the first range stalls
+			return
+		}
+		w.WriteHeader(http.StatusPreconditionFailed)
+	}))
+	defer srv.Close()
+	r := newRangeReader(t.Context(), srv.URL, `"v1"`, 4*rangeChunkSize, 3)
+	defer func() { _ = r.Close() }()
+	done := make(chan error, 1)
+	go func() { _, err := r.Read(make([]byte, 1)); done <- err }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, errImageChanged) {
+			t.Fatalf("Read() = %v, want errImageChanged", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Read() waits for the stalled range after another range failed for good")
 	}
 }

@@ -746,10 +746,11 @@ stream before the write, so it still covers every byte of the image.
 (`-image.bench-target` selects a block device).
 
 Two options make HTTP downloads more robust or faster, in every image mode.
-Both need a server that sends `Accept-Ranges: bytes` and a strong `ETag`,
-like common static file servers and object stores; without them, or with
-`Content-Encoding`, BOOTy logs `image server does not offer ranges with a
-strong ETag` and downloads in one GET. Every ranged GET carries `If-Range`
+Both need a server that sends `Accept-Ranges: bytes`, a strong `ETag` and a
+`Content-Length`, like common static file servers and object stores; without
+them, or with `Content-Encoding`, BOOTy logs `image server does not offer
+ranges with a strong ETag and a length` and downloads in one GET. A range that
+fails for good (changed image, client error) stops the other ranges at once. Every ranged GET carries `If-Range`
 and `If-Match` with that ETag, and the `Content-Range` must name the same
 start and size, so the bytes always come from the same image. When the image
 changed on the server, the attempt fails. A client error (`403`, `404`,

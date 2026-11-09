@@ -2,6 +2,7 @@ package image
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,7 +21,8 @@ type chunk struct {
 // rangeReader downloads an object of a known size as ranged GETs, n at a
 // time, and returns the bytes in order.
 type rangeReader struct {
-	cancel context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelCauseFunc
 	order  chan chan chunk // the pending chunks in order
 	cur    []byte
 	err    error
@@ -29,10 +31,11 @@ type rangeReader struct {
 // newRangeReader fetches url (n >= 2) with n ranged GETs at a time: n-1
 // queued and the one Read waits for. With the chunk that Read passes on, it
 // holds about n+1 chunks. Every range is bound to etag, so all bytes come
-// from the same object.
+// from the same object. A range that fails for good cancels all others, and
+// Read returns its error.
 func newRangeReader(ctx context.Context, url, etag string, size int64, n int) *rangeReader {
-	ctx, cancel := context.WithCancel(ctx)
-	r := &rangeReader{cancel: cancel, order: make(chan chan chunk, n-1)}
+	ctx, cancel := context.WithCancelCause(ctx)
+	r := &rangeReader{ctx: ctx, cancel: cancel, order: make(chan chan chunk, n-1)}
 	step, backoff := rangeChunkSize, retryBackoffBase
 	go func() {
 		defer close(r.order)
@@ -44,7 +47,13 @@ func newRangeReader(ctx context.Context, url, etag string, size int64, n int) *r
 				return
 			}
 			end := min(off+step, size) - 1
-			go func() { result <- fetchRange(ctx, url, etag, off, end, size, backoff) }()
+			go func() {
+				c := fetchRange(ctx, url, etag, off, end, size, backoff)
+				if c.err != nil {
+					cancel(c.err) // only the first cause is kept
+				}
+				result <- c
+			}()
 		}
 	}()
 	return r
@@ -60,6 +69,9 @@ func fetchRange(ctx context.Context, url, etag string, off, end, size int64, bac
 		if err == nil {
 			_, err = io.ReadFull(body, buf)
 			_ = body.Close()
+			if errors.Is(err, io.EOF) { // an empty body: readers above take io.EOF as the end
+				err = io.ErrUnexpectedEOF
+			}
 		}
 		if err == nil {
 			return chunk{data: buf}
@@ -88,6 +100,9 @@ func (r *rangeReader) Read(p []byte) (int, error) {
 			continue
 		}
 		c := <-next
+		if c.err != nil {
+			c.err = context.Cause(r.ctx) // the range that failed first, not the ones it canceled
+		}
 		r.cur, r.err = c.data, c.err
 	}
 	n := copy(p, r.cur)
@@ -96,6 +111,6 @@ func (r *rangeReader) Read(p []byte) (int, error) {
 }
 
 func (r *rangeReader) Close() error {
-	r.cancel()
+	r.cancel(nil)
 	return nil
 }

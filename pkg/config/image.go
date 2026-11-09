@@ -80,7 +80,8 @@ type ImageConfig struct {
 	// Resume continues an HTTP download that breaks mid-body with a ranged
 	// GET from the last byte received, bound to the strong ETag of the
 	// first response (If-Range, If-Match), so the bytes come from the same
-	// image. Servers without ranges or a strong ETag download in one GET.
+	// image. Servers without ranges, a strong ETag or a Content-Length
+	// download in one GET.
 	// Default: false (a break fails the attempt; the step retry downloads
 	// from the first byte)
 	Resume bool `yaml:"resume,omitempty" json:"resume,omitempty"`
