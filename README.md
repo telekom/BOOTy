@@ -993,6 +993,37 @@ gh attestation verify "oci://ghcr.io/telekom/booty:${VERSION_NO_V}" \
 The per-arch `-amd64`/`-arm64` image tags and the ORAS artifact refs above are
 signed with cosign but have no separate provenance attestation.
 
+#### Reproducible builds
+
+The initramfs files are reproducible: the same commit, base images and
+Debian packages give the same bytes. `hack/pack-initramfs.sh` sorts the cpio
+entries, stamps every entry with `SOURCE_DATE_EPOCH` and owner root, numbers
+the inodes in archive order (`cpio --reproducible`) and compresses without
+names or times. The release passes the commit time as `SOURCE_DATE_EPOCH`;
+other builds use 1980-01-01. The `Reproducible Initramfs` CI job builds the
+default, split, slim, gobgp and micro targets for amd64 twice, each in a new
+builder with an empty cache, and fails if one byte differs; arm64 uses the
+same packing.
+
+To rebuild a release file and compare it with the published checksum, check
+out the tag and build the flavor with the same arguments as `release-v2.yml`:
+
+```bash
+git checkout "${VERSION}"
+docker buildx build --platform linux/amd64 \
+  --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" \
+  --build-arg "BOOTY_VERSION=${VERSION_NO_V}" \
+  --build-arg "BOOTY_BUILD=$(git rev-parse HEAD)" \
+  --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" \
+  --build-arg "BOOTY_FLAVOR=full" \
+  --output type=local,dest=out -f initrd.Dockerfile .
+echo "$(cut -d' ' -f1 default-amd64-initramfs.cpio.zst.sha256)  out/initramfs.cpio.zst" | sha256sum -c
+```
+
+The Debian packages come from the live mirrors, so a rebuild matches only
+while the mirrors still serve the package versions of the release.
+`hack/check-reproducible.sh <platform> <target>...` runs the CI check locally.
+
 ### Telemetry and Metrics
 
 `TELEMETRY_ENABLED=true` makes BOOTy post a metrics summary when provisioning
