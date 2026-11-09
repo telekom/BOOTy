@@ -369,10 +369,14 @@ RUN strip --strip-all \
 # that caused CI failures when the site was unreachable.
 FROM busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6 AS busybox-bin
 
-FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS busybox
+# The packages on their own stage, so sbom-inputs can export their database
+# without building the ramdisk.
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS busybox-packages
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     cpio ca-certificates zstd cloud-guest-utils \
     && rm -rf /var/lib/apt/lists/*
+
+FROM busybox-packages AS busybox
 WORKDIR /build/initramfs
 RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/console c 5 1 && \
@@ -521,8 +525,8 @@ FROM scratch AS sbom-inputs
 COPY --from=tools /usr/lib/os-release os-release
 COPY --from=tools /var/lib/dpkg/status dpkg/tools/status
 COPY --from=tools /var/lib/dpkg/info/ dpkg/tools/info/
-COPY --from=busybox /var/lib/dpkg/status dpkg/busybox/status
-COPY --from=busybox /var/lib/dpkg/info/ dpkg/busybox/info/
+COPY --from=busybox-packages /var/lib/dpkg/status dpkg/busybox/status
+COPY --from=busybox-packages /var/lib/dpkg/info/ dpkg/busybox/info/
 COPY --from=frr /var/lib/dpkg/status dpkg/frr/status
 COPY --from=frr /var/lib/dpkg/info/ dpkg/frr/info/
 COPY --from=frr /frrouting-packages dpkg/frr/frrouting-packages

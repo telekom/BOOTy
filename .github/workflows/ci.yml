@@ -371,8 +371,14 @@ jobs:
             "${cat[@]}" "${r}" | cpio -itv --quiet | awk '/^-/ {sub(/^\.?\/?/, "/", $9); print $9}' | sort > want-files.txt
             jq -r '.components[] | select(.type == "file") | .name' "${r%.cpio.*}.cdx.json" | sort > got-files.txt
             diff -u want-files.txt got-files.txt || { echo "::error::${r}: SBOM file list differs from the ramdisk"; exit 1; }
-            jq -r '.files[].fileName | "/" + ltrimstr("/")' "${r%.cpio.*}.spdx.json" | sort > got-files.txt
-            diff -u want-files.txt got-files.txt || { echo "::error::${r}: SPDX file list differs from the ramdisk"; exit 1; }
+            # SPDX also lists directories and links: every regular file,
+            # and none of the files the generator adds for syft.
+            jq -r '.files[].fileName | "/" + ltrimstr("/")' "${r%.cpio.*}.spdx.json" | sort -u > got-files.txt
+            missing=$(comm -23 want-files.txt got-files.txt)
+            added=$(grep -E '^(/var/lib/dpkg/|/etc/os-release$)' got-files.txt || true)
+            if [ -n "${missing}${added}" ]; then
+              echo "::error::${r}: SPDX lacks ${missing:-nothing} and lists ${added:-nothing}"; exit 1
+            fi
             echo "${r}: $(wc -l < got-files.txt) files"
           done
 

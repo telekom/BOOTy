@@ -113,7 +113,7 @@ def open_ramdisk(path):
         return gzip.open(path)
     if path.endswith(".cpio.zst"):
         return io.BytesIO(subprocess.run(["zstd", "-dcq", path], check=True, stdout=subprocess.PIPE).stdout)
-    sys.exit(f"ramdisk-sbom: {path} is not a .cpio.zst or .cpio.gz file")
+    raise SystemExit(f"ramdisk-sbom: {path} is not a .cpio.zst or .cpio.gz file")
 
 
 def stanzas(text):
@@ -292,7 +292,13 @@ def add_sources_spdx(doc, sources, built):
         contained = [files[f] for f in built[s["name"]] if f in files]
         # SPDX: a package that contains files has them analyzed and carries
         # their verification code.
-        analyzed = {"filesAnalyzed": True, "packageVerificationCode": verification_code(contained)} if contained else {"filesAnalyzed": False}
+        analyzed = {"filesAnalyzed": False}
+        if contained:
+            analyzed = {
+                "filesAnalyzed": True,
+                "packageVerificationCode": verification_code(contained),
+                "licenseInfoFromFiles": ["NOASSERTION"],
+            }
         doc["packages"].append(
             {
                 "name": s["name"],

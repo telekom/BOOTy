@@ -267,6 +267,7 @@ class RamdiskSBOMTest(unittest.TestCase):
             spdx["relationships"],
         )
         self.assertTrue(pkg["filesAnalyzed"])
+        self.assertEqual(pkg["licenseInfoFromFiles"], ["NOASSERTION"])
         self.assertEqual(
             pkg["packageVerificationCode"]["packageVerificationCodeValue"],
             hashlib.sha1(hashlib.sha1(SFDISK_BUILT).hexdigest().encode()).hexdigest(),
