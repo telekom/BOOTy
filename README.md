@@ -1689,6 +1689,7 @@ vrnetlab topologies and the test levels.
 | [docs/provisioning-report.md](docs/provisioning-report.md) | Machine-readable report of a provision, in the installed OS and the log |
 | [docs/sysext-provisioning.md](docs/sysext-provisioning.md) | Optional systemd-sysext loading while provisioning |
 | [docs/gobgp-evpn-guide.md](docs/gobgp-evpn-guide.md) | GoBGP EVPN guide |
+| [docs/rfc-compliance.md](docs/rfc-compliance.md) | RFC compliance audit of the networking stack |
 | [docs/serial-console-resolution.md](docs/serial-console-resolution.md) | Serial console resolution for the installed OS |
 | [docs/e2e-test-matrix.md](docs/e2e-test-matrix.md) | End-to-end test matrix |
 | [docs/size-optimization.md](docs/size-optimization.md) | Initramfs size optimization |
