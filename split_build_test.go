@@ -120,7 +120,7 @@ func TestReleaseSplitAssetsNameTheReleasedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got []string
+	got := make([]string, 0, len(entries))
 	for _, e := range entries {
 		got = append(got, e.Name())
 	}
