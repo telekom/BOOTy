@@ -3,6 +3,7 @@
 package bfd
 
 import (
+	"encoding/binary"
 	"net"
 	"net/netip"
 	"testing"
@@ -30,11 +31,11 @@ func TestRFC5880PacketFields(t *testing.T) {
 	if b[3] != 24 || len(b) != 24 {
 		t.Errorf("length = %d (%d bytes), want 24", b[3], len(b))
 	}
-	if p.RequiredMinEchoRxUS != 50_000 {
-		t.Errorf("Required Min Echo RX = %d us, want 50000 (FRR bfdd default)", p.RequiredMinEchoRxUS)
+	if echo := binary.BigEndian.Uint32(b[20:24]); echo != 50_000 {
+		t.Errorf("Required Min Echo RX = %d us, want 50000 (FRR bfdd default)", echo)
 	}
-	if p.DesiredMinTxUS < 1_000_000 {
-		t.Errorf("Desired Min TX before Up = %d us, want at least 1 s", p.DesiredMinTxUS)
+	if tx := binary.BigEndian.Uint32(b[12:16]); tx < 1_000_000 {
+		t.Errorf("Desired Min TX before Up = %d us, want at least 1 s", tx)
 	}
 	if p.MyDiscriminator == 0 {
 		t.Error("My Discriminator is zero")

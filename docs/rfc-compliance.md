@@ -79,7 +79,7 @@ New tests added by this audit:
 
 - `pkg/network/gobgp/rfc_wire_test.go`: `TestRFCWireType5`,
   `TestRFCWireType3`, `TestRFCWireType2` encode the EVPN routes BOOTy
-  originates with GoBGP and check every field on the wire, the VXLAN
+  originates with GoBGP and check the NLRI bytes and every attribute BOOTy sets, the VXLAN
   encapsulation community of [#746] included, and the type 1 route
   distinguisher of [#710].
 - `pkg/network/bfd/rfc_test.go`: `TestRFC5880PacketFields`,
@@ -165,7 +165,7 @@ ranked: the legacy FRR profile has none either.
 
 | ID | RFC | Fixed by | Test |
 |---|---|---|---|
-| RFC7606-EVPN-PANIC | 7606 §5.3 | GoBGP 4 ([#699]) | `TestEVPNDecodeTruncatedNLRIReturnsError` (from [#755]) |
+| RFC7606-EVPN-PANIC | 7606 §5.3 | GoBGP 4 ([#699]) | `TestEVPNDecodeTruncatedNLRIReturnsError` (on `main` since [#699], proposed in the closed [#755]) |
 | RFC7606-TYPED-NLRI | 7606 §5.4 | fork ([#699]), upstream v4.11.0 ([#874]) | `Test_EVPNUnknownRouteTypeIsDiscarded`, `TestProcessMessageEVPNUnknownRouteTypeOnly` (GoBGP) |
 | RFC4271-COLLISION, RFC4271-COLLISION-DIALED | 4271 §6.8, §8.2.2 | GoBGP 4 and the fork ([#699], [#808], [#831], [#884]) | `TestResolveCollision`, `TestCollisionResolvedByGoBGPKeepsSurvivingConnection`, `TestCollisionLoserClosedOnlyAfterItsOpen`, `TestFSMHandlerOpensent_DialedOutgoingConnKeptForCollision` (GoBGP); `TestCollisionAfterCarrierLoss`; lab `TestProdTplOneDropPerFault` |
 | RFC4724-NEWCONN | 4724 §4.2 | fork ([#699]), upstream v4.11.0 with the fork's F-bit gate ([#876]) | `TestFSMHandlerEstablished_NewConnection`, `TestNewConnectionAfterTuplesFromEarlierSessionIsCollision` (GoBGP) |
@@ -197,7 +197,7 @@ ranked: the legacy FRR profile has none either.
 | ID | § | Requirement | Owner | Status | Evidence, impact, fix | Verified |
 |---|---|---|---|---|---|---|
 | 4271-1 | 4.2 | OPEN Version MUST be 4; Unsupported Version Number otherwise | GoBGP | GOBGP: COMPLIANT | `gobgp@v4.11.0-booty.6/pkg/packet/bgp/validate.go:377` | reading |
-| 4271-2 | 4.2, 6.2 | Hold Time MUST be 0 or at least 3; Unacceptable Hold Time otherwise | GoBGP, BOOTy | GOBGP: COMPLIANT | receive: `validate.go:425`; send: BOOTy rejects 1 and 2 (`pkg/network/gobgp/config.go:517`, `:497`), tests `TestScenarioBGPTimers`, `TestValidateSessions` | test |
+| 4271-2 | 4.2, 6.2 | Hold Time MUST be 0 or at least 3; Unacceptable Hold Time otherwise | GoBGP, BOOTy | GOBGP: COMPLIANT | receive: `validate.go:425`; send: BOOTy rejects 1 and 2, and also 0 (FRR `timers 0 0`, which GoBGP would replace with 30/90; a local choice the RFC allows) (`pkg/network/gobgp/config.go:517`, `:497`), tests `TestScenarioBGPTimers`, `TestValidateSessions` | test |
 | 4271-3 | 4.2 | BGP Identifier MUST be an IPv4 address of the speaker, the same for every peer | BOOTy | COMPLIANT | router ID = underlay IPv4, validated in `config.go:448`; one router ID for all peers (`underlay.go:528`) | reading |
 | 4271-4 | 4.4, 10 | KEEPALIVE not more often than once per second; RECOMMENDED one third of the hold time | BOOTy, GoBGP | COMPLIANT | BOOTy rejects a keepalive above hold/3 (`config.go:521`). GoBGP keeps the configured keepalive and uses hold/3 only when the negotiated hold time is below the configured one (`gobgp@v4.11.0-booty.6/pkg/server/fsm.go:927` to `:931`) | reading |
 | 4271-5 | 4.2 | Hold timer MUST be the smaller of the configured and received hold time | GoBGP | GOBGP: COMPLIANT | `fsm.go:914` | reading |
@@ -354,7 +354,7 @@ ranked: the legacy FRR profile has none either.
 | 7606-2 | 3 (c), (g) | Duplicate attributes: discard all but the first; duplicate MP_REACH/MP_UNREACH: session reset | GoBGP | GOBGP: COMPLIANT | `validate.go:29` to `:72` | reading |
 | 7606-3 | 3 (d) | Missing well-known mandatory attribute: treat-as-withdraw | GoBGP | GOBGP: COMPLIANT | `validate.go:84` to `:102` | reading |
 | 7606-4 | 7.x | Per-attribute handling (ORIGIN, AS_PATH, NEXT_HOP, MED, LOCAL_PREF, communities: treat-as-withdraw; ATOMIC_AGGREGATE, AGGREGATOR: attribute discard; MP_REACH/MP_UNREACH: AFI/SAFI disable) | GoBGP | GOBGP: COMPLIANT | `bgp.go:18000` | reading |
-| 7606-5 | 5.3 | A malformed NLRI in MP_REACH_NLRI ends in session reset or AFI/SAFI disable | GoBGP | GOBGP: COMPLIANT | RFC7606-EVPN-PANIC at the first audit: GoBGP 3.37.0 panicked in the EVPN route type decoders for short route types 1 to 4, before any check of the negotiated families, so any BGP peer could end BOOTy (PID 1). GoBGP 4.10.0 ([#699]) returns a MessageError (`bgp.go:2893` and the other decoders); `TestEVPNDecodeTruncatedNLRIReturnsError` pins it. Defence in depth: [#765] and [#787] (merged) reboot after a kernel panic (`panic=10`). The panic regression test of [#755] (closed) is on `main` as `pkg/network/gobgp/rfc7606_decode_test.go` | test |
+| 7606-5 | 5.3 | A malformed NLRI in MP_REACH_NLRI ends in session reset or AFI/SAFI disable | GoBGP | GOBGP: COMPLIANT | RFC7606-EVPN-PANIC at the first audit: GoBGP 3.37.0 panicked in the EVPN route type decoders for short route types 1 to 4, before any check of the negotiated families, so any BGP peer could end BOOTy (PID 1). GoBGP 4.10.0 ([#699]) returns a MessageError (`bgp.go:2893` and the other decoders); `TestEVPNDecodeTruncatedNLRIReturnsError` pins it. Defence in depth: [#765] and [#787] (merged) reboot after a kernel panic (`panic=10`). The panic regression test proposed in [#755] (closed) is on `main` since [#699] as `pkg/network/gobgp/rfc7606_decode_test.go` | test |
 | 7606-6 | 5.4 | Routes with unrecognized NLRI types of a typed family (EVPN) MUST be discarded | GoBGP | GOBGP: COMPLIANT | RFC7606-TYPED-NLRI at the first audit (an unknown EVPN route type disabled L2VPN EVPN on the session, in 3.37.0 and 4.10.0). Upstream v4.11.0 skips the NLRI by its length (`bgp.go:3582`; 97833030, [osrg/gobgp#3742](https://github.com/osrg/gobgp/issues/3742)); GoBGP tests `Test_EVPNUnknownRouteTypeIsDiscarded`, `TestProcessMessageEVPNUnknownRouteTypeOnly` | GoBGP test |
 | 7606-7 | n/a | BOOTy's own route processing does not fail on bad input | BOOTy | COMPLIANT | `processRouteUpdate` skips undecodable NLRIs and attributes (`overlay.go:870`), `TestProcessRouteUpdateGuardAndL2Branches`, `TestRouterMACInCommunitiesIgnoresUnmarshalFailures` | test |
 | 7606-8 | 8 | Errors SHOULD be logged | GoBGP, BOOTy | COMPLIANT | GoBGP logs "treated as withdraw" (`fsm.go` `handlingError`); BOOTy logs skipped routes | reading |
@@ -437,7 +437,7 @@ connection; a packet for no session is dropped.
 | 5881-6 | 4 | Source port 49152 to 65535, one per session | BOOTy | COMPLIANT | `manager_linux.go:448`; `TestRFC5881SourcePortAndTTL` | test |
 | 5881-7 | 4 | Source port SHOULD be unique per system | BOOTy | COMPLIANT | one bound socket per session; two sessions bound to different devices could share a port number (rare) | reading |
 | 5881-8 | 4 | Demultiplexing by the BFD mechanisms, not by port | BOOTy | COMPLIANT | by discriminator (`manager_linux.go:379`) | reading |
-| 5881-9 | 5 | All packets sent with TTL/Hop Limit 255 | BOOTy | COMPLIANT | `manager_linux.go:468`; `TestRFC5881SourcePortAndTTL`, `TestManagerSingleHopTTL` | test |
+| 5881-9 | 5 | All packets sent with TTL/Hop Limit 255 | BOOTy | COMPLIANT | `manager_linux.go:468`; `TestRFC5881SourcePortAndTTL` (IPv4), `TestManagerSingleHopTTL`; the IPv6 Hop Limit (`SetHopLimit`) is checked by reading only | test |
 | 5881-10 | 5 | Received packets with TTL other than 255 discarded | BOOTy | COMPLIANT | `manager_linux.go:356`; `TestManagerSingleHopTTL` | test |
 | 5881-11 | 6 | Packets only over the one-hop path (bound to the interface) | BOOTy | COMPLIANT | `SO_BINDTODEVICE` (`manager_linux.go:488`) on the send and receive sockets | reading |
 | 5881-12 | 6 | Multiaccess: source and destination on the subnet | Kernel | COMPLIANT | kernel source selection on the bound interface | reading |
@@ -801,7 +801,7 @@ audited tree, except [#755] (closed; its test is on `main`).
 | [#699] GoBGP 4.10.0 | RFC7606-EVPN-PANIC, RFC4271-COLLISION, and the first fork tags for RFC7606-TYPED-NLRI, RFC4724-NEWCONN, RFC8950-ENHE-CHECK, RFC8950-ENHE-EVPN, 7606-9, 9047-1 |
 | [#808], [#811], [#831] fork tags `v4.10.0-booty.3` to `booty.16` | 9384-1, 7313-1 to 7313-5, 7911-8, 4271-17, 4271-31 to 4271-34 |
 | [#874] fork on upstream v4.11.0, [#851], [#876], [#884] (`v4.11.0-booty.6`) | upstream now has RFC7606-TYPED-NLRI, RFC8950-ENHE-CHECK, RFC8950-ENHE-EVPN, RFC4724-NEWCONN and 9384-2 (Hard Reset with BFD Down); the fork keeps 4271-17, 4271-31, 4271-33, 4271-34, 4724-10 (F-bit gate, [#876]), 7313, 7911-8, 9384-1 |
-| [#755] (closed) | panic regression test of RFC7606-EVPN-PANIC, on `main` as `pkg/network/gobgp/rfc7606_decode_test.go` |
+| [#755] (closed) | panic regression test of RFC7606-EVPN-PANIC, on `main` since [#699] as `pkg/network/gobgp/rfc7606_decode_test.go` |
 | [#710] | RFC7432-RD (7432-12, 8365-21, 9136-3); MED 0; BFD Required Min Echo RX 50 ms |
 | [#746] | RFC8365-ENCAP |
 | [#747], [#799] | RFC9136-RMAC, RFC9136-ESIGW, RFC9136-ESI, RFC9136-LABEL0 |
