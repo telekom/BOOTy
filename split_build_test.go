@@ -111,7 +111,7 @@ func TestReleaseSplitAssetsNameTheReleasedFiles(t *testing.T) {
 	}
 
 	rel := t.TempDir()
-	cmd := exec.Command(script, out, "amd64")
+	cmd := exec.CommandContext(t.Context(), script, out, "amd64")
 	cmd.Dir = rel
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("release-split-assets.sh: %v\n%s", err, b)
@@ -149,7 +149,7 @@ func TestReleaseSplitAssetsNameTheReleasedFiles(t *testing.T) {
 		t.Fatalf("manifest lists %v, want %v", listed, want)
 	}
 	for _, sums := range []string{"split-amd64-SHA256SUMS", "split-amd64-SHA256SUMS.sha256"} {
-		check := exec.Command("sha256sum", "-c", "--quiet", sums)
+		check := exec.CommandContext(t.Context(), "sha256sum", "-c", "--quiet", sums)
 		check.Dir = rel
 		if b, err := check.CombinedOutput(); err != nil {
 			t.Errorf("sha256sum -c %s next to the released files: %v\n%s", sums, err, b)
@@ -160,7 +160,7 @@ func TestReleaseSplitAssetsNameTheReleasedFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(out, "frr.cpio.zst"), []byte("tampered"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd = exec.Command(script, out, "amd64")
+	cmd = exec.CommandContext(t.Context(), script, out, "amd64")
 	cmd.Dir = t.TempDir()
 	if err := cmd.Run(); err == nil {
 		t.Error("release-split-assets.sh accepted a build output that fails its SHA256SUMS")
