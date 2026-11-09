@@ -215,16 +215,10 @@ jobs:
             sha256sum booty-${{ matrix.arch }} > booty-${{ matrix.arch }}.sha256
           fi
           if [ "${{ matrix.flavor }}" = "split" ]; then
-            # Base ramdisk plus one archive per payload (pkg/payload).
-            # SHA256SUMS lists the unprefixed names; it pins the whole set.
-            (cd out-split && sha256sum -c --quiet SHA256SUMS)
-            for part in base frr; do
-              cp "out-split/${part}.cpio.zst" "split-${{ matrix.arch }}-${part}.cpio.zst"
-              sha256sum "split-${{ matrix.arch }}-${part}.cpio.zst" > "split-${{ matrix.arch }}-${part}.cpio.zst.sha256"
-            done
-            cp out-split/vmlinuz "split-${{ matrix.arch }}-vmlinuz"
-            sha256sum "split-${{ matrix.arch }}-vmlinuz" > "split-${{ matrix.arch }}-vmlinuz.sha256"
-            cp out-split/SHA256SUMS "split-${{ matrix.arch }}-SHA256SUMS"
+            # Base ramdisk plus one archive per payload (pkg/payload) and the
+            # vmlinuz, as split-<arch>-*, with a split-<arch>-SHA256SUMS
+            # over the released names.
+            hack/release-split-assets.sh out-split "${{ matrix.arch }}"
           elif [ -f out-${{ matrix.flavor }}/initramfs.cpio.zst ]; then
             cp out-${{ matrix.flavor }}/initramfs.cpio.zst ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst
             sha256sum ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst > ${{ matrix.flavor }}-${{ matrix.arch }}-initramfs.cpio.zst.sha256
@@ -287,6 +281,7 @@ jobs:
             split-${{ matrix.arch }}-vmlinuz
             split-${{ matrix.arch }}-vmlinuz.sha256
             split-${{ matrix.arch }}-SHA256SUMS
+            split-${{ matrix.arch }}-SHA256SUMS.sha256
             *-${{ matrix.arch }}-initramfs.cdx.json*
             *-${{ matrix.arch }}-initramfs.spdx.json*
             split-${{ matrix.arch }}-*.cdx.json*
@@ -454,17 +449,14 @@ jobs:
       - name: Collect provenance subjects
         run: |
           # Subjects are the published release payloads: every file with a
-          # sha256sum-format .sha256 next to it, plus the split SHA256SUMS
-          # manifests, which are published without a .sha256. Each checksum
-          # is re-checked so the attested digest is that of the released file.
+          # sha256sum-format .sha256 next to it (the split SHA256SUMS
+          # manifests included). Each checksum is re-checked so the attested
+          # digest is that of the released file.
           subjects="${RUNNER_TEMP}/provenance-subjects.sha256"
           : > "${subjects}"
           while IFS= read -r -d '' f; do
             (cd "$(dirname "$f")" && sha256sum -c --quiet "$(basename "$f")" && cat "$(basename "$f")") >> "${subjects}"
           done < <(find artifacts -type f -name "*.sha256" -print0 | sort -z)
-          while IFS= read -r -d '' f; do
-            (cd "$(dirname "$f")" && sha256sum "$(basename "$f")") >> "${subjects}"
-          done < <(find artifacts -type f -name "split-*-SHA256SUMS" -print0 | sort -z)
           if [ ! -s "${subjects}" ]; then
             echo "::error::no checksum files found for provenance subjects"
             exit 1
