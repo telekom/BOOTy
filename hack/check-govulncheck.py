@@ -16,10 +16,16 @@ from dataclasses import dataclass
 from typing import Any
 
 
+# The govulncheck version is pinned by the tool directive in hack/tools/go.mod,
+# which Dependabot updates. Its -C flag scans the repository root module.
 GOVULNCHECK = [
     "go",
-    "run",
-    "golang.org/x/vuln/cmd/govulncheck@v1.8.0",
+    "-C",
+    "hack/tools",
+    "tool",
+    "govulncheck",
+    "-C",
+    "../..",
     "-format=json",
     "./...",
 ]

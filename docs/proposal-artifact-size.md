@@ -61,14 +61,17 @@ time dominates.
 against 40 s natively, more for arm64 under QEMU in CI). It is not worth
 the CI time now.
 
-## 3. Load optional payloads as a second initrd
+## 3. Load optional payloads as a second initrd (build done, #782; delivery open)
 
-The Linux kernel unpacks several concatenated cpio archives. FRR (4.2 MB),
-qemu-img (2.3 MB) and ipmitool (1.3 MB) are used only for some
-configurations. A bootloader or iPXE script could load a base archive plus
-an optional archive per feature, so a DHCP-only deployment downloads less.
-This changes how operators deliver the ramdisk, so it needs a design for
-the ISO, PXE and CAPRF paths first.
+The Linux kernel unpacks several concatenated cpio archives, so a boot
+loader can load a base archive plus an optional archive per feature. The
+`split` target ships the default ramdisk as `base.cpio.zst` plus
+`frr.cpio.zst`. qemu-img and ipmitool, which this section also counted,
+left the ramdisk with #815 and #816. Open: no deployment downloads less
+yet. The ISO targets still have FRR built in, and CAPRF does not load the
+split archives yet (CAPRF draft MR !311).
+[proposal-ramdisk-split.md](proposal-ramdisk-split.md) records the
+options and the decision.
 
 ## 4. Release binary build flags
 

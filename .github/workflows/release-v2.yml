@@ -196,9 +196,12 @@ jobs:
           if [ "${{ matrix.flavor }}" != "default" ]; then
             TARGET_ARG="--target=${{ matrix.flavor }}"
           fi
+          # The commit time stamps every ramdisk entry, so a rebuild of the
+          # tag gives the same bytes (README.md, Reproducible builds).
           docker buildx build \
             ${TARGET_ARG} \
             --platform linux/${{ matrix.arch }} \
+            --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" \
             --build-arg "BOOTY_VERSION=${VERSION}" \
             --build-arg "BOOTY_BUILD=${{ github.sha }}" \
             --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" \
@@ -376,13 +379,14 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532
 
       - name: Download all artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -403,6 +407,37 @@ jobs:
               --bundle "${f}.bundle" \
               "$f"
           done
+
+      - name: Collect provenance subjects
+        run: |
+          # Subjects are the published release payloads: every file with a
+          # sha256sum-format .sha256 next to it, plus the split SHA256SUMS
+          # manifests, which are published without a .sha256. Each checksum
+          # is re-checked so the attested digest is that of the released file.
+          subjects="${RUNNER_TEMP}/provenance-subjects.sha256"
+          : > "${subjects}"
+          while IFS= read -r -d '' f; do
+            (cd "$(dirname "$f")" && sha256sum -c --quiet "$(basename "$f")" && cat "$(basename "$f")") >> "${subjects}"
+          done < <(find artifacts -type f -name "*.sha256" -print0 | sort -z)
+          while IFS= read -r -d '' f; do
+            (cd "$(dirname "$f")" && sha256sum "$(basename "$f")") >> "${subjects}"
+          done < <(find artifacts -type f -name "split-*-SHA256SUMS" -print0 | sort -z)
+          if [ ! -s "${subjects}" ]; then
+            echo "::error::no checksum files found for provenance subjects"
+            exit 1
+          fi
+          # The release job flattens all files into one directory.
+          dups=$(awk '{print $2}' "${subjects}" | sort | uniq -d)
+          if [ -n "${dups}" ]; then
+            echo "::error::duplicate provenance subject names: ${dups}"
+            exit 1
+          fi
+          cat "${subjects}"
+
+      - name: Attest build provenance for release files
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/provenance-subjects.sha256
 
       - name: Upload signatures
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -445,7 +480,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -541,14 +576,14 @@ jobs:
       id-token: write
     steps:
       - name: Login to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532
 
       - name: Sign per-arch image
         run: |
@@ -591,9 +626,10 @@ jobs:
       contents: read
       packages: write
       id-token: write
+      attestations: write
     steps:
       - name: Login to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -658,8 +694,34 @@ jobs:
             "${IMAGE}:${IMAGE_TAG}-amd64" \
             "${IMAGE}:${IMAGE_TAG}-arm64"
 
+      - name: Resolve manifest digest
+        id: manifest
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          IMAGE_TAG="${VERSION}"
+          if [ "${{ matrix.flavor }}" = "gobgp" ]; then
+            IMAGE_TAG="${VERSION}-gobgp"
+          fi
+          IMAGE=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${IMAGE_TAG}" | awk '/^Digest:/ {print $2; exit}')
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::could not resolve manifest digest for ${IMAGE}:${IMAGE_TAG} (got '${DIGEST}')"
+            exit 1
+          fi
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Attest build provenance for container image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.manifest.outputs.image }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+          # Storage records need artifact-metadata: write; only attest here.
+          create-storage-record: false
+
       - name: Install Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532
 
       - name: Sign container image
         run: |
@@ -772,7 +834,7 @@ jobs:
           version: "1.3.1"
 
       - name: Login to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -817,7 +879,7 @@ jobs:
             "${{ matrix.artifact }}:application/octet-stream"
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532
 
       - name: Sign OCI artifact
         run: |
@@ -876,7 +938,7 @@ jobs:
           ls -lh release-files/
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3
         with:
           body_path: artifacts/changelog/release-notes.md
           files: release-files/*
@@ -903,7 +965,7 @@ jobs:
           version: "1.3.1"
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532
 
       - name: Login to GHCR
         env:

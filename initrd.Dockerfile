@@ -1,7 +1,10 @@
-# syntax=docker/dockerfile:experimental
+# syntax=docker/dockerfile:1.27.1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+# Dependabot reads only FROM lines, not this syntax directive
+# (dependabot/dependabot-core#4078): update the frontend pin by hand. The build
+# needs only RUN --mount=type=cache, stable since dockerfile:1.2.
 
 # Build LVM2 as an init
-FROM gcc:16 AS lvm
+FROM gcc:16@sha256:9af8c7003ad451f09496c7182f320c58554e10ec080e7038e0aa5e41146c916b AS lvm
 ARG LVM2_VERSION=2.03.27
 ARG LVM2_SHA256=3133415905b9b46d152d064865d52f32eee4fcbeb0e8a69e3510caeaae0c56a9
 # One mirror that is down or fails TLS must not fail the whole build: try
@@ -35,7 +38,7 @@ RUN gcc -O2 -fPIC -static -L command.o dumpconfig.o formats.o lvchange.o lvconve
 RUN strip --strip-all lvm
 
 # Build scripted fdisk (sfdisk)
-FROM gcc:16 AS sfdisk
+FROM gcc:16@sha256:9af8c7003ad451f09496c7182f320c58554e10ec080e7038e0aa5e41146c916b AS sfdisk
 ARG UTIL_LINUX_REF=5305e6c70b274f679329b79c0e1ef5a07e9dc1a6
 RUN apt-get -o Acquire::Retries=5 update -y && apt-get -o Acquire::Retries=5 install -y bison autopoint gettext flex
 RUN set -eu; \
@@ -60,7 +63,7 @@ RUN ./autogen.sh && ./configure --enable-static-programs=sfdisk && make
 RUN strip --strip-all sfdisk.static
 
 # Build BOOTy as an init
-FROM golang:1.27.2-alpine AS dev
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS dev
 ARG BOOTY_VERSION=dev
 ARG BOOTY_BUILD=unknown
 ARG BOOTY_COMMIT_TIME=
@@ -97,7 +100,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o esp-sync ./c
 # Build a removable UEFI fallback loader that BOOTy can copy into a target ESP.
 # The embedded config loads EFI/BOOT/grub.cfg from the ESP; BOOTy writes that
 # handoff config at provisioning time so the selected A/B root slot is explicit.
-FROM debian:trixie-slim AS efi-fallback
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS efi-fallback
 ARG TARGETARCH
 RUN set -eux; \
     apt-get -o Acquire::Retries=5 update; \
@@ -126,7 +129,7 @@ RUN set -eux; \
       "boot/grub/grub.cfg=/tmp/booty-efi-fallback.cfg"
 
 # Build FRR (BGP/BFD/Zebra) for EVPN networking — use FRR official stable repo
-FROM debian:trixie-slim AS frr
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS frr
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     curl gnupg lsb-release ca-certificates && \
     curl --fail --location --show-error --silent \
@@ -177,7 +180,7 @@ RUN mkdir -p /frr-libs && \
 # target OS kernels today) refuse to assemble them. BOOTy creates the
 # DISK_MIRRORING_MODE and explicit RAID arrays that the installed OS assembles.
 # Upstream keeps this by design (commit a4166f1c4893) and has no opt-out.
-FROM debian:trixie-slim AS kernel
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS kernel
 ARG TARGETARCH
 ARG KERNEL_SUITE=
 RUN if [ -n "$KERNEL_SUITE" ]; then \
@@ -285,7 +288,7 @@ RUN if [ -n "$KERNEL_SUITE" ]; then \
     rm -rf /tmp/kernel /tmp/debs /var/lib/apt/lists/*
 
 # Build disk, system, and firmware tools
-FROM debian:trixie-slim AS tools
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS tools
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     binutils \
     mdadm util-linux fdisk e2fsprogs xfsprogs btrfs-progs parted gdisk kpartx dosfstools \
@@ -336,9 +339,9 @@ RUN strip --strip-all \
 # Busybox static binary — sourced from Docker Hub for reliability and
 # Dependabot version tracking.  Eliminates the fragile busybox.net download
 # that caused CI failures when the site was unreachable.
-FROM busybox:1.38.0-musl AS busybox-bin
+FROM busybox:1.38.0-musl@sha256:80e38f9a1b39188b8bdb28879178edb322a4402b081a9aedda1924609decd6f6 AS busybox-bin
 
-FROM debian:trixie-slim AS busybox
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS busybox
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     cpio ca-certificates zstd cloud-guest-utils \
     && rm -rf /var/lib/apt/lists/*
@@ -349,8 +352,9 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/ttyS0 c 4 64
 # Users and groups: root, and frr and frrvty, which the FRR daemons switch
 # to (zebra: "could not lookup user frr" without them). Every flavor gets
-# them, so a ramdisk with FRR never lacks them.
-COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
+# them, so a ramdisk with FRR never lacks them. --chmod: the mode must not
+# depend on the umask of the checkout (reproducible builds).
+COPY --chmod=0644 hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Pre-built static busybox binary from Docker Hub (cached by Docker layer cache)
 COPY --from=busybox-bin /bin/busybox bin/busybox
@@ -445,6 +449,9 @@ COPY --from=frr /frr-libs/ .
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
 
+# pack-initramfs.sh stamps every entry with this time (reproducible builds).
+ARG SOURCE_DATE_EPOCH=315532800
+
 # Drop the libraries that no shipped executable loads, then check in a chroot
 # that every dynamic executable resolves its libraries from the tree alone.
 # Nothing may change the tree between this step and cpio.
@@ -466,6 +473,7 @@ RUN pack-initramfs.sh . /initramfs.cpio.zst
 # SHA256SUMS lists every file, so one pin covers the set.
 FROM busybox AS split-builder
 ARG BOOTY_BUILD=unknown
+ARG SOURCE_DATE_EPOCH=315532800
 COPY hack/split-initramfs.sh /usr/local/bin/
 RUN split-initramfs.sh /build/initramfs /split "$BOOTY_BUILD"
 COPY --from=kernel /vmlinuz /split/vmlinuz
@@ -481,7 +489,7 @@ COPY --from=split-builder /split/ .
 # shim or GRUB (an old version leaves the mirror, so the build fails loudly).
 # The manifest records the versions and SHA-256 sums, and the ISO ships it as
 # /boot/efi-manifest.txt. amd64 only, like ISOLINUX.
-FROM debian:trixie-slim AS efi-boot
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS efi-boot
 ARG SHIM_SIGNED_VERSION=1.51~1+deb13u1+16.1-2~deb13u1
 ARG SHIM_HELPERS_VERSION=1+16.1+2~deb13u1
 ARG GRUB_SIGNED_VERSION=1+2.12+9+deb13u2
@@ -495,7 +503,7 @@ RUN make-efiboot.sh /efiboot.img /efi-manifest.txt
 
 # Shared by every ISO target (and reusable for other ISOs): BIOS ISOLINUX +
 # UEFI El Torito + isohybrid MBR + GPT with an ESP, see hack/make-iso.sh.
-FROM debian:trixie-slim AS iso-tools
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS iso-tools
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     xorriso isolinux syslinux-common \
     && rm -rf /var/lib/apt/lists/*
@@ -516,7 +524,7 @@ FROM scratch AS iso
 COPY --from=iso-builder /booty.iso .
 
 # ── Slim target: BOOTy + busybox shell + minimal tools, no FRR/LVM ────────
-FROM debian:trixie-slim AS slim-builder
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS slim-builder
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends cpio zstd ca-certificates cloud-guest-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
@@ -526,8 +534,9 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/ttyS0 c 4 64
 # Users and groups: root, and frr and frrvty, which the FRR daemons switch
 # to (zebra: "could not lookup user frr" without them). Every flavor gets
-# them, so a ramdisk with FRR never lacks them.
-COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
+# them, so a ramdisk with FRR never lacks them. --chmod: the mode must not
+# depend on the umask of the checkout (reproducible builds).
+COPY --chmod=0644 hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Copy busybox binary and create all applet symlinks (same as default variant).
 # This ensures utilities like tail, grep, dmesg, hostname, ps, and xargs are
@@ -584,6 +593,9 @@ COPY --from=tools /tool-libs/ .
 # of the Debian kernel, and slim ships mdadm and the disk tools.
 COPY --from=kernel /modules/ modules/
 
+# pack-initramfs.sh stamps every entry with this time (reproducible builds).
+ARG SOURCE_DATE_EPOCH=315532800
+
 # Drop the libraries of the tools that slim does not ship, then check in a
 # chroot that every dynamic executable resolves its libraries from the tree
 # alone. Nothing may change the tree between this step and cpio.
@@ -597,7 +609,7 @@ FROM scratch AS slim
 COPY --from=slim-builder /initramfs.cpio.zst .
 
 # ── GoBGP target: like default but without FRR (GoBGP is in-process Go) ───
-FROM debian:trixie-slim AS gobgp-builder
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS gobgp-builder
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends cpio zstd \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
@@ -607,8 +619,9 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/ttyS0 c 4 64
 # Users and groups: root, and frr and frrvty, which the FRR daemons switch
 # to (zebra: "could not lookup user frr" without them). Every flavor gets
-# them, so a ramdisk with FRR never lacks them.
-COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
+# them, so a ramdisk with FRR never lacks them. --chmod: the mode must not
+# depend on the umask of the checkout (reproducible builds).
+COPY --chmod=0644 hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Copy busybox binary and create all applet symlinks (same as default variant).
 # This ensures utilities like tail, pgrep, dmesg, lsblk, hostname, ps, grep,
@@ -691,6 +704,9 @@ COPY --from=tools /tool-libs-full/ .
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
 
+# pack-initramfs.sh stamps every entry with this time (reproducible builds).
+ARG SOURCE_DATE_EPOCH=315532800
+
 # Drop the libraries that no shipped executable loads, then check in a chroot
 # that every dynamic executable resolves its libraries from the tree alone.
 # Nothing may change the tree between this step and cpio.
@@ -742,7 +758,7 @@ FROM scratch AS check-iso
 COPY --from=check-iso-builder /booty-check.iso .
 
 # ── Micro target: pure-Go BOOTy only, no external binaries ────────────────
-FROM golang:1.27.2-trixie AS micro-dev
+FROM golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e AS micro-dev
 ARG BOOTY_VERSION=dev
 ARG BOOTY_BUILD=unknown
 ARG BOOTY_COMMIT_TIME=
@@ -768,7 +784,7 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
       -X github.com/telekom/BOOTy/pkg/buildinfo.commitTime=${BOOTY_COMMIT_TIME} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.flavor=${BOOTY_FLAVOR}" -o init
 
-FROM debian:trixie-slim AS micro-builder
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS micro-builder
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends cpio ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/initramfs
@@ -778,18 +794,18 @@ RUN mkdir -p bin sbin dev proc run sys tmp etc && \
     mknod -m 600 dev/ttyS0 c 4 64
 # Users and groups: root, and frr and frrvty, which the FRR daemons switch
 # to (zebra: "could not lookup user frr" without them). Every flavor gets
-# them, so a ramdisk with FRR never lacks them.
-COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
+# them, so a ramdisk with FRR never lacks them. --chmod: the mode must not
+# depend on the umask of the checkout (reproducible builds).
+COPY --chmod=0644 hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 COPY --from=micro-dev /go/src/github.com/telekom/BOOTy/init .
 # "booty lldp ..." and other commands in the rescue shell run the agent binary.
 RUN ln -sf ../init bin/booty
 RUN mkdir -p etc/ssl/certs && cp /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
 
 # Package micro initramfs
-RUN find . -print0 > ../initramfs.files \
-    && cpio --null -ov --format=newc < ../initramfs.files > ../initramfs.cpio \
-    && rm ../initramfs.files \
-    && gzip ../initramfs.cpio && mv ../initramfs.cpio.gz /
+ARG SOURCE_DATE_EPOCH=315532800
+COPY hack/pack-initramfs.sh /usr/local/bin/
+RUN pack-initramfs.sh . /initramfs.cpio.gz
 
 FROM scratch AS micro
 COPY --from=micro-builder /initramfs.cpio.gz .

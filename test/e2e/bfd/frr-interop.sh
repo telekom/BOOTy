@@ -4,12 +4,15 @@
 # docker network with the fabric timers 150/150/3: 20 s after the session
 # is Up, CYCLES times (default 1) the FRR peer is shut down for 3 s and
 # stays up for 10 s after no shutdown. A session that goes Down within 2 s
-# of an Up fails the test. Needs docker.
+# of an Up fails the test. Needs docker. FRR_IMAGE defaults to the lab FRR
+# and the test runs in the lab Go image, both from test/e2e/clab/labimages.
 set -euo pipefail
-image=${1:-quay.io/frrouting/frr:10.3.1}
-go_image=golang:1.27.2
-cycles=${CYCLES:-1}
 root=$(cd "$(dirname "$0")/../../.." && pwd)
+# shellcheck source=../clab/lab-images.sh
+source "$root/test/e2e/clab/lab-images.sh"
+image=${1:-$BOOTY_LAB_FRR_IMAGE}
+go_image=$BOOTY_LAB_GOLANG_IMAGE
+cycles=${CYCLES:-1}
 name=booty-bfd-interop-$$
 net=$name
 tmp=$(mktemp -d)

@@ -119,9 +119,10 @@ jobs:
   kvm-tests:
     name: KVM ${{ matrix.scenario }}
     # Guests are assembled from runner binaries (busybox, kmod, ld-linux),
-    # which are x86-64-v3 builds on ubuntu-26.04 and trap in the guests.
-    # Follow-up: https://github.com/telekom/BOOTy/issues/881
-    runs-on: ubuntu-24.04
+    # which are x86-64-v3 builds on ubuntu-26.04. The "Enable KVM" step gives
+    # every guest a v3-capable CPU. Hermetic guest userland:
+    # https://github.com/telekom/BOOTy/issues/881
+    runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.timeout_minutes || 75 }}
     needs: preflight
     strategy:
@@ -184,6 +185,18 @@ jobs:
             test_regex: TestFlatcarLikeUSRASourceCanProvisionSystemABVM
             privileged: true
             setup: ""
+          # Synthetic layered-layout image (ESP + root with /var, /home and
+          # /tmp content, xattrs, ACLs, file capabilities and a layout JSON),
+          # provisioned whole-disk and system-ab with /home, /tmp and /var
+          # data partitions. test/e2e/kvm/layered_layout_test.go lists the
+          # pending scenarios on the same fixture.
+          - scenario: layered-layout
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestLayeredLayout"
+            privileged: true
+            setup: ""
+            go_timeout: 25m
           - scenario: crash-artifacts
             qemu_extra: ""
             test_tag: e2e
@@ -541,6 +554,18 @@ jobs:
           # The "Prepare kernel" step downloads a kernel package if /boot has none.
           sudo DEBIAN_FRONTEND=noninteractive apt-get "${apt_opts[@]}" install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools cpio zstd busybox-static xorriso isolinux syslinux-common fdisk util-linux e2fsprogs dosfstools parted mdadm lvm2 gdisk cloud-guest-utils efibootmgr nvme-cli hdparm
 
+      - name: Enable KVM
+        # Runner userland copied into the guests needs x86-64-v3, which the
+        # default qemu64 CPU lacks. The release binary's baseline x86-64 CPU
+        # coverage stays with the qemu64 jobs in ci.yml.
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+            echo "QEMU_CPU_ARGS=-enable-kvm -cpu host" >> "$GITHUB_ENV"
+          else
+            echo "QEMU_CPU_ARGS=-cpu max" >> "$GITHUB_ENV"
+          fi
+
       - name: Load KVM network modules
         run: |
           # The production-template guest boots the runner kernel directly and
@@ -703,7 +728,9 @@ jobs:
             exit 1
           fi
           if [ "${{ matrix.privileged }}" = "true" ] || [ "${{ matrix.scenario }}" = "luks-verify" ]; then
-            test_cmd=(sudo -E env "PATH=$PATH:/usr/sbin:/sbin" go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -count=1 -v -timeout ${{ matrix.go_timeout || '15m' }} ./test/e2e/kvm/...)
+            # sudo-rs (ubuntu-26.04) ignores -E, so pass the environment explicitly.
+            mapfile -d '' runner_env < <(env -0)
+            test_cmd=(sudo env "${runner_env[@]}" "PATH=$PATH:/usr/sbin:/sbin" go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -count=1 -v -timeout ${{ matrix.go_timeout || '15m' }} ./test/e2e/kvm/...)
           else
             test_cmd=(go test -tags ${{ matrix.test_tag }} -run ${{ matrix.test_regex }} -race -count=1 -v -timeout ${{ matrix.go_timeout || '15m' }} ./test/e2e/kvm/...)
           fi
@@ -722,7 +749,7 @@ jobs:
             exit 1
           fi
         env:
-          QEMU_EXTRA_ARGS: ${{ matrix.qemu_extra }}
+          QEMU_EXTRA_ARGS: ${{ env.QEMU_CPU_ARGS }} ${{ matrix.qemu_extra }}
           BOOTY_INITRAMFS: ${{ github.workspace }}/test-initramfs.cpio.gz
           BOOTY_KERNEL: ${{ github.workspace }}/vmlinuz
           BOOTY_FLAVOR_INITRAMFS: ${{ github.workspace }}/out-flavor/initramfs.cpio.zst
