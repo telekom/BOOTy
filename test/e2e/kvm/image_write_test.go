@@ -30,7 +30,10 @@ func TestProvisionImageWriteOptionsQEMU(t *testing.T) {
 	rawDisk := createTestDiskImage(t, 512)
 	addRandomRootPayload(t, rawDisk, 64)
 	zstdImage := compressFile(t, rawDisk, filepath.Join(t.TempDir(), "image.raw.zst"), func(w io.Writer) io.WriteCloser {
-		zw, _ := zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.SpeedFastest))
+		zw, err := zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.SpeedFastest))
+		if err != nil {
+			t.Fatal(err)
+		}
 		return zw
 	})
 	baseURL := startImageServer(t, zstdImage)
