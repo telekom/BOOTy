@@ -132,6 +132,9 @@ func (c *Config) validateProvisionFeatureConfigs() []string {
 	if err := c.Provision.SRIOV.Validate(); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := validateReportPath(c.Provision.ReportPath); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if strings.EqualFold(strings.TrimSpace(c.SuccessAction), SuccessActionPowerOff) && c.Provision.AB.PreserveExisting {
 		errs = append(errs, "successAction poweroff (SUCCESS_ACTION, preset by CAPRF_LEGACY_COMPAT) never uses kexec and cannot be combined with provision.ab.preserveExisting")
 	}

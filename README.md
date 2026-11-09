@@ -62,7 +62,7 @@ CAPRF-compatible `/deploy/vars` file.
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs mount/resize; vfat mount/format for EFI system partitions
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **54-step provisioning pipeline**: provisioning input validation, RAID cleanup, disk mirroring, NVMe namespace setup, RAID array setup, disk detection, partition layout, image streaming, shared data mounting, optional target overlayFS configuration, partition growth, LVM, filesystem resize, optional sysext loading, OCI image pre-pulls, OS configuration, serial console resolution, EFI fallback installation, final Secure Boot chain verification, cloud-init injection, EFI boot, Mellanox SR-IOV, SR-IOV profiles, post-provision hooks
+- **55-step provisioning pipeline**: provisioning input validation, RAID cleanup, disk mirroring, NVMe namespace setup, RAID array setup, disk detection, partition layout, image streaming, shared data mounting, optional target overlayFS configuration, partition growth, LVM, filesystem resize, optional sysext loading, OCI image pre-pulls, OS configuration, serial console resolution, EFI fallback installation, final Secure Boot chain verification, cloud-init injection, EFI boot, Mellanox SR-IOV, SR-IOV profiles, post-provision hooks
 - **systemd-sysext provisioning** — Optional digest-checked sysext preload or active loading into the provisioned OS image
 - **Ubuntu overlayFS configuration** — Optional target-root overlayroot config for immutable Ubuntu images, with tmpfs or operator-provided persistent backing storage
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
@@ -473,6 +473,7 @@ root is mounted.
 | `CAPRF_LEGACY_COMPAT` | `false` | Preset that behaves like the CAPRF legacy shell provisioner. See [CAPRF legacy compatibility](#caprf-legacy-compatibility) |
 | `SUCCESS_ACTION` | `reboot` | `poweroff` powers off after a successful run instead of kexec or reboot. Preset by `CAPRF_LEGACY_COMPAT` |
 | `PROVISIONER_FILES_TARGET` | `target` | `ramdisk` copies `/deploy/file-system` into the ramdisk before the network starts, like `copy_files`, instead of into the installed OS. Preset by `CAPRF_LEGACY_COMPAT` |
+| `PROVISION_REPORT_PATH` | `/etc/booty/provision.json` | Path of the [provisioning report](docs/provisioning-report.md) in the installed OS; `none` writes no file (the report is still logged to `LOG_URL`) |
 | `WRITE_RESOLV_CONF` | `true` | `false` keeps the installed OS `resolv.conf`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `RAMDISK_HOSTNAME` | `false` | Set `HOSTNAME` as the ramdisk host name for provisioning. Preset by `CAPRF_LEGACY_COMPAT` |
 | `FAILURE_ACTION` | `reboot` | `wait` reports a failed run and keeps the ramdisk running. Default of `RESCUE_MODE`. Preset by `CAPRF_LEGACY_COMPAT` |
@@ -748,10 +749,11 @@ saves the checkpoint to `/tmp/booty-checkpoint.json` after each step. The file
 is in the ramdisk, so it helps only when provisioning runs again in the same
 boot, for example with `RESCUE_MODE=retry`. A new run skips the completed
 steps, except the steps that rebuild runtime state or check safety rules:
-`validate-provision-inputs`, `verify-image`, `mount-efivarfs`,
+`release-stale-mounts`, `validate-provision-inputs`, `verify-image`, `mount-efivarfs`,
 `setup-mellanox`, `configure-sriov`, `detect-disk`, `parse-partitions`, `mirror-root`, `enable-lvm`,
 `mount-root`, `mount-boot`, `mount-shared-data`, `setup-chroot-binds`,
-`configure-serial-console`, `configure-grub` and `teardown-chroot`.
+`configure-serial-console`, `configure-grub`, `write-provision-report` (it
+rebuilds the report but does not write the file again) and `teardown-chroot`.
 
 When no checkpoint exists, BOOTy starts a new one. When the checkpoint file
 can not be read or decoded, provisioning fails with `load checkpoint`. Remove
@@ -1652,7 +1654,7 @@ vrnetlab topologies and the test levels.
 │   │   ├── persist/           # Persist network config into target OS (netplan, NM, systemd-networkd)
 │   │   ├── vrf/               # VRF configuration and validation
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── provision/              # Orchestrator (54-step provision, deprovision)
+│   ├── provision/              # Orchestrator (55-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── realm/                  # Device, mount, network, shell operations
 │   ├── rescue/                 # Rescue mode behavior and retry policy
@@ -1684,6 +1686,7 @@ vrnetlab topologies and the test levels.
 | [docs/networking.md](docs/networking.md) | Ramdisk network stacks: GoBGP, FRR, static, DHCP, bond, VLAN, netplan |
 | [docs/disk.md](docs/disk.md) | Disk selection, wipe, partition layout, and image streaming |
 | [docs/ab-partitioning.md](docs/ab-partitioning.md) | Optional A/B partitioning and inactive-slot provisioning |
+| [docs/provisioning-report.md](docs/provisioning-report.md) | Machine-readable report of a provision, in the installed OS and the log |
 | [docs/sysext-provisioning.md](docs/sysext-provisioning.md) | Optional systemd-sysext loading while provisioning |
 | [docs/gobgp-evpn-guide.md](docs/gobgp-evpn-guide.md) | GoBGP EVPN guide |
 | [docs/serial-console-resolution.md](docs/serial-console-resolution.md) | Serial console resolution for the installed OS |

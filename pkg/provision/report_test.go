@@ -1,0 +1,456 @@
+//go:build linux
+
+package provision
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/tpm"
+)
+
+const secureBootVar = "SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"
+
+// withReportHost fakes the efivarfs and TPM that the report reads.
+func withReportHost(t *testing.T, secureBoot []byte, tpmInfo *tpm.Info) {
+	t.Helper()
+	dir := t.TempDir()
+	if secureBoot != nil {
+		// efivarfs files start with 4 attribute bytes.
+		if err := os.WriteFile(filepath.Join(dir, secureBootVar), append([]byte{7, 0, 0, 0}, secureBoot...), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldDir, oldTPM, oldNow := reportEFIVarsDir, reportDetectTPM, reportNow
+	reportEFIVarsDir = dir
+	reportDetectTPM = func() *tpm.Info { return tpmInfo }
+	reportNow = func() time.Time { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) }
+	t.Cleanup(func() { reportEFIVarsDir, reportDetectTPM, reportNow = oldDir, oldTPM, oldNow })
+}
+
+func reportTestConfig() *config.MachineConfig {
+	cfg := &config.MachineConfig{Hostname: "node-1"}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.Image.Checksum = strings.Repeat("ab", 32)
+	cfg.Provision.Image.ChecksumType = "sha256"
+	cfg.Provision.Image.SignatureURL = "https://images.example.invalid/node.raw.sig"
+	cfg.Provision.AB.Scheme = config.ABSchemeSystemAB
+	cfg.Provision.AB.ActiveSlot = "a"
+	cfg.Provision.Sysext.Enabled = true
+	cfg.Provision.Sysext.DefaultMode = "preload"
+	cfg.Provision.Sysext.Layers = []config.SysextLayerConfig{
+		{Name: "tools", Version: "1.2.3", SHA256: strings.Repeat("cd", 32)},
+		{Name: "debug", Mode: "active"},
+	}
+	return cfg
+}
+
+func TestBuildReport(t *testing.T) {
+	withReportHost(t, []byte{1}, &tpm.Info{Present: true, Version: "2.0"})
+	cfg := reportTestConfig()
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	if err := o.ensureABPartitionLayout(); err != nil {
+		t.Fatal(err)
+	}
+	o.bestImageURL = "https://user:secret@images.example.invalid/node.raw.zst?token=x"
+	o.targetDisk = "/dev/vda"
+	o.rootPartition = "/dev/vda3"
+	if err := os.MkdirAll(filepath.Join(o.config.rootDir, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	crypttab := "# comment\n\ndata UUID=1234 none luks\n"
+	if err := os.WriteFile(filepath.Join(o.config.rootDir, "etc", "crypttab"), []byte(crypttab), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	o.collector.Steps().StartStep("stream-image")
+	o.collector.Steps().EndStep("stream-image", nil)
+
+	r := o.buildReport(context.Background())
+
+	if r.Schema != ReportSchemaVersion || r.Hostname != "node-1" || r.Booty.Version == "" {
+		t.Fatalf("header = %+v", r)
+	}
+	if strings.Contains(r.Image.Reference, "secret") || strings.Contains(r.Image.Reference, "token") {
+		t.Fatalf("image reference not redacted: %q", r.Image.Reference)
+	}
+	if r.Image.Mode != config.ImageModeAB || r.Image.Checksum == nil || r.Image.Checksum.Scope != config.ChecksumScopeDownload {
+		t.Fatalf("image = %+v", r.Image)
+	}
+	if r.Verification.Checksum != ReportStateVerified || r.Verification.Signature != (ReportSignatureResult{Method: "gpg", Result: ReportStateVerified}) {
+		t.Fatalf("verification = %+v", r.Verification)
+	}
+	if r.AB == nil || r.AB.Scheme != config.ABSchemeSystemAB || r.AB.TargetSlot != "b" || r.AB.ActiveSlot != "a" {
+		t.Fatalf("ab = %+v", r.AB)
+	}
+	if r.Disk.Device != "/dev/vda" || r.Disk.RootPartition != "/dev/vda3" || r.Disk.Layout == nil || len(r.Disk.Layout.Partitions) == 0 {
+		t.Fatalf("disk = %+v", r.Disk)
+	}
+	if r.Encryption != (ReportEncryption{LUKS: ReportStatePresent, TPM: ReportStatePresent, TPMVersion: "2.0"}) {
+		t.Fatalf("encryption = %+v", r.Encryption)
+	}
+	if r.SecureBoot.State != ReportStateEnabled {
+		t.Fatalf("secure boot = %+v", r.SecureBoot)
+	}
+	wantSysexts := []ReportSysext{
+		{Name: "tools", Version: "1.2.3", Mode: "preload", SHA256: strings.Repeat("cd", 32)},
+		{Name: "debug", Mode: "active"},
+	}
+	if len(r.Sysexts) != 2 || r.Sysexts[0] != wantSysexts[0] || r.Sysexts[1] != wantSysexts[1] {
+		t.Fatalf("sysexts = %+v", r.Sysexts)
+	}
+	if len(r.Timings.Steps) != 1 || r.Timings.Steps[0].Name != "stream-image" {
+		t.Fatalf("timings = %+v", r.Timings)
+	}
+}
+
+func TestBuildReportDefaults(t *testing.T) {
+	withReportHost(t, nil, &tpm.Info{})
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	o.bestImageURL = "oci://registry.example.invalid/node:1"
+	o.imageDigest = "sha256:" + strings.Repeat("0", 64)
+
+	r := o.buildReport(context.Background())
+
+	if r.Image.Mode != config.ImageModeWholeDisk || r.Image.Digest != o.imageDigest || r.Image.Checksum != nil {
+		t.Fatalf("image = %+v", r.Image)
+	}
+	if r.Verification.Checksum != ReportStateNotConfigured || r.Verification.Signature.Result != ReportStateNotConfigured {
+		t.Fatalf("verification = %+v", r.Verification)
+	}
+	if r.AB != nil || r.Sysexts != nil {
+		t.Fatalf("ab/sysexts set without config: %+v %+v", r.AB, r.Sysexts)
+	}
+	if r.Encryption.LUKS != ReportStateAbsent || r.Encryption.TPM != ReportStateAbsent {
+		t.Fatalf("encryption = %+v", r.Encryption)
+	}
+	if r.SecureBoot.State != ReportStateUnknown {
+		t.Fatalf("secure boot without efivars = %q, want unknown", r.SecureBoot.State)
+	}
+}
+
+func TestWriteProvisionReport(t *testing.T) {
+	withReportHost(t, []byte{0}, nil)
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	o.bestImageURL = "https://images.example.invalid/node.raw"
+
+	if err := o.writeProvisionReport(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(o.config.rootDir, config.DefaultReportPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("report is not JSON: %v\n%s", err, data)
+	}
+	if got["schema"] != ReportSchemaVersion {
+		t.Fatalf("schema = %v", got["schema"])
+	}
+	if sb, _ := got["secureBoot"].(map[string]any); sb["state"] != ReportStateDisabled {
+		t.Fatalf("secureBoot = %v", got["secureBoot"])
+	}
+}
+
+func TestWriteProvisionReportCustomPathAndNone(t *testing.T) {
+	withReportHost(t, nil, nil)
+	cfg := &config.MachineConfig{}
+	cfg.Provision.ReportPath = "/var/lib/booty/report.json"
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	if err := o.writeProvisionReport(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(o.config.rootDir, "var", "lib", "booty", "report.json")); err != nil {
+		t.Fatalf("custom report path: %v", err)
+	}
+
+	cfg = &config.MachineConfig{}
+	cfg.Provision.ReportPath = config.ReportPathNone
+	o = newTestOrchestrator(t, cfg, &mockProvider{})
+	if err := o.writeProvisionReport(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if o.report == nil {
+		t.Fatal("report not built with reportPath none")
+	}
+	if _, err := os.Stat(filepath.Join(o.config.rootDir, config.DefaultReportPath)); !os.IsNotExist(err) {
+		t.Fatalf("report written with reportPath none: %v", err)
+	}
+}
+
+func TestWriteProvisionReportRefusesSymlinkOutOfRoot(t *testing.T) {
+	withReportHost(t, nil, nil)
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(o.config.rootDir, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(o.config.rootDir, "etc", "booty")); err != nil {
+		t.Fatal(err)
+	}
+	// Best effort: the step succeeds, the report still goes to the log.
+	if err := o.writeProvisionReport(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if o.report == nil {
+		t.Fatal("report not built")
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("files written outside the root: %v", entries)
+	}
+}
+
+func TestWriteProvisionReportKeepsFileOnResume(t *testing.T) {
+	withReportHost(t, nil, nil)
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	path := filepath.Join(o.config.rootDir, config.DefaultReportPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("machine file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o.reportWritten = true
+	if err := o.writeProvisionReport(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if o.report == nil {
+		t.Fatal("report not rebuilt on resume")
+	}
+	if data, _ := os.ReadFile(path); string(data) != "machine file\n" {
+		t.Fatalf("report file rewritten on resume: %q", data)
+	}
+}
+
+func TestReportSuccessLogsReport(t *testing.T) {
+	withReportHost(t, nil, nil)
+	provider := &mockProvider{}
+	o := newTestOrchestrator(t, &config.MachineConfig{}, provider)
+	var buf bytes.Buffer
+	o.log = slog.New(slog.NewJSONHandler(&buf, nil))
+	cfg := o.cfg
+	cfg.Provision.ReportPath = config.ReportPathNone
+	if err := o.writeProvisionReport(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	o.collector.Steps().StartStep("report-success")
+	if err := o.reportSuccess(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var line struct {
+		Msg    string `json:"msg"`
+		Report string `json:"report"`
+	}
+	for _, raw := range bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
+		if err := json.Unmarshal(raw, &line); err == nil && line.Msg == "provisioning report" {
+			break
+		}
+	}
+	if line.Msg != "provisioning report" {
+		t.Fatalf("no report log line in:\n%s", buf.String())
+	}
+	var r ProvisionReport
+	if err := json.Unmarshal([]byte(line.Report), &r); err != nil {
+		t.Fatalf("logged report is not JSON: %v", err)
+	}
+	if len(r.Timings.Steps) == 0 || r.Timings.Steps[len(r.Timings.Steps)-1].Name != "report-success" {
+		t.Fatalf("logged report has no final timings: %+v", r.Timings)
+	}
+	if len(provider.statuses) != 1 || provider.statuses[0].status != config.StatusSuccess {
+		t.Fatalf("statuses = %+v", provider.statuses)
+	}
+}
+
+// A retried report-success sends the report once; a report built again
+// (a rescue retry runs write-provision-report again) is sent again.
+func TestLogProvisionReportOnce(t *testing.T) {
+	withReportHost(t, nil, nil)
+	cfg := &config.MachineConfig{}
+	cfg.Provision.ReportPath = config.ReportPathNone
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	var buf bytes.Buffer
+	o.log = slog.New(slog.NewJSONHandler(&buf, nil))
+	logged := func() int { return strings.Count(buf.String(), `"msg":"provisioning report"`) }
+	if err := o.writeProvisionReport(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	o.logProvisionReport()
+	o.logProvisionReport()
+	if n := logged(); n != 1 {
+		t.Fatalf("report logged %d times, want 1:\n%s", n, buf.String())
+	}
+	if err := o.writeProvisionReport(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	o.logProvisionReport()
+	if n := logged(); n != 2 {
+		t.Fatalf("rebuilt report logged %d times in total, want 2", n)
+	}
+}
+
+// The report has the root filesystem of the streamed image, like fstab.
+func TestBuildReportDetectedRootFilesystem(t *testing.T) {
+	withReportHost(t, nil, nil)
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{
+		Table:      "gpt",
+		Partitions: []config.Partition{{Label: "root", Filesystem: "xfs", Mountpoint: "/"}},
+	}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk, o.rootPartition = "/dev/sda", "/dev/sda1"
+	cmd.setResult("blkid -o", []byte("ext4\n"), nil)
+
+	r := o.buildReport(context.Background())
+
+	if got := r.Disk.Layout.Partitions[0].Filesystem; got != "ext4" {
+		t.Fatalf("reported root filesystem = %q, want detected ext4", got)
+	}
+	if cfg.Provision.Disk.PartitionLayout.Partitions[0].Filesystem != "xfs" {
+		t.Fatal("configured layout mutated")
+	}
+}
+
+// A failed step of an earlier attempt keeps its status in the report but
+// not its error text, which can hold command output.
+func TestReportTimingsDropStepErrors(t *testing.T) {
+	withReportHost(t, nil, nil)
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	o.collector.Steps().StartStep("post-provision-cmds")
+	o.collector.Steps().EndStep("post-provision-cmds", errors.New("command failed: password=hunter2"))
+
+	r := o.buildReport(context.Background())
+
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "hunter2") {
+		t.Fatalf("report holds the step error: %s", data)
+	}
+	steps := r.Timings.Steps
+	if len(steps) != 1 || steps[0].Status != "failed" {
+		t.Fatalf("steps = %+v, want the failed step", steps)
+	}
+	if s := o.collector.Summarize().Steps; len(s) != 1 || s[0].Error == "" {
+		t.Fatal("collector lost the step error")
+	}
+}
+
+func TestCrypttabState(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "crypttab")
+	if err := os.WriteFile(outside, []byte("data /dev/vdb2 none luks\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file := func(content string) func(string) error {
+		return func(etc string) error { return os.WriteFile(filepath.Join(etc, "crypttab"), []byte(content), 0o600) }
+	}
+	link := func(target string) func(string) error {
+		return func(etc string) error { return os.Symlink(target, filepath.Join(etc, "crypttab")) }
+	}
+	for name, tc := range map[string]struct {
+		setup func(etc string) error
+		want  string
+	}{
+		"missing":       {nil, ReportStateAbsent},
+		"comments":      {file("# none\n\n"), ReportStateAbsent},
+		"volume":        {file("data /dev/vdb2 none luks\n"), ReportStatePresent},
+		"volume no EOL": {file("data /dev/vdb2 none luks"), ReportStatePresent},
+		"at limit":      {file(strings.Repeat("#", maxCrypttabBytes-1) + "\n"), ReportStateAbsent},
+		"oversize":      {file(strings.Repeat("#", maxCrypttabBytes) + "\ndata /dev/vdb2 none luks\n"), ReportStateUnknown},
+		"fifo":          {func(etc string) error { return syscall.Mkfifo(filepath.Join(etc, "crypttab"), 0o600) }, ReportStateUnknown},
+		"directory":     {func(etc string) error { return os.Mkdir(filepath.Join(etc, "crypttab"), 0o755) }, ReportStateUnknown},
+		"symlink out":   {link(outside), ReportStateUnknown},
+		"dev zero":      {link("/dev/zero"), ReportStateUnknown},
+		"symlink in":    {link("crypttab.real"), ReportStateUnknown},
+	} {
+		root := t.TempDir()
+		etc := filepath.Join(root, "etc")
+		if err := os.Mkdir(etc, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if tc.setup != nil {
+			if err := tc.setup(etc); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := crypttabState(root); got != tc.want {
+			t.Errorf("%s: crypttabState = %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
+func TestCrypttabStateRefusesEtcOutOfRoot(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "crypttab"), []byte("data /dev/vdb2 none luks\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	if got := crypttabState(root); got != ReportStateUnknown {
+		t.Fatalf("crypttabState through /etc out of root = %q, want unknown", got)
+	}
+}
+
+// A FIFO crypttab must not block the report, also when no file is written:
+// the log line still carries the encryption state.
+func TestWriteProvisionReportFIFOCrypttabWithReportPathNone(t *testing.T) {
+	withReportHost(t, nil, nil)
+	cfg := &config.MachineConfig{}
+	cfg.Provision.ReportPath = config.ReportPathNone
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	etc := filepath.Join(o.config.rootDir, "etc")
+	if err := os.MkdirAll(etc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(etc, "crypttab"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- o.writeProvisionReport(context.Background()) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("writeProvisionReport blocked on a FIFO crypttab")
+	}
+	if o.report.Encryption.LUKS != ReportStateUnknown {
+		t.Fatalf("luks = %q, want unknown", o.report.Encryption.LUKS)
+	}
+}
+
+func TestReportSysextsDefaultMode(t *testing.T) {
+	cfg := &config.SysextConfig{Enabled: true, Layers: []config.SysextLayerConfig{
+		{Name: "tools"},
+		{Name: "debug", Mode: "Active"},
+	}}
+	got := reportSysexts(cfg)
+	if len(got) != 2 || got[0].Mode != sysextModePreload || got[1].Mode != sysextModeActive {
+		t.Fatalf("sysexts = %+v, want tools preload and debug active", got)
+	}
+}
+
+func TestWriteProvisionReportStepPlacement(t *testing.T) {
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	steps := o.provisionSteps()
+	idx := requireStepIndex(t, steps, "write-provision-report")
+	if idx <= requireStepIndex(t, steps, "inject-cloudinit") || idx >= requireStepIndex(t, steps, "copy-machine-files") {
+		t.Fatal("write-provision-report must run after inject-cloudinit and before copy-machine-files")
+	}
+	if _, ok := resumeStateSteps()["write-provision-report"]; !ok {
+		t.Fatal("write-provision-report must rerun on resume: report-success needs the report in memory")
+	}
+}

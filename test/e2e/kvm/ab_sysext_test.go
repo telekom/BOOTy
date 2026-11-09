@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -139,6 +140,10 @@ func TestABProvisionPreloadsSysextsWithoutActivatingVM(t *testing.T) {
 	slotState := readProvisionedFile(t, rootMount, "etc/booty/ab-slot.env")
 	if !strings.Contains(slotState, "BOOTY_AB_TARGET_SLOT=a") {
 		t.Fatalf("A/B slot state did not record initial target slot a:\n%s", slotState)
+	}
+	report := assertProvisionReport(t, rootMount, output, "a")
+	if len(report.Sysexts) != 1 || report.Sysexts[0].Name != "node-tuning" || report.Sysexts[0].Mode != "preload" {
+		t.Fatalf("provisioning report sysexts = %+v, want node-tuning in preload mode", report.Sysexts)
 	}
 	grubDefaults := readProvisionedFile(t, rootMount, "etc/default/grub.d/10-caprf-kernel-params.cfg")
 	if !strings.Contains(grubDefaults, "root=PARTLABEL=BOOTY-ROOT-A") {
@@ -328,6 +333,7 @@ func TestABPreserveExistingUpgradeKeepsActiveSlotAndWritesInactiveVM(t *testing.
 	if !strings.Contains(stateA, "BOOTY_AB_TARGET_SLOT=a") {
 		t.Fatalf("slot A state changed unexpectedly:\n%s", stateA)
 	}
+	assertProvisionReport(t, slotA, nil, "a") // the report of the first provision stays in slot A
 	cleanupA()
 
 	slotB, cleanupB := mountQcow2Partition(t, targetDisk, 3)
@@ -346,6 +352,9 @@ func TestABPreserveExistingUpgradeKeepsActiveSlotAndWritesInactiveVM(t *testing.
 		if !strings.Contains(stateB, want) {
 			t.Fatalf("slot B state missing %q:\n%s", want, stateB)
 		}
+	}
+	if report := assertProvisionReport(t, slotB, upgradeOutput, "b"); report.AB.ActiveSlot != "a" || !report.AB.PreserveExisting {
+		t.Fatalf("slot B report ab = %+v, want active slot a and preserveExisting", report.AB)
 	}
 	cleanupB()
 
@@ -586,4 +595,38 @@ func pushKVMSysextOCI(t *testing.T, registryHost, repoTag string, data []byte) {
 	if err := remote.Write(ref, img); err != nil {
 		t.Fatalf("push sysext OCI ref: %v", err)
 	}
+}
+
+// vmProvisionReport is the part of /etc/booty/provision.json that the A/B
+// tests check.
+type vmProvisionReport struct {
+	Schema string `json:"schema"`
+	AB     *struct {
+		TargetSlot       string `json:"targetSlot"`
+		ActiveSlot       string `json:"activeSlot"`
+		PreserveExisting bool   `json:"preserveExisting"`
+	} `json:"ab"`
+	Sysexts []struct {
+		Name string `json:"name"`
+		Mode string `json:"mode"`
+	} `json:"sysexts"`
+}
+
+// assertProvisionReport decodes the provisioning report in the slot root
+// and checks its target slot; with output, it also checks that the report
+// was logged (the log line that LOG_URL receives).
+func assertProvisionReport(t *testing.T, root string, output []byte, slot string) vmProvisionReport {
+	t.Helper()
+	var r vmProvisionReport
+	data := readProvisionedFile(t, root, "etc/booty/provision.json")
+	if err := json.Unmarshal([]byte(data), &r); err != nil {
+		t.Fatalf("decode provisioning report: %v\n%s", err, data)
+	}
+	if r.Schema != "booty.provision-report/v1" || r.AB == nil || r.AB.TargetSlot != slot {
+		t.Fatalf("provisioning report in slot %s: schema %q ab %+v\n%s", slot, r.Schema, r.AB, data)
+	}
+	if output != nil && (!bytes.Contains(output, []byte("provisioning report")) || !bytes.Contains(output, []byte("booty.provision-report/v1"))) {
+		t.Fatalf("provisioning report not logged. tail:\n%s", tail(output, 4000))
+	}
+	return r
 }

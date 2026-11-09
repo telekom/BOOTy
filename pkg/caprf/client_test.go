@@ -3114,6 +3114,19 @@ func TestParseVarsLLDPReceive(t *testing.T) {
 	}
 }
 
+func TestParseVarsProvisionReportPath(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("export PROVISION_REPORT_PATH=\"none\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provision.ReportPath != "none" || cfg.Provision.ReportTargetPath() != "" {
+		t.Fatalf("reportPath = %q, target = %q", cfg.Provision.ReportPath, cfg.Provision.ReportTargetPath())
+	}
+	if _, err := ParseVars(strings.NewReader("export PROVISION_REPORT_PATH=\"relative.json\"\n")); err == nil {
+		t.Fatal("relative PROVISION_REPORT_PATH accepted")
+	}
+}
+
 func TestParseVarsPartitionLayoutSources(t *testing.T) {
 	input := `export PARTITION_LAYOUT_URL="https://layouts.example.invalid/cis.json"
 export PARTITION_LAYOUT_IMAGE_PATH="/usr/share/vendor/layout/*.json"

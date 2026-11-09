@@ -124,6 +124,7 @@ var failureCodes = []FailureCode{
 	{"BOOTY-OS-013", ClassConfig, "run-post-provision-cmds", "A post-provision command failed."},
 	{"BOOTY-OS-014", ClassEnvironment, "teardown-chroot", "Chroot teardown failed."},
 	{"BOOTY-OS-015", ClassConfig, "soft-deprovision", "Soft deprovision failed."},
+	{"BOOTY-OS-016", ClassConfig, "write-provision-report", "Encoding the provisioning report failed; a failed file write only logs a warning."},
 
 	{"BOOTY-WDT-001", ClassEnvironment, AnyStep, "A step made no progress within its watchdog budget; the hardware watchdog resets the host."},
 

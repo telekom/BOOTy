@@ -128,6 +128,30 @@ func TestProbeOCIReference(t *testing.T) {
 	}
 }
 
+func TestResolveOCIReferenceReturnsManifestDigest(t *testing.T) {
+	srv := startTestRegistry(t)
+	defer srv.Close()
+
+	pushTestImageToRegistry(t, srv, "test/resolve:v1", []byte("resolve payload"))
+
+	ref := fmt.Sprintf("%s/test/resolve:v1", strings.TrimPrefix(srv.URL, "http://"))
+	got, err := ResolveOCIReference(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("ResolveOCIReference: %v", err)
+	}
+	if !strings.HasPrefix(got, "sha256:") || len(got) != len("sha256:")+64 {
+		t.Fatalf("digest = %q, want sha256:<64 hex>", got)
+	}
+	// The digest pins the same image: resolving ref@digest returns it again.
+	pinned, err := ResolveOCIReference(context.Background(), fmt.Sprintf("%s/test/resolve@%s", strings.TrimPrefix(srv.URL, "http://"), got))
+	if err != nil {
+		t.Fatalf("ResolveOCIReference(pinned): %v", err)
+	}
+	if pinned != got {
+		t.Fatalf("pinned digest = %q, want %q", pinned, got)
+	}
+}
+
 func TestProbeOCIReferenceRejectsMissingImage(t *testing.T) {
 	srv := startTestRegistry(t)
 	defer srv.Close()

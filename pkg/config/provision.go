@@ -119,6 +119,12 @@ type ProvisionConfig struct {
 	// Default: [] (none)
 	PostProvisionCmds []string `yaml:"postProvisionCmds" json:"postProvisionCmds"`
 
+	// ReportPath is where BOOTy writes the provisioning report (JSON) into
+	// the installed OS. "none" writes no report into the target; the report
+	// still goes to the log channel. See docs/provisioning-report.md.
+	// Default: "" (/etc/booty/provision.json)
+	ReportPath string `yaml:"reportPath" json:"reportPath"`
+
 	// Nested provisioning sub-configs.
 	Image          ImageConfig          `yaml:"image"          json:"image"`
 	Disk           DiskConfig           `yaml:"disk"           json:"disk"`
