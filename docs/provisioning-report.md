@@ -10,7 +10,7 @@ The report goes to two places:
 | Where | When | Content |
 |-------|------|---------|
 | Installed OS, `PROVISION_REPORT_PATH` (default `/etc/booty/provision.json`) | `write-provision-report` step, after `inject-cloudinit` and before `copy-machine-files` | Pretty-printed JSON, mode `0644`. Step timings up to this step. |
-| `LOG_URL` (and the console) | `report-success`, before the success status | One log line, also when `report-success` is retried `[INFO] provisioning report component=provision report=<json>`. Step timings up to `report-success`. |
+| `LOG_URL` (and the console) | `report-success`, before the success status | One log line `[INFO] provisioning report component=provision report=<json>`, sent once also when `report-success` is retried. Step timings up to `report-success`. |
 
 The file sits next to the A/B slot state (`/etc/booty/ab-slot.env`), so
 `copy-machine-files` and the machine commands can still read or replace it.
