@@ -473,6 +473,7 @@ root is mounted.
 | `CAPRF_LEGACY_COMPAT` | `false` | Preset that behaves like the CAPRF legacy shell provisioner. See [CAPRF legacy compatibility](#caprf-legacy-compatibility) |
 | `SUCCESS_ACTION` | `reboot` | `poweroff` powers off after a successful run instead of kexec or reboot. Preset by `CAPRF_LEGACY_COMPAT` |
 | `PROVISIONER_FILES_TARGET` | `target` | `ramdisk` copies `/deploy/file-system` into the ramdisk before the network starts, like `copy_files`, instead of into the installed OS. Preset by `CAPRF_LEGACY_COMPAT` |
+| `PROVISION_REPORT_PATH` | `/etc/booty/provision.json` | Path of the [provisioning report](docs/provisioning-report.md) in the installed OS; `none` writes no file (the report is still logged to `LOG_URL`) |
 | `WRITE_RESOLV_CONF` | `true` | `false` keeps the installed OS `resolv.conf`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `RAMDISK_HOSTNAME` | `false` | Set `HOSTNAME` as the ramdisk host name for provisioning. Preset by `CAPRF_LEGACY_COMPAT` |
 | `FAILURE_ACTION` | `reboot` | `wait` reports a failed run and keeps the ramdisk running. Default of `RESCUE_MODE`. Preset by `CAPRF_LEGACY_COMPAT` |
