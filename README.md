@@ -1024,6 +1024,26 @@ The Debian packages come from the live mirrors, so a rebuild matches only
 while the mirrors still serve the package versions of the release.
 `hack/check-reproducible.sh <platform> <target>...` runs the CI check locally.
 
+#### Ramdisk SBOMs
+
+Every released ramdisk archive has two SBOMs of its content next to it, in
+CycloneDX and SPDX: `<flavor>-<arch>-initramfs.cdx.json` and
+`.spdx.json`, and `split-<arch>-<part>.cdx.json` and `.spdx.json` for the
+split parts. Each one lists every regular file in the ramdisk with its SHA-256, and these
+components:
+
+- the Debian packages whose files the ramdisk ships, with the ramdisk paths
+  they own (the tools, FRR, the shared libraries and the kernel modules);
+- LVM2 and util-linux (`sfdisk`), which are built from source;
+- busybox and the Go modules of the BOOTy binaries.
+
+The ramdisk has no package database, so `hack/ramdisk_sbom.py` builds one
+for the scan. It gives each ELF file the Debian package that ships a file of
+the same name in the build stages (`--target sbom-inputs`), and then runs
+syft. The SBOMs have `.sha256` files, so they are signed and have build
+provenance like the other release files. `sbom.spdx.json` still describes
+the release files and the Go modules of the binaries.
+
 ### Telemetry and Metrics
 
 `TELEMETRY_ENABLED=true` makes BOOTy post a metrics summary when provisioning

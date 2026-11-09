@@ -3,8 +3,9 @@
 ## Status
 
 Partly implemented. Phase 1 (signatures and build provenance on release
-files and images) and phase 3 (reproducible initramfs with a double-build CI
-job, see the README section "Reproducible builds") are done; the other
+files and images), phase 2 (CycloneDX and SPDX SBOMs of the ramdisk content,
+see the README section "Ramdisk SBOMs") and phase 3 (reproducible initramfs
+with a double-build CI job, see "Reproducible builds") are done; the other
 phases are design only. It extends
 [proposal-release-pipelines.md](proposal-release-pipelines.md) and
 [proposal-image-signatures.md](proposal-image-signatures.md).

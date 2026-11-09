@@ -36,6 +36,9 @@ RUN make
 WORKDIR tools
 RUN gcc -O2 -fPIC -static -L command.o dumpconfig.o formats.o lvchange.o lvconvert.o lvconvert_poll.o lvcreate.o lvdisplay.o lvextend.o lvmcmdline.o lvmdiskscan.o lvpoll.o lvreduce.o lvremove.o lvrename.o lvresize.o lvscan.o polldaemon.o pvchange.o pvck.o pvcreate.o pvdisplay.o pvmove.o pvmove_poll.o pvremove.o pvresize.o pvscan.o reporter.o segtypes.o tags.o toollib.o vgcfgbackup.o vgcfgrestore.o vgchange.o vgck.o vgcreate.o vgdisplay.o vgexport.o vgextend.o vgimport.o vgimportclone.o vgmerge.o vgmknodes.o vgreduce.o vgremove.o vgrename.o vgscan.o vgsplit.o lvm-static.o ../lib/liblvm-internal.a ../libdaemon/client/libdaemonclient.a ../device_mapper/libdevice-mapper.a ../base/libbase.a -lm -lblkid -laio -o lvm -lpthread -luuid ./liblvm2cmd.a
 RUN strip --strip-all lvm
+# The ramdisk SBOM lists this source build as a component (--target sbom-inputs).
+RUN printf '{"name":"lvm2","version":"%s","purl":"pkg:generic/lvm2@%s?download_url=https://sourceware.org/pub/lvm2/LVM2.%s.tgz","files":["sbin/lvm"]}\n' \
+      "${LVM2_VERSION}" "${LVM2_VERSION}" "${LVM2_VERSION}" > /sbom-source.json
 
 # Build scripted fdisk (sfdisk)
 FROM gcc:16@sha256:9af8c7003ad451f09496c7182f320c58554e10ec080e7038e0aa5e41146c916b AS sfdisk
@@ -61,6 +64,9 @@ RUN set -eu; \
     git checkout --detach "${UTIL_LINUX_REF}"
 RUN ./autogen.sh && ./configure --enable-static-programs=sfdisk && make
 RUN strip --strip-all sfdisk.static
+# The ramdisk SBOM lists this source build as a component (--target sbom-inputs).
+RUN printf '{"name":"util-linux","version":"%s","purl":"pkg:github/util-linux/util-linux@%s","files":["bin/sfdisk"]}\n' \
+      "${UTIL_LINUX_REF}" "${UTIL_LINUX_REF}" > /sbom-source.json
 
 # Build BOOTy as an init
 FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS dev
@@ -285,6 +291,13 @@ RUN if [ -n "$KERNEL_SUITE" ]; then \
     find /modules -name '*.ko.xz' -exec xz -d {} + && \
     if ls /modules/*.ko.* >/dev/null 2>&1; then echo "compressed modules left in /modules" >&2; exit 1; fi && \
     echo "Extracted $(ls /modules/*.ko 2>/dev/null | wc -l) kernel modules of $KVER" && \
+    # The kernel packages are unpacked, not installed: record them in dpkg
+    # status and .list form for the ramdisk SBOM (--target sbom-inputs).
+    mkdir -p /sbom-dpkg/info && \
+    for d in /tmp/debs/*.deb; do \
+        { dpkg-deb -f "$d"; echo "Status: install ok installed"; echo; } >> /sbom-dpkg/status; \
+        dpkg-deb --fsys-tarfile "$d" | tar -t | sed 's|^\.||' > "/sbom-dpkg/info/$(dpkg-deb -f "$d" Package).list"; \
+    done && \
     rm -rf /tmp/kernel /tmp/debs /var/lib/apt/lists/*
 
 # Build disk, system, and firmware tools
@@ -481,6 +494,21 @@ RUN cd /split && sha256sum base.cpio.zst frr.cpio.zst vmlinuz > SHA256SUMS
 
 FROM scratch AS split
 COPY --from=split-builder /split/ .
+
+# ── Ramdisk SBOM inputs (optional, --target=sbom-inputs) ─────────────────
+# What hack/ramdisk_sbom.py needs besides an extracted ramdisk: the package
+# databases of the stages whose Debian files the ramdisks ship, the kernel
+# packages, and the components built from source. Nothing here goes into a
+# ramdisk.
+FROM scratch AS sbom-inputs
+COPY --from=tools /usr/lib/os-release os-release
+COPY --from=tools /var/lib/dpkg/status dpkg/tools/status
+COPY --from=tools /var/lib/dpkg/info/ dpkg/tools/info/
+COPY --from=frr /var/lib/dpkg/status dpkg/frr/status
+COPY --from=frr /var/lib/dpkg/info/ dpkg/frr/info/
+COPY --from=kernel /sbom-dpkg/ dpkg/kernel/
+COPY --from=lvm /sbom-source.json source/lvm2.json
+COPY --from=sfdisk /sbom-source.json source/util-linux.json
 
 # ── ISO build stage (optional, triggered by --target=iso) ──────────────────
 # UEFI boot image: Debian shim (Microsoft UEFI CA) + Debian-signed GRUB,
