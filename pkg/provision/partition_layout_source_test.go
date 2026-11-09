@@ -166,6 +166,8 @@ func TestValidateSupportedLayoutMountpoint(t *testing.T) {
 		{"/etc/bootyx", false},
 		{"/boot/grub", true},
 		{"/boot/firmware", true},
+		{`/srv/cache\040files`, true},
+		{"/srv/cache files", true},
 	} {
 		err := validateSupportedLayoutMountpoint(tc.mountpoint, "ext4", map[string]bool{})
 		if (err != nil) != tc.wantErr {
@@ -197,13 +199,20 @@ func TestCopyTreeWithSymlinksKeepsXattrsAndSkipsNested(t *testing.T) {
 		{"lib/state", "system.posix_acl_access", acl},
 		{"log", "user.booty.test", []byte("mountpoint")},
 	}
-	// Setting a file capability needs CAP_SETFCAP; the kvm scenario covers
-	// it for unprivileged runs.
+	// Setting a file capability needs CAP_SETFCAP, and a trusted.* xattr
+	// (allowed on a symlink, unlike user.*) CAP_SYS_ADMIN; the kvm scenario
+	// covers capabilities for unprivileged runs.
 	if os.Geteuid() == 0 {
-		xattrs = append(xattrs, struct {
+		if err := os.Symlink("state", filepath.Join(src, "lib", "link")); err != nil {
+			t.Fatal(err)
+		}
+		xattrs = append(xattrs, []struct {
 			path, name string
 			value      []byte
-		}{"lib/helper", "security.capability", capability})
+		}{
+			{"lib/helper", "security.capability", capability},
+			{"lib/link", "trusted.booty.test", []byte("symlink")},
+		}...)
 	}
 	for _, x := range xattrs {
 		if err := unix.Lsetxattr(filepath.Join(src, x.path), x.name, x.value, 0); err != nil {

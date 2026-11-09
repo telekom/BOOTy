@@ -1525,6 +1525,11 @@ func validateSupportedLayoutMountpoint(mountpoint, filesystem string, seen map[s
 	if mountpoint == "" {
 		return nil
 	}
+	// fstab decodes \040 and friends and splits on white space, so such a
+	// mountpoint would mount somewhere else after the reboot.
+	if strings.ContainsAny(mountpoint, "\\ \t\n") {
+		return fmt.Errorf("partition layout mountpoint %q must not contain white space or a backslash", mountpoint)
+	}
 	clean := filepath.Clean(mountpoint)
 	if clean != mountpoint {
 		return fmt.Errorf("partition layout mountpoint %q must be a clean path (%q)", mountpoint, clean)
@@ -3033,14 +3038,16 @@ type seededDir struct {
 	meta copiedPathMetadata
 }
 
-// copySeedEntry copies one entry of a shared data seed. A regular file gets
-// its extended attributes at once; for a directory it returns the metadata
+// copySeedEntry copies one entry of a shared data seed. A regular file or
+// symlink gets its extended attributes at once; for a directory it returns the metadata
 // that the caller applies after the content.
 func copySeedEntry(ctx context.Context, src, dst string, d os.DirEntry) (seededDir, bool, error) {
 	if err := copyTreeEntry(ctx, src, dst, d); err != nil {
 		return seededDir{}, false, err
 	}
-	if d.Type().IsRegular() {
+	// A symlink keeps its own xattrs too (security labels); copyXattrs does
+	// not follow links.
+	if d.Type().IsRegular() || d.Type()&os.ModeSymlink != 0 {
 		return seededDir{}, false, copyXattrs(src, dst)
 	}
 	if !d.IsDir() {
