@@ -45,6 +45,8 @@ var DefaultStepBudgets = map[string]time.Duration{
 	"setup-raid":             time.Hour,
 	"setup-nvme-namespaces":  time.Hour,
 	"apply-partition-layout": time.Hour,
+	// Up to 4 HTTP attempts of 2 min each plus the retry delays.
+	"fetch-partition-layout": 10 * time.Minute,
 	// Writes the image a second time into the layout from the image.
 	"load-image-partition-layout": time.Hour,
 	// Seeds the data partitions; each copied entry reports progress, the

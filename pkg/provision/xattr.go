@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"slices"
 
 	"golang.org/x/sys/unix"
 )
@@ -15,10 +16,22 @@ import (
 // capabilities (security.capability) and security labels. Set them after
 // the owner and mode: chown drops security.capability and chmod rewrites
 // the ACL mask.
+//
+// A POSIX ACL of dst that src does not have is removed: dst can inherit one
+// from the default ACL that an interrupted earlier seed left on a parent.
 func copyXattrs(src, dst string) error {
 	names, err := listXattrs(src)
 	if err != nil {
 		return err
+	}
+	for _, acl := range []string{"system.posix_acl_access", "system.posix_acl_default"} {
+		if slices.Contains(names, acl) {
+			continue
+		}
+		err := unix.Lremovexattr(dst, acl)
+		if err != nil && !errors.Is(err, unix.ENODATA) && !errors.Is(err, unix.ENOTSUP) && !errors.Is(err, unix.EPERM) {
+			return fmt.Errorf("remove xattr %s from %s: %w", acl, dst, err)
+		}
 	}
 	for _, name := range names {
 		value, err := getXattr(src, name)

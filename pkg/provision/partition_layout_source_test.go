@@ -203,16 +203,20 @@ func TestCopyTreeWithSymlinksKeepsXattrsAndSkipsNested(t *testing.T) {
 	// (allowed on a symlink, unlike user.*) CAP_SYS_ADMIN; the kvm scenario
 	// covers capabilities for unprivileged runs.
 	if os.Geteuid() == 0 {
-		if err := os.Symlink("state", filepath.Join(src, "lib", "link")); err != nil {
-			t.Fatal(err)
-		}
-		xattrs = append(xattrs, []struct {
+		xattrs = append(xattrs, struct {
 			path, name string
 			value      []byte
-		}{
-			{"lib/helper", "security.capability", capability},
-			{"lib/link", "trusted.booty.test", []byte("symlink")},
-		}...)
+		}{"lib/helper", "security.capability", capability})
+		link := filepath.Join(src, "lib", "link")
+		if err := os.Symlink("state", link); err != nil {
+			t.Fatal(err)
+		}
+		if unix.Lsetxattr(link, "trusted.booty.test", []byte("symlink"), 0) == nil {
+			xattrs = append(xattrs, struct {
+				path, name string
+				value      []byte
+			}{"lib/link", "trusted.booty.test", []byte("symlink")})
+		}
 	}
 	for _, x := range xattrs {
 		if err := unix.Lsetxattr(filepath.Join(src, x.path), x.name, x.value, 0); err != nil {
@@ -237,6 +241,27 @@ func TestCopyTreeWithSymlinksKeepsXattrsAndSkipsNested(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(dst, "log", "nested.log")); !os.IsNotExist(err) {
 		t.Fatalf("nested mountpoint content copied: %v", err)
+	}
+}
+
+// An ACL inherited from a default ACL that an interrupted seed left on the
+// parent is removed when the source has none.
+func TestCopyXattrsDropsACLMissingInSource(t *testing.T) {
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "src"), filepath.Join(dir, "dst")
+	writeFile(t, src, "src")
+	writeFile(t, dst, "dst")
+	if err := unix.Lsetxattr(dst, "system.posix_acl_access", testPosixACL(1000), 0); err != nil {
+		if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EPERM) {
+			t.Skipf("set ACL on the test filesystem: %v", err)
+		}
+		t.Fatal(err)
+	}
+	if err := copyXattrs(src, dst); err != nil {
+		t.Fatalf("copyXattrs: %v", err)
+	}
+	if _, err := getXattr(dst, "system.posix_acl_access"); !errors.Is(err, unix.ENODATA) {
+		t.Fatalf("inherited ACL kept: %v", err)
 	}
 }
 

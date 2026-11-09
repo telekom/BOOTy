@@ -610,6 +610,7 @@ of waiting for the CAPRF provision timeout.
   | `collect-firmware`, `setup-mellanox` | 1 h | Firmware reads and NIC firmware changes |
   | `setup-raid`, `setup-nvme-namespaces` | 1 h | Array creation and namespace changes wait for devices |
   | `apply-partition-layout`, `grow-partition` | 1 h | Partitioning and growth wait for devices and udev |
+  | `fetch-partition-layout` | 10 min | Up to 4 HTTP attempts of 2 min each for `PARTITION_LAYOUT_URL`, plus the retry delays |
   | `load-image-partition-layout` | 1 h | Partitions and writes the image a second time for `PARTITION_LAYOUT_IMAGE_PATH` |
   | `mount-shared-data` | 1 h | Seeds the data partitions; every copied entry reports progress, the budget covers one large file |
   | `stream-image` | 1 h | Image modes that write with `dd`; the HTTP download reports every written byte |
