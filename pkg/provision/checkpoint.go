@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
+
+	"github.com/telekom/BOOTy/pkg/config"
 )
 
 // ErrNoCheckpoint is returned when no checkpoint file exists.
@@ -30,9 +33,12 @@ type Checkpoint struct {
 	// MirrorTargetDisk and MirrorDisk store the disks that detect-disk
 	// selected for DISK_MIRRORING_MODE; MirrorDisk is empty when auto mode
 	// fell back to one disk. Resume keeps that selection.
-	MirrorTargetDisk string   `json:"mirrorTargetDisk,omitempty"`
-	MirrorDisk       string   `json:"mirrorDisk,omitempty"`
-	CompletedSteps   []string `json:"completedSteps"`
+	MirrorTargetDisk string `json:"mirrorTargetDisk,omitempty"`
+	MirrorDisk       string `json:"mirrorDisk,omitempty"`
+	// PartitionLayout stores a layout read from PARTITION_LAYOUT_URL or the
+	// image, so a resumed run uses the layout that is on the disk.
+	PartitionLayout *config.PartitionLayout `json:"partitionLayout,omitempty"`
+	CompletedSteps  []string                `json:"completedSteps"`
 	// FailureCount is the number of steps that failed at least once
 	// (incremented per executeStep error, not per retry attempt).
 	FailureCount int      `json:"failureCount"`
@@ -116,6 +122,12 @@ func (c *Checkpoint) MarkStep(name string) {
 		return
 	}
 	c.CompletedSteps = append(c.CompletedSteps, name)
+}
+
+// ForgetSteps marks the named steps as not completed, so a resumed run
+// repeats them.
+func (c *Checkpoint) ForgetSteps(names ...string) {
+	c.CompletedSteps = slices.DeleteFunc(c.CompletedSteps, func(s string) bool { return slices.Contains(names, s) })
 }
 
 // IsCompleted returns true if the named step was already completed.

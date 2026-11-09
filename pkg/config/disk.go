@@ -1,5 +1,7 @@
 package config
 
+import "strings"
+
 // DiskConfig defines target disk selection, preparation, and layout settings.
 // Used during provisioning for RAID assembly, NVMe namespace management,
 // disk detection, wiping, and partitioning.
@@ -162,6 +164,28 @@ type DiskConfig struct {
 	// the selected source root filesystem into the declared root partition.
 	// Default: nil
 	PartitionLayout *PartitionLayout `yaml:"partitionLayout" json:"partitionLayout"`
+
+	// PartitionLayoutURL is an HTTPS URL of a PartitionLayout JSON document.
+	// BOOTy fetches it before any disk is changed. Plain HTTP needs
+	// Provision.Image.AllowInsecureHTTP. Ignored when PartitionLayout is set.
+	// Default: "" (none)
+	PartitionLayoutURL string `yaml:"partitionLayoutURL,omitempty" json:"partitionLayoutURL,omitempty"`
+
+	// PartitionLayoutImagePath is the absolute path of a PartitionLayout JSON
+	// document in the root filesystem of the image, for example
+	// "/usr/share/vendor/layout/*.json". A filepath.Match pattern must match
+	// exactly one file. BOOTy writes the whole-disk image, reads the layout
+	// from its root, then creates the layout and writes the image root into
+	// it. Ignored when PartitionLayout or PartitionLayoutURL is set.
+	// Default: "" (none)
+	PartitionLayoutImagePath string `yaml:"partitionLayoutImagePath,omitempty" json:"partitionLayoutImagePath,omitempty"`
+}
+
+// PartitionLayoutRequested reports whether a partition layout is set or comes
+// from a URL or the image.
+func (d *DiskConfig) PartitionLayoutRequested() bool {
+	return d.PartitionLayout != nil || strings.TrimSpace(d.PartitionLayoutURL) != "" ||
+		strings.TrimSpace(d.PartitionLayoutImagePath) != ""
 }
 
 // RAIDConfig defines a single software RAID array to create via mdadm.

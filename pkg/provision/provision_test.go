@@ -1323,9 +1323,10 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 	// overlayFS config, apply-sysexts, OCI pre-pulls, serial console
 	// resolution, EFI fallback install, secureboot chain verification, and the
 	// disk mirroring steps (mirror-root, configure-mdadm, install-esp-sync, mirror EFI entry)
-	// and configure-sriov.
-	if len(steps) != 52 {
-		t.Errorf("expected 52 provisioning steps, got %d", len(steps))
+	// configure-sriov and the partition layout sources (fetch-partition-layout,
+	// load-image-partition-layout).
+	if len(steps) != 54 {
+		t.Errorf("expected 54 provisioning steps, got %d", len(steps))
 	}
 }
 

@@ -133,7 +133,7 @@ RUN set -eux; \
       > /tmp/booty-efi-fallback.cfg && \
     grub-mkstandalone -O "${grub_platform}" -o "/out/${efi_loader}" \
       --locales="" --fonts="" \
-      --modules="part_gpt part_msdos fat ext2 search search_fs_file configfile normal" \
+      --modules="part_gpt part_msdos fat ext2 xfs lvm search search_fs_file configfile normal" \
       "boot/grub/grub.cfg=/tmp/booty-efi-fallback.cfg"
 # The ramdisk SBOM lists the loader as the GRUB package it is built from
 # (--target sbom-inputs); it matches the file by its SHA-256.

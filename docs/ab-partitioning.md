@@ -106,7 +106,10 @@ EFI partitions. This happens before the hostname, provisioner files, sysexts,
 fstab, cloud-init, machine files and post-provision commands.
 
 During initial provisioning, BOOTy seeds an empty shared partition from the
-matching directory in the target root slot before it mounts the partition.
+matching directory in the target root slot before it mounts the partition,
+with owners, modes and extended attributes (POSIX ACLs, file capabilities).
+A nested data mountpoint (`/var/log` below `/var`) gets its content only on
+its own partition (see [Data Mountpoints](disk.md#data-mountpoints)).
 During `preserveExisting` upgrades, BOOTy mounts the shared data partitions but
 does not format or seed them.
 
