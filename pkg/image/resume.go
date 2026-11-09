@@ -83,12 +83,14 @@ func getRange(ctx context.Context, url, etag string, start, end, total int64) (i
 	req.Header.Set("Range", spec)
 	req.Header.Set("If-Range", etag)
 	req.Header.Set("If-Match", etag)
+	// A transparently decompressed body would not match its Content-Range.
+	req.Header.Set("Accept-Encoding", "identity")
 	resp, err := imageHTTPClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("range request %s: %w", spec, &redactedSourceError{rawSource: url, err: err})
 	}
-	if resp.StatusCode == http.StatusPartialContent && contentRangeMatches(resp.Header.Get("Content-Range"), start, total) {
+	if rangeResponseOK(resp, start, total) {
 		return newIdleTimeoutBody(resp.Body, cancel, imageIdleReadTimeout), nil
 	}
 	_ = resp.Body.Close()
@@ -103,6 +105,13 @@ func getRange(ctx context.Context, url, etag string, start, end, total int64) (i
 	default:
 		return nil, errors.New(prefix)
 	}
+}
+
+// rangeResponseOK reports whether resp is a 206 with the bytes from start of
+// an object of total bytes, as sent: a decoded body has other offsets.
+func rangeResponseOK(resp *http.Response, start, total int64) bool {
+	return resp.StatusCode == http.StatusPartialContent && !resp.Uncompressed &&
+		resp.Header.Get("Content-Encoding") == "" && contentRangeMatches(resp.Header.Get("Content-Range"), start, total)
 }
 
 // contentRangeMatches reports whether the Content-Range value v starts at
@@ -171,8 +180,11 @@ func (b *resumingBody) Read(p []byte) (int, error) {
 		b.off += int64(n)
 		// net/http reports a body shorter than its Content-Length as
 		// io.ErrUnexpectedEOF; a plain io.EOF ends a complete body.
-		if err == nil || (err == io.EOF && b.off == b.size) || b.ctx.Err() != nil { //nolint:errorlint // io.EOF is never wrapped
+		if err == nil || (err == io.EOF && b.off == b.size) { //nolint:errorlint // io.EOF is never wrapped
 			return n, err //nolint:wrapcheck // io.EOF must stay unwrapped
+		}
+		if b.ctx.Err() != nil { // never pass a break off as the end of the image
+			return n, fmt.Errorf("image download stopped at offset %d: %w", b.off, context.Cause(b.ctx))
 		}
 		if b.err = b.resume(err); b.err != nil || n > 0 {
 			return n, b.err

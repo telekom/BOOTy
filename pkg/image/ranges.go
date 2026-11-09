@@ -26,6 +26,8 @@ type rangeReader struct {
 	order  chan chan chunk // the pending chunks in order
 	cur    []byte
 	err    error
+	size   int64 // bytes of the object
+	read   int64 // bytes passed on
 }
 
 // newRangeReader fetches url (n >= 2) with n ranged GETs at a time: n-1
@@ -35,7 +37,7 @@ type rangeReader struct {
 // Read returns its error.
 func newRangeReader(ctx context.Context, url, etag string, size int64, n int) *rangeReader {
 	ctx, cancel := context.WithCancelCause(ctx)
-	r := &rangeReader{ctx: ctx, cancel: cancel, order: make(chan chan chunk, n-1)}
+	r := &rangeReader{ctx: ctx, cancel: cancel, order: make(chan chan chunk, n-1), size: size}
 	step, backoff := rangeChunkSize, retryBackoffBase
 	go func() {
 		defer close(r.order)
@@ -96,7 +98,13 @@ func (r *rangeReader) Read(p []byte) (int, error) {
 		}
 		next, ok := <-r.order
 		if !ok {
+			// A canceled ctx closes order early: only a complete object ends in io.EOF.
 			r.err = io.EOF
+			if r.read != r.size {
+				if r.err = context.Cause(r.ctx); r.err == nil {
+					r.err = io.ErrUnexpectedEOF
+				}
+			}
 			continue
 		}
 		c := <-next
@@ -107,6 +115,7 @@ func (r *rangeReader) Read(p []byte) (int, error) {
 	}
 	n := copy(p, r.cur)
 	r.cur = r.cur[n:]
+	r.read += int64(n)
 	return n, nil
 }
 

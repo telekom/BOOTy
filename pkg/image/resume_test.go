@@ -264,3 +264,26 @@ func TestRangeReaderFailsFast(t *testing.T) {
 		t.Fatal("Read() waits for the stalled range after another range failed for good")
 	}
 }
+
+// TestRangeReaderParentCancel: a canceled parent ctx stops the download
+// early; Read must report it, not end the image with io.EOF.
+func TestRangeReaderParentCancel(t *testing.T) {
+	withDownloadOptions(t, DownloadOptions{})
+	origChunk := rangeChunkSize
+	rangeChunkSize = 64 << 10
+	t.Cleanup(func() { rangeChunkSize = origChunk })
+	data := testPayload(1 << 20)
+	srv := httptest.NewServer(&faultServer{data: data})
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	r := newRangeReader(ctx, srv.URL+"/image.raw", `"v1"`, int64(len(data)), 3)
+	defer func() { _ = r.Close() }()
+	if _, err := io.ReadFull(r, make([]byte, rangeChunkSize)); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	got, err := io.ReadAll(r)
+	if err == nil {
+		t.Fatalf("ReadAll() after cancel = %d bytes and nil, want an error", rangeChunkSize+int64(len(got)))
+	}
+}
