@@ -1050,6 +1050,23 @@ build by their SHA-256. It then runs syft. The SBOMs have `.sha256` files, so th
 provenance like the other release files. `sbom.spdx.json` still describes
 the release files and the Go modules of the binaries.
 
+Each ramdisk archive also carries a CycloneDX and an SPDX SBOM attestation
+that binds its SBOM to its digest, and each OCI initramfs artifact carries
+a cosign CycloneDX attestation:
+
+```bash
+gh attestation verify default-amd64-initramfs.cpio.zst \
+  --repo telekom/BOOTy \
+  --signer-workflow telekom/BOOTy/.github/workflows/release-v2.yml \
+  --source-ref "refs/tags/${VERSION}" \
+  --predicate-type https://cyclonedx.org/bom   # SPDX: https://spdx.dev/Document/v2.3
+
+cosign verify-attestation --type cyclonedx \
+  --certificate-identity "${IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  "ghcr.io/telekom/booty/initramfs:${VERSION_NO_V}-default-amd64"
+```
+
 ### Telemetry and Metrics
 
 `TELEMETRY_ENABLED=true` makes BOOTy post a metrics summary when provisioning
