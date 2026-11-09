@@ -1,7 +1,8 @@
 #!/bin/sh
-# Pack a ramdisk tree as a newc cpio archive compressed with zstd.
+# Pack a ramdisk tree as a newc cpio archive compressed with zstd, or with
+# gzip for an output name that ends in .gz.
 #
-# usage: pack-initramfs.sh <root> <out.cpio.zst>
+# usage: pack-initramfs.sh <root> <out.cpio.zst|out.cpio.gz>
 #
 # The kernel decompresses the ramdisk in one thread before /init starts,
 # and slow BMC virtual media streams every byte of it. zstd is the codec
@@ -16,9 +17,16 @@
 # libraries, executables, the rest. Similar files next to each other
 # compress about 1% better than the find order, and the order no longer
 # depends on the directory order of the build file system.
+#
+# The same tree gives the same bytes (README.md, Reproducible builds): every
+# entry gets the time SOURCE_DATE_EPOCH (default 1980-01-01, like the
+# ISOs) and the owner root, cpio --reproducible numbers the inodes in
+# archive order and zeroes the device numbers, and gzip -n leaves out the
+# name and time of the input.
 set -eu
-root=${1:?usage: pack-initramfs.sh <root> <out.cpio.zst>}
-out=${2:?usage: pack-initramfs.sh <root> <out.cpio.zst>}
+root=${1:?usage: pack-initramfs.sh <root> <out.cpio.zst|out.cpio.gz>}
+out=${2:?usage: pack-initramfs.sh <root> <out.cpio.zst|out.cpio.gz>}
+epoch=${SOURCE_DATE_EPOCH:-315532800}
 
 cd "$root"
 {
@@ -38,7 +46,11 @@ if [ "$listed" -ne "$total" ] || [ "$(tr -cd '\0' < /tmp/initramfs.files | wc -c
 	exit 1
 fi
 
-cpio --null -o --quiet --format=newc < /tmp/initramfs.files > /tmp/initramfs.cpio
+find . -exec touch -h -d "@$epoch" {} +
+cpio --null -o --quiet --format=newc --reproducible --owner=0:0 < /tmp/initramfs.files > /tmp/initramfs.cpio
 rm /tmp/initramfs.files
-zstd -q --ultra -22 --long /tmp/initramfs.cpio -o "$out"
+case "$out" in
+*.gz) gzip -n -c /tmp/initramfs.cpio > "$out" ;;
+*) zstd -q --ultra -22 --long /tmp/initramfs.cpio -o "$out" ;;
+esac
 rm /tmp/initramfs.cpio

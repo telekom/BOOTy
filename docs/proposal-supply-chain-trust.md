@@ -2,7 +2,10 @@
 
 ## Status
 
-Proposal. Design only. Nothing in this document is implemented. It extends
+Partly implemented. Phase 1 (signatures and build provenance on release
+files and images) and phase 3 (reproducible initramfs with a double-build CI
+job, see the README section "Reproducible builds") are done; the other
+phases are design only. It extends
 [proposal-release-pipelines.md](proposal-release-pipelines.md) and
 [proposal-image-signatures.md](proposal-image-signatures.md).
 
