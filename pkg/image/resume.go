@@ -214,7 +214,17 @@ func (b *resumingBody) resume(cause error) error {
 		}
 		cause = err
 	}
-	return fmt.Errorf("image download failed after %d resumes at offset %d: %w", maxResumes, b.off, cause)
+	return fmt.Errorf("image download failed after %d resumes at offset %d: %w", maxResumes, b.off, notEOF(cause))
+}
+
+// notEOF turns an io.EOF in err (an empty body, a connection closed before
+// the response) into io.ErrUnexpectedEOF: readers above take io.EOF as the
+// end of the image.
+func notEOF(err error) error {
+	if errors.Is(err, io.EOF) {
+		return fmt.Errorf("%w: %v", io.ErrUnexpectedEOF, err) //nolint:errorlint // io.EOF must not stay matchable
+	}
+	return err
 }
 
 func (b *resumingBody) Close() error {

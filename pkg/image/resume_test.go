@@ -287,3 +287,34 @@ func TestRangeReaderParentCancel(t *testing.T) {
 		t.Fatalf("ReadAll() after cancel = %d bytes and nil, want an error", rangeChunkSize+int64(len(got)))
 	}
 }
+
+// hangUpServer closes every connection before it sends a response, which
+// the client reports as a wrapped io.EOF.
+func hangUpServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestRangeFailuresAreNotEOF: a range or a resume that fails on an empty
+// body or a connection closed before the response must not end in io.EOF,
+// which readers above take as the end of the image.
+func TestRangeFailuresAreNotEOF(t *testing.T) {
+	withDownloadOptions(t, DownloadOptions{})
+	srv := hangUpServer(t)
+	c := fetchRange(t.Context(), srv.URL, `"v1"`, 0, 99, 100, time.Millisecond)
+	if c.err == nil || errors.Is(c.err, io.EOF) || !errors.Is(c.err, io.ErrUnexpectedEOF) {
+		t.Errorf("fetchRange() error = %v, want io.ErrUnexpectedEOF and not io.EOF", c.err)
+	}
+	b := &resumingBody{ctx: t.Context(), url: srv.URL, etag: `"v1"`, size: 100, body: io.NopCloser(strings.NewReader("short"))}
+	_, err := io.ReadAll(b)
+	if err == nil || errors.Is(err, io.EOF) || !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Errorf("resumingBody error = %v, want io.ErrUnexpectedEOF and not io.EOF", err)
+	}
+}

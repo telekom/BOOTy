@@ -2,7 +2,6 @@ package image
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -71,9 +70,6 @@ func fetchRange(ctx context.Context, url, etag string, off, end, size int64, bac
 		if err == nil {
 			_, err = io.ReadFull(body, buf)
 			_ = body.Close()
-			if errors.Is(err, io.EOF) { // an empty body: readers above take io.EOF as the end
-				err = io.ErrUnexpectedEOF
-			}
 		}
 		if err == nil {
 			return chunk{data: buf}
@@ -87,7 +83,7 @@ func fetchRange(ctx context.Context, url, etag string, off, end, size int64, bac
 		}
 		backoff *= 2
 	}
-	return chunk{err: fmt.Errorf("image range at offset %d: %w", off, err)}
+	return chunk{err: fmt.Errorf("image range at offset %d: %w", off, notEOF(err))}
 }
 
 func (r *rangeReader) Read(p []byte) (int, error) {
