@@ -88,7 +88,26 @@ func (w *blockWriter) copyFrom(src io.Reader) (int64, error) {
 			return w.off, rerr //nolint:wrapcheck // checksum and download errors stay matchable
 		}
 	}
-	return w.off, w.flushZeros()
+	if err := w.flushZeros(); err != nil {
+		return w.off, err
+	}
+	return w.off, w.extendFile()
+}
+
+// extendFile grows a regular-file target that is shorter than the image: a
+// punch keeps the file size, so a trailing zero run would leave it short.
+func (w *blockWriter) extendFile() error {
+	fi, err := w.dev.Stat()
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", w.dev.Name(), err)
+	}
+	if !fi.Mode().IsRegular() || fi.Size() >= w.off {
+		return nil
+	}
+	if err := w.dev.Truncate(w.off); err != nil {
+		return fmt.Errorf("extending %s to %d bytes: %w", w.dev.Name(), w.off, err)
+	}
+	return nil
 }
 
 // fill reads into buf until it is full or src fails. Unlike io.ReadFull it
