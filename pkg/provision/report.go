@@ -294,7 +294,8 @@ func reportSysexts(cfg *config.SysextConfig) []ReportSysext {
 // effort, like the other reports: a failed write logs a warning and the
 // report still reaches LOG_URL through report-success.
 func (o *Orchestrator) writeProvisionReport(ctx context.Context) error {
-	o.report = o.buildReport(ctx)
+	// A new report (a rescue retry runs the steps again) is logged again.
+	o.report, o.reportLogged = o.buildReport(ctx), false
 	path := o.cfg.Provision.ReportTargetPath()
 	switch {
 	case path == "":

@@ -270,17 +270,30 @@ func TestReportSuccessLogsReport(t *testing.T) {
 	}
 }
 
-// A retried report-success sends the report once.
+// A retried report-success sends the report once; a report built again
+// (a rescue retry runs write-provision-report again) is sent again.
 func TestLogProvisionReportOnce(t *testing.T) {
 	withReportHost(t, nil, nil)
-	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	cfg := &config.MachineConfig{}
+	cfg.Provision.ReportPath = config.ReportPathNone
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
 	var buf bytes.Buffer
 	o.log = slog.New(slog.NewJSONHandler(&buf, nil))
-	o.report = o.buildReport(context.Background())
+	logged := func() int { return strings.Count(buf.String(), `"msg":"provisioning report"`) }
+	if err := o.writeProvisionReport(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	o.logProvisionReport()
 	o.logProvisionReport()
-	if n := strings.Count(buf.String(), `"msg":"provisioning report"`); n != 1 {
+	if n := logged(); n != 1 {
 		t.Fatalf("report logged %d times, want 1:\n%s", n, buf.String())
+	}
+	if err := o.writeProvisionReport(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	o.logProvisionReport()
+	if n := logged(); n != 2 {
+		t.Fatalf("rebuilt report logged %d times in total, want 2", n)
 	}
 }
 
