@@ -1780,13 +1780,16 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		}
 	}
 
+	img := o.cfg.Provision.Image
 	var opts []image.StreamOpts
-	if o.cfg.Provision.Image.Checksum != "" || o.cfg.Provision.Image.Stream {
+	if img.Checksum != "" || img.Stream || img.SparseWrite == config.SparseWriteAuto || img.SkipUnchanged {
 		opts = append(opts, image.StreamOpts{
-			Checksum:      o.cfg.Provision.Image.Checksum,
-			ChecksumType:  o.cfg.Provision.Image.ChecksumType,
-			ChecksumScope: o.cfg.Provision.Image.ChecksumScope,
-			StreamOnly:    o.cfg.Provision.Image.Stream,
+			Checksum:      img.Checksum,
+			ChecksumType:  img.ChecksumType,
+			ChecksumScope: img.ChecksumScope,
+			StreamOnly:    img.Stream,
+			SparseWrite:   img.SparseWrite == config.SparseWriteAuto,
+			SkipUnchanged: img.SkipUnchanged,
 		})
 	}
 	defer startMemoryPeak(o.log)()

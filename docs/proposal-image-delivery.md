@@ -2,7 +2,16 @@
 
 ## Status
 
-Proposal. Design only. Nothing in this document is implemented.
+Proposal. Partly implemented:
+
+- Benchmark: `BenchmarkStreamZstd` in `pkg/image` streams a synthetic zstd
+  disk image (60 % zero blocks) to a file or a block device.
+- Sparse writes (`IMAGE_SPARSE_WRITE=auto`) and skipping unchanged blocks
+  (`IMAGE_SKIP_UNCHANGED`), whole-disk streaming only. See
+  [disk.md](disk.md#faster-image-writes).
+- Decoder concurrency: measured, not changed. With the default of the zstd
+  library (up to 4 goroutines) `BenchmarkStreamZstd` was not faster than with
+  one, so `pkg/image/format.go` keeps one.
 
 ## Priority
 
@@ -99,6 +108,11 @@ air-gapped operation.
 
 ### 3. Sparse writes
 
+- Implemented without a dependency on the wipe: BOOTy zeroes each run of zero
+  blocks with `fallocate(PUNCH_HOLE)` on the device, which the kernel turns
+  into WRITE ZEROES without a fallback (`BLKDEV_ZERO_NOFALLBACK`). It fails
+  when the device cannot guarantee zeros, and BOOTy then writes the zeros.
+  The original idea follows.
 - After `wipe-disks` with `blkdiscard` on a device that reports
   `discard_zeroes_data` or a successful `BLKZEROOUT`, BOOTy can skip writing
   all-zero blocks. Track skipped ranges and verify the checksum over the full

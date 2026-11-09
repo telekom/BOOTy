@@ -32,6 +32,7 @@ import (
 //   - Provision.Image.Mode: "whole-disk", "partition", "ab"
 //   - Provision.Image.ChecksumType: "sha256", "sha512"
 //   - Provision.Image.ChecksumScope: "download", "decompressed"
+//   - Provision.Image.SparseWrite: "off", "auto"
 //   - Provision.CloudInit.Datasource: "nocloud", "configdrive"
 //   - Provision.OCIPrePulls: valid cache path, import namespace, and image refs
 //   - Provision.ProviderID: no whitespace or control characters
@@ -226,6 +227,10 @@ func (c *Config) validatePrimaryEnums() []string {
 
 func (c *Config) validateFeatureEnums() []string {
 	validators := []func() string{
+		c.validateSkipUnchanged,
+		func() string {
+			return validateEnumLower(c.Provision.Image.SparseWrite, "provision.image.sparseWrite (IMAGE_SPARSE_WRITE)", SparseWriteOff, SparseWriteAuto)
+		},
 		func() string {
 			return validateEnumLower(c.Network.BGP.UnderlayAF, "network.bgp.underlayAF", "ipv4")
 		},
@@ -414,6 +419,19 @@ func validatePersistenceVLANConfig(vlanConfig string) []string {
 	return errs
 }
 
+// validateSkipUnchanged allows IMAGE_SKIP_UNCHANGED only after a quick wipe:
+// a block that a thorough wipe discarded or a secure erase cleared need not
+// read back the same after the reboot, so it must not be compared.
+func (c *Config) validateSkipUnchanged() string {
+	d := c.Provision.Disk
+	if !c.Provision.Image.SkipUnchanged ||
+		(strings.EqualFold(strings.TrimSpace(d.WipeDepth), WipeDepthQuick) && !d.SecureErase && !BoolOr(d.DiscardNVMe, false)) {
+		return ""
+	}
+	return "provision.image.skipUnchanged (IMAGE_SKIP_UNCHANGED) needs provision.disk.wipeDepth quick (WIPE_DEPTH=quick) " +
+		"without secureErase and discardNVMe: a discarded or erased block need not read back the same"
+}
+
 func validateImageSourceRootSelectors(cfg *ImageConfig) error {
 	if cfg.SourceRootPartition < 0 {
 		return fmt.Errorf("provision.image.sourceRootPartition must be non-negative")
@@ -439,6 +457,7 @@ func (c *Config) normalize() {
 		&c.Provision.TargetOS,
 		&c.Provision.Image.ChecksumType,
 		&c.Provision.Image.ChecksumScope,
+		&c.Provision.Image.SparseWrite,
 		&c.Provision.Disk.MirroringMode,
 		&c.Network.Mode,
 		&c.Network.WaitMode,

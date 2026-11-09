@@ -1222,7 +1222,7 @@ func applyLogFlushTimeoutVar(cfg *config.MachineConfig, value string) error {
 }
 
 func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
-	if applyNetworkStringVar(cfg, key, value) || applySecureBootDigestVar(cfg, key, value) {
+	if applyNetworkStringVar(cfg, key, value) || applySecureBootDigestVar(cfg, key, value) || applyImageWriteVar(cfg, key, value) {
 		return true
 	}
 	if applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) || applyCheckStringVar(cfg, key, value) {
@@ -1300,6 +1300,19 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		return true
 	}
 	return false
+}
+
+// applyImageWriteVar handles the image write options.
+func applyImageWriteVar(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
+	case "IMAGE_SPARSE_WRITE":
+		cfg.Provision.Image.SparseWrite = value
+	case "IMAGE_SKIP_UNCHANGED":
+		cfg.Provision.Image.SkipUnchanged = parseBoolVar(value)
+	default:
+		return false
+	}
+	return true
 }
 
 // splitVarList splits a comma-separated vars value.
