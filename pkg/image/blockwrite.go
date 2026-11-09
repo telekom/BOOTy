@@ -31,6 +31,7 @@ var punchZeroes = punchHole
 //     device is a WRITE ZEROES or deallocate command instead of a data write.
 //     The first failure turns punching off and writes the zeros.
 //   - skipUnchanged: a block that the device already holds is not written.
+//     All-zero blocks are always punched or written.
 //     Reinstalling the same image writes only the blocks that differ.
 //
 // The image checksum is computed from the stream before blockWriter, so it
@@ -170,7 +171,9 @@ func (w *blockWriter) skip(blk []byte, off int64) (bool, error) {
 			return joined, err
 		}
 	}
-	if !w.skipUnchanged {
+	// An all-zero block is never skipped by comparison: the old OS may have
+	// trimmed it, and a deallocated block need not read back as zeros later.
+	if !w.skipUnchanged || bytes.Equal(blk, zeroBlock[:len(blk)]) {
 		return false, nil
 	}
 	have := w.readBuf[:len(blk)]
@@ -216,7 +219,7 @@ func (w *blockWriter) flushZeros() error {
 		w.punched += n
 		return nil
 	}
-	slog.Info("hole punch failed, writing zeros from here on", "error", err)
+	slog.Warn("hole punch failed, writing zeros from here on", "error", err)
 	w.punch = false
 	for done := int64(0); done < n; done += writeBlockSize {
 		if err := w.writeAt(zeroBlock, off+done); err != nil {
