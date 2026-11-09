@@ -74,7 +74,7 @@ func fetchRange(ctx context.Context, url, etag string, off, end, size int64, bac
 		if err == nil {
 			return chunk{data: buf}
 		}
-		if finalRangeError(err) || ctx.Err() != nil {
+		if finalRangeError(err) || ctx.Err() != nil || attempt == maxResumes {
 			break
 		}
 		slog.Warn("image range failed, retrying", "offset", off, "attempt", attempt, "error", err)

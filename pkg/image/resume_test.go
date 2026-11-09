@@ -65,7 +65,7 @@ func (s *faultServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func testPayload(n int) []byte {
 	p := make([]byte, n)
 	for i := range p {
-		p[i] = byte(i * 7)
+		p[i] = byte(i*7 + i>>8 + i>>16) // distinct per 256-byte period: swapped ranges differ
 	}
 	return p
 }
@@ -316,5 +316,42 @@ func TestRangeFailuresAreNotEOF(t *testing.T) {
 	_, err := io.ReadAll(b)
 	if err == nil || errors.Is(err, io.EOF) || !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Errorf("resumingBody error = %v, want io.ErrUnexpectedEOF and not io.EOF", err)
+	}
+}
+
+// TestRangesFollowTheRedirect: ranges go to the resource that answered the
+// first GET. The redirect then points to another image with the same ETag
+// and size, which must not be mixed in.
+func TestRangesFollowTheRedirect(t *testing.T) {
+	origChunk := rangeChunkSize
+	rangeChunkSize = 64 << 10
+	t.Cleanup(func() { rangeChunkSize = origChunk })
+	v1, v2 := testPayload(1<<20), bytes.Repeat([]byte{0xee}, 1<<20)
+	for _, opts := range []DownloadOptions{{Resume: true}, {ParallelRanges: 3}} {
+		withDownloadOptions(t, opts)
+		var redirects atomic.Int32
+		srv1 := &faultServer{data: v1}
+		srv1.cuts.Store(1) // the first GET breaks, so Resume requests a range
+		mux := http.NewServeMux()
+		mux.Handle("/v1", srv1)
+		mux.Handle("/v2", &faultServer{data: v2})
+		mux.HandleFunc("/latest", func(w http.ResponseWriter, r *http.Request) {
+			target := "/v2"
+			if redirects.Add(1) == 1 {
+				target = "/v1"
+			}
+			http.Redirect(w, r, target, http.StatusFound)
+		})
+		srv := httptest.NewServer(mux)
+		body, err := httpGetWithRetry(t.Context(), srv.URL+"/latest")
+		if err != nil {
+			t.Fatalf("%+v: httpGetWithRetry() = %v", opts, err)
+		}
+		got, err := io.ReadAll(body)
+		_ = body.Close()
+		srv.Close()
+		if err != nil || !bytes.Equal(got, v1) {
+			t.Fatalf("%+v: ReadAll() = %d bytes, %v; want the %d bytes of /v1", opts, len(got), err, len(v1))
+		}
 	}
 }

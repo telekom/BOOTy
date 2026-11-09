@@ -132,6 +132,11 @@ func wrapDownload(ctx context.Context, url string, resp *http.Response, cancel c
 		return body
 	}
 	etag := rangeValidator(resp)
+	// Ranges go to the resource that answered, not to a URL that redirects
+	// and may point to another image with the same ETag and size later.
+	if resp.Request != nil && resp.Request.URL != nil {
+		url = resp.Request.URL.String()
+	}
 	// A transparently decompressed body has other offsets than its ranges.
 	// Without a Content-Length a resumed body could end early unnoticed.
 	if etag == "" || resp.ContentLength < 0 || resp.Uncompressed || resp.Header.Get("Content-Encoding") != "" {
