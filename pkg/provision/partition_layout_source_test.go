@@ -174,6 +174,8 @@ func TestValidateSupportedLayoutMountpoint(t *testing.T) {
 		{"/srv/cache\x7ffiles", true},
 		{"/srv/cache\x01files", true},
 		{"/srv/cache-files", false},
+		{"/var\u00a0", true},
+		{" /var", true},
 	} {
 		err := validateSupportedLayoutMountpoint(tc.mountpoint, "ext4", map[string]bool{})
 		if (err != nil) != tc.wantErr {

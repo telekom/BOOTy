@@ -1522,7 +1522,7 @@ func (o *Orchestrator) validatePartitionLayoutRuntimeSupport() error {
 // (seeding sets owners, modes and xattrs, which vfat cannot store). Every
 // other mountpoint is seeded and mounted.
 func validateSupportedLayoutMountpoint(mountpoint, filesystem string, seen map[string]bool) error {
-	mountpoint = strings.TrimSpace(mountpoint)
+	// Not trimmed: fstab gets the mountpoint as it is.
 	if mountpoint == "" {
 		return nil
 	}
