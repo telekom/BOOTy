@@ -197,9 +197,9 @@ func (c *Client) solicit() {
 }
 
 // request asks for an advertised (or, after NoBinding, the current)
-// address, up to ten times, until a REPLY with NoBinding or until until
-// (when set: the end of the valid lifetime of the current address); it
-// tells whether a REPLY bound it.
+// address, up to ten times, until a REPLY with NoBinding or with valid
+// lifetime 0 for it, or until until (when set: the end of the valid
+// lifetime of the current address); it tells whether a REPLY bound it.
 func (c *Client) request(adv *Lease, until time.Time) bool {
 	start, xid := c.now(), rand.Uint32()&0xffffff //nolint:gosec // a transaction ID
 	var rt time.Duration
@@ -222,6 +222,8 @@ func (c *Client) request(adv *Lease, until time.Time) bool {
 		case r.hasAddr:
 			c.bind(&r.lease)
 			return true
+		case slices.ContainsFunc(r.revoked, adv.Addr.Equal):
+			return false // valid lifetime 0 (RFC 8415 18.2.10.1)
 		}
 	}
 	return false
@@ -239,11 +241,11 @@ func (c *Client) extend(l *Lease) {
 		typ   dhcpv6.MessageType
 		until time.Time
 	}{{msgRenew, l.Rebind}, {msgRebind, l.Expire}} {
-		bound, noBinding := c.phase(l, phase.typ, phase.until)
+		bound, end := c.phase(l, phase.typ, phase.until)
 		if bound || c.stopped() {
 			return
 		}
-		if noBinding {
+		if end {
 			break
 		}
 	}
@@ -258,9 +260,11 @@ func (c *Client) extend(l *Lease) {
 // phase sends RENEW or REBIND until a REPLY binds the address or until is
 // reached; it tells whether the address is bound again. A REPLY with
 // NoBinding for the IA makes the client send a REQUEST to that server
-// (RFC 8415 18.2.10.1); noBinding then tells that the REQUEST failed too,
-// and the lease ends at once, like networkd ends it on NoBinding.
-func (c *Client) phase(l *Lease, typ dhcpv6.MessageType, until time.Time) (bound, noBinding bool) {
+// (RFC 8415 18.2.10.1); end then tells that the REQUEST failed too, and
+// the lease ends at once, like networkd ends it on NoBinding. A REPLY that
+// gives the address a valid lifetime of 0 and no other address ends it at
+// once too (18.2.10.1: discard the leases with a valid lifetime of 0).
+func (c *Client) phase(l *Lease, typ dhcpv6.MessageType, until time.Time) (bound, end bool) {
 	start, xid := c.now(), rand.Uint32()&0xffffff //nolint:gosec // a transaction ID
 	var rt time.Duration
 	for !c.stopped() {
@@ -289,6 +293,9 @@ func (c *Client) phase(l *Lease, typ dhcpv6.MessageType, until time.Time) (bound
 		case r.hasAddr:
 			c.bind(&r.lease)
 			return true, false
+		case slices.ContainsFunc(r.revoked, l.Addr.Equal):
+			c.Log.Info("DHCPv6 address revoked: valid lifetime 0", "addr", l.Addr)
+			return false, true
 		}
 	}
 	return false, false

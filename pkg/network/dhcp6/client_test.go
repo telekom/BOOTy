@@ -705,3 +705,74 @@ func TestInformationClosesSocketBeforeWait(t *testing.T) {
 		t.Fatalf("%d sockets open during the information refresh wait, want 0", got)
 	}
 }
+
+// replyIA is a REPLY to msg whose IA_NA (T1 60 s, T2 96 s) has addrs.
+func replyIA(msg []byte, addrs ...[]byte) []byte {
+	clientID, _ := find(msg, optClientID)
+	return encode(msgReply, xidOf(msg), []dhcpv6.Option{raw(optServerID, testServer), raw(optClientID, clientID), iaNAOpt(60, 96, addrs...)})
+}
+
+// RFC 8415 18.2.10.1: a REPLY to RENEW or REBIND that gives the bound
+// address a valid lifetime of 0 ends the lease at once; with a new address
+// next to it the client binds that one. The lease is bound at 0 s with T1
+// 60 s, T2 96 s and valid 180 s.
+func TestReplyWithZeroValidLifetime(t *testing.T) {
+	const other = "fd00:10::2b5"
+	ours := testAddr.String()
+	for _, tt := range []struct {
+		name   string
+		answer dhcpv6.MessageType // RENEW or REBIND
+		addrs  [][]byte
+		bound  string        // the address bound again, "": none
+		end    time.Duration // when the lease ends after the bind, 0: not
+	}{
+		{"RENEW revokes", msgRenew, [][]byte{iaAddr(ours, 0, 0)}, "", 60 * time.Second},
+		{"REBIND revokes", msgRebind, [][]byte{iaAddr(ours, 0, 0)}, "", 96 * time.Second},
+		{"RENEW revokes and assigns another", msgRenew, [][]byte{iaAddr(ours, 0, 0), iaAddr(other, 120, 180)}, other, 0},
+		{"RENEW assigns another first", msgRenew, [][]byte{iaAddr(other, 120, 180), iaAddr(ours, 0, 0)}, other, 0},
+		{"RENEW with valid lifetime 1", msgRenew, [][]byte{iaAddr(ours, 0, 1)}, ours, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFakeNet()
+			f.answer = func(msg []byte) []byte {
+				switch dhcpv6.MessageType(msg[0]) {
+				case msgSolicit:
+					return serverReply(msg, msgReply, true)
+				case tt.answer:
+					return replyIA(msg, tt.addrs...)
+				}
+				return nil
+			}
+			bound, expired := make(chan *Lease, 4), make(chan time.Time, 1)
+			c := f.client(true)
+			c.OnBound = func(l *Lease) { bound <- l }
+			c.OnExpire = func(*Lease) { expired <- c.now() }
+			c.Start()
+			l := <-bound
+			f.tick(t)
+			if tt.bound != "" {
+				select {
+				case got := <-bound:
+					if !got.Addr.Equal(net.ParseIP(tt.bound)) {
+						t.Errorf("bound %s, want %s", got.Addr, tt.bound)
+					}
+				case <-expired:
+					t.Error("the lease ended, want a new binding")
+				case <-time.After(5 * time.Second):
+					t.Error("no new binding")
+				}
+			} else {
+				select {
+				case at := <-expired:
+					if got := at.Sub(l.Bound); got != tt.end {
+						t.Errorf("the lease ended %s after the bind, want %s", got, tt.end)
+					}
+				case <-time.After(5 * time.Second):
+					t.Error("the lease did not end")
+				}
+			}
+			close(f.stopped)
+			c.Stop()
+		})
+	}
+}

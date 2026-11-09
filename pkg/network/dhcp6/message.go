@@ -150,6 +150,9 @@ type reply struct {
 	pref        byte            // server preference (option 7), 0 when absent
 	lease       Lease
 	hasAddr     bool
+	// revoked are the addresses of our IA_NA with a valid lifetime of 0,
+	// which the client must stop using (RFC 8415 18.2.10.1).
+	revoked []net.IP
 }
 
 var (
@@ -196,6 +199,7 @@ func decode(b []byte, iaid uint32, now time.Time) (reply, error) {
 				r.iaStatus = st.StatusCode
 			}
 			r.hasAddr = r.lease.ia(ia, now)
+			r.revoked = revoked(ia)
 		}
 	}
 	return r, nil
@@ -240,6 +244,17 @@ func (l *Lease) ia(ia *dhcpv6.OptIANA, now time.Time) bool {
 		return true
 	}
 	return false
+}
+
+// revoked returns the addresses of an IA_NA with a valid lifetime of 0.
+func revoked(ia *dhcpv6.OptIANA) []net.IP {
+	var out []net.IP
+	for _, o := range ia.Options.Get(optIAAddr) {
+		if a, ok := o.(*dhcpv6.OptIAAddress); ok && a.ValidLifetime == 0 {
+			out = append(out, a.IPv6Addr)
+		}
+	}
+	return out
 }
 
 func seconds(d time.Duration) uint32 { return uint32(d / time.Second) } //nolint:gosec // from 32 bits
