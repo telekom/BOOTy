@@ -246,14 +246,16 @@ jobs:
             # Five QEMU runs.
             go_timeout: 35m
           # IMAGE_SPARSE_WRITE=auto on a fresh virtio disk, then
-          # IMAGE_SKIP_UNCHANGED=true with the same image on the same disk.
+          # IMAGE_SKIP_UNCHANGED=true with the same image on the same disk;
+          # IMAGE_RESUME and IMAGE_PARALLEL_RANGES against a server that
+          # breaks every full GET. Four QEMU runs.
           - scenario: image-write
             qemu_extra: ""
             test_tag: e2e
-            test_regex: "^TestProvisionImageWriteOptionsQEMU$"
+            test_regex: "^TestProvisionImage.*OptionsQEMU$"
             privileged: true
             setup: ""
-            go_timeout: 20m
+            go_timeout: 35m
           - scenario: disk-wipe
             qemu_extra: ""
             test_tag: e2e
