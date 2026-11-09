@@ -521,9 +521,10 @@ func (c *Client) release() {
 		return
 	}
 	defer func() { _ = tr.close() }()
-	// networkd sends the client identifier only (captured in kindmetal:
-	// options 53, 61), unicast from the lease address to the server.
-	var opts []dhcpv4.Option
+	// Unicast from the lease address to the server with the server
+	// identifier, which RFC 2131 Table 5 requires in a DHCPRELEASE, and the
+	// client identifier when set.
+	opts := []dhcpv4.Option{dhcpv4.OptServerIdentifier(l.ServerID.To4())}
 	if len(c.ClientID) > 0 {
 		opts = append(opts, dhcpv4.OptClientIdentifier(c.ClientID))
 	}
@@ -565,7 +566,9 @@ func (c *Client) request(xid uint32, ciaddr, server, addr net.IP) *message {
 	return &message{typ: dhcpv4.MessageTypeRequest, xid: xid, ciaddr: ciaddr, mac: c.Iface.HardwareAddr, options: c.withHostname(opts)}
 }
 
-// common returns 61, 55 and 57 (the MTU of the NIC now, less 28).
+// common returns 61, 55 and 57: the MTU of the NIC now less 28, but at
+// least 576, the minimum of RFC 2132 section 9.10. A NIC below an MTU of
+// 576 sends no option 57, so the server uses 576.
 func (c *Client) common() []dhcpv4.Option {
 	var opts []dhcpv4.Option
 	if len(c.ClientID) > 0 {
@@ -579,7 +582,7 @@ func (c *Client) common() []dhcpv4.Option {
 		mtu = ifi.MTU
 	}
 	if mtu >= 576 {
-		opts = append(opts, dhcpv4.OptMaxMessageSize(uint16(mtu-28))) //nolint:gosec // an MTU fits 16 bits
+		opts = append(opts, dhcpv4.OptMaxMessageSize(uint16(max(mtu-28, 576)))) //nolint:gosec // an MTU fits 16 bits
 	}
 	return opts
 }

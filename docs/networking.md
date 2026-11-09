@@ -1516,8 +1516,10 @@ The client is BOOTy's own (`pkg/network/dhcp4`), with the states of RFC
   the INIT backoff), like networkd restarts its client when the carrier
   returns; without an answer the client goes to INIT.
 - DHCPRELEASE at stop (Teardown, before kexec or reboot) from the lease
-  address to the server, with the client identifier only, like networkd
-  (`SendRelease=yes`; the legacy ramdisk sends it, captured in kindmetal).
+  address to the server, with the server identifier (option 54, which
+  RFC 2131 Table 5 requires) and the client identifier (`SendRelease=yes`
+  in networkd; the legacy ramdisk sends it, captured in kindmetal with
+  the client identifier only).
 - The UDP socket on lease-address:68 of an exchange with `ciaddr`
   (RENEWING and REBINDING) stays open until the reply, and a socket on
   0.0.0.0:68 of the NIC is open for every exchange (a server answers an
@@ -1551,7 +1553,8 @@ identifier (61: type 255, an IAID of the NIC and a DUID-EN with the systemd
 enterprise number and a hash of the machine ID of the boot, so new at every
 boot as in the legacy ramdisk), parameter request list (55: 1, 3, 6, 12,
 15, 26, 33, 42, 114, 119, 120, 121), maximum message size (57: MTU less
-28) and the ramdisk hostname (12) when one is set.
+28, at least 576 as RFC 2132 section 9.10 requires; not sent below an MTU
+of 576) and the ramdisk hostname (12) when one is set.
 
 On every lease (also renewals and leases on the other NICs), BOOTy:
 
