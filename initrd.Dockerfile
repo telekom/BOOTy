@@ -352,8 +352,9 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/ttyS0 c 4 64
 # Users and groups: root, and frr and frrvty, which the FRR daemons switch
 # to (zebra: "could not lookup user frr" without them). Every flavor gets
-# them, so a ramdisk with FRR never lacks them.
-COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
+# them, so a ramdisk with FRR never lacks them. --chmod: the mode must not
+# depend on the umask of the checkout (reproducible builds).
+COPY --chmod=0644 hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Pre-built static busybox binary from Docker Hub (cached by Docker layer cache)
 COPY --from=busybox-bin /bin/busybox bin/busybox
@@ -448,6 +449,9 @@ COPY --from=frr /frr-libs/ .
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
 
+# pack-initramfs.sh stamps every entry with this time (reproducible builds).
+ARG SOURCE_DATE_EPOCH=315532800
+
 # Drop the libraries that no shipped executable loads, then check in a chroot
 # that every dynamic executable resolves its libraries from the tree alone.
 # Nothing may change the tree between this step and cpio.
@@ -469,6 +473,7 @@ RUN pack-initramfs.sh . /initramfs.cpio.zst
 # SHA256SUMS lists every file, so one pin covers the set.
 FROM busybox AS split-builder
 ARG BOOTY_BUILD=unknown
+ARG SOURCE_DATE_EPOCH=315532800
 COPY hack/split-initramfs.sh /usr/local/bin/
 RUN split-initramfs.sh /build/initramfs /split "$BOOTY_BUILD"
 COPY --from=kernel /vmlinuz /split/vmlinuz
@@ -529,8 +534,9 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/ttyS0 c 4 64
 # Users and groups: root, and frr and frrvty, which the FRR daemons switch
 # to (zebra: "could not lookup user frr" without them). Every flavor gets
-# them, so a ramdisk with FRR never lacks them.
-COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
+# them, so a ramdisk with FRR never lacks them. --chmod: the mode must not
+# depend on the umask of the checkout (reproducible builds).
+COPY --chmod=0644 hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Copy busybox binary and create all applet symlinks (same as default variant).
 # This ensures utilities like tail, grep, dmesg, hostname, ps, and xargs are
@@ -587,6 +593,9 @@ COPY --from=tools /tool-libs/ .
 # of the Debian kernel, and slim ships mdadm and the disk tools.
 COPY --from=kernel /modules/ modules/
 
+# pack-initramfs.sh stamps every entry with this time (reproducible builds).
+ARG SOURCE_DATE_EPOCH=315532800
+
 # Drop the libraries of the tools that slim does not ship, then check in a
 # chroot that every dynamic executable resolves its libraries from the tree
 # alone. Nothing may change the tree between this step and cpio.
@@ -610,8 +619,9 @@ RUN mkdir -p dev proc run sys tmp etc && \
     mknod -m 600 dev/ttyS0 c 4 64
 # Users and groups: root, and frr and frrvty, which the FRR daemons switch
 # to (zebra: "could not lookup user frr" without them). Every flavor gets
-# them, so a ramdisk with FRR never lacks them.
-COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
+# them, so a ramdisk with FRR never lacks them. --chmod: the mode must not
+# depend on the umask of the checkout (reproducible builds).
+COPY --chmod=0644 hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 
 # Copy busybox binary and create all applet symlinks (same as default variant).
 # This ensures utilities like tail, pgrep, dmesg, lsblk, hostname, ps, grep,
@@ -693,6 +703,9 @@ COPY --from=tools /tool-libs-full/ .
 
 # Kernel modules for common server NICs (flat directory, loaded via insmod)
 COPY --from=kernel /modules/ modules/
+
+# pack-initramfs.sh stamps every entry with this time (reproducible builds).
+ARG SOURCE_DATE_EPOCH=315532800
 
 # Drop the libraries that no shipped executable loads, then check in a chroot
 # that every dynamic executable resolves its libraries from the tree alone.
@@ -781,18 +794,18 @@ RUN mkdir -p bin sbin dev proc run sys tmp etc && \
     mknod -m 600 dev/ttyS0 c 4 64
 # Users and groups: root, and frr and frrvty, which the FRR daemons switch
 # to (zebra: "could not lookup user frr" without them). Every flavor gets
-# them, so a ramdisk with FRR never lacks them.
-COPY hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
+# them, so a ramdisk with FRR never lacks them. --chmod: the mode must not
+# depend on the umask of the checkout (reproducible builds).
+COPY --chmod=0644 hack/initramfs-etc/passwd hack/initramfs-etc/group etc/
 COPY --from=micro-dev /go/src/github.com/telekom/BOOTy/init .
 # "booty lldp ..." and other commands in the rescue shell run the agent binary.
 RUN ln -sf ../init bin/booty
 RUN mkdir -p etc/ssl/certs && cp /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/
 
 # Package micro initramfs
-RUN find . -print0 > ../initramfs.files \
-    && cpio --null -ov --format=newc < ../initramfs.files > ../initramfs.cpio \
-    && rm ../initramfs.files \
-    && gzip ../initramfs.cpio && mv ../initramfs.cpio.gz /
+ARG SOURCE_DATE_EPOCH=315532800
+COPY hack/pack-initramfs.sh /usr/local/bin/
+RUN pack-initramfs.sh . /initramfs.cpio.gz
 
 FROM scratch AS micro
 COPY --from=micro-builder /initramfs.cpio.gz .

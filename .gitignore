@@ -33,3 +33,6 @@ findings.md
 
 # Python bytecode
 __pycache__/
+
+# hack/check-reproducible.sh output
+repro-out/
