@@ -51,7 +51,7 @@ func (o *Orchestrator) validateMirroringMode() error {
 		return nil
 	}
 	imageMode := strings.ToLower(strings.TrimSpace(o.cfg.Provision.Image.Mode))
-	if len(o.cfg.Provision.Disk.RAID) > 0 || o.cfg.Provision.Disk.PartitionLayout != nil ||
+	if len(o.cfg.Provision.Disk.RAID) > 0 || o.cfg.Provision.Disk.PartitionLayoutRequested() ||
 		strings.TrimSpace(o.cfg.Provision.Disk.NVMeNamespaces) != "" ||
 		(imageMode != "" && imageMode != config.ImageModeWholeDisk) {
 		return fmt.Errorf("disk mirroring mode %q requires a whole-disk image and cannot be combined with explicit RAID, NVMe namespace setup or a partition layout", mode)

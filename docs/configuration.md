@@ -289,6 +289,8 @@ behaviour changes of this mode.
 | `ROOT_PARTITION_LABEL` | (unset) | GPT partition name | Root partition of a whole-disk image. Excludes `ROOT_PARTITION_NUMBER`. |
 | `ROOT_PARTITION_NUMBER` | `0` | 1-based partition number | Root partition of a whole-disk image when it has no stable label. |
 | `PARTITION_LAYOUT` | (unset) | JSON object | Declarative GPT layout with optional LVM. An invalid layout stops the parse. |
+| `PARTITION_LAYOUT_URL` | (unset) | HTTPS URL | Fetch the `PARTITION_LAYOUT` JSON from this URL before any disk is changed; plain HTTP needs `IMAGE_ALLOW_INSECURE_HTTP`. `PARTITION_LAYOUT` overrides it. Whole-disk image mode only. See [Layout Sources](disk.md#layout-sources). YAML `provision.disk.partitionLayoutURL`. |
+| `PARTITION_LAYOUT_IMAGE_PATH` | (unset) | absolute path or pattern | Read the `PARTITION_LAYOUT` JSON from this path in the root of the written image, for example `/usr/share/vendor/layout/*.json` (exactly one match), then create the layout and write the image root into it. `PARTITION_LAYOUT` and `PARTITION_LAYOUT_URL` override it. Whole-disk image mode only. See [Layout Sources](disk.md#layout-sources). YAML `provision.disk.partitionLayoutImagePath`. |
 | `DISK_MIRRORING_MODE` | (unset) | `raid-1`, `auto`, `none` | Mirror the installed system with RAID1 across a pair of disks with equal size and sector size, like the CAPRF legacy provisioner. `raid-1` needs a pair, `auto` falls back to one disk, `none` is the default. Ignored when `DISK_DEVICE` or `DISK_SERIAL_NUMBER` selects the disk. A mirrored target with an ESP gets the enabled `booty-esp-sync` service (`/usr/local/libexec/booty-esp-sync`, `/etc/systemd/system/booty-esp-sync.service`, `/etc/booty/esp-sync.conf`), which copies changes of `/boot/efi` to the ESP on the other disk; turn it off with `systemctl disable booty-esp-sync.service` in the installed system, see [ESP Synchronization](disk.md#esp-synchronization). See the README table for the full rules. |
 | `NVME_NAMESPACES` | (unset) | JSON array | NVMe namespaces to create before disk detection, for example `[{"controller":"/dev/nvme0","namespaces":[{"label":"os","sizePct":100}]}]`. |
 
@@ -609,6 +611,9 @@ of waiting for the CAPRF provision timeout.
   | `collect-firmware`, `setup-mellanox` | 1 h | Firmware reads and NIC firmware changes |
   | `setup-raid`, `setup-nvme-namespaces` | 1 h | Array creation and namespace changes wait for devices |
   | `apply-partition-layout`, `grow-partition` | 1 h | Partitioning and growth wait for devices and udev |
+  | `fetch-partition-layout` | 10 min | Up to 4 HTTP attempts of 2 min each for `PARTITION_LAYOUT_URL`, plus the retry delays |
+  | `load-image-partition-layout` | 1 h | Partitions and writes the image a second time for `PARTITION_LAYOUT_IMAGE_PATH` |
+  | `mount-shared-data` | 1 h | Seeds the data partitions; every copied entry reports progress, the budget covers one large file |
   | `stream-image` | 1 h | Image modes that write with `dd`; the HTTP download reports every written byte |
   | `mirror-root`, `check-filesystem`, `resize-filesystem` | 1 h | Copies and file system checks of large file systems |
   | `run-machine-commands`, `run-post-provision-cmds` | 1 h | Operator commands |

@@ -62,7 +62,7 @@ CAPRF-compatible `/deploy/vars` file.
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs mount/resize; vfat mount/format for EFI system partitions
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
 - **Post-provision hooks** — Execute arbitrary commands in chroot after OS configuration
-- **53-step provisioning pipeline**: provisioning input validation, RAID cleanup, disk mirroring, NVMe namespace setup, RAID array setup, disk detection, partition layout, image streaming, shared data mounting, optional target overlayFS configuration, partition growth, LVM, filesystem resize, optional sysext loading, OCI image pre-pulls, OS configuration, serial console resolution, EFI fallback installation, final Secure Boot chain verification, cloud-init injection, EFI boot, Mellanox SR-IOV, SR-IOV profiles, post-provision hooks
+- **55-step provisioning pipeline**: provisioning input validation, RAID cleanup, disk mirroring, NVMe namespace setup, RAID array setup, disk detection, partition layout, image streaming, shared data mounting, optional target overlayFS configuration, partition growth, LVM, filesystem resize, optional sysext loading, OCI image pre-pulls, OS configuration, serial console resolution, EFI fallback installation, final Secure Boot chain verification, cloud-init injection, EFI boot, Mellanox SR-IOV, SR-IOV profiles, post-provision hooks
 - **systemd-sysext provisioning** — Optional digest-checked sysext preload or active loading into the provisioned OS image
 - **Ubuntu overlayFS configuration** — Optional target-root overlayroot config for immutable Ubuntu images, with tmpfs or operator-provided persistent backing storage
 - **Kexec support** — Fast reboot into installed kernel without full BIOS POST (auto-disabled after firmware changes)
@@ -510,7 +510,9 @@ root is mounted.
 | `INSECURE_TRANSPORT` | `false` | Allow insecure HTTP connections. Preset by `CAPRF_LEGACY_COMPAT` |
 | `SKIP_TLS_VERIFY` | `false` | Skip TLS certificate checks for CAPRF callbacks, the connectivity check and images, like `curl --insecure`. Never for `TOKEN_URL`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `EXPORT_VARS` | `false` | Export every `/deploy/vars` entry to the environment, like `source vars`. Preset by `CAPRF_LEGACY_COMPAT` |
-| `PARTITION_LAYOUT` | — | Custom partition layout specification |
+| `PARTITION_LAYOUT` | — | Custom partition layout specification; data mountpoints such as `/var` or `/home` are seeded from the image root with ACLs and file capabilities, `mountOptions` go to `/etc/fstab` |
+| `PARTITION_LAYOUT_URL` | — | HTTPS URL of the partition layout JSON; `PARTITION_LAYOUT` overrides it |
+| `PARTITION_LAYOUT_IMAGE_PATH` | — | Path (or pattern) of the partition layout JSON in the root of the image; `PARTITION_LAYOUT` and `PARTITION_LAYOUT_URL` override it |
 | `DISK_SERIAL` | — | Target specific disk by serial number |
 | `RESCUE_PASSWORD_HASH` | — | Password hash for rescue mode access |
 | `POST_PROVISION_CMDS` | — | Semicolon-separated commands to run in chroot after provisioning |
@@ -1035,9 +1037,17 @@ docker buildx build --platform linux/amd64 \
 echo "$(cut -d' ' -f1 default-amd64-initramfs.cpio.zst.sha256)  out/initramfs.cpio.zst" | sha256sum -c
 ```
 
-The Debian packages come from the live mirrors, so a rebuild matches only
-while the mirrors still serve the package versions of the release.
-`hack/check-reproducible.sh <platform> <target>...` runs the CI check locally.
+The Debian and Alpine packages come from the live mirrors, so a rebuild
+matches only while the mirrors still serve the package versions of the
+release. The CI check can fail for the same reason when a mirror publishes a
+new version between its two rounds; it then lists the package versions that
+differ (`--target package-versions`).
+
+`hack/check-reproducible.sh <platform> <target>...` runs the CI check locally
+on a clean checkout. Its second round builds a fresh clone of `HEAD` in
+another directory with `umask 002` and `TZ=Asia/Kolkata`, so the result may
+not depend on the checkout path, its file modes or the time zone, and each
+target gets the `BOOTY_FLAVOR` of the release.
 
 #### Ramdisk SBOMs
 
@@ -1643,7 +1653,7 @@ vrnetlab topologies and the test levels.
 │   │   ├── persist/           # Persist network config into target OS (netplan, NM, systemd-networkd)
 │   │   ├── vrf/               # VRF configuration and validation
 │   │   └── vlan/              # VLAN 802.1Q tagging via netlink
-│   ├── provision/              # Orchestrator (53-step provision, deprovision)
+│   ├── provision/              # Orchestrator (55-step provision, deprovision)
 │   │   └── configurator.go    # OS config: hostname, kubelet, GRUB, DNS, EFI, Mellanox SR-IOV
 │   ├── realm/                  # Device, mount, network, shell operations
 │   ├── rescue/                 # Rescue mode behavior and retry policy

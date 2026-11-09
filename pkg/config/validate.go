@@ -95,6 +95,7 @@ func (c *Config) Validate() error {
 			c.Provision.Disk.PartitionLayout = layout
 		}
 	}
+	errs = append(errs, validatePartitionLayoutSources(&c.Provision.Disk, &c.Provision.Image)...)
 	errs = append(errs, c.validateProvisionFeatureConfigs()...)
 	if err := validateImageSourceRootSelectors(&c.Provision.Image); err != nil {
 		errs = append(errs, err.Error())

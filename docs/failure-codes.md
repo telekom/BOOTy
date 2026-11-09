@@ -65,6 +65,8 @@ and, with `OOB_EFI_VAR`, in the `BootyLastResult` UEFI variable.
 | `BOOTY-DSK-021` | config | `configure-mdadm` | Writing the mdadm configuration failed. |
 | `BOOTY-DSK-022` | config | `select-deprovision-disk` | Deprovision disk selection failed. |
 | `BOOTY-DSK-023` | hardware | `decommission-wipe` | Decommission disk wipe failed. |
+| `BOOTY-DSK-024` | transient | `fetch-partition-layout` | Fetching the partition layout from PARTITION_LAYOUT_URL failed. |
+| `BOOTY-DSK-025` | permanent | `load-image-partition-layout` | Reading or applying the partition layout from the image failed. |
 | `BOOTY-EFI-001` | environment | `mount-efivarfs` | Mounting efivarfs failed. |
 | `BOOTY-EFI-002` | environment | `*` | EFI variables unavailable. |
 | `BOOTY-EFI-003` | hardware | `remove-efi-entries` | Removing EFI boot entries failed. |

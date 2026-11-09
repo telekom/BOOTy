@@ -246,8 +246,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 53 {
-		t.Fatalf("expected 53 provisioning steps, got %d", len(steps))
+	if len(steps) != 55 {
+		t.Fatalf("expected 55 provisioning steps, got %d", len(steps))
 	}
 }
 
@@ -851,16 +851,16 @@ func TestValidateProvisionInputsRejectsUnsupportedPartitionLayoutMountpoint(t *t
 		Table: "gpt",
 		Partitions: []config.Partition{
 			{Label: "root", Filesystem: "ext4", Mountpoint: "/"},
-			{Label: "var", Filesystem: "ext4", Mountpoint: "/var"},
+			{Label: "boot", Filesystem: "ext4", Mountpoint: "/boot"},
 		},
 	}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
 	err := o.validateProvisionInputs(context.Background())
 	if err == nil {
-		t.Fatal("expected unsupported non-root mountpoint error")
+		t.Fatal("expected unsupported /boot mountpoint error")
 	}
-	if !strings.Contains(err.Error(), `mountpoint "/var" is not supported`) {
+	if !strings.Contains(err.Error(), `mountpoint "/boot" is not supported`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -1186,7 +1186,7 @@ func TestSeedSharedDataPartitionRejectsSymlinkedSourceBeforeMount(t *testing.T) 
 	}
 	t.Cleanup(func() { mountSharedDataPart = oldMountShared })
 
-	err := (&Orchestrator{}).seedSharedDataPartition(context.Background(), "/dev/test", target)
+	err := (&Orchestrator{}).seedSharedDataPartition(context.Background(), "/dev/test", target, nil)
 	if err == nil || !strings.Contains(err.Error(), "got symlink") {
 		t.Fatalf("seedSharedDataPartition error = %v, want symlink rejection", err)
 	}
@@ -1491,6 +1491,27 @@ func TestInstallEFIFallbackLoaderSkipsPreserveExistingAB(t *testing.T) {
 	}
 	if hasCommandName(cmd.calls, "chroot") {
 		t.Fatal("fallback installer ran for preserveExisting A/B mode")
+	}
+}
+
+// A non-A/B PARTITION_LAYOUT formats a new, empty ESP and writes only the
+// image root, so the ESP needs the fallback loader like A/B.
+func TestInstallEFIFallbackLoaderRunsForNonABPartitionLayout(t *testing.T) {
+	oldMountPoint := isMountPoint
+	isMountPoint = func(path string) bool { return path == bootEFIMountPoint() }
+	t.Cleanup(func() { isMountPoint = oldMountPoint })
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{}
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.targetDisk = "/dev/sda"
+	o.bootPartition = "/dev/sda1"
+
+	if err := o.installEFIFallbackLoader(context.Background()); err != nil {
+		t.Fatalf("installEFIFallbackLoader non-A/B layout: %v", err)
+	}
+	if !hasCommandName(cmd.calls, "chroot") {
+		t.Fatal("fallback installer did not run for a non-A/B partition layout")
 	}
 }
 
