@@ -2,7 +2,9 @@
 
 ## Status: Accepted
 
-Implementation status: Phase 1 groundwork and root image streaming are implemented; tarball extraction and generic non-root mount orchestration remain pending.
+Implementation status: Phase 1 groundwork, root image streaming and the
+mount orchestration of non-root mountpoints are implemented; tarball
+extraction remains pending.
 
 Implemented in Phase 1:
 - `ParsePartitionLayout` validation (GPT-only schema, root/mountpoint checks,
@@ -26,9 +28,17 @@ Current runtime behavior:
   that mode copies the source partition table and conflicts with a declarative
   target layout.
 
+- Mount orchestration of every other declared mountpoint (partitions and
+  logical volumes, nested ones included): seeded from the written root with
+  owners, modes and extended attributes (POSIX ACLs, file capabilities),
+  mounted parents first below the target root, with `mountOptions` in the
+  generated fstab (see [docs/disk.md](disk.md#data-mountpoints))
+- Layout sources: `PARTITION_LAYOUT_URL` and `PARTITION_LAYOUT_IMAGE_PATH` (a
+  layout shipped in the image), overridden by `PARTITION_LAYOUT` from the
+  host vars (see [docs/disk.md](disk.md#layout-sources))
+
 Still pending for full proposal closure:
 - End-to-end rootfs tarball extraction flow (instead of raw image assumptions)
-- Explicit mount orchestration for all non-root declared mountpoints during provisioning
 
 ## Priority: P3
 
@@ -205,9 +215,10 @@ With custom partitioning:
 
 In the implemented path, the image remains a raw/qcow2/compressed/OCI source.
 BOOTy selects the source root partition, or copies a plain root filesystem
-image, and writes it into the declared root partition. Rootfs tarball extraction
-and arbitrary non-root mount orchestration remain future work; non-A/B layouts
-currently reject mountpoints other than `/` and `/boot/efi`.
+image, and writes it into the declared root partition. It then seeds and
+mounts the other declared mountpoints from the written root. Rootfs tarball
+extraction remains future work; non-A/B layouts reject `/boot` and
+mountpoints below `/boot/efi`.
 
 ### Auto-generated fstab
 

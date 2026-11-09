@@ -185,18 +185,20 @@ jobs:
             test_regex: TestFlatcarLikeUSRASourceCanProvisionSystemABVM
             privileged: true
             setup: ""
-          # Synthetic layered-layout image (ESP + root with /var, /home and
-          # /tmp content, xattrs, ACLs, file capabilities and a layout JSON),
-          # provisioned whole-disk and system-ab with /home, /tmp and /var
-          # data partitions. test/e2e/kvm/layered_layout_test.go lists the
-          # pending scenarios on the same fixture.
+          # Synthetic layered-layout image (ESP + root with /var, /var/log,
+          # /var/log/audit, /var/tmp, /home and /tmp content, xattrs, ACLs,
+          # file capabilities and a CIS-like layout JSON), provisioned
+          # whole-disk, system-ab with /home, /tmp and /var data partitions,
+          # and with the layout read from the image
+          # (PARTITION_LAYOUT_IMAGE_PATH). test/e2e/kvm/layered_layout_test.go
+          # lists the pending scenarios on the same fixture.
           - scenario: layered-layout
             qemu_extra: ""
             test_tag: e2e
             test_regex: "^TestLayeredLayout"
             privileged: true
             setup: ""
-            go_timeout: 25m
+            go_timeout: 40m
           - scenario: crash-artifacts
             qemu_extra: ""
             test_tag: e2e

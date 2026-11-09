@@ -3,6 +3,7 @@
 package kvm
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,10 +11,11 @@ import (
 )
 
 // Scenario layered-layout (.github/workflows/kvm-matrix.yml) runs
-// ^TestLayeredLayout, that is FixtureImage, WholeDiskVM and SystemABVM, on
-// the fixture of layered_layout_fixture_test.go. The TestPendingLayeredLayout* tests name
-// what the fixture is for but BOOTy does not do yet; they skip and stay out
-// of the scenario regex (the matrix fails on a skipped test).
+// ^TestLayeredLayout, that is FixtureImage, WholeDiskVM, SystemABVM and
+// PartitionLayoutVM, on the fixture of layered_layout_fixture_test.go. The
+// TestPendingLayeredLayout* tests name what the fixture is for but BOOTy
+// does not do yet; they skip and stay out of the scenario regex (the matrix
+// fails on a skipped test).
 
 // TestLayeredLayoutFixtureImage checks the fixture itself, without a VM: the
 // content, owners, modes, xattrs, ACLs and file capabilities are in the
@@ -63,14 +65,9 @@ func TestLayeredLayoutWholeDiskVM(t *testing.T) {
 }
 
 // TestLayeredLayoutSystemABVM provisions the fixture as system-ab with
-// /home, /tmp and /var on shared data partitions (AB_DATA_PARTITIONS).
-// Asserted today: the read-only root slot keeps all metadata (block copy),
-// fstab mounts the slot read-only and the data partitions, and the seeded
-// data partitions have the content, owners and modes.
-//
-// Known gap (strict expected failure): seeding copies files without their
-// xattrs, ACLs and file capabilities. The test fails once seeding keeps any
-// of them, so that change turns the check into an assertion.
+// /home, /tmp and /var on shared data partitions (AB_DATA_PARTITIONS). It
+// asserts the read-only root slot, fstab, and the seeded data partitions
+// with content, owners, modes, xattrs, ACLs and file capabilities.
 func TestLayeredLayoutSystemABVM(t *testing.T) {
 	requireRoot(t)
 	qemuAvailable(t)
@@ -126,23 +123,89 @@ func TestLayeredLayoutSystemABVM(t *testing.T) {
 		prefix string
 	}{{4, "home/"}, {5, "tmp/"}, {6, "var/"}} {
 		mount, cleanup := mountQcow2Partition(t, targetDisk, data.part)
-		assertLayeredEntries(t, mount, data.prefix, true, layeredCheck{skipXattrs: true})
-		kept, lost := extendedMetadataKept(t, mount, data.prefix)
-		if len(kept) > 0 {
-			t.Errorf("seeded /%s keeps %s now: assert the metadata (layeredCheck{}) and drop the known gap", data.prefix, strings.Join(kept, ", "))
-		}
-		t.Logf("known gap: seeded /%s lost %s", data.prefix, strings.Join(lost, ", "))
+		assertLayeredEntries(t, mount, data.prefix, true, layeredCheck{})
 		cleanup()
 	}
 }
 
-// TestPendingLayeredLayoutPartitionLayoutSeedingVM: whole-disk provisioning
-// with the multi-mountpoint layout of the image (PARTITION_LAYOUT, or the
-// layout JSON read from the image), with /var, /home and /tmp seeded from
-// the image root with xattrs, ACLs, file capabilities and mount options.
-// Today a non-A/B layout supports only / and /boot/efi.
-func TestPendingLayeredLayoutPartitionLayoutSeedingVM(t *testing.T) {
-	t.Skip("pending: non-A/B PARTITION_LAYOUT with data mountpoints and metadata-preserving seeding")
+// TestLayeredLayoutPartitionLayoutVM provisions the fixture with the CIS-like
+// layout that the image ships (PARTITION_LAYOUT_IMAGE_PATH): BOOTy writes the
+// image whole-disk, reads the layout from its root, creates the layout and
+// writes the image root into it. Each data mountpoint, nested ones included,
+// is seeded from the image root with content, owners, modes, xattrs, ACLs
+// and file capabilities, and fstab carries the mount options.
+func TestLayeredLayoutPartitionLayoutVM(t *testing.T) {
+	requireRoot(t)
+	qemuAvailable(t)
+	requireProvisionTools(t)
+	requireDiskInspectTools(t)
+
+	baseURL := startImageServer(t, compressGzip(t, createLayeredLayoutTestDiskImage(t, 512)))
+	targetDisk := filepath.Join(t.TempDir(), "layered-partition-layout.qcow2")
+	run(t, "create layered partition-layout target", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
+
+	initramfs := buildProvisionInitramfs(t, map[string]string{
+		"HOSTNAME":                    "layered-partition-layout",
+		"MODE":                        "provision",
+		"DISK_DEVICE":                 "/dev/vda",
+		"IMAGE_ALLOW_INSECURE_HTTP":   "true",
+		"IMAGE":                       baseURL + "/image.gz",
+		"IMAGE_SOURCE_ROOT_PARTITION": "2",
+		"PARTITION_LAYOUT_IMAGE_PATH": "/" + filepath.Dir(layeredLayoutJSONPath) + "/*.json",
+	})
+	output := runQEMUProvision(t, findKernel(t), initramfs, targetDisk, 10*time.Minute)
+	t.Logf("layered partition-layout VM output tail:\n%s", tail(output, 3000))
+	assertProvisionSucceeded(t, output)
+	if !strings.Contains(string(output), "partition layout from image") {
+		t.Errorf("BOOTy did not log the layout from the image")
+	}
+
+	root, cleanupRoot := mountQcow2Partition(t, targetDisk, 2)
+	if got := strings.TrimSpace(readProvisionedFile(t, root, "etc/hostname")); got != "layered-partition-layout" {
+		t.Errorf("hostname = %q", got)
+	}
+	fstab := readProvisionedFile(t, root, "etc/fstab")
+	for _, want := range []string{
+		"PARTLABEL=ROOT\t/\text4\tdefaults\t0\t1",
+		"PARTLABEL=EFI\t/boot/efi\tvfat\tumask=0077\t0\t2",
+		"PARTLABEL=AUDIT\t/var/log/audit\text4\tnodev,nosuid,noexec\t0\t2",
+		"PARTLABEL=LOG\t/var/log\text4\tnodev,nosuid,noexec\t0\t2",
+		"PARTLABEL=VARTMP\t/var/tmp\text4\tnodev,nosuid,noexec\t0\t2",
+		"PARTLABEL=VAR\t/var\text4\tnodev,nosuid\t0\t2",
+		"PARTLABEL=HOME\t/home\text4\tnodev,nosuid\t0\t2",
+		"PARTLABEL=TMP\t/tmp\text4\tnodev,nosuid,noexec\t0\t2",
+	} {
+		if !strings.Contains(fstab, want) {
+			t.Errorf("fstab missing %q:\n%s", want, fstab)
+		}
+	}
+	// The root is a block copy of the image root and keeps everything.
+	assertLayeredEntries(t, root, "", false, layeredCheck{})
+	cleanupRoot()
+
+	for _, m := range layeredLayoutMounts {
+		prefix := strings.TrimPrefix(m.mountpoint, "/") + "/"
+		var nested []string
+		for _, other := range layeredLayoutMounts {
+			if strings.HasPrefix(other.mountpoint, m.mountpoint+"/") {
+				nested = append(nested, strings.TrimPrefix(other.mountpoint, "/")+"/")
+			}
+		}
+		mount, cleanup := mountQcow2Partition(t, targetDisk, m.part)
+		assertLayeredEntries(t, mount, prefix, true, layeredCheck{exclude: nested})
+		// A nested mountpoint is an empty directory in its parent.
+		for _, n := range nested {
+			rel := strings.TrimPrefix(strings.TrimSuffix(n, "/"), prefix)
+			if strings.Contains(rel, "/") {
+				continue // below another nested mount
+			}
+			entries, err := os.ReadDir(filepath.Join(mount, rel))
+			if err != nil || len(entries) != 0 {
+				t.Errorf("%s: nested mountpoint %s = %d entries (%v), want an empty directory", m.mountpoint, rel, len(entries), err)
+			}
+		}
+		cleanup()
+	}
 }
 
 // TestPendingLayeredLayoutSignedModuleVM: an out-of-tree kernel module in

@@ -510,7 +510,9 @@ root is mounted.
 | `INSECURE_TRANSPORT` | `false` | Allow insecure HTTP connections. Preset by `CAPRF_LEGACY_COMPAT` |
 | `SKIP_TLS_VERIFY` | `false` | Skip TLS certificate checks for CAPRF callbacks, the connectivity check and images, like `curl --insecure`. Never for `TOKEN_URL`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `EXPORT_VARS` | `false` | Export every `/deploy/vars` entry to the environment, like `source vars`. Preset by `CAPRF_LEGACY_COMPAT` |
-| `PARTITION_LAYOUT` | — | Custom partition layout specification |
+| `PARTITION_LAYOUT` | — | Custom partition layout specification; data mountpoints such as `/var` or `/home` are seeded from the image root with ACLs and file capabilities, `mountOptions` go to `/etc/fstab` |
+| `PARTITION_LAYOUT_URL` | — | HTTPS URL of the partition layout JSON; `PARTITION_LAYOUT` overrides it |
+| `PARTITION_LAYOUT_IMAGE_PATH` | — | Path (or pattern) of the partition layout JSON in the root of the image; `PARTITION_LAYOUT` and `PARTITION_LAYOUT_URL` override it |
 | `DISK_SERIAL` | — | Target specific disk by serial number |
 | `RESCUE_PASSWORD_HASH` | — | Password hash for rescue mode access |
 | `POST_PROVISION_CMDS` | — | Semicolon-separated commands to run in chroot after provisioning |

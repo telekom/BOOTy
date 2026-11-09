@@ -361,7 +361,7 @@ func TestDryRunConfigValidation(t *testing.T) {
 					Table: "gpt",
 					Partitions: []config.Partition{
 						{Label: "root", Filesystem: "ext4", Mountpoint: "/"},
-						{Label: "var", Filesystem: "ext4", Mountpoint: "/var"},
+						{Label: "boot", Filesystem: "ext4", Mountpoint: "/boot"},
 					},
 				}
 				return c

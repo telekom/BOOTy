@@ -246,8 +246,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 52 {
-		t.Fatalf("expected 52 provisioning steps, got %d", len(steps))
+	if len(steps) != 54 {
+		t.Fatalf("expected 54 provisioning steps, got %d", len(steps))
 	}
 }
 
@@ -851,16 +851,16 @@ func TestValidateProvisionInputsRejectsUnsupportedPartitionLayoutMountpoint(t *t
 		Table: "gpt",
 		Partitions: []config.Partition{
 			{Label: "root", Filesystem: "ext4", Mountpoint: "/"},
-			{Label: "var", Filesystem: "ext4", Mountpoint: "/var"},
+			{Label: "boot", Filesystem: "ext4", Mountpoint: "/boot"},
 		},
 	}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 
 	err := o.validateProvisionInputs(context.Background())
 	if err == nil {
-		t.Fatal("expected unsupported non-root mountpoint error")
+		t.Fatal("expected unsupported /boot mountpoint error")
 	}
-	if !strings.Contains(err.Error(), `mountpoint "/var" is not supported`) {
+	if !strings.Contains(err.Error(), `mountpoint "/boot" is not supported`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -1186,7 +1186,7 @@ func TestSeedSharedDataPartitionRejectsSymlinkedSourceBeforeMount(t *testing.T) 
 	}
 	t.Cleanup(func() { mountSharedDataPart = oldMountShared })
 
-	err := (&Orchestrator{}).seedSharedDataPartition(context.Background(), "/dev/test", target)
+	err := (&Orchestrator{}).seedSharedDataPartition(context.Background(), "/dev/test", target, nil)
 	if err == nil || !strings.Contains(err.Error(), "got symlink") {
 		t.Fatalf("seedSharedDataPartition error = %v, want symlink rejection", err)
 	}

@@ -106,9 +106,12 @@ type Orchestrator struct {
 	rootPartition    string
 	bootPartition    string
 	sharedMounts     []string
-	bestImageURL     string // resolved by verify-image, reused by stream-image
-	nvmeTargetDevice string
-	firmwareChanged  bool // true if any step changed firmware values requiring hard reboot
+	// sourcePartitionLayout is the layout read from PARTITION_LAYOUT_URL or
+	// the image. The checkpoint keeps it for a resumed run.
+	sourcePartitionLayout *config.PartitionLayout
+	bestImageURL          string // resolved by verify-image, reused by stream-image
+	nvmeTargetDevice      string
+	firmwareChanged       bool // true if any step changed firmware values requiring hard reboot
 	// separateBootMounted is true while mount-boot owns a separate /boot mount.
 	separateBootMounted bool
 	// disksSettled is true after waitForDisks ran.
@@ -145,6 +148,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"collect-inventory", o.collectInventory},
 		{"collect-firmware", o.collectFirmware},
 		{"health-checks", o.runHealthChecks},
+		{"fetch-partition-layout", o.fetchPartitionLayout},
 		{"validate-provision-inputs", o.validateProvisionInputs},
 		{"verify-image", o.verifyImageSignature},
 		{"disable-lvm", o.disableLVM},
@@ -161,6 +165,7 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"stream-image", o.streamImage},
 		{"partprobe", o.partprobe},
 		{"parse-partitions", o.parsePartitions},
+		{"load-image-partition-layout", o.loadImagePartitionLayout},
 		{"mirror-root", o.mirrorRoot},
 		{"check-filesystem", o.checkFilesystem},
 		{"enable-lvm", o.enableLVM},
@@ -285,6 +290,11 @@ func (o *Orchestrator) loadOrCreateCheckpoint() (*Checkpoint, error) {
 }
 
 func (o *Orchestrator) restoreCheckpointDerivedState(cp *Checkpoint) {
+	if cp != nil && cp.PartitionLayout != nil && o.cfg.Provision.Disk.PartitionLayout == nil {
+		o.cfg.Provision.Disk.PartitionLayout = cp.PartitionLayout
+		o.sourcePartitionLayout = cp.PartitionLayout
+		o.log.Info("restored partition layout from checkpoint")
+	}
 	if cp == nil || o.cfg.Provision.Disk.Device != "" {
 		return
 	}
@@ -368,6 +378,9 @@ func stepFailureMessage(step string, err error) string {
 func (o *Orchestrator) recordCheckpointDerivedState(stepName string, cp *Checkpoint) {
 	if cp == nil {
 		return
+	}
+	if o.sourcePartitionLayout != nil {
+		cp.PartitionLayout = o.sourcePartitionLayout
 	}
 	switch stepName {
 	case "setup-nvme-namespaces":
@@ -1469,13 +1482,16 @@ func (o *Orchestrator) validatePartitionLayoutRuntimeSupport() error {
 	return nil
 }
 
+// validateSupportedLayoutMountpoint rejects the mountpoints that
+// mount-shared-data cannot mount below the target root: a separate /boot
+// (mount-boot mounts the ESP first, so /boot would hide it) and anything
+// below /boot/efi. Every other mountpoint is seeded and mounted.
 func validateSupportedLayoutMountpoint(mountpoint string) error {
-	switch strings.TrimSpace(mountpoint) {
-	case "", "/", "/boot/efi":
-		return nil
-	default:
-		return fmt.Errorf("partition layout mountpoint %q is not supported in non-A/B layout provisioning; only / and /boot/efi are mounted during provisioning", mountpoint)
+	clean := filepath.Clean(strings.TrimSpace(mountpoint))
+	if clean == "/boot" || strings.HasPrefix(clean, "/boot/efi/") {
+		return fmt.Errorf("partition layout mountpoint %q is not supported in non-A/B layout provisioning; /boot and mountpoints below /boot/efi cannot be mounted during provisioning", mountpoint)
 	}
+	return nil
 }
 
 // waitForDisks waits once per run for the block devices to settle
@@ -2575,7 +2591,8 @@ func (o *Orchestrator) verifySecureBootChain(_ context.Context) error {
 
 type sharedDataMount struct {
 	device     string
-	mountpoint string
+	mountpoint string // clean absolute path in the installed OS
+	target     string // mountpoint below newroot
 	label      string
 }
 
@@ -2588,74 +2605,128 @@ type copiedPathMetadata struct {
 	hasOwner bool
 }
 
+// mountSharedData seeds and mounts the data mountpoints of the layout: the
+// system-ab data partitions, or every partition and logical volume of a
+// non-A/B PARTITION_LAYOUT other than / and /boot/efi. All mounts are seeded
+// before the first one is mounted, because a mounted parent (/var) would
+// hide the root directory that a nested mount (/var/log) is seeded from.
 func (o *Orchestrator) mountSharedData(ctx context.Context) error {
-	if !o.isSystemABMode() {
+	if !o.mountsLayoutData() {
 		return nil
 	}
 	mounts := o.sharedDataMountsFromLayout()
+	pending := make([]sharedDataMount, 0, len(mounts))
 	for _, m := range mounts {
-		target := filepath.Join(newroot, strings.TrimPrefix(m.mountpoint, "/"))
-		if err := ensureWithinRoot(newroot, target); err != nil {
+		if err := ensureWithinRoot(newroot, m.target); err != nil {
 			return fmt.Errorf("shared data mount %s: %w", m.mountpoint, err)
 		}
-		if isMountPoint(target) {
-			source, err := mountedFromExpectedSource(target, m.device, "shared data partition")
+		if isMountPoint(m.target) {
+			source, err := mountedFromExpectedSource(m.target, m.device, "shared data partition")
 			if err != nil {
 				return err
 			}
-			o.log.Info("shared data partition already mounted", "label", m.label, "mountpoint", target, "source", source)
-			o.recordSharedMount(target)
+			o.log.Info("shared data partition already mounted", "label", m.label, "mountpoint", m.target, "source", source)
+			o.recordSharedMount(m.target)
 			continue
 		}
 		// The mountpoint may be a link left by an earlier run (checkpoint
 		// resume). Seeding reads it and mount(2) follows it, so check first.
-		if err := ensureMountpointWithinRoot(newroot, target); err != nil {
+		if err := ensureMountpointWithinRoot(newroot, m.target); err != nil {
 			return fmt.Errorf("shared data mountpoint %s: %w", m.mountpoint, err)
 		}
-		if !o.cfg.Provision.AB.PreserveExisting {
-			if err := o.seedSharedDataPartition(ctx, m.device, target); err != nil {
+		if o.seedsLayoutData() {
+			if err := o.seedSharedDataPartition(ctx, m.device, m.target, nestedMountTargets(m, mounts)); err != nil {
 				return fmt.Errorf("seed shared data partition %s: %w", m.label, err)
 			}
 		}
-		if err := mountSharedDataPart(ctx, o.disk, m.device, target); err != nil {
-			return fmt.Errorf("mount shared data partition %s at %s: %w", m.device, target, err)
+		pending = append(pending, m)
+	}
+	for _, m := range pending {
+		if err := ensureMountpointWithinRoot(newroot, m.target); err != nil {
+			return fmt.Errorf("shared data mountpoint %s: %w", m.mountpoint, err)
 		}
-		o.recordSharedMount(target)
-		o.log.Info("mounted shared data partition", "label", m.label, "device", m.device, "mountpoint", target)
+		if err := mountSharedDataPart(ctx, o.disk, m.device, m.target); err != nil {
+			return fmt.Errorf("mount shared data partition %s at %s: %w", m.device, m.target, err)
+		}
+		o.recordSharedMount(m.target)
+		o.log.Info("mounted shared data partition", "label", m.label, "device", m.device, "mountpoint", m.target)
 	}
 	return nil
+}
+
+// mountsLayoutData reports whether mount-shared-data mounts layout data
+// partitions: system-ab, or a PARTITION_LAYOUT outside A/B mode.
+func (o *Orchestrator) mountsLayoutData() bool {
+	if o.isABImageMode() {
+		return o.isSystemABMode()
+	}
+	return o.cfg.Provision.Disk.PartitionLayout != nil
+}
+
+// seedsLayoutData reports whether the data partitions are new and get
+// seeded. A/B preserveExisting upgrades keep the existing data.
+func (o *Orchestrator) seedsLayoutData() bool {
+	return !o.isABImageMode() || !o.cfg.Provision.AB.PreserveExisting
 }
 
 func (o *Orchestrator) isSystemABMode() bool {
 	return o.isABImageMode() && o.cfg.Provision.AB.WithDefaults().Scheme == config.ABSchemeSystemAB
 }
 
+// sharedDataMountsFromLayout returns the data mounts of the layout, parents
+// before nested mountpoints (/var before /var/log).
 func (o *Orchestrator) sharedDataMountsFromLayout() []sharedDataMount {
 	layout := o.cfg.Provision.Disk.PartitionLayout
 	if layout == nil {
 		return nil
 	}
 	var mounts []sharedDataMount
-	for i := range layout.Partitions {
-		part := &layout.Partitions[i]
-		if !isSharedDataPartition(part) {
-			continue
+	add := func(device, mountpoint, filesystem, label string) {
+		if !isSharedDataMountpoint(mountpoint, filesystem) {
+			return
 		}
+		clean := filepath.Clean("/" + strings.TrimSpace(mountpoint))
 		mounts = append(mounts, sharedDataMount{
-			device:     disk.PartitionDevicePath(o.targetDisk, i+1),
-			mountpoint: part.Mountpoint,
-			label:      part.Label,
+			device:     device,
+			mountpoint: clean,
+			target:     filepath.Join(newroot, strings.TrimPrefix(clean, "/")),
+			label:      label,
 		})
 	}
+	for i := range layout.Partitions {
+		part := &layout.Partitions[i]
+		add(disk.PartitionDevicePath(o.targetDisk, i+1), part.Mountpoint, part.Filesystem, part.Label)
+	}
+	if layout.LVM != nil {
+		for _, vol := range layout.LVM.Volumes {
+			add(fmt.Sprintf("/dev/%s/%s", layout.LVM.VolumeGroup, vol.Name), vol.Mountpoint, vol.Filesystem, vol.Name)
+		}
+	}
+	slices.SortStableFunc(mounts, func(a, b sharedDataMount) int {
+		return strings.Count(a.mountpoint, "/") - strings.Count(b.mountpoint, "/")
+	})
 	return mounts
 }
 
-func isSharedDataPartition(part *config.Partition) bool {
-	mountpoint := strings.TrimSpace(part.Mountpoint)
+// nestedMountTargets returns the targets of the mounts below m. Seeding m
+// creates these directories but does not copy their content, which goes to
+// the nested mount.
+func nestedMountTargets(m sharedDataMount, mounts []sharedDataMount) []string {
+	var nested []string
+	for _, other := range mounts {
+		if strings.HasPrefix(other.mountpoint, m.mountpoint+"/") {
+			nested = append(nested, other.target)
+		}
+	}
+	return nested
+}
+
+func isSharedDataMountpoint(mountpoint, filesystem string) bool {
+	mountpoint = strings.TrimSpace(mountpoint)
 	if mountpoint == "" || mountpoint == "/" || mountpoint == "/boot/efi" {
 		return false
 	}
-	return !strings.EqualFold(part.Filesystem, "swap")
+	return !strings.EqualFold(filesystem, "swap")
 }
 
 func (o *Orchestrator) recordSharedMount(mountpoint string) {
@@ -2667,7 +2738,11 @@ func (o *Orchestrator) recordSharedMount(mountpoint string) {
 	o.sharedMounts = append(o.sharedMounts, mountpoint)
 }
 
-func (o *Orchestrator) seedSharedDataPartition(ctx context.Context, device, target string) error {
+// seedSharedDataPartition copies the target directory of the root into the
+// empty partition device, with owners, modes, timestamps and extended
+// attributes (ACLs, file capabilities). The directories in skip are created
+// without their content.
+func (o *Orchestrator) seedSharedDataPartition(ctx context.Context, device, target string, skip []string) error {
 	if exists, err := validateSharedDataSeedSource(target); err != nil {
 		return err
 	} else if !exists {
@@ -2701,7 +2776,7 @@ func (o *Orchestrator) seedSharedDataPartition(ctx context.Context, device, targ
 	if err := writeSeedInProgressMarker(seedMount); err != nil {
 		return err
 	}
-	if err := copyTreeWithSymlinks(ctx, target, seedMount); err != nil {
+	if err := copyTreeWithSymlinks(ctx, target, seedMount, skip...); err != nil {
 		return err
 	}
 	return removeSeedInProgressMarker(seedMount)
@@ -2815,7 +2890,11 @@ func removeSeedInProgressMarker(path string) error {
 	return nil
 }
 
-func copyTreeWithSymlinks(ctx context.Context, srcBase, destRoot string) error {
+// copyTreeWithSymlinks copies srcBase into destRoot for a shared data seed.
+// It keeps symlinks, owners, modes, timestamps and the extended attributes
+// of files and directories (POSIX ACLs, file capabilities, security labels).
+// Directories in skip are created with their metadata but without content.
+func copyTreeWithSymlinks(ctx context.Context, srcBase, destRoot string, skip ...string) error {
 	if exists, err := validateSharedDataSeedSource(srcBase); err != nil {
 		return err
 	} else if !exists {
@@ -2829,7 +2908,7 @@ func copyTreeWithSymlinks(ctx context.Context, srcBase, destRoot string) error {
 	if err != nil {
 		return fmt.Errorf("resolve dest root: %w", err)
 	}
-	var dirs []copiedPathMetadata
+	var dirs []seededDir
 	if err := filepath.WalkDir(cleanSrc, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("walk %s: %w", path, walkErr)
@@ -2845,23 +2924,62 @@ func copyTreeWithSymlinks(ctx context.Context, srcBase, destRoot string) error {
 		if err := ensureWithinRoot(cleanDest, destPath); err != nil {
 			return fmt.Errorf("shared data seed path %s: %w", relPath, err)
 		}
-		if d.IsDir() {
-			info, err := d.Info()
-			if err != nil {
-				return fmt.Errorf("stat %s: %w", path, err)
-			}
-			dirs = append(dirs, copiedPathMetadataFromInfo(destPath, info))
+		dir, isDir, err := copySeedEntry(ctx, path, destPath, d)
+		if err != nil || !isDir {
+			return err
 		}
-		return copyTreeEntry(ctx, path, destPath, d)
+		dirs = append(dirs, dir)
+		if path != cleanSrc && slices.Contains(skip, path) {
+			return filepath.SkipDir
+		}
+		return nil
 	}); err != nil {
 		return fmt.Errorf("copy shared data tree %s -> %s: %w", srcBase, destRoot, err)
 	}
+	return applySeededDirMetadata(dirs)
+}
+
+// applySeededDirMetadata sets the metadata of the copied directories,
+// children first. Owner and mode come first: chown drops
+// security.capability and chmod rewrites the ACL mask, so the extended
+// attributes come after them.
+func applySeededDirMetadata(dirs []seededDir) error {
 	for i := len(dirs) - 1; i >= 0; i-- {
-		if err := applyPathMetadata(dirs[i]); err != nil {
+		if err := applyPathMetadata(dirs[i].meta); err != nil {
+			return err
+		}
+		if err := copyXattrs(dirs[i].src, dirs[i].meta.path); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// seededDir is a copied directory whose metadata is applied after its
+// content.
+type seededDir struct {
+	src  string
+	meta copiedPathMetadata
+}
+
+// copySeedEntry copies one entry of a shared data seed. A regular file gets
+// its extended attributes at once; for a directory it returns the metadata
+// that the caller applies after the content.
+func copySeedEntry(ctx context.Context, src, dst string, d os.DirEntry) (seededDir, bool, error) {
+	if err := copyTreeEntry(ctx, src, dst, d); err != nil {
+		return seededDir{}, false, err
+	}
+	if d.Type().IsRegular() {
+		return seededDir{}, false, copyXattrs(src, dst)
+	}
+	if !d.IsDir() {
+		return seededDir{}, false, nil
+	}
+	info, err := d.Info()
+	if err != nil {
+		return seededDir{}, false, fmt.Errorf("stat %s: %w", src, err)
+	}
+	return seededDir{src: src, meta: copiedPathMetadataFromInfo(dst, info)}, true, nil
 }
 
 func validateSharedDataSeedSource(path string) (bool, error) {

@@ -3081,3 +3081,22 @@ func TestParseVarsLLDPReceive(t *testing.T) {
 		}
 	}
 }
+
+func TestParseVarsPartitionLayoutSources(t *testing.T) {
+	input := `export PARTITION_LAYOUT_URL="https://layouts.example.invalid/cis.json"
+export PARTITION_LAYOUT_IMAGE_PATH="/usr/share/vendor/layout/*.json"
+`
+	cfg, err := ParseVars(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provision.Disk.PartitionLayoutURL != "https://layouts.example.invalid/cis.json" {
+		t.Fatalf("partitionLayoutURL = %q", cfg.Provision.Disk.PartitionLayoutURL)
+	}
+	if cfg.Provision.Disk.PartitionLayoutImagePath != "/usr/share/vendor/layout/*.json" {
+		t.Fatalf("partitionLayoutImagePath = %q", cfg.Provision.Disk.PartitionLayoutImagePath)
+	}
+	if !knownVarKey("PARTITION_LAYOUT_URL") || !knownVarKey("PARTITION_LAYOUT_IMAGE_PATH") {
+		t.Fatal("partition layout source keys are not known vars keys")
+	}
+}
