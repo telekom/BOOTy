@@ -1029,18 +1029,21 @@ while the mirrors still serve the package versions of the release.
 Every released ramdisk archive has two SBOMs of its content next to it, in
 CycloneDX and SPDX: `<flavor>-<arch>-initramfs.cdx.json` and
 `.spdx.json`, and `split-<arch>-<part>.cdx.json` and `.spdx.json` for the
-split parts. Each one lists every regular file in the ramdisk with its SHA-256, and these
-components:
+split parts. Each one lists every regular file in the ramdisk with its
+SHA-256, and these components:
 
 - the Debian packages whose files the ramdisk ships, with the ramdisk paths
-  they own (the tools, FRR, the shared libraries and the kernel modules);
-- LVM2 and util-linux (`sfdisk`), which are built from source;
+  they own (the tools, the shared libraries, the kernel modules, and FRR
+  from the FRR repository as `pkg:deb/frrouting/...`);
+- LVM2 and util-linux (`sfdisk`), which are built from source, and the GRUB
+  package that the EFI fallback loader is built from;
 - busybox and the Go modules of the BOOTy binaries.
 
 The ramdisk has no package database, so `hack/ramdisk_sbom.py` builds one
-for the scan. It gives each ELF file the Debian package that ships a file of
-the same name in the build stages (`--target sbom-inputs`), and then runs
-syft. The SBOMs have `.sha256` files, so they are signed and have build
+for the scan from the build stages (`--target sbom-inputs`). It matches a
+file to a Debian package by content (dpkg md5sums), or, for files that the
+build strips or decompresses, by name. It matches the files built in the
+build by their SHA-256. It then runs syft. The SBOMs have `.sha256` files, so they are signed and have build
 provenance like the other release files. `sbom.spdx.json` still describes
 the release files and the Go modules of the binaries.
 

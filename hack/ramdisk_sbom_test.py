@@ -1,6 +1,8 @@
 """Tests for hack/ramdisk_sbom.py. Run: python3 -B hack/ramdisk_sbom_test.py"""
 
 import gzip
+import hashlib
+import io
 import json
 import pathlib
 import stat
@@ -40,32 +42,82 @@ def write(path, data=b""):
     path.write_bytes(data if isinstance(data, bytes) else data.encode())
 
 
-def newc(root):
-    """A newc cpio archive of root, with a hard link pair and a device node."""
-    out, ino = bytearray(), 0
-
-    def entry(name, mode, data=b"", nlink=1, ino_=None):
-        nonlocal ino
-        ino += 1
-        name = name.encode() + b"\0"
-        fields = [ino_ or ino, mode, 0, 0, nlink, 0, len(data), 0, 0, 0, 0, len(name), 0]
-        out.extend(b"070701" + b"".join(b"%08X" % f for f in fields) + name)
-        out.extend(b"\0" * (-len(out) % 4) + data)
-        out.extend(b"\0" * (-len(out) % 4))
-
+def entries(root):
+    """(name, mode, data) for the files, directories and links of root."""
     for p in sorted(root.rglob("*")):
         rel = p.relative_to(root).as_posix()
         if p.is_symlink():
-            entry(rel, stat.S_IFLNK | 0o777, str(p.readlink()).encode())
+            yield rel, stat.S_IFLNK | 0o777, str(p.readlink()).encode()
         elif p.is_dir():
-            entry(rel, stat.S_IFDIR | 0o755)
+            yield rel, stat.S_IFDIR | 0o755, b""
         else:
-            entry(rel, stat.S_IFREG | 0o755, p.read_bytes())
-    entry("dev/console", stat.S_IFCHR | 0o600)
-    entry("bin/hard1", stat.S_IFREG | 0o755, b"", nlink=2, ino_=999)
-    entry("bin/hard2", stat.S_IFREG | 0o755, ELF, nlink=2, ino_=999)
-    entry("TRAILER!!!", 0)
+            yield rel, stat.S_IFREG | (p.stat().st_mode & 0o777), p.read_bytes()
+
+
+def newc(items):
+    """A newc cpio archive of (name, mode, data[, nlink, ino]) items."""
+    out = bytearray()
+    for i, (name, mode, data, *link) in enumerate(list(items) + [("TRAILER!!!", 0, b"")]):
+        nlink, ino = link or (1, i + 1)
+        name = name.encode() + b"\0"
+        fields = [ino, mode, 0, 0, nlink, 0, len(data), 0, 0, 0, 0, len(name), 0]
+        out.extend(b"070701" + b"".join(b"%08X" % f for f in fields) + name)
+        out.extend(b"\0" * (-len(out) % 4) + data)
+        out.extend(b"\0" * (-len(out) % 4))
     return bytes(out)
+
+
+def source(name, data):
+    return json.dumps({"name": name, "version": "1", "purl": f"pkg:generic/{name}@1", "sha256": hashlib.sha256(data).hexdigest()})
+
+
+SFDISK_BUILT = ELF + b"sfdisk built from source"
+SFDISK_DEBIAN = ELF + b"sfdisk from Debian"
+LIBFOO = ELF + b"libfoo"
+
+
+class UnpackTest(unittest.TestCase):
+    def unpack(self, items):
+        dest = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        ramdisk_sbom.unpack(io.BytesIO(newc(items)), dest)
+        return dest
+
+    def test_hard_links_device_nodes_and_modes(self):
+        reg = stat.S_IFREG | 0o755
+        dest = self.unpack([
+            (".", stat.S_IFDIR | 0o755, b""),
+            ("./bin", stat.S_IFDIR | 0o755, b""),
+            ("dev", stat.S_IFDIR | 0o755, b""),
+            ("dev/console", stat.S_IFCHR | 0o600, b""),
+            # newc: data with the last name; another archive: with the first.
+            ("bin/a1", reg, b"", 2, 100), ("bin/a2", reg, b"A", 2, 100),
+            ("bin/b1", reg, b"B", 2, 101), ("bin/b2", reg, b"", 2, 101),
+            # Empty files linked together.
+            ("bin/e1", stat.S_IFREG | 0o644, b"", 2, 102), ("bin/e2", stat.S_IFREG | 0o644, b"", 2, 102),
+        ])
+        for name, data in {"a1": b"A", "a2": b"A", "b1": b"B", "b2": b"B", "e1": b"", "e2": b""}.items():
+            self.assertEqual((dest / "bin" / name).read_bytes(), data, name)
+        self.assertEqual(stat.S_IMODE((dest / "bin/a1").stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE((dest / "bin/e1").stat().st_mode), 0o644)
+        self.assertFalse((dest / "dev/console").exists())
+
+    def test_refuses_paths_out_of_the_tree(self):
+        outside = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        for items in (
+            [("../x", stat.S_IFREG | 0o644, b"x")],
+            [("/x", stat.S_IFREG | 0o644, b"x")],
+            # Through a link that an earlier entry made.
+            [("esc", stat.S_IFLNK | 0o777, str(outside).encode()), ("esc/pwned", stat.S_IFREG | 0o644, b"x")],
+        ):
+            with self.assertRaises(SystemExit):
+                self.unpack(items)
+        self.assertFalse((outside / "pwned").exists())
+
+    def test_does_not_write_through_a_link(self):
+        outside = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory())) / "target"
+        with self.assertRaises(OSError):
+            self.unpack([("f", stat.S_IFLNK | 0o777, str(outside).encode()), ("f", stat.S_IFREG | 0o644, b"x")])
+        self.assertFalse(outside.exists())
 
 
 class RamdiskSBOMTest(unittest.TestCase):
@@ -79,9 +131,10 @@ class RamdiskSBOMTest(unittest.TestCase):
 
         write(self.rootfs / "init", ELF + b"\xff Go buildinf:")
         write(self.rootfs / "bin/wipefs", ELF)
-        write(self.rootfs / "bin/sfdisk", ELF)
+        write(self.rootfs / "bin/sfdisk", SFDISK_BUILT)
         write(self.rootfs / "bin/ambiguous", ELF)
         write(self.rootfs / "bin/gpgv", ELF)
+        write(self.rootfs / "lib/libfoo.so.1", LIBFOO)
         write(self.rootfs / "etc/passwd", "root:x:0:0::/:/bin/sh\n")
         write(self.rootfs / "modules/xfs.ko", ELF)
         (self.rootfs / "bin/sh").symlink_to("busybox")
@@ -92,6 +145,7 @@ class RamdiskSBOMTest(unittest.TestCase):
             "Package: util-linux\nStatus: install ok installed\nVersion: 2.41-1\nArchitecture: amd64\n"
             "Description: tools\n more text\n\n"
             "Package: fdisk\nStatus: install ok installed\nVersion: 2.41-1\n\n"
+            "Package: libfoo1\nStatus: install ok installed\nVersion: 1.0-1\n\n"
             "Package: passwd\nStatus: install ok installed\nVersion: 4.17-1\n\n"
             "Package: removed\nStatus: deinstall ok config-files\nVersion: 1\n\n"
             "Package: a\nStatus: install ok installed\nVersion: 1\n\n"
@@ -100,29 +154,33 @@ class RamdiskSBOMTest(unittest.TestCase):
         )
         write(tools / "info/util-linux:amd64.list", "/.\n/usr/sbin\n/usr/sbin/wipefs\n")
         write(tools / "info/fdisk.list", "/usr/sbin/sfdisk\n")
+        write(tools / "info/fdisk.md5sums", hashlib.md5(SFDISK_DEBIAN).hexdigest() + "  usr/sbin/sfdisk\n")
+        # Another name than in the ramdisk: only the content matches.
+        write(tools / "info/libfoo1:amd64.md5sums", hashlib.md5(LIBFOO).hexdigest() + "  usr/lib/x86_64-linux-gnu/libfoo.so.1.0\n")
         write(tools / "info/passwd.list", "/usr/bin/passwd\n")
         write(tools / "info/a.list", "/usr/bin/ambiguous\n/usr/bin/gpgv\n")
         write(tools / "info/apt.list", "/usr/lib/apt/methods/gpgv\n/etc/network/if-up.d/wipefs\n")
         write(tools / "info/b.list", "/usr/sbin/ambiguous\n")
+        # frr is first by name; the tools version of a package wins.
+        write(
+            self.inputs / "dpkg/frr/status",
+            "Package: libfoo1\nStatus: install ok installed\nVersion: 0.9-1\n\n"
+            "Package: frr\nStatus: install ok installed\nVersion: 10-1\n",
+        )
+        write(self.inputs / "dpkg/frr/frrouting-packages", "frr\nfrr-pythontools\n")
         write(
             self.inputs / "dpkg/kernel/status",
             "Package: linux-image-6.12-amd64\nVersion: 6.12.1-1\nStatus: install ok installed\n\n",
         )
         write(self.inputs / "dpkg/kernel/info/linux-image-6.12-amd64.list", "/usr/lib/modules/6.12/kernel/fs/xfs/xfs.ko.xz\n")
         write(self.inputs / "os-release", 'ID=debian\nVERSION_ID="13"\n')
-        write(
-            self.inputs / "source/util-linux.json",
-            json.dumps({"name": "util-linux", "version": "abc", "purl": "pkg:github/util-linux/util-linux@abc", "files": ["bin/sfdisk"]}),
-        )
-        write(
-            self.inputs / "source/lvm2.json",
-            json.dumps({"name": "lvm2", "version": "2", "purl": "pkg:generic/lvm2@2", "files": ["sbin/lvm"]}),
-        )
+        write(self.inputs / "source/util-linux.json", source("util-linux", SFDISK_BUILT))
+        write(self.inputs / "source/lvm2.json", source("lvm2", ELF + b"lvm"))
 
-    def run_sbom(self):
+    def run_sbom(self, extra=()):
         ramdisk = self.tmp / "test-amd64-initramfs.cpio.gz"
         with gzip.open(ramdisk, "wb") as f:
-            f.write(newc(self.rootfs))
+            f.write(newc(list(entries(self.rootfs)) + list(extra)))
         ramdisk_sbom.main(["x", str(self.syft), str(self.inputs), str(ramdisk)])
         with open(self.tmp / "test-amd64-initramfs.cdx.json") as f:
             cdx = json.load(f)
@@ -130,21 +188,41 @@ class RamdiskSBOMTest(unittest.TestCase):
             spdx = json.load(f)
         return cdx, spdx
 
-    def test_attributes_elf_files_to_single_owning_package(self):
-        packages, owners = ramdisk_sbom.read_dpkg(self.inputs)
+    def attribute(self):
+        packages, digests, owners, _ = ramdisk_sbom.read_dpkg(self.inputs)
+        return packages, ramdisk_sbom.attribute(self.rootfs, packages, digests, owners, ramdisk_sbom.read_sources(self.inputs))
+
+    def test_attributes_files_to_packages_and_built_components(self):
+        packages, (owned, built, unowned) = self.attribute()
         self.assertNotIn("removed", packages)
-        owned, unowned = ramdisk_sbom.attribute(self.rootfs, packages, owners, {"bin/sfdisk"})
+        self.assertIn("Version: 1.0-1", packages["libfoo1"])
         self.assertEqual(
             dict(owned),
-            {"util-linux": ["/bin/wipefs"], "linux-image-6.12-amd64": ["/modules/xfs.ko"], "a": ["/bin/gpgv"]},
+            {
+                "util-linux": ["/bin/wipefs"],
+                "linux-image-6.12-amd64": ["/modules/xfs.ko"],
+                "a": ["/bin/gpgv"],
+                "libfoo1": ["/lib/libfoo.so.1"],
+            },
         )
+        self.assertEqual(dict(built), {"util-linux": ["/bin/sfdisk"]})
         # Two packages ship "ambiguous" in a bin directory; apt's gpgv is not
         # in one, and its /etc file does not count; passwd is not an ELF
         # file; init is Go.
         self.assertEqual(unowned, ["bin/ambiguous"])
 
+    def test_debian_sfdisk_is_not_the_source_build(self):
+        # slim ships Debian's sfdisk under the same name.
+        write(self.rootfs / "bin/sfdisk", SFDISK_DEBIAN)
+        _, (owned, built, _) = self.attribute()
+        self.assertEqual(owned["fdisk"], ["/bin/sfdisk"])
+        self.assertNotIn("util-linux", built)
+
     def test_writes_dpkg_database_that_syft_sees_and_drops_it_from_file_lists(self):
-        cdx, spdx = self.run_sbom()
+        cdx, spdx = self.run_sbom(
+            [("bin/hard1", stat.S_IFREG | 0o755, b"", 2, 999), ("bin/hard2", stat.S_IFREG | 0o755, ELF, 2, 999),
+             ("dev/console", stat.S_IFCHR | 0o600, b"")]
+        )
 
         seen = cdx["seen"]
         status = seen["/var/lib/dpkg/status"]
@@ -168,9 +246,10 @@ class RamdiskSBOMTest(unittest.TestCase):
         rel_ids = {r["relatedSpdxElement"] for r in spdx["relationships"]}
         self.assertFalse([i for i in rel_ids if i.startswith("SPDXRef-File-") and i not in spdx_files])
 
-        # util-linux (sfdisk) is in the tree, lvm2 (sbin/lvm) is not.
-        sources = [c for c in cdx["components"] if c["type"] == "application"]
-        self.assertEqual([c["purl"] for c in sources], ["pkg:github/util-linux/util-linux@abc"])
+        # util-linux (sfdisk) is in the tree, lvm2 is not.
+        built = [c for c in cdx["components"] if c["type"] == "application"]
+        self.assertEqual([c["purl"] for c in built], ["pkg:generic/util-linux@1"])
+        self.assertEqual(built[0]["properties"], [{"name": "booty:ramdisk:file", "value": "/bin/sfdisk"}])
         pkg = next(p for p in spdx["packages"] if p["name"] == "util-linux")
         sfdisk = next(i for i, f in spdx_files.items() if f == "/bin/sfdisk")
         self.assertIn(
@@ -178,10 +257,16 @@ class RamdiskSBOMTest(unittest.TestCase):
             spdx["relationships"],
         )
 
-    def test_refuses_a_tree_with_a_package_database(self):
-        write(self.rootfs / "etc/os-release", "ID=other\n")
+    def test_refuses_a_tree_with_os_release(self):
+        (self.rootfs / "etc/os-release").symlink_to("/nonexistent")
         with self.assertRaises(SystemExit):
             self.run_sbom()
+
+    def test_frr_repository_packages_get_their_own_purl_namespace(self):
+        frr = {"frr"}
+        self.assertEqual(ramdisk_sbom.fix_purl("pkg:deb/debian/frr@10-1?distro=debian-13", frr), "pkg:deb/frrouting/frr@10-1?distro=debian-13")
+        self.assertEqual(ramdisk_sbom.fix_purl("pkg:deb/debian/libc6@2.41", frr), "pkg:deb/debian/libc6@2.41")
+        self.assertEqual(ramdisk_sbom.fix_purl("pkg:deb/debian/frr-other@1", frr), "pkg:deb/debian/frr-other@1")
 
 
 if __name__ == "__main__":

@@ -36,9 +36,10 @@ RUN make
 WORKDIR tools
 RUN gcc -O2 -fPIC -static -L command.o dumpconfig.o formats.o lvchange.o lvconvert.o lvconvert_poll.o lvcreate.o lvdisplay.o lvextend.o lvmcmdline.o lvmdiskscan.o lvpoll.o lvreduce.o lvremove.o lvrename.o lvresize.o lvscan.o polldaemon.o pvchange.o pvck.o pvcreate.o pvdisplay.o pvmove.o pvmove_poll.o pvremove.o pvresize.o pvscan.o reporter.o segtypes.o tags.o toollib.o vgcfgbackup.o vgcfgrestore.o vgchange.o vgck.o vgcreate.o vgdisplay.o vgexport.o vgextend.o vgimport.o vgimportclone.o vgmerge.o vgmknodes.o vgreduce.o vgremove.o vgrename.o vgscan.o vgsplit.o lvm-static.o ../lib/liblvm-internal.a ../libdaemon/client/libdaemonclient.a ../device_mapper/libdevice-mapper.a ../base/libbase.a -lm -lblkid -laio -o lvm -lpthread -luuid ./liblvm2cmd.a
 RUN strip --strip-all lvm
-# The ramdisk SBOM lists this source build as a component (--target sbom-inputs).
-RUN printf '{"name":"lvm2","version":"%s","purl":"pkg:generic/lvm2@%s?download_url=https://sourceware.org/pub/lvm2/LVM2.%s.tgz","files":["sbin/lvm"]}\n' \
-      "${LVM2_VERSION}" "${LVM2_VERSION}" "${LVM2_VERSION}" > /sbom-source.json
+# The ramdisk SBOM lists this source build as a component (--target
+# sbom-inputs); it matches the file by its SHA-256.
+RUN printf '{"name":"lvm2","version":"%s","purl":"pkg:generic/lvm2@%s?checksum=sha256:%s&download_url=https://sourceware.org/pub/lvm2/LVM2.%s.tgz","sha256":"%s"}\n' \
+      "${LVM2_VERSION}" "${LVM2_VERSION}" "${LVM2_SHA256}" "${LVM2_VERSION}" "$(sha256sum lvm | cut -d' ' -f1)" > /sbom-source.json
 
 # Build scripted fdisk (sfdisk)
 FROM gcc:16@sha256:9af8c7003ad451f09496c7182f320c58554e10ec080e7038e0aa5e41146c916b AS sfdisk
@@ -64,9 +65,10 @@ RUN set -eu; \
     git checkout --detach "${UTIL_LINUX_REF}"
 RUN ./autogen.sh && ./configure --enable-static-programs=sfdisk && make
 RUN strip --strip-all sfdisk.static
-# The ramdisk SBOM lists this source build as a component (--target sbom-inputs).
-RUN printf '{"name":"util-linux","version":"%s","purl":"pkg:github/util-linux/util-linux@%s","files":["bin/sfdisk"]}\n' \
-      "${UTIL_LINUX_REF}" "${UTIL_LINUX_REF}" > /sbom-source.json
+# The ramdisk SBOM lists this source build as a component (--target
+# sbom-inputs); it matches the file by its SHA-256.
+RUN printf '{"name":"util-linux","version":"%s","purl":"pkg:github/util-linux/util-linux@%s","sha256":"%s"}\n' \
+      "${UTIL_LINUX_REF}" "${UTIL_LINUX_REF}" "$(sha256sum sfdisk.static | cut -d' ' -f1)" > /sbom-source.json
 
 # Build BOOTy as an init
 FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS dev
@@ -133,6 +135,15 @@ RUN set -eux; \
       --locales="" --fonts="" \
       --modules="part_gpt part_msdos fat ext2 search search_fs_file configfile normal" \
       "boot/grub/grub.cfg=/tmp/booty-efi-fallback.cfg"
+# The ramdisk SBOM lists the loader as the GRUB package it is built from
+# (--target sbom-inputs); it matches the file by its SHA-256.
+RUN set -eu; \
+    . /etc/os-release; \
+    pkg=$(dpkg-query -W -f '${Package}\n' 'grub-efi-*-bin'); \
+    ver=$(dpkg-query -W -f '${Version}' "$pkg"); \
+    printf '{"name":"%s","version":"%s","purl":"pkg:deb/debian/%s@%s?arch=%s&distro=debian-%s","sha256":"%s"}\n' \
+      "$pkg" "$ver" "$pkg" "$(printf %s "$ver" | sed 's/%/%25/g; s/:/%3A/g; s/+/%2B/g')" \
+      "$(dpkg --print-architecture)" "$VERSION_ID" "$(sha256sum /out/*.EFI | cut -d' ' -f1)" > /sbom-source.json
 
 # Build FRR (BGP/BFD/Zebra) for EVPN networking — use FRR official stable repo
 FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS frr
@@ -164,6 +175,10 @@ RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 instal
       > /etc/apt/sources.list.d/frr.list && \
     apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     frr frr-pythontools && \
+    # The packages of the FRR repository, for their purls in the ramdisk SBOM.
+    apt-get indextargets --format '$(FILENAME)' 'Created-By: Packages' 'Site: https://deb.frrouting.org/frr' \
+      | xargs -r -n1 /usr/lib/apt/apt-helper cat-file | awk '/^Package:/ {print $2}' | sort -u > /frrouting-packages && \
+    grep -qx frr /frrouting-packages && \
     rm -rf /var/lib/apt/lists/*
 
 # Collect shared libraries for FRR binaries (same rationale as tools stage).
@@ -498,7 +513,8 @@ COPY --from=split-builder /split/ .
 # ── Ramdisk SBOM inputs (optional, --target=sbom-inputs) ─────────────────
 # What hack/ramdisk_sbom.py needs besides an extracted ramdisk: the package
 # databases of the stages whose Debian files the ramdisks ship, the kernel
-# packages, and the components built from source. Nothing here goes into a
+# packages, and the components built in the build (LVM2, sfdisk, the GRUB
+# EFI loader), each with the SHA-256 of its file. Nothing here goes into a
 # ramdisk.
 FROM scratch AS sbom-inputs
 COPY --from=tools /usr/lib/os-release os-release
@@ -506,9 +522,11 @@ COPY --from=tools /var/lib/dpkg/status dpkg/tools/status
 COPY --from=tools /var/lib/dpkg/info/ dpkg/tools/info/
 COPY --from=frr /var/lib/dpkg/status dpkg/frr/status
 COPY --from=frr /var/lib/dpkg/info/ dpkg/frr/info/
+COPY --from=frr /frrouting-packages dpkg/frr/frrouting-packages
 COPY --from=kernel /sbom-dpkg/ dpkg/kernel/
 COPY --from=lvm /sbom-source.json source/lvm2.json
 COPY --from=sfdisk /sbom-source.json source/util-linux.json
+COPY --from=efi-fallback /sbom-source.json source/grub-efi.json
 
 # ── ISO build stage (optional, triggered by --target=iso) ──────────────────
 # UEFI boot image: Debian shim (Microsoft UEFI CA) + Debian-signed GRUB,

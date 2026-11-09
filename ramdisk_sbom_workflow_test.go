@@ -28,18 +28,24 @@ func TestDockerfileBuildsRamdiskSBOMInputs(t *testing.T) {
 			t.Errorf("sbom-inputs lacks %q", want)
 		}
 	}
-	// The source components name the ramdisk paths their binaries get.
+	// The built components carry the SHA-256 of the file the ramdisk ships.
 	for stage, want := range map[string]string{
-		"lvm":     `"files":["sbin/lvm"]`,
-		"sfdisk":  `"files":["bin/sfdisk"]`,
-		"busybox": "COPY --from=sfdisk /util-linux/sfdisk.static bin/sfdisk",
+		"lvm":          "$(sha256sum lvm | cut -d' ' -f1)",
+		"sfdisk":       "$(sha256sum sfdisk.static | cut -d' ' -f1)",
+		"efi-fallback": "$(sha256sum /out/*.EFI | cut -d' ' -f1)",
+		"frr":          "> /frrouting-packages",
 	} {
 		if !strings.Contains(dockerfileStageBlock(t, text, stage), want) {
 			t.Errorf("stage %s lacks %q", stage, want)
 		}
 	}
-	if !strings.Contains(dockerfileStageBlock(t, text, "busybox"), "COPY --from=lvm /LVM2.2.03.27/tools/lvm sbin/") {
-		t.Error("the busybox stage no longer copies lvm to sbin/lvm")
+	for _, want := range []string{
+		"COPY --from=efi-fallback /sbom-source.json source/grub-efi.json",
+		"COPY --from=frr /frrouting-packages dpkg/frr/frrouting-packages",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("sbom-inputs lacks %q", want)
+		}
 	}
 }
 

@@ -306,6 +306,11 @@ jobs:
           path: release-artifacts
           merge-multiple: false
 
+      - name: Leave out the ramdisk SBOMs
+        # Each ramdisk has its own SBOMs (build job); syft would read them
+        # as SBOM files and repeat their packages here.
+        run: find release-artifacts -type f \( -name '*.cdx.json*' -o -name '*.spdx.json*' \) -print -delete
+
       - id: sbom-attempt-1
         name: Generate SBOM (attempt 1)
         continue-on-error: true
