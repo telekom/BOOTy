@@ -226,6 +226,12 @@ func (c *Config) validateFeatureEnums() []string {
 	validators := []func() string{
 		c.validateSkipUnchanged,
 		func() string {
+			if n := c.Provision.Image.ParallelRanges; n < 0 || n > MaxImageParallelRanges {
+				return fmt.Sprintf("provision.image.parallelRanges (IMAGE_PARALLEL_RANGES) must be 0 to %d, got %d", MaxImageParallelRanges, n)
+			}
+			return ""
+		},
+		func() string {
 			return validateEnumLower(c.Provision.Image.SparseWrite, "provision.image.sparseWrite (IMAGE_SPARSE_WRITE)", SparseWriteOff, SparseWriteAuto)
 		},
 		func() string {

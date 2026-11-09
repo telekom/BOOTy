@@ -1769,6 +1769,7 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	}
 
 	img := o.cfg.Provision.Image
+	image.SetDownloadOptions(image.DownloadOptions{Resume: img.Resume, ParallelRanges: img.ParallelRanges})
 	var opts []image.StreamOpts
 	if img.Checksum != "" || img.Stream || img.SparseWrite == config.SparseWriteAuto || img.SkipUnchanged {
 		opts = append(opts, image.StreamOpts{

@@ -3,7 +3,12 @@
 package kvm
 
 import (
+	"bytes"
+	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -96,4 +101,82 @@ func TestProvisionImageWriteOptionsQEMU(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestProvisionImageDownloadOptionsQEMU provisions a zstd image from a server
+// that breaks every full GET at half of the image and serves ranges with a
+// strong ETag. IMAGE_RESUME must continue the broken download and
+// IMAGE_PARALLEL_RANGES must fetch the image in ranges; both runs must boot
+// to a root with the right hostname.
+func TestProvisionImageDownloadOptionsQEMU(t *testing.T) {
+	requireRoot(t)
+	qemuAvailable(t)
+	requireProvisionTools(t)
+	requireDiskInspectTools(t)
+
+	rawDisk := createTestDiskImage(t, 512)
+	addRandomRootPayload(t, rawDisk, 64) // over 8 MiB compressed: parallel ranges apply
+	zstdImage := compressFile(t, rawDisk, filepath.Join(t.TempDir(), "image.raw.zst"), func(w io.Writer) io.WriteCloser {
+		zw, _ := zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.SpeedFastest))
+		return zw
+	})
+	baseURL := startBreakingImageServer(t, zstdImage)
+
+	for _, tt := range []struct {
+		name, key, value, wantLog string
+	}{
+		{"resume", "IMAGE_RESUME", "true", "image download broke, resuming"},
+		{"parallel", "IMAGE_PARALLEL_RANGES", "4", "downloading image in parallel ranges"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			hostname := "image-download-" + tt.name
+			targetDisk := filepath.Join(t.TempDir(), "target.qcow2")
+			run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
+			output := runQEMUProvision(t, findKernel(t), buildProvisionInitramfs(t, map[string]string{
+				"HOSTNAME":                  hostname,
+				"IMAGE_ALLOW_INSECURE_HTTP": "true",
+				"IMAGE":                     baseURL + "/image.gz",
+				"MODE":                      "provision",
+				"DISK_DEVICE":               "/dev/vda",
+				tt.key:                      tt.value,
+			}), targetDisk, 6*time.Minute)
+			if !strings.Contains(string(output), tt.wantLog) {
+				t.Fatalf("no %q line; tail:\n%s", tt.wantLog, tail(output, 3000))
+			}
+			rootMount, cleanup := mountQcow2(t, targetDisk)
+			defer cleanup()
+			if got := strings.TrimSpace(readProvisionedFile(t, rootMount, "etc/hostname")); got != hostname {
+				t.Errorf("hostname: got %q, want %q", got, hostname)
+			}
+		})
+	}
+}
+
+// startBreakingImageServer serves imagePath at /image.gz with a strong ETag
+// and Range support, and breaks every GET without Range after half of the
+// file, like a connection reset.
+func startBreakingImageServer(t *testing.T, imagePath string) string {
+	t.Helper()
+	data, err := os.ReadFile(imagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"kvm-image"`)
+		if r.Header.Get("Range") == "" {
+			w.Header().Set("Accept-Ranges", "bytes")
+			w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+			_, _ = w.Write(data[:len(data)/2])
+			panic(http.ErrAbortHandler)
+		}
+		http.ServeContent(w, r, "image.gz", time.Time{}, bytes.NewReader(data))
+	})
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	go func() { _ = srv.Serve(listener) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return fmt.Sprintf("http://10.0.2.2:%d", listener.Addr().(*net.TCPAddr).Port)
 }

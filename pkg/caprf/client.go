@@ -1311,6 +1311,8 @@ func applyImageWriteVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Provision.Image.SparseWrite = value
 	case "IMAGE_SKIP_UNCHANGED":
 		cfg.Provision.Image.SkipUnchanged = parseBoolVar(value)
+	case "IMAGE_RESUME":
+		cfg.Provision.Image.Resume = parseBoolVar(value)
 	default:
 		return false
 	}
@@ -1756,6 +1758,7 @@ func applyIntVar(cfg *config.MachineConfig, key, value string) (bool, error) {
 		"AB_ROOT_SIZE_MB":                    &cfg.Provision.AB.RootSizeMB,
 		"AB_STATE_SIZE_MB":                   &cfg.Provision.AB.StateSizeMB,
 		"IMAGE_SOURCE_ROOT_PARTITION":        &cfg.Provision.Image.SourceRootPartition,
+		"IMAGE_PARALLEL_RANGES":              &cfg.Provision.Image.ParallelRanges,
 		"AB_SOURCE_ROOT_PARTITION":           &cfg.Provision.AB.SourceRootPartition,
 		"ROOT_PARTITION_NUMBER":              &cfg.Provision.Disk.RootPartitionNumber,
 		"OVERLAYFS_TIMEOUT_SEC":              &cfg.Provision.OverlayFS.TimeoutSec,
