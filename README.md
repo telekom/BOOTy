@@ -955,6 +955,16 @@ cosign verify-blob \
   "${ARTIFACT}.sha256"
 sha256sum -c "${ARTIFACT}.sha256"
 
+# The split parts: split-<arch>-SHA256SUMS lists the released names, so
+# check it next to the downloaded split-<arch>-* files.
+cosign verify-blob \
+  --bundle split-amd64-SHA256SUMS.sha256.bundle \
+  --certificate-identity "${IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  split-amd64-SHA256SUMS.sha256
+sha256sum -c split-amd64-SHA256SUMS.sha256
+sha256sum -c split-amd64-SHA256SUMS
+
 # Verify signed OCI release refs before pulling or mirroring them.
 cosign verify \
   --certificate-identity "${IDENTITY}" \
@@ -977,7 +987,7 @@ The release workflow also signs these OCI artifact refs:
 | SBOM | `ghcr.io/telekom/booty/sbom:${VERSION_NO_V}` |
 
 Release files that have a `.sha256` checksum (binaries, initramfs, split
-parts, ISOs, SBOM) plus the `split-<arch>-SHA256SUMS` manifests, and the
+parts and their `split-<arch>-SHA256SUMS` manifests, ISOs, SBOM), and the
 multi-arch `ghcr.io/telekom/booty:<version>` and `:<version>-gobgp` images,
 also carry GitHub build provenance attestations. Verify them with the GitHub
 CLI (2.68+, the first release with `--source-ref`):
