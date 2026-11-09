@@ -46,9 +46,10 @@ build() {
 	for target in "$@"; do
 		target_arg=()
 		[ "$target" = default ] || target_arg=(--target "$target")
-		# The flavor of the init binary, like release-v2.yml.
+		# The flavor of the init binary, like release-v2.yml; package-versions
+		# takes the cached dev stage of the default target.
 		case "$target" in
-		default | split) flavor=full ;;
+		default | split | package-versions) flavor=full ;;
 		*) flavor=$target ;;
 		esac
 		docker buildx build --builder "$builder-$round" --platform "$platform" \
@@ -112,7 +113,7 @@ for round in 1 2; do
 		awk -v db="${db#*/}" '
 			/^(Package|P):/ { sub(/^[^:]*: ?/, ""); p = $0 }
 			/^(Version|V):/ { sub(/^[^:]*: ?/, ""); print db, p, $0 }' "$db"
-	done) | LC_ALL=C sort > "$out/packages$round.txt"
+	done) | LC_ALL=C sort > "$out/packages$round.txt" || true
 done
 diff -u "$out/packages1.txt" "$out/packages2.txt" || true
 echo "::endgroup::"

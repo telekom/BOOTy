@@ -57,7 +57,7 @@ func TestPackInitramfsIsReproducible(t *testing.T) {
 	}
 
 	// packCmd packs a small tree with the given file times to dest.
-	packCmd := func(mtime time.Time, dest string) *exec.Cmd {
+	packCmd := func(t *testing.T, mtime time.Time, dest string) *exec.Cmd {
 		t.Helper()
 		root := t.TempDir()
 		for _, d := range []string{"bin", "etc", "modules"} {
@@ -83,10 +83,10 @@ func TestPackInitramfsIsReproducible(t *testing.T) {
 		cmd.Env = append(os.Environ(), "SOURCE_DATE_EPOCH=1700000000")
 		return cmd
 	}
-	pack := func(mtime time.Time, out string) []byte {
+	pack := func(t *testing.T, mtime time.Time, out string) []byte {
 		t.Helper()
 		dest := filepath.Join(t.TempDir(), out)
-		if b, err := packCmd(mtime, dest).CombinedOutput(); err != nil {
+		if b, err := packCmd(t, mtime, dest).CombinedOutput(); err != nil {
 			t.Fatalf("pack-initramfs.sh: %v\n%s", err, b)
 		}
 		data, err := os.ReadFile(dest)
@@ -98,8 +98,8 @@ func TestPackInitramfsIsReproducible(t *testing.T) {
 
 	for _, out := range []string{"initramfs.cpio.zst", "initramfs.cpio.gz"} {
 		t.Run(out, func(t *testing.T) {
-			a := pack(time.Unix(1, 0), out)
-			b := pack(time.Now(), out)
+			a := pack(t, time.Unix(1, 0), out)
+			b := pack(t, time.Now(), out)
 			if !bytes.Equal(a, b) {
 				t.Fatal("the same tree with other file times packed to different bytes")
 			}
@@ -124,11 +124,11 @@ func TestPackInitramfsIsReproducible(t *testing.T) {
 
 	// Runs at the same time keep their scratch files apart.
 	t.Run("concurrent", func(t *testing.T) {
-		want := pack(time.Unix(1, 0), "initramfs.cpio")
+		want := pack(t, time.Unix(1, 0), "initramfs.cpio")
 		dir := t.TempDir()
 		var cmds []*exec.Cmd
 		for i := range 4 {
-			cmd := packCmd(time.Now(), filepath.Join(dir, fmt.Sprintf("%d.cpio", i)))
+			cmd := packCmd(t, time.Now(), filepath.Join(dir, fmt.Sprintf("%d.cpio", i)))
 			cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 			if err := cmd.Start(); err != nil {
 				t.Fatal(err)
