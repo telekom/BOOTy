@@ -237,6 +237,40 @@ jobs:
             exit 1
           fi
 
+      - name: Download Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c
+
+      - name: Generate ramdisk SBOMs
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: |
+          # One CycloneDX and one SPDX SBOM per released ramdisk archive,
+          # of its content (hack/ramdisk_sbom.py). The package databases
+          # come from the cached stages of the build above; micro has no
+          # Debian files.
+          mkdir -p sbom-inputs
+          if [ "${{ matrix.flavor }}" != "micro" ]; then
+            docker buildx build --target=sbom-inputs \
+              --platform linux/${{ matrix.arch }} \
+              --output type=local,dest=sbom-inputs \
+              -f initrd.Dockerfile .
+          fi
+          shopt -s nullglob
+          ramdisks=(*-${{ matrix.arch }}-initramfs.cpio.zst *-${{ matrix.arch }}-initramfs.cpio.gz split-${{ matrix.arch }}-*.cpio.zst)
+          if [ "${#ramdisks[@]}" -eq 0 ]; then
+            echo "::error::no ramdisk archives to describe"
+            exit 1
+          fi
+          python3 -I hack/ramdisk_sbom.py "${SYFT}" sbom-inputs "${ramdisks[@]}"
+          for f in "${ramdisks[@]}"; do
+            base="${f%.cpio.*}"
+            for sbom in "${base}.cdx.json" "${base}.spdx.json"; do
+              jq -e . "${sbom}" >/dev/null
+              sha256sum "${sbom}" > "${sbom}.sha256"
+            done
+          done
+
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -253,6 +287,10 @@ jobs:
             split-${{ matrix.arch }}-vmlinuz
             split-${{ matrix.arch }}-vmlinuz.sha256
             split-${{ matrix.arch }}-SHA256SUMS
+            *-${{ matrix.arch }}-initramfs.cdx.json*
+            *-${{ matrix.arch }}-initramfs.spdx.json*
+            split-${{ matrix.arch }}-*.cdx.json*
+            split-${{ matrix.arch }}-*.spdx.json*
           if-no-files-found: ignore
 
   sbom:
@@ -267,6 +305,11 @@ jobs:
           pattern: release-*
           path: release-artifacts
           merge-multiple: false
+
+      - name: Leave out the ramdisk SBOMs
+        # Each ramdisk has its own SBOMs (build job); syft would read them
+        # as SBOM files and repeat their packages here.
+        run: find release-artifacts -type f \( -name '*.cdx.json*' -o -name '*.spdx.json*' \) -print -delete
 
       - id: sbom-attempt-1
         name: Generate SBOM (attempt 1)
@@ -933,7 +976,7 @@ jobs:
       - name: Collect release files
         run: |
           mkdir release-files
-          find artifacts -type f \( -name "booty-*" -o -name "*.cpio.gz" -o -name "*.cpio.zst" -o -name "*.iso" -o -name "*.sha256" -o -name "*.sig" -o -name "*.bundle" -o -name "*.spdx.json" -o -name "split-*" \) \
+          find artifacts -type f \( -name "booty-*" -o -name "*.cpio.gz" -o -name "*.cpio.zst" -o -name "*.iso" -o -name "*.sha256" -o -name "*.sig" -o -name "*.bundle" -o -name "*.spdx.json" -o -name "*.cdx.json" -o -name "split-*" \) \
             -exec cp {} release-files/ \;
           ls -lh release-files/
 
