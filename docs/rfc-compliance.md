@@ -46,7 +46,8 @@ server identifier (2131-10) and option 57 values below 576 for MTUs 576
 to 603 (2132-2), both fixed by [#908]. [#892] fixed 8415-7. It added
 two very-low-impact deviations that the earlier refreshes missed
 (4861-15: RA options of length zero; 8415-10: an address revoked with
-valid lifetime 0) and a GoBGP one (8654-1: extended messages received
+valid lifetime 0), one low-impact one (2131-13: a DHCPNAK from another
+server is ignored in INIT-REBOOT and REBINDING) and a GoBGP one (8654-1: extended messages received
 only from a peer that advertised the capability), and corrected the
 text of 4271-4, 3442-1, 8654-2 and 7348-4.
 
@@ -131,10 +132,10 @@ refresh is merged.
 | 802.1AB | LLDP | 17 | 1 | 2 | 0 | 0 | 0 |
 | 4861 | IPv6 ND (RAs) | 11 | 4 | 1 | 0 | 0 | 0 |
 | 4862 | IPv6 SLAAC | 2 | 0 | 0 | 0 | 0 | 0 |
-| 2131 | DHCPv4 client | 14 | 1 | 0 | 0 | 0 | 0 |
+| 2131 | DHCPv4 client | 13 | 2 | 0 | 0 | 0 | 0 |
 | 2132 / 3397 / 3442 / 4039 / 4361 | DHCPv4 options | 6 | 0 | 0 | 0 | 0 | 0 |
 | 8415 | DHCPv6 | 8 | 2 | 0 | 0 | 0 | 0 |
-| **Total** | | **209** | **18** | **57** | **2** | **89** | **3** |
+| **Total** | | **208** | **19** | **57** | **2** | **89** | **3** |
 
 Kernel- and library-owned rows count as COMPLIANT or DEVIATION; the owner
 column names them. The second refresh (`5ac79521`) counted 209
@@ -152,20 +153,21 @@ COMPLIANT, 47 DEVIATION, 67 N/A, 4 NOT IMPLEMENTED, 68 GOBGP: COMPLIANT and
 |---|---|---|---|---|---|
 | 1 | RFC8365-RX-VNI | 8365 §5.1.3, 9136 §3.1 | BOOTy | Low: outside the Type-5-only (L3VNI) mode the VNI of a received Type-5 route is not checked, and Type-2 and Type-3 entries use the local VNI. Breaks only with a fabric that uses another VNI for the same VRF. | Partly fixed by [#773] for Type-5 routes in L3VNI mode, like zebra; the rest is kept like FRR. |
 | 2 | RFC2131-ARP | 2131 §4.4.1 | BOOTy | Low: no ARP probe of the offered address and no DHCPDECLINE. | Open: an ARP probe (RFC 5227) before the bind and a DECLINE on a conflict. |
-| 3 | RFC9136-ESI | 9136 §3.2 | BOOTy | Low: a Type-5 route with an ESI overlay index and a label is installed through the BGP next hop, without RT-1 resolution. | Kept like FRR ([#747]). |
-| 4 | RFC5880-ECHORX | 5880 §4.1, §6.8.7 | BOOTy | Low: since [#710] BFD advertises Required Min Echo RX 50 ms like FRR bfdd, but BOOTy loops back no echo packets; a peer with echo mode gets a failing echo session. The fabric does not enable echo mode. | Kept for FRR parity. |
-| 5 | RFC9136-NH-REACH | 9136 §3.2 | BOOTy | Low: a Type-5 route is installed without a check that the VTEP is reachable; in Type-5-only mode BOOTy installs its own /32 to the VTEP. | Open, by design for a host with one uplink path. |
-| 6 | RFC5880-ADMINDOWN | 5880 §6.8.16 | BOOTy | Low: at shutdown one AdminDown packet instead of AdminDown for a detection time. A lost packet makes the peer wait one detection time. | Open; [#723] stops BFD before kexec and reboot, still with one packet. |
-| 7 | RFC5880-CONGESTION | 5880 §7 | BOOTy | Low: no congestion control for multihop sessions (a few sessions per host). | Open. |
-| 8 | RFC4861-HOST-RA | 4861 §6.2.1, §6.2.2, §6.2.4, §6.2.6 | BOOTy | Low: BOOTy sends RAs with IPv6 forwarding off (a host) at a fixed 10 s interval, answers Router Solicitations, and since [#846] starts with fast RAs 1 s apart like zebra. Needed for FRR BGP unnumbered; the legacy FRR ramdisk does the same. | By design, documented. |
-| 9 | RFC4271-NH-RESOLVE | 4271 §9.1.2.1 | GoBGP | Low: no next hop tracking in the decision process; BOOTy's FIB writer skips unresolvable next hops instead. | Open. |
-| 10 | RFC7432-PMSI-ID | 7432 §11.2, 6514 §5 | BOOTy | Very low: the ingress replication destination is the originating router IP, not the PMSI Tunnel Identifier; in VXLAN fabrics both are the VTEP. | Kept like FRR, documented. |
-| 11 | RFC7432-MOBILITY-GOBGP | 7432 §15 | GoBGP | Very low: GoBGP withdraws its local Type-2 route on a remote higher sequence only when the ESIs differ. BOOTy's MAC is its own bridge MAC and does not move. | Open. |
-| 12 | RFC8654-RX | 8654 §4 | GoBGP | Very low: GoBGP accepts UPDATEs above 4096 octets only from a peer that advertised the extended message capability, although it advertises the capability itself. BOOTy's and the fabric's routes are far smaller. | Open (GoBGP). |
-| 13 | RFC8415-DECLINE | 8415 §18.2.8 | BOOTy | Very low: a failed DAD sends no DECLINE (8415-8). | Open: DECLINE on a DAD failure. |
-| 14 | RFC4861-RA-OPTLEN | 4861 §4.6, §6.1.2 | BOOTy | Very low: in DHCP mode an RA with a zero-length option, which the kernel drops, still starts DHCPv6 (4861-15). | Open: check the option lengths in `validRA`, like `validRS`. |
-| 15 | RFC8415-ZERO-LIFETIME | 8415 §18.2.10.1 | BOOTy | Very low: an address that a REPLY to RENEW or REBIND gives valid lifetime 0 stays until its old valid lifetime ends (8415-10). | Open: expire the lease at once. |
-| 16 | LLDP-TTL | 802.1AB | BOOTy | Very low: TTL 120 instead of txTTL = 4 x 30 + 1 = 121; matches systemd-networkd. | Kept for networkd parity. |
+| 3 | RFC2131-NAK-SERVER | 2131 §4.4.2, §4.4.5 | BOOTy | Low: in INIT-REBOOT and REBINDING a DHCPNAK counts only from the server of the lease, like networkd; on a changed network the old address stays until a new lease or its expiry (2131-13). | Kept for networkd parity; fix: accept a NAK from any server in these states. |
+| 4 | RFC9136-ESI | 9136 §3.2 | BOOTy | Low: a Type-5 route with an ESI overlay index and a label is installed through the BGP next hop, without RT-1 resolution. | Kept like FRR ([#747]). |
+| 5 | RFC5880-ECHORX | 5880 §4.1, §6.8.7 | BOOTy | Low: since [#710] BFD advertises Required Min Echo RX 50 ms like FRR bfdd, but BOOTy loops back no echo packets; a peer with echo mode gets a failing echo session. The fabric does not enable echo mode. | Kept for FRR parity. |
+| 6 | RFC9136-NH-REACH | 9136 §3.2 | BOOTy | Low: a Type-5 route is installed without a check that the VTEP is reachable; in Type-5-only mode BOOTy installs its own /32 to the VTEP. | Open, by design for a host with one uplink path. |
+| 7 | RFC5880-ADMINDOWN | 5880 §6.8.16 | BOOTy | Low: at shutdown one AdminDown packet instead of AdminDown for a detection time. A lost packet makes the peer wait one detection time. | Open; [#723] stops BFD before kexec and reboot, still with one packet. |
+| 8 | RFC5880-CONGESTION | 5880 §7 | BOOTy | Low: no congestion control for multihop sessions (a few sessions per host). | Open. |
+| 9 | RFC4861-HOST-RA | 4861 §6.2.1, §6.2.2, §6.2.4, §6.2.6 | BOOTy | Low: BOOTy sends RAs with IPv6 forwarding off (a host) at a fixed 10 s interval, answers Router Solicitations, and since [#846] starts with fast RAs 1 s apart like zebra. Needed for FRR BGP unnumbered; the legacy FRR ramdisk does the same. | By design, documented. |
+| 10 | RFC4271-NH-RESOLVE | 4271 §9.1.2.1 | GoBGP | Low: no next hop tracking in the decision process; BOOTy's FIB writer skips unresolvable next hops instead. | Open. |
+| 11 | RFC7432-PMSI-ID | 7432 §11.2, 6514 §5 | BOOTy | Very low: the ingress replication destination is the originating router IP, not the PMSI Tunnel Identifier; in VXLAN fabrics both are the VTEP. | Kept like FRR, documented. |
+| 12 | RFC7432-MOBILITY-GOBGP | 7432 §15 | GoBGP | Very low: GoBGP withdraws its local Type-2 route on a remote higher sequence only when the ESIs differ. BOOTy's MAC is its own bridge MAC and does not move. | Open. |
+| 13 | RFC8654-RX | 8654 §4 | GoBGP | Very low: GoBGP accepts UPDATEs above 4096 octets only from a peer that advertised the extended message capability, although it advertises the capability itself. BOOTy's and the fabric's routes are far smaller. | Open (GoBGP). |
+| 14 | RFC8415-DECLINE | 8415 §18.2.8 | BOOTy | Very low: a failed DAD sends no DECLINE (8415-8). | Open: DECLINE on a DAD failure. |
+| 15 | RFC4861-RA-OPTLEN | 4861 §4.6, §6.1.2 | BOOTy | Very low: in DHCP mode an RA with a zero-length option, which the kernel drops, still starts DHCPv6 (4861-15). | Open: check the option lengths in `validRA`, like `validRS`. |
+| 16 | RFC8415-ZERO-LIFETIME | 8415 §18.2.10.1 | BOOTy | Very low: an address that a REPLY to RENEW or REBIND gives valid lifetime 0 stays until its old valid lifetime ends (8415-10). | Open: expire the lease at once. |
+| 17 | LLDP-TTL | 802.1AB | BOOTy | Very low: TTL 120 instead of txTTL = 4 x 30 + 1 = 121; matches systemd-networkd. | Kept for networkd parity. |
 
 The rows without authentication (5880-39, 5881-15, 5883-4) are not
 ranked: the legacy FRR profile has none either.
@@ -761,14 +763,14 @@ timers and checks.
 | 2131-3 | 4.3.2, 4.4.5 | RENEWING: unicast REQUEST with ciaddr, without server identifier and requested IP; REBINDING: broadcast | BOOTy | COMPLIANT | RFC2131-RENEW at the first audit (go-dhclient). [#790]: unicast from the lease address to the server of the lease with ciaddr and neither option, broadcast when rebinding (`dhcp4/client.go:302` `renewState`, `:310` `rebindState`, `:558` `request`); `TestRenewUnicastRebindBroadcast`, `TestRenewWait` | test |
 | 2131-4 | 4.4.5 | T1 and T2 defaults 0.5 and 0.875 of the lease | BOOTy | COMPLIANT | `dhcp4/message.go:302` (`leaseTimes.set`, also for a T1 or T2 past the lease, like networkd); `TestLeaseTimes` | test |
 | 2131-5 | 4.4.5 | Lease expiry before renewal or rebind: MUST stop using the address, back to INIT | BOOTy | COMPLIANT | RFC2131-EXPIRE at the first audit. The client ends the lease at expiry (`dhcp4/client.go:328`, `:385` `expire`, also in INIT after failed INIT-REBOOTs `:204`); [#751] removes address, routes, DNS, NTP and MTU (`dhcp.go:544` `onExpire`, `:554` `endLease`); `TestExpiryAndNak`, `TestLeaseExpiresInInitAfterFailedReboot`, `TestOnExpireRemovesLeaseState` | test |
-| 2131-6 | 3.2 | DHCPNAK: stop using the address, restart | BOOTy | COMPLIANT | Fixed by [#751] and [#790]: a NAK ends the lease (`dhcp4/client.go:270`, `:344`) and BOOTy removes it (`dhcp.go:544`); a NAK counts only from the server of the offer or lease, like networkd (`dhcp4/client.go:452`); `TestExpiryAndNak`, `TestNakFromOtherServerIgnored`, `TestNakFromOtherServerIgnoredInRequesting`, `TestNakFromOtherServerIgnoredInRebooting` | test |
+| 2131-6 | 3.2 | DHCPNAK: stop using the address, restart | BOOTy | COMPLIANT | Fixed by [#751] and [#790]: a NAK ends the lease (`dhcp4/client.go:270`, `:344`) and BOOTy removes it (`dhcp.go:544`); a NAK counts only from the server of the offer or lease, like networkd (`dhcp4/client.go:452`; in INIT-REBOOT and REBINDING this is a deviation, see 2131-13); `TestExpiryAndNak`, `TestNakFromOtherServerIgnored`, `TestNakFromOtherServerIgnoredInRequesting`, `TestNakFromOtherServerIgnoredInRebooting` | test |
 | 2131-7 | 4.4.5 | A renewed lease updates address and router | BOOTy | COMPLIANT | `dhcp.go:597` `apply` for every ACK, `:735` `applyRoutes`; `TestOnBoundAppliesRenewal`, `TestOnBoundAppliesEveryNIC` | test |
 | 2131-8 | 3.3 | Lease without router option drops the default route | BOOTy | COMPLIANT | `dhcp_options.go:113` `leaseRouteSet` (no default route without a non-zero router), `dhcp.go:735` removes the routes the new lease lacks; `TestLeaseRoutesTable`, `TestOnBoundRenewalDropsRouteAndRestoresMask` | test |
 | 2131-9 | 4.1 | Retransmission with randomized exponential backoff (SHOULD) | BOOTy | COMPLIANT | RFC2131-BACKOFF at the first audit (go-dhclient, fixed 1 s). [#790]: 2, 4, 8, 16, 32, then 64 s, each +-1 s, like networkd (`dhcp4/client.go:76` `timeout`); `TestDiscoverBackoffAndOptions` | test |
 | 2131-10 | 4.4.6, Table 5 | DHCPRELEASE on shutdown (MAY); a DHCPRELEASE MUST carry the server identifier (54) | BOOTy | COMPLIANT | [#790] releases a bound lease at stop, unicast with ciaddr, like networkd SendRelease=yes (`dhcp4/client.go:512` `release`, `dhcp.go:456`); [#908] adds the server identifier of the lease, which the release sent without before, to the client identifier; `TestRebootAndRelease`, `TestGolden` | test |
 | 2131-11 | 4.4.1 | Parameter request list, hostname option | BOOTy | COMPLIANT | [#776] networkd's list and options 61, 55, 57, 12 (`dhcp_options.go:27` `networkdParams`, `dhcp.go:446` `newDHCPClient`, `dhcp4/client.go:573`); `TestNewDHCPClientSendsNetworkdOptions`, `TestDiscoverBackoffAndOptions` | test |
 | 2131-12 | 3.1 | Client identifier, chaddr | BOOTy | COMPLIANT | N/A at the first audit (chaddr only). [#776] sends networkd's client identifier in every message with chaddr (`dhcp_options.go:43`, `dhcp4/client.go:576`), see 4361-1; `TestNewDHCPClientSendsNetworkdOptions` | test |
-| 2131-13 | 3.2, 4.4.2 | INIT-REBOOT: confirm the last address with a broadcast REQUEST (requested IP, no server identifier); NAK: back to INIT | BOOTy | COMPLIANT | [#790] `dhcp4/client.go:250` `rebootState`, started by [#793] when the carrier returns, like networkd (`dhcp.go:400`); `TestRebootTriesOnce`, `TestRebootEndsRenewal`, `TestCarrierLossKeepsLeaseAndReturnReboots` | test |
+| 2131-13 | 3.2, 4.4.2, 4.4.5 | INIT-REBOOT: confirm the last address with a broadcast REQUEST (requested IP, no server identifier); NAK: back to INIT. INIT-REBOOT and REBINDING ask any server, so a DHCPNAK from any server ends the lease | BOOTy | DEVIATION | RFC2131-NAK-SERVER: [#790] `dhcp4/client.go:250` `rebootState`, started by [#793] when the carrier returns, like networkd (`dhcp.go:400`); `TestRebootTriesOnce`, `TestRebootEndsRenewal`, `TestCarrierLossKeepsLeaseAndReturnReboots`. But `rebootState` and `extend` (also REBINDING) pass the server of the lease to `wanted` (`dhcp4/client.go:261`, `:335`, `:452`), which ignores a NAK from another server, like networkd; `TestNakFromOtherServerIgnoredInRebooting`. On a changed network the client then keeps the old address until a new lease or its expiry instead of restarting at once. Impact low. Fix: accept a NAK from any server in INIT-REBOOT and REBINDING (kept for networkd parity so far) | test |
 | 2131-14 | 4.1 | secs: the time since the client began the exchange | BOOTy | COMPLIANT | [#790] `dhcp4/client.go:506` `secs`, set on each send (`:413`); no test checks the value | reading |
 | 2131-15 | 4.1 | Replies are matched by xid and chaddr | BOOTy | COMPLIANT | [#790] `dhcp4/client.go:448` `wanted`; `TestIgnoresForeignReplies` | test |
 
