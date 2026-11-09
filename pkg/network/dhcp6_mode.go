@@ -139,12 +139,21 @@ func watchRA(ctx context.Context, iface *net.Interface, fn func(managed, other b
 	return nil
 }
 
-// validRA checks a router advertisement like RFC 4861 6.1.2: hop limit 255
-// (it was not forwarded) and a link-local source.
+// validRA checks a router advertisement like RFC 4861 6.1.2 (the kernel
+// checks the checksum): hop limit 255 (it was not forwarded), a link-local
+// source, code 0, at least 16 octets and options with a non-zero length.
 func validRA(b []byte, cm *ipv6.ControlMessage, src net.Addr) bool {
 	a, ok := src.(*net.IPAddr)
-	return len(b) >= 16 && b[0] == byte(ipv6.ICMPTypeRouterAdvertisement) && b[1] == 0 &&
-		cm != nil && cm.HopLimit == 255 && ok && a.IP.IsLinkLocalUnicast()
+	if len(b) < 16 || b[0] != byte(ipv6.ICMPTypeRouterAdvertisement) || b[1] != 0 ||
+		cm == nil || cm.HopLimit != 255 || !ok || !a.IP.IsLinkLocalUnicast() {
+		return false
+	}
+	for o := b[16:]; len(o) > 0; o = o[int(o[1])*8:] {
+		if len(o) < 2 || o[1] == 0 || int(o[1])*8 > len(o) {
+			return false
+		}
+	}
+	return true
 }
 
 // startRA watches the router advertisements of a NIC with a DHCPv4 client.
