@@ -219,6 +219,10 @@ def write_dpkg(rootfs, packages, owned):
         for pkg in sorted(owned):
             out.write(packages[pkg] + "\n\n")
             (info / f"{pkg}.list").write_text("\n".join(sorted(owned[pkg])) + "\n")
+            # syft takes the files of a package from its md5sums, not .list.
+            (info / f"{pkg}.md5sums").write_text(
+                "".join(f"{hashlib.md5((rootfs / f[1:]).read_bytes()).hexdigest()}  {f[1:]}\n" for f in sorted(owned[pkg]))
+            )
 
 
 def fix_purl(purl, frrouting):

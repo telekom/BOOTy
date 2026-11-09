@@ -241,6 +241,7 @@ class RamdiskSBOMTest(unittest.TestCase):
         self.assertIn("Package: linux-image-6.12-amd64\n", status)
         self.assertNotIn("Package: fdisk", status)
         self.assertEqual(seen["/var/lib/dpkg/info/util-linux.list"], "/bin/wipefs\n")
+        self.assertEqual(seen["/var/lib/dpkg/info/util-linux.md5sums"], hashlib.md5(ELF).hexdigest() + "  bin/wipefs\n")
         self.assertEqual(seen["/etc/os-release"], 'ID=debian\nVERSION_ID="13"\n')
 
         files = [c["name"] for c in cdx["components"] if c["type"] == "file"]

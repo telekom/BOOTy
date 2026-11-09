@@ -358,6 +358,11 @@ jobs:
           fi
           has micro-amd64-initramfs '.name == "github.com/telekom/BOOTy"'
           has gobgp-amd64-initramfs '.name == "cloud-guest-utils"'
+          # Debian packages own their ramdisk files (from the md5sums).
+          jq -e '(.packages[] | select(.name == "e2fsprogs") | .SPDXID) as $p
+            | any(.relationships[]; .spdxElementId == $p and .relationshipType == "CONTAINS")' \
+            default-amd64-initramfs.spdx.json >/dev/null \
+            || { echo "::error::default ramdisk SBOM (SPDX): e2fsprogs owns no files"; exit 1; }
           # The built components contain their files in SPDX too.
           for want in lvm2 util-linux; do
             jq -e --arg n "${want}" 'any(.packages[]; .name == $n and .filesAnalyzed and .packageVerificationCode)' \
