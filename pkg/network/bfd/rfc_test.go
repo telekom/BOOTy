@@ -22,14 +22,14 @@ func TestRFC5880PacketFields(t *testing.T) {
 	s := NewSession(Timers{DesiredMinTx: 300 * time.Millisecond, RequiredMinRx: 300 * time.Millisecond, DetectMult: 3}, 7)
 	p := s.Packet()
 	b := p.Marshal()
+	if len(b) != 24 || b[3] != 24 {
+		t.Fatalf("packet = %x (%d bytes), want Length 24", b, len(b))
+	}
 	if b[0]>>5 != 1 {
 		t.Errorf("version = %d, want 1", b[0]>>5)
 	}
 	if b[1]&0x0f != 0 {
 		t.Errorf("C/A/D/M bits = %#x, want 0", b[1]&0x0f)
-	}
-	if b[3] != 24 || len(b) != 24 {
-		t.Errorf("length = %d (%d bytes), want 24", b[3], len(b))
 	}
 	if echo := binary.BigEndian.Uint32(b[20:24]); echo != 50_000 {
 		t.Errorf("Required Min Echo RX = %d us, want 50000 (FRR bfdd default)", echo)
@@ -51,6 +51,7 @@ func TestRFC5881SourcePortAndTTL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { _ = conn.Close() })
 		port := conn.LocalAddr().(*net.UDPAddr).Port
 		if port < 49152 || port > 65535 {
 			t.Errorf("multihop=%v: source port %d, want 49152-65535", mh, port)
@@ -67,6 +68,5 @@ func TestRFC5881SourcePortAndTTL(t *testing.T) {
 		if ttl != 255 {
 			t.Errorf("multihop=%v: TTL %d, want 255", mh, ttl)
 		}
-		_ = conn.Close()
 	}
 }

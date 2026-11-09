@@ -66,6 +66,9 @@ func checkWireRD(t *testing.T, body []byte) {
 	t.Helper()
 	want := append([]byte{0, 1}, net.ParseIP(wireRouterID).To4()...)
 	want = append(want, 0, 2)
+	if len(body) < 8 {
+		t.Fatalf("NLRI body of %d bytes has no 8-octet RD", len(body))
+	}
 	if !bytes.Equal(body[:8], want) {
 		t.Errorf("RD = %x, want %x (type 1, %s:2)", body[:8], want, wireRouterID)
 	}
@@ -158,8 +161,8 @@ func TestRFCWireType5(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Route type 5, length 34 (RFC 9136 section 3.1, IPv4).
-	if b[0] != bgp.EVPN_IP_PREFIX || b[1] != 34 || len(b) != 2+34 {
-		t.Fatalf("type/length = %d/%d (%d bytes), want 5/34", b[0], b[1], len(b))
+	if len(b) != 2+34 || b[0] != bgp.EVPN_IP_PREFIX || b[1] != 34 {
+		t.Fatalf("NLRI = %x (%d bytes), want type 5, length 34", b, len(b))
 	}
 	body := b[2:]
 	checkWireRD(t, body)
@@ -232,8 +235,8 @@ func TestRFCWireType3(t *testing.T) {
 		t.Fatal(err)
 	}
 	// RD 8, Ethernet Tag 4, IP length 1, IPv4 4: 17 octets.
-	if b[0] != bgp.EVPN_INCLUSIVE_MULTICAST_ETHERNET_TAG || b[1] != 17 {
-		t.Fatalf("type/length = %d/%d, want 3/17", b[0], b[1])
+	if len(b) != 2+17 || b[0] != bgp.EVPN_INCLUSIVE_MULTICAST_ETHERNET_TAG || b[1] != 17 {
+		t.Fatalf("NLRI = %x (%d bytes), want type 3, length 17", b, len(b))
 	}
 	body := b[2:]
 	checkWireRD(t, body)
@@ -288,8 +291,8 @@ func TestRFCWireType2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b[0] != bgp.EVPN_ROUTE_TYPE_MAC_IP_ADVERTISEMENT || b[1] != 37 {
-		t.Fatalf("type/length = %d/%d, want 2/37 (RFC 9135 section 6.1)", b[0], b[1])
+	if len(b) != 2+37 || b[0] != bgp.EVPN_ROUTE_TYPE_MAC_IP_ADVERTISEMENT || b[1] != 37 {
+		t.Fatalf("NLRI = %x (%d bytes), want type 2, length 37 (RFC 9135 section 6.1)", b, len(b))
 	}
 	body := b[2:]
 	checkWireRD(t, body)
