@@ -354,9 +354,11 @@ func TestDecodeMaxRT(t *testing.T) {
 	sol := raw(optSolMaxRT, be(60))
 	fail := raw(optStatusCode, []byte{0, 1})
 	for name, opts := range map[string][]dhcpv6.Option{
-		"no server ID":   {raw(optClientID, testDUID), sol, fail},
-		"two client IDs": {raw(optServerID, testServer), raw(optClientID, testDUID), raw(optClientID, testDUID), sol},
-		"bad preference": {raw(optServerID, testServer), raw(optClientID, testDUID), raw(optPreference, []byte{1, 2}), sol},
+		"no server ID":     {raw(optClientID, testDUID), sol, fail},
+		"two client IDs":   {raw(optServerID, testServer), raw(optClientID, testDUID), raw(optClientID, testDUID), sol},
+		"bad preference":   {raw(optServerID, testServer), raw(optClientID, testDUID), raw(optPreference, []byte{1, 2}), sol},
+		"status of 1 byte": {raw(optServerID, testServer), raw(optClientID, testDUID), raw(optStatusCode, []byte{1}), sol},
+		"empty status":     {raw(optServerID, testServer), raw(optClientID, testDUID), raw(optStatusCode, nil), sol},
 	} {
 		if r, err := decode(encode(msgReply, 1, opts), 7, time.Now()); err == nil || r.solMaxRT != 0 || r.xid != 0 {
 			t.Errorf("%s: SOL_MAX_RT %s, xid %d, error %v; want the message dropped", name, r.solMaxRT, r.xid, err)
