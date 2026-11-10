@@ -1625,8 +1625,8 @@ does the same by default: it runs IPv4 ACD on a DHCPv4 address only with
 Like networkd with the legacy netplan, every NIC with a DHCP client also
 watches router advertisements (the kernel keeps doing SLAAC). Only an RA
 with code 0 and hop limit 255 from a link-local address, at least 16
-octets long and without an option of length zero, counts (RFC 4861
-6.1.2). The
+octets long and with options of a non-zero length that fit in the
+packet, counts (RFC 4861 6.1.2). The
 first RA with the M flag starts a stateful DHCPv6 client
 (`pkg/network/dhcp6`), one with only the O flag a stateless one
 (INFORMATION-REQUEST, options 6, 1, 8, ORO 23, 31, 32, 56, 83, 103); a later RA with the M flag
@@ -1661,7 +1661,7 @@ captured in the CAPRF L2 parity fixture:
   skipped. T1 and T2 of 0 become 0.5 and 0.8 of the preferred lifetime,
   and T1 <= T2 <= the valid lifetime. A REPLY to RENEW or REBIND that
   gives the bound address a valid lifetime of 0 and no other address ends
-  the lease at once (RFC 8415 18.2.10.1).
+  the lease at once (RFC 8415 18.2.10.1); a REQUEST stops on it too.
 - The client identifier is the DUID-EN of DHCPv4 option 61 and the IAID
   that of option 61, as in networkd.
 
