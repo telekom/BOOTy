@@ -1,6 +1,7 @@
 package image
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -16,12 +17,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 )
 
 // Cosign signature verification against offline public keys.
@@ -45,12 +49,20 @@ const (
 	minCosignRSAKeyBits  = 2048
 )
 
-// ErrCosignVerification marks a reference without a signature that verifies
-// against the configured keys.
-var ErrCosignVerification = errors.New("cosign signature verification failed")
+var (
+	// ErrCosignVerification marks a reference without a signature that
+	// verifies against the configured keys.
+	ErrCosignVerification = errors.New("cosign signature verification failed")
+	// ErrCosignFetch marks a network or registry error (timeout, 5xx,
+	// connection error) while fetching the signature, which a retry may
+	// fix. The error still wraps ErrCosignVerification.
+	ErrCosignFetch = errors.New("fetching cosign signature failed")
+)
 
-// LoadCosignPublicKeys reads one PEM public key (ECDSA, RSA or Ed25519, as
-// written by `cosign generate-key-pair` or `cosign public-key`) per path.
+// LoadCosignPublicKeys reads the PEM public keys (ECDSA, RSA or Ed25519, as
+// written by `cosign generate-key-pair` or `cosign public-key`) in paths. A
+// file may hold several PUBLIC KEY blocks, so keys can be rotated by
+// concatenating them.
 func LoadCosignPublicKeys(paths []string) ([]crypto.PublicKey, error) {
 	if len(paths) == 0 {
 		return nil, errors.New("no cosign public keys configured")
@@ -61,26 +73,57 @@ func LoadCosignPublicKeys(paths []string) ([]crypto.PublicKey, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read cosign public key: %w", err)
 		}
-		key, err := parseCosignPublicKey(data)
+		fileKeys, err := parseCosignPublicKeys(data)
 		if err != nil {
 			return nil, fmt.Errorf("cosign public key %s: %w", p, err)
 		}
-		keys = append(keys, key)
+		keys = append(keys, fileKeys...)
 	}
 	return keys, nil
 }
 
-func parseCosignPublicKey(data []byte) (crypto.PublicKey, error) {
-	block, _ := pem.Decode(data)
-	if block == nil || block.Type != "PUBLIC KEY" {
+// parseCosignPublicKeys parses every PEM block of data. Any data outside
+// the blocks and any block that is not a PUBLIC KEY fail the file.
+func parseCosignPublicKeys(data []byte) ([]crypto.PublicKey, error) {
+	var keys []crypto.PublicKey
+	for rest := bytes.TrimSpace(data); len(rest) > 0; rest = bytes.TrimSpace(rest) {
+		// pem.Decode skips text before a block; refuse it instead.
+		if !bytes.HasPrefix(rest, []byte("-----BEGIN ")) {
+			return nil, errors.New("data outside PEM blocks")
+		}
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			return nil, errors.New("malformed PEM block")
+		}
+		if block.Type != "PUBLIC KEY" {
+			return nil, fmt.Errorf("PEM block %q is not a PUBLIC KEY", block.Type)
+		}
+		key, err := parseCosignPublicKey(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
 		return nil, errors.New("no PEM PUBLIC KEY block")
 	}
-	key, err := x509.ParsePKIXPublicKey(block.Bytes)
+	return keys, nil
+}
+
+func parseCosignPublicKey(der []byte) (crypto.PublicKey, error) {
+	key, err := x509.ParsePKIXPublicKey(der)
 	if err != nil {
 		return nil, fmt.Errorf("parse public key: %w", err)
 	}
 	switch k := key.(type) {
-	case *ecdsa.PublicKey, ed25519.PublicKey:
+	case *ecdsa.PublicKey:
+		switch k.Curve {
+		case elliptic.P256(), elliptic.P384(), elliptic.P521():
+			return key, nil
+		}
+		return nil, fmt.Errorf("unsupported ECDSA curve %s", k.Curve.Params().Name)
+	case ed25519.PublicKey:
 		return key, nil
 	case *rsa.PublicKey:
 		if k.N.BitLen() < minCosignRSAKeyBits {
@@ -115,13 +158,19 @@ func VerifyCosignSignature(ctx context.Context, reference string, keys []crypto.
 	sigTag := digestRef.Context().Tag(strings.Replace(digest, ":", "-", 1) + ".sig")
 	sigImg, err := remote.Image(sigTag, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
 	if err != nil {
+		if cosignFetchTransient(err) {
+			return fmt.Errorf("%w: %w: %s: %w", ErrCosignVerification, ErrCosignFetch, redacted, wrapRedactedOCIRefError(err, reference))
+		}
 		return fmt.Errorf("%w: no signature found for %s: %w", ErrCosignVerification, redacted, wrapRedactedOCIRefError(err, reference))
 	}
 	manifest, err := sigImg.Manifest()
 	if err != nil {
-		return fmt.Errorf("%w: read signature manifest of %s: %w", ErrCosignVerification, redacted, wrapRedactedOCIRefError(err, reference))
+		return fmt.Errorf("%w: read signature manifest of %s: %w", ErrCosignVerification, redacted, cosignFetchError(err, reference))
 	}
+	// A layer that cannot be read does not hide a later valid one; its
+	// error is reported only when no layer verifies.
 	checked := 0
+	var layerErrs []error
 	for i := range manifest.Layers {
 		desc := &manifest.Layers[i]
 		sig := desc.Annotations[cosignSignatureAnnotation]
@@ -131,18 +180,51 @@ func VerifyCosignSignature(ctx context.Context, reference string, keys []crypto.
 		checked++
 		layer, err := sigImg.LayerByDigest(desc.Digest)
 		if err != nil {
-			return fmt.Errorf("%w: signature payload of %s: %w", ErrCosignVerification, redacted, wrapRedactedOCIRefError(err, reference))
+			layerErrs = append(layerErrs, fmt.Errorf("signature layer %s: %w", desc.Digest, cosignFetchError(err, reference)))
+			continue
 		}
 		payload, err := readCosignPayload(layer.Compressed)
 		if err != nil {
-			return fmt.Errorf("%w: signature payload of %s: %w", ErrCosignVerification, redacted, wrapRedactedOCIRefError(err, reference))
+			layerErrs = append(layerErrs, fmt.Errorf("signature layer %s: %w", desc.Digest, cosignFetchError(err, reference)))
+			continue
 		}
 		if cosignSignatureValid(keys, payload, sig, digest) {
 			return nil
 		}
 	}
+	if len(layerErrs) > 0 {
+		return fmt.Errorf("%w: none of the %d signatures of %s verifies against the configured keys for digest %s: %w",
+			ErrCosignVerification, checked, redacted, digest, errors.Join(layerErrs...))
+	}
 	return fmt.Errorf("%w: none of the %d signatures of %s verifies against the configured keys for digest %s",
 		ErrCosignVerification, checked, redacted, digest)
+}
+
+// cosignFetchError redacts err and marks it with ErrCosignFetch when a
+// retry may fix it.
+func cosignFetchError(err error, reference string) error {
+	redacted := wrapRedactedOCIRefError(err, reference)
+	if cosignFetchTransient(err) {
+		return fmt.Errorf("%w: %w", ErrCosignFetch, redacted)
+	}
+	return redacted
+}
+
+// cosignFetchTransient reports whether err is a timeout, a connection
+// error, a truncated read or a temporary registry error (5xx, 408, 429).
+// A missing signature (404) or a refused request is not.
+func cosignFetchTransient(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	var terr *transport.Error
+	if errors.As(err, &terr) {
+		return terr.Temporary() || terr.StatusCode >= http.StatusInternalServerError
+	}
+	var nerr net.Error
+	var opErr *net.OpError
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.As(err, &opErr) || (errors.As(err, &nerr) && nerr.Timeout())
 }
 
 // readCosignPayload reads a payload blob to its end, so go-containerregistry
