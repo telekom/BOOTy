@@ -304,6 +304,68 @@ func TestReplyWithErrorStatusDoesNotBind(t *testing.T) {
 	}
 }
 
+// RFC 8415 21.24 and 21.25: SOL_MAX_RT and INF_MAX_RT of 60 to 86400 s
+// count, other values and lengths are ignored; 18.2.10: also in a REPLY
+// with a failure status, which is otherwise dropped.
+func TestDecodeMaxRT(t *testing.T) {
+	base := []dhcpv6.Option{raw(optServerID, testServer), raw(optClientID, testDUID)}
+	be := func(v uint32) []byte { return binary.BigEndian.AppendUint32(nil, v) }
+	for _, tt := range []struct {
+		name string
+		data []byte
+		want time.Duration
+	}{
+		{"absent", nil, 0},
+		{"59", be(59), 0},
+		{"60", be(60), time.Minute},
+		{"3600", be(3600), time.Hour},
+		{"86400", be(86400), 86400 * time.Second},
+		{"86401", be(86401), 0},
+		{"0", be(0), 0},
+		{"3 bytes", []byte{0, 0, 60}, 0},
+		{"5 bytes", []byte{0, 0, 0, 60, 0}, 0},
+	} {
+		for _, code := range []dhcpv6.OptionCode{optSolMaxRT, optInfMaxRT} {
+			opts := slices.Clone(base)
+			if tt.data != nil {
+				opts = append(opts, raw(code, tt.data))
+			}
+			for _, failed := range []bool{false, true} {
+				o := opts
+				if failed {
+					o = append(slices.Clone(opts), raw(optStatusCode, []byte{0, 1}))
+				}
+				r, err := decode(encode(msgReply, 1, o), 7, time.Now())
+				if (err != nil) != failed {
+					t.Fatalf("%s option %d failed %v: error %v", tt.name, code, failed, err)
+				}
+				got := r.solMaxRT
+				if code == optInfMaxRT {
+					got = r.infMaxRT
+				}
+				if got != tt.want || r.xid != 1 || !slices.Equal(r.clientID, testDUID) {
+					t.Errorf("%s option %d failed %v: %s, xid %d, client %x; want %s", tt.name, code, failed, got, r.xid, r.clientID, tt.want)
+				}
+			}
+		}
+	}
+	// Only the status may fail: without a server identifier, or with a
+	// second client identifier, the message is dropped with its options.
+	sol := raw(optSolMaxRT, be(60))
+	fail := raw(optStatusCode, []byte{0, 1})
+	for name, opts := range map[string][]dhcpv6.Option{
+		"no server ID":     {raw(optClientID, testDUID), sol, fail},
+		"two client IDs":   {raw(optServerID, testServer), raw(optClientID, testDUID), raw(optClientID, testDUID), sol},
+		"bad preference":   {raw(optServerID, testServer), raw(optClientID, testDUID), raw(optPreference, []byte{1, 2}), sol},
+		"status of 1 byte": {raw(optServerID, testServer), raw(optClientID, testDUID), raw(optStatusCode, []byte{1}), sol},
+		"empty status":     {raw(optServerID, testServer), raw(optClientID, testDUID), raw(optStatusCode, nil), sol},
+	} {
+		if r, err := decode(encode(msgReply, 1, opts), 7, time.Now()); err == nil || r.solMaxRT != 0 || r.xid != 0 {
+			t.Errorf("%s: SOL_MAX_RT %s, xid %d, error %v; want the message dropped", name, r.solMaxRT, r.xid, err)
+		}
+	}
+}
+
 // RFC 8415 18.2.10.1, 21.4 and 21.6: an address with valid lifetime 0
 // counts as revoked only where ia would read it: not in an IA with
 // T1 > T2, not with a preferred lifetime over the valid one or an error

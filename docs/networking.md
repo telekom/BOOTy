@@ -1629,7 +1629,7 @@ octets long and with options of a non-zero length that fit in the
 packet, counts (RFC 4861 6.1.2). The
 first RA with the M flag starts a stateful DHCPv6 client
 (`pkg/network/dhcp6`), one with only the O flag a stateless one
-(INFORMATION-REQUEST, options 6, 1, 8); a later RA with the M flag
+(INFORMATION-REQUEST, options 6, 1, 8, ORO 23, 31, 32, 56, 83, 103); a later RA with the M flag
 replaces a stateless client with a stateful one. The stateful client sends the messages of systemd-networkd 255, as
 captured in the CAPRF L2 parity fixture:
 
@@ -1649,7 +1649,11 @@ captured in the CAPRF L2 parity fixture:
   goes straight to SOLICIT).
 - Retransmission as in RFC 8415 section 15 (SOLICIT 1 s, up to 1 h; the
   first SOLICIT timeout is above 1 s); REQUEST up to ten times, then a new
-  SOLICIT. When the valid lifetime ends without a REPLY, the client
+  SOLICIT. A SOL_MAX_RT or INF_MAX_RT (60 s to 1 day) in any ADVERTISE or
+  REPLY replaces the 1 h of SOLICIT or INFORMATION-REQUEST (RFC 8415
+  18.2.9, 18.2.10). The first SOLICIT or INFORMATION-REQUEST of a client
+  waits a random 0 to 1 s (SOL_MAX_DELAY, INF_MAX_DELAY; 18.2.1, 18.2.6).
+  REQUEST, RENEW and REBIND do not ask for SOL_MAX_RT, like networkd. When the valid lifetime ends without a REPLY, the client
   solicits again.
 - Replies (RFC 8415): an ADVERTISE or REPLY without a server identifier
   or with a top-level status other than success is discarded (networkd
