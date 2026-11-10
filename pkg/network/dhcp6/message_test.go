@@ -349,6 +349,19 @@ func TestDecodeMaxRT(t *testing.T) {
 			}
 		}
 	}
+	// Only the status may fail: without a server identifier, or with a
+	// second client identifier, the message is dropped with its options.
+	sol := raw(optSolMaxRT, be(60))
+	fail := raw(optStatusCode, []byte{0, 1})
+	for name, opts := range map[string][]dhcpv6.Option{
+		"no server ID":   {raw(optClientID, testDUID), sol, fail},
+		"two client IDs": {raw(optServerID, testServer), raw(optClientID, testDUID), raw(optClientID, testDUID), sol},
+		"bad preference": {raw(optServerID, testServer), raw(optClientID, testDUID), raw(optPreference, []byte{1, 2}), sol},
+	} {
+		if r, err := decode(encode(msgReply, 1, opts), 7, time.Now()); err == nil || r.solMaxRT != 0 || r.xid != 0 {
+			t.Errorf("%s: SOL_MAX_RT %s, xid %d, error %v; want the message dropped", name, r.solMaxRT, r.xid, err)
+		}
+	}
 }
 
 // RFC 8415 18.2.10.1, 21.4 and 21.6: an address with valid lifetime 0

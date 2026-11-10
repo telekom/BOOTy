@@ -100,9 +100,8 @@ func lenient(code dhcpv6.OptionCode, data []byte) (dhcpv6.Option, error) {
 
 // strict checks what drops the whole message in networkd 255
 // (dhcp6_lease_parse_message): a client or server identifier after a
-// non-empty one, a preference other than 1 byte, a status code under 2
-// bytes or other than success, and an information refresh time other
-// than 4 bytes. A status inside an IA (NoBinding) is no top-level status.
+// non-empty one, a preference other than 1 byte and an information
+// refresh time other than 4 bytes; statusOK checks the status code.
 func strict(opts dhcpv6.Options) bool {
 	seen := map[dhcpv6.OptionCode]bool{}
 	for _, o := range opts {
@@ -117,14 +116,22 @@ func strict(opts dhcpv6.Options) bool {
 			if len(b) != 1 {
 				return false
 			}
-		case optStatusCode:
-			if len(b) < 2 || iana.StatusCode(binary.BigEndian.Uint16(b)) != iana.StatusSuccess {
-				return false
-			}
 		case optInfoRefresh:
 			if len(b) != 4 {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+// statusOK tells whether every top-level status code is success; networkd
+// drops a message with a status code under 2 bytes or another status. A
+// status inside an IA (NoBinding) is no top-level status.
+func statusOK(opts dhcpv6.Options) bool {
+	for _, o := range opts.Get(optStatusCode) {
+		if b := o.ToBytes(); len(b) < 2 || iana.StatusCode(binary.BigEndian.Uint16(b)) != iana.StatusSuccess {
+			return false
 		}
 	}
 	return true
@@ -174,18 +181,21 @@ func decode(b []byte, iaid uint32, now time.Time) (reply, error) {
 	if err := opts.FromBytesWithParser(withoutTail(b[dhcpv6.MessageHeaderSize:]), lenient); err != nil {
 		return reply{}, err //nolint:wrapcheck // the caller drops it
 	}
+	if !strict(opts) {
+		return reply{}, errInvalid
+	}
 	r := reply{typ: dhcpv6.MessageType(b[0]), xid: uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])}
 	r.clientID = optionData(opts, optClientID)
-	// RFC 8415 18.2.9 and 18.2.10: SOL_MAX_RT and INF_MAX_RT count also in
-	// a message that is otherwise ignored, or has a failure status.
-	r.solMaxRT, r.infMaxRT = maxRT(opts, optSolMaxRT), maxRT(opts, optInfMaxRT)
-	if !strict(opts) {
-		return r, errInvalid
-	}
 	r.lease.ServerID = optionData(opts, optServerID)
 	// RFC 8415 16.3 and 16.10: discard an ADVERTISE or REPLY without one.
 	if (r.typ == msgAdvertise || r.typ == msgReply) && len(r.lease.ServerID) == 0 {
 		return reply{}, errNoServer
+	}
+	// RFC 8415 18.2.9 and 18.2.10: SOL_MAX_RT and INF_MAX_RT count also in
+	// a message with a failure status, which is otherwise dropped.
+	r.solMaxRT, r.infMaxRT = maxRT(opts, optSolMaxRT), maxRT(opts, optInfMaxRT)
+	if !statusOK(opts) {
+		return r, errInvalid
 	}
 	r.rapidCommit = opts.GetOne(optRapidCommit) != nil
 	if p := optionData(opts, optPreference); len(p) == 1 {

@@ -51,9 +51,11 @@ type Client struct {
 	after        func(time.Duration) <-chan time.Time
 	firstDelay   func() time.Duration // before the first SOLICIT or INFORMATION-REQUEST
 
-	// SOL_MAX_RT and INF_MAX_RT of the server, 0 for the defaults; only
-	// the goroutine of run uses them.
+	// SOL_MAX_RT and INF_MAX_RT of the server, 0 for the defaults, and
+	// what the ADVERTISEs of the current SOLICIT said about them; only the
+	// goroutine of run uses them.
 	solMaxRT, infMaxRT time.Duration
+	solVote, infVote   rtVote
 	delayed            bool // the first message waited its delay
 
 	mu    sync.Mutex
@@ -193,6 +195,7 @@ func (c *Client) solicit() {
 	if !c.delayFirst() {
 		return
 	}
+	c.solVote, c.infVote = rtVote{}, rtVote{}
 	start, xid := c.now(), rand.Uint32()&0xffffff //nolint:gosec // a transaction ID
 	var rt time.Duration
 	var best *reply
@@ -509,17 +512,45 @@ func (c *Client) exchange(build func() []byte, xid uint32, timeout time.Duration
 	}
 }
 
-// maxRT keeps the SOL_MAX_RT and INF_MAX_RT of a server message for the
-// next retransmissions (RFC 8415 18.2.9, 18.2.10, 21.24, 21.25).
+// maxRT keeps the SOL_MAX_RT and INF_MAX_RT of an ADVERTISE or REPLY for
+// the next retransmissions (RFC 8415 18.2.9, 18.2.10, 21.24, 21.25).
 func (c *Client) maxRT(r *reply) {
-	if r.solMaxRT > 0 && r.solMaxRT != c.solMaxRT {
-		c.Log.Debug("DHCPv6 SOL_MAX_RT", "value", r.solMaxRT)
-		c.solMaxRT = r.solMaxRT
+	if v := c.solVote.apply(r.typ, r.solMaxRT, c.solMaxRT); v != c.solMaxRT {
+		c.Log.Debug("DHCPv6 SOL_MAX_RT", "value", v)
+		c.solMaxRT = v
 	}
-	if r.infMaxRT > 0 && r.infMaxRT != c.infMaxRT {
-		c.Log.Debug("DHCPv6 INF_MAX_RT", "value", r.infMaxRT)
-		c.infMaxRT = r.infMaxRT
+	if v := c.infVote.apply(r.typ, r.infMaxRT, c.infMaxRT); v != c.infMaxRT {
+		c.Log.Debug("DHCPv6 INF_MAX_RT", "value", v)
+		c.infMaxRT = v
 	}
+}
+
+// rtVote is what the ADVERTISEs of one SOLICIT said about SOL_MAX_RT or
+// INF_MAX_RT: RFC 8415 18.2.9 takes the value only when every ADVERTISE
+// with the option has the same one, else the default.
+type rtVote struct {
+	v     time.Duration
+	mixed bool
+}
+
+// apply returns the MRT after a message with option value v (0: absent):
+// v from a REPLY; from an ADVERTISE v while the ADVERTISEs agree, else 0
+// (the default); cur without the option.
+func (a *rtVote) apply(typ dhcpv6.MessageType, v, cur time.Duration) time.Duration {
+	switch {
+	case v == 0:
+		return cur
+	case typ != msgAdvertise:
+		return v
+	case a.v == 0:
+		a.v = v
+	case a.v != v:
+		a.mixed = true
+	}
+	if a.mixed {
+		return 0
+	}
+	return v
 }
 
 func (c *Client) pause(d time.Duration) error {

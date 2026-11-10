@@ -827,6 +827,46 @@ func TestSolMaxRT(t *testing.T) {
 	}
 }
 
+// RFC 8415 18.2.9: SOL_MAX_RT counts only when all ADVERTISEs with it
+// agree; else SOLICIT keeps the default MRT of 3600 s. Two servers answer
+// every SOLICIT with an ADVERTISE without addresses.
+func TestSolMaxRTAgreement(t *testing.T) {
+	for _, tt := range []struct {
+		a, b uint32 // 0: no option
+		want time.Duration
+	}{
+		{60, 60, 60 * time.Second},
+		{60, 0, 60 * time.Second},
+		{60, 100, 258560 * time.Millisecond},
+		{100, 60, 258560 * time.Millisecond},
+	} {
+		f := newFakeNet()
+		adv := func(msg, server []byte, v uint32) []byte {
+			clientID, _ := find(msg, optClientID)
+			opts := []dhcpv6.Option{raw(optServerID, server), raw(optClientID, clientID)}
+			if v != 0 {
+				opts = append(opts, raw(optSolMaxRT, binary.BigEndian.AppendUint32(nil, v)))
+			}
+			return encode(msgAdvertise, xidOf(msg), opts)
+		}
+		f.answer = func(msg []byte) []byte {
+			if dhcpv6.MessageType(msg[0]) != msgSolicit {
+				return nil
+			}
+			f.queue = append(f.queue, adv(msg, testServer, tt.a)) // f.mu is held
+			return adv(msg, otherServer, tt.b)
+		}
+		c := f.client(true)
+		c.Start()
+		waits := f.waitsAtLeast(t, 9)
+		close(f.stopped)
+		c.Stop()
+		if waits[8] != tt.want {
+			t.Errorf("SOL_MAX_RT %d and %d: 9th timeout %s, want %s", tt.a, tt.b, waits[8], tt.want)
+		}
+	}
+}
+
 // RFC 8415 18.2.6 and 21.25: the INFORMATION-REQUEST asks for options 32
 // and 83, and an INF_MAX_RT becomes its MRT, also from a REPLY with a
 // failure status that is otherwise dropped.
