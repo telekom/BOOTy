@@ -163,10 +163,12 @@ var sentinelCodes = []struct {
 	err  error
 	code string
 }{
-	// Before context.DeadlineExceeded: a signature fetch that timed out is
-	// transient. image.ErrCosignFetch never wraps context.Canceled.
-	{image.ErrCosignFetch, codeCosignFetch},
+	// A canceled run wins, even when a signature layer failed transiently
+	// before the cancel.
 	{context.Canceled, CodeCanceled},
+	// Before context.DeadlineExceeded: a signature fetch that timed out is
+	// transient.
+	{image.ErrCosignFetch, codeCosignFetch},
 	{context.DeadlineExceeded, CodeCanceled},
 	{image.ErrChecksumMismatch, codeChecksumMismatch},
 	{image.ErrFormatProbe, codeFormatProbe},

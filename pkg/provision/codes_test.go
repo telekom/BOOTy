@@ -116,6 +116,8 @@ func TestWithCode(t *testing.T) {
 		{"deadline", "report-init", context.DeadlineExceeded, CodeCanceled},
 		{"cosign signature fetch", "verify-image", fmt.Errorf("x: %w: %w", image.ErrCosignVerification, image.ErrCosignFetch), "BOOTY-IMG-008"},
 		{"cosign signature fetch timeout", "verify-image", fmt.Errorf("%w: %w", image.ErrCosignFetch, context.DeadlineExceeded), "BOOTY-IMG-008"},
+		{"cosign fetch then canceled", "verify-image", fmt.Errorf("%w: %w", image.ErrCosignVerification,
+			errors.Join(fmt.Errorf("%w: 503", image.ErrCosignFetch), context.Canceled)), CodeCanceled},
 		{"cosign signature missing", "verify-image", fmt.Errorf("x: %w", image.ErrCosignVerification), "BOOTY-IMG-001"},
 		{"existing code wins", "detect-disk", &CodedError{Code: "BOOTY-NET-001", Err: errors.New("x")}, "BOOTY-NET-001"},
 	}
