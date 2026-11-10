@@ -83,7 +83,7 @@ func Stream(ctx context.Context, url, device string, opts ...StreamOpts) error {
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
-	opt, err := withDownloadChecksum(opt)
+	opt, err := withDownloadChecksum(opt, url)
 	if err != nil {
 		return err
 	}

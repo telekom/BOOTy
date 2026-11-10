@@ -111,16 +111,19 @@ func TestCosignUnsignedOCIImageRefusedVM(t *testing.T) {
 	imageDigest := pushCosignTestImage(t, pushHost, "test/layered-os",
 		static.NewLayer(readFile(t, compressGzip(t, createLayeredLayoutTestDiskImage(t, 512))), types.OCILayer))
 
-	output, _ := runCosignProvision(t, "cosign-unsigned", "oci://"+guestHost+"/test/layered-os@"+imageDigest, key, nil)
+	output, targetDisk := runCosignProvision(t, "cosign-unsigned", "oci://"+guestHost+"/test/layered-os@"+imageDigest, key, nil)
 	text := string(output)
-	if !strings.Contains(text, "cosign signature verification failed") {
-		t.Fatalf("no cosign refusal. tail:\n%s", tail(output, 3000))
+	if !strings.Contains(text, "step=verify-image") || !strings.Contains(text, "cosign signature verification failed") {
+		t.Fatalf("no cosign refusal in verify-image. tail:\n%s", tail(output, 3000))
 	}
 	for _, step := range []string{"step=wipe-disks", "step=stream-image"} {
 		if strings.Contains(text, step) {
 			t.Fatalf("%s ran after the refused signature. tail:\n%s", step, tail(output, 3000))
 		}
 	}
+	// The marker that runCosignProvision wrote is still at the start of the
+	// target disk, where any wipe or image write starts.
+	run(t, "check the target disk marker", "qemu-io", "-f", "qcow2", "-c", "read -P 0xab 0 1M", targetDisk)
 }
 
 func runCosignProvision(t *testing.T, hostname, imageURL string, key *ecdsa.PrivateKey, extra map[string]string) (output []byte, targetDisk string) {
@@ -144,6 +147,7 @@ func runCosignProvision(t *testing.T, hostname, imageURL string, key *ecdsa.Priv
 	})
 	targetDisk = filepath.Join(t.TempDir(), hostname+".qcow2")
 	run(t, "create target disk", "qemu-img", "create", "-f", "qcow2", targetDisk, "2G")
+	run(t, "mark the target disk", "qemu-io", "-f", "qcow2", "-c", "write -P 0xab 0 1M", targetDisk)
 	output = runQEMUProvision(t, findKernel(t), initramfs, targetDisk, 7*time.Minute)
 	t.Logf("%s VM output tail:\n%s", hostname, tail(output, 3000))
 	return output, targetDisk

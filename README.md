@@ -921,8 +921,21 @@ every `oci://` sysext source. Verification fails closed:
 
 BOOTy verifies offline against the configured keys and needs no Sigstore
 service. It reads the signatures that `cosign sign --key` and `cosign attach
-signature` store under the `sha256-<hex>.sig` tag of the repository (the
-default of cosign 2; cosign 3 writes them with `--new-bundle-format=false`).
+signature` store under the `sha256-<hex>.sig` tag of the repository. That is
+the default of cosign 2; cosign 3 writes them with
+`--new-bundle-format=false`, for example without a transparency log:
+
+```bash
+cosign sign --key cosign.key --new-bundle-format=false \
+  --tlog-upload=false --use-signing-config=false \
+  registry.example/os-image@sha256:<digest>
+```
+
+Sign the digest that the reference pins. For an image index that is the
+index digest; the provisioning report records the digest of the platform
+manifest that BOOTy pulled from it. A/B and root streaming read an `oci://`
+image to its end even after the last partition, so a blob that does not
+match its digest fails the run.
 Keys may be ECDSA (P-256, P-384, P-521), RSA (2048 bits or more, PKCS#1
 v1.5) or Ed25519. Keyless (Fulcio certificate) signatures, Rekor entries and
 the Sigstore bundle format stored as OCI referrers are not read. The

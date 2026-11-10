@@ -209,6 +209,8 @@ jobs:
             test_regex: "^TestCosign"
             privileged: true
             setup: ""
+            # Two QEMU runs.
+            go_timeout: 30m
           - scenario: crash-artifacts
             qemu_extra: ""
             test_tag: e2e

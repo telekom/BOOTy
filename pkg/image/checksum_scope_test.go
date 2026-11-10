@@ -142,7 +142,7 @@ func TestDownloadToFileVerifiesDownloadChecksum(t *testing.T) {
 		{checksum: sha256Hex(downloaded)},
 		{checksum: sha256Hex([]byte("partition mode payload")), wantErr: true},
 	} {
-		opt, err := withDownloadChecksum(StreamOpts{Checksum: tt.checksum})
+		opt, err := withDownloadChecksum(StreamOpts{Checksum: tt.checksum}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -232,7 +232,7 @@ func TestDownloadChecksumVerifyWithOpenDecoder(t *testing.T) {
 	}
 	downloaded := compressForTest(t, "zst", payload)
 	for range 3 {
-		opt, err := withDownloadChecksum(StreamOpts{Checksum: sha256Hex(downloaded)})
+		opt, err := withDownloadChecksum(StreamOpts{Checksum: sha256Hex(downloaded)}, "")
 		if err != nil {
 			t.Fatal(err)
 		}

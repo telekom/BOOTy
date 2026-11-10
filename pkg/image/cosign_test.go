@@ -1,6 +1,7 @@
 package image
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -14,12 +15,16 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
@@ -225,5 +230,77 @@ func TestLoadCosignPublicKeys(t *testing.T) {
 				t.Fatalf("LoadCosignPublicKeys() error = %v, want %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestOCIBlobTamperedUnderSignedDigest serves other bytes under the layer
+// digest of a signed image. A reader that stops early (A/B and root
+// streaming stop after the last partition) sees no error; the drain that
+// withDownloadChecksum sets up for oci:// sources reads to the end, where
+// go-containerregistry compares the blob with its digest.
+func TestOCIBlobTamperedUnderSignedDigest(t *testing.T) {
+	reg := registry.New()
+	var tamper bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if tamper && r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/blobs/") {
+			rec := httptest.NewRecorder()
+			reg.ServeHTTP(rec, r)
+			body := rec.Body.Bytes()
+			if len(body) > 0 {
+				body[len(body)-1] ^= 0xff
+			}
+			for k, v := range rec.Header() {
+				w.Header()[k] = v
+			}
+			w.WriteHeader(rec.Code)
+			_, _ = w.Write(body)
+			return
+		}
+		reg.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	payload := bytes.Repeat([]byte("signed image "), 1000)
+	img, err := mutate.Append(empty.Image, mutate.Addendum{Layer: static.NewLayer(payload, "application/vnd.example.disk+raw")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag, err := name.NewTag(strings.TrimPrefix(srv.URL, "http://") + "/os/tampered-blob:v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.Write(tag, img); err != nil {
+		t.Fatal(err)
+	}
+	d, err := img.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := "oci://" + tag.Context().Digest(d.String()).String()
+	tamper = true
+
+	for _, drain := range []bool{false, true} {
+		rc, err := FetchOCIImageBlob(context.Background(), TrimOCIScheme(url))
+		if err != nil {
+			t.Fatal(err)
+		}
+		opt := StreamOpts{}
+		if drain {
+			if opt, err = withDownloadChecksum(opt, url); err != nil {
+				t.Fatal(err)
+			}
+		}
+		src := opt.download.source(rc)
+		if _, err := io.ReadFull(src, make([]byte, 100)); err != nil {
+			t.Fatalf("read the first partition: %v", err)
+		}
+		err = verifyChecksum(nil, opt)
+		_ = rc.Close()
+		if drain && (err == nil || !strings.Contains(err.Error(), "error verifying sha256")) {
+			t.Fatalf("verifyChecksum() = %v for a tampered oci:// blob, want a digest error", err)
+		}
+		if !drain && err != nil {
+			t.Fatalf("verifyChecksum() without a drain = %v, want nil (the control case)", err)
+		}
 	}
 }
