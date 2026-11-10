@@ -1656,7 +1656,9 @@ captured in the CAPRF L2 parity fixture:
   too; NoBinding in an IA is handled above); an IA_NA with T1 > T2 is discarded, an address with a preferred lifetime
   over its valid lifetime, a valid lifetime of 0 or an error status is
   skipped. T1 and T2 of 0 become 0.5 and 0.8 of the preferred lifetime,
-  and T1 <= T2 <= the valid lifetime.
+  and T1 <= T2 <= the valid lifetime. A REPLY to RENEW or REBIND that
+  gives the bound address a valid lifetime of 0 and no other address ends
+  the lease at once (RFC 8415 18.2.10.1); a REQUEST stops on it too.
 - The client identifier is the DUID-EN of DHCPv4 option 61 and the IAID
   that of option 61, as in networkd.
 
