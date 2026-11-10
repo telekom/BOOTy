@@ -1651,8 +1651,9 @@ captured in the CAPRF L2 parity fixture:
   first SOLICIT timeout is above 1 s); REQUEST up to ten times, then a new
   SOLICIT. A SOL_MAX_RT or INF_MAX_RT (60 s to 1 day) in any ADVERTISE or
   REPLY replaces the 1 h of SOLICIT or INFORMATION-REQUEST (RFC 8415
-  18.2.9, 18.2.10). The first SOLICIT of a client waits a random 0 to 1 s
-  (SOL_MAX_DELAY, 18.2.1). When the valid lifetime ends without a REPLY, the client
+  18.2.9, 18.2.10). The first SOLICIT or INFORMATION-REQUEST of a client
+  waits a random 0 to 1 s (SOL_MAX_DELAY, INF_MAX_DELAY; 18.2.1, 18.2.6).
+  REQUEST, RENEW and REBIND do not ask for SOL_MAX_RT, like networkd. When the valid lifetime ends without a REPLY, the client
   solicits again.
 - Replies (RFC 8415): an ADVERTISE or REPLY without a server identifier
   or with a top-level status other than success is discarded (networkd

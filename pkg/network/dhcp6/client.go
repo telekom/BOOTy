@@ -49,12 +49,12 @@ type Client struct {
 	now          func() time.Time
 	rand         func() float64 // in [-0.1, 0.1]
 	after        func(time.Duration) <-chan time.Time
-	solDelay     func() time.Duration // before the first SOLICIT
+	firstDelay   func() time.Duration // before the first SOLICIT or INFORMATION-REQUEST
 
 	// SOL_MAX_RT and INF_MAX_RT of the server, 0 for the defaults; only
 	// the goroutine of run uses them.
 	solMaxRT, infMaxRT time.Duration
-	solicited          bool // the first SOLICIT is out
+	delayed            bool // the first message waited its delay
 
 	mu    sync.Mutex
 	stop  chan struct{}
@@ -79,11 +79,11 @@ var (
 	infoRT    = params{time.Second, 3600 * time.Second, false}
 )
 
-// solMaxDelay is SOL_MAX_DELAY (RFC 8415 section 7.6).
-const solMaxDelay = time.Second
+// maxDelay is SOL_MAX_DELAY and INF_MAX_DELAY (RFC 8415 section 7.6).
+const maxDelay = time.Second
 
-// solicitDelay is a random time of 0 to SOL_MAX_DELAY.
-func solicitDelay() time.Duration { return rand.N(solMaxDelay + 1) } //nolint:gosec // timing jitter
+// randomDelay is a random time of 0 to maxDelay.
+func randomDelay() time.Duration { return rand.N(maxDelay + 1) } //nolint:gosec // timing jitter
 
 // withMRT returns p with the MRT of the server, when it sent one.
 func (p params) withMRT(mrt time.Duration) params {
@@ -127,8 +127,8 @@ func (c *Client) Start() {
 	if c.after == nil {
 		c.after = time.After
 	}
-	if c.solDelay == nil {
-		c.solDelay = solicitDelay
+	if c.firstDelay == nil {
+		c.firstDelay = randomDelay
 	}
 	c.stop, c.done = make(chan struct{}), make(chan struct{})
 	go c.run()
@@ -190,7 +190,7 @@ func (c *Client) run() {
 // 18.2.9, like sd-dhcp6-client client_receive_advertise). A REPLY with
 // rapid commit binds at once.
 func (c *Client) solicit() {
-	if !c.delayFirstSolicit() {
+	if !c.delayFirst() {
 		return
 	}
 	start, xid := c.now(), rand.Uint32()&0xffffff //nolint:gosec // a transaction ID
@@ -225,15 +225,16 @@ func (c *Client) solicit() {
 	}
 }
 
-// delayFirstSolicit waits a random 0 to SOL_MAX_DELAY before the first
-// SOLICIT of the client (RFC 8415 18.2.1), so hosts started by the same RA
-// do not send together; it tells false when Stop ended the wait.
-func (c *Client) delayFirstSolicit() bool {
-	if c.solicited {
+// delayFirst waits a random 0 to SOL_MAX_DELAY or INF_MAX_DELAY (both 1 s)
+// before the first SOLICIT or INFORMATION-REQUEST of the client (RFC 8415
+// 18.2.1, 18.2.6), so hosts started by the same RA do not send together;
+// it tells false when Stop ended the wait.
+func (c *Client) delayFirst() bool {
+	if c.delayed {
 		return true
 	}
-	c.solicited = true
-	d := c.solDelay()
+	c.delayed = true
+	d := c.firstDelay()
 	return d <= 0 || !errors.Is(c.pause(d), errStopped)
 }
 
@@ -356,6 +357,9 @@ func infoRefresh(v time.Duration) time.Duration {
 // refresh time (the default of 86400 s). The Option Request asks for the
 // information refresh time and INF_MAX_RT (RFC 8415 18.2.6).
 func (c *Client) information() {
+	if !c.delayFirst() {
+		return
+	}
 	start, xid := c.now(), rand.Uint32()&0xffffff //nolint:gosec // a transaction ID
 	var rt time.Duration
 	for !c.stopped() {
@@ -493,7 +497,9 @@ func (c *Client) exchange(build func() []byte, xid uint32, timeout time.Duration
 		if r.xid != xid || !bytes.Equal(r.clientID, c.DUID) {
 			continue
 		}
-		c.maxRT(&r)
+		if r.typ == msgAdvertise || r.typ == msgReply {
+			c.maxRT(&r)
+		}
 		if err != nil || !slices.Contains(types, r.typ) {
 			continue
 		}

@@ -42,7 +42,7 @@ func (f *fakeNet) client(stateful bool) *Client {
 	c.newTransport = func(*net.Interface) (transport, error) { return &fakeTransport{f: f}, nil }
 	c.now = func() time.Time { f.mu.Lock(); defer f.mu.Unlock(); return f.now }
 	c.rand = func() float64 { return 0 }
-	c.solDelay = func() time.Duration { return 0 }
+	c.firstDelay = func() time.Duration { return 0 }
 	c.after = func(d time.Duration) <-chan time.Time {
 		f.mu.Lock()
 		f.waits = append(f.waits, d)
@@ -856,8 +856,8 @@ func TestInfMaxRT(t *testing.T) {
 // (1 s); later ones, after the lease ends, do not.
 func TestFirstSolicitDelay(t *testing.T) {
 	for range 1000 {
-		if d := solicitDelay(); d < 0 || d > time.Second {
-			t.Fatalf("solicitDelay() = %s, want 0 to 1 s", d)
+		if d := randomDelay(); d < 0 || d > time.Second {
+			t.Fatalf("randomDelay() = %s, want 0 to 1 s", d)
 		}
 	}
 	for _, delay := range []time.Duration{time.Nanosecond, 300 * time.Millisecond, time.Second} {
@@ -870,7 +870,7 @@ func TestFirstSolicitDelay(t *testing.T) {
 		}
 		bound, expired := make(chan *Lease, 2), make(chan *Lease, 1)
 		c := f.client(true)
-		c.solDelay = func() time.Duration { return delay }
+		c.firstDelay = func() time.Duration { return delay }
 		c.OnBound = func(l *Lease) { bound <- l }
 		c.OnExpire = func(l *Lease) { expired <- l }
 		c.Start()
@@ -899,11 +899,37 @@ func TestFirstSolicitDelay(t *testing.T) {
 	}
 }
 
+// RFC 8415 18.2.6: the first INFORMATION-REQUEST waits a random 0 to
+// INF_MAX_DELAY (1 s); the one after the refresh time does not.
+func TestFirstInformationRequestDelay(t *testing.T) {
+	f := newFakeNet()
+	f.answer = func(msg []byte) []byte { return serverReply(msg, msgReply, false) }
+	bound := make(chan *Lease, 2)
+	c := f.client(false)
+	c.firstDelay = func() time.Duration { return time.Second }
+	c.OnBound = func(l *Lease) { bound <- l }
+	c.Start()
+	f.waitsAtLeast(t, 1)
+	if n := len(f.messages()); n != 0 {
+		t.Fatalf("%d messages during the delay", n)
+	}
+	f.tick(t) // the delay
+	<-bound
+	f.tick(t) // the refresh time
+	<-bound
+	waits := f.waitsAtLeast(t, 3)
+	close(f.stopped)
+	c.Stop()
+	if want := []time.Duration{time.Second, 24 * time.Hour, 24 * time.Hour}; !slices.Equal(waits, want) {
+		t.Errorf("waits %v, want the delay, then the refresh time twice", waits)
+	}
+}
+
 // Stop during the delay before the first SOLICIT sends nothing.
 func TestStopDuringSolicitDelay(t *testing.T) {
 	f := newFakeNet()
 	c := f.client(true)
-	c.solDelay = func() time.Duration { return time.Second }
+	c.firstDelay = func() time.Duration { return time.Second }
 	c.Start()
 	f.waitsAtLeast(t, 1)
 	c.Stop()
