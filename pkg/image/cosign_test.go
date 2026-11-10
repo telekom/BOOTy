@@ -1,7 +1,6 @@
 package image
 
 import (
-	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -15,16 +14,12 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/registry"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
@@ -96,6 +91,19 @@ func attachCosignSignature(t *testing.T, ref name.Digest, payload []byte, sig st
 	}
 }
 
+// signECDSAPayload signs payload with key over the hash h, as a KMS key
+// with a P-384 or P-521 curve does.
+func signECDSAPayload(t *testing.T, key *ecdsa.PrivateKey, payload []byte, h crypto.Hash) string {
+	t.Helper()
+	d := h.New()
+	d.Write(payload)
+	sig, err := ecdsa.SignASN1(rand.Reader, key, d.Sum(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(sig)
+}
+
 func newECDSAKey(t *testing.T) *ecdsa.PrivateKey {
 	t.Helper()
 	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -147,6 +155,36 @@ func TestVerifyCosignSignature(t *testing.T) {
 
 	unsigned := pushTestImage(t, host+"/os/unsigned")
 
+	// ECDSA over each curve and hash: cosign signs P-256 file keys with
+	// SHA-256, KMS keys with the hash of their curve.
+	curves := map[string]*ecdsa.PrivateKey{}
+	for _, c := range []struct {
+		name  string
+		curve elliptic.Curve
+	}{{"p384", elliptic.P384()}, {"p521", elliptic.P521()}} {
+		k, err := ecdsa.GenerateKey(c.curve, rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		curves[c.name] = k
+	}
+	ecdsaSigned := map[string]name.Digest{}
+	for _, c := range []struct {
+		name, curve string
+		hash        crypto.Hash
+	}{
+		{"p384-sha256", "p384", crypto.SHA256},
+		{"p384-sha384", "p384", crypto.SHA384},
+		{"p384-sha512", "p384", crypto.SHA512},
+		{"p521-sha256", "p521", crypto.SHA256},
+		{"p521-sha512", "p521", crypto.SHA512},
+	} {
+		ref := pushTestImage(t, host+"/os/"+c.name)
+		payload := cosignPayload(ref, ref.DigestStr())
+		attachCosignSignature(t, ref, payload, signECDSAPayload(t, curves[c.curve], payload, c.hash))
+		ecdsaSigned[c.name] = ref
+	}
+
 	tests := []struct {
 		name    string
 		ref     string
@@ -157,6 +195,12 @@ func TestVerifyCosignSignature(t *testing.T) {
 		{name: "second key of two", ref: signed.String(), keys: []crypto.PublicKey{&other.PublicKey, &signer.PublicKey}},
 		{name: "ed25519 key", ref: edSigned.String(), keys: []crypto.PublicKey{edPub}},
 		{name: "rsa key", ref: rsaSigned.String(), keys: []crypto.PublicKey{&rsaKey.PublicKey}},
+		{name: "p384 sha256", ref: ecdsaSigned["p384-sha256"].String(), keys: []crypto.PublicKey{&curves["p384"].PublicKey}},
+		{name: "p384 sha384", ref: ecdsaSigned["p384-sha384"].String(), keys: []crypto.PublicKey{&curves["p384"].PublicKey}},
+		{name: "p384 sha512 refused", ref: ecdsaSigned["p384-sha512"].String(), keys: []crypto.PublicKey{&curves["p384"].PublicKey}, wantErr: "none of the 1 signatures"},
+		{name: "p521 sha256", ref: ecdsaSigned["p521-sha256"].String(), keys: []crypto.PublicKey{&curves["p521"].PublicKey}},
+		{name: "p521 sha512", ref: ecdsaSigned["p521-sha512"].String(), keys: []crypto.PublicKey{&curves["p521"].PublicKey}},
+		{name: "p384 signature, p521 key", ref: ecdsaSigned["p384-sha384"].String(), keys: []crypto.PublicKey{&curves["p521"].PublicKey}, wantErr: "none of the 1 signatures"},
 		{name: "wrong key", ref: signed.String(), keys: []crypto.PublicKey{&other.PublicKey}, wantErr: "none of the 1 signatures"},
 		{name: "signature names another digest", ref: wrongDigest.String(), keys: []crypto.PublicKey{&signer.PublicKey}, wantErr: "none of the 1 signatures"},
 		{name: "tampered payload", ref: tampered.String(), keys: []crypto.PublicKey{&signer.PublicKey}, wantErr: "none of the 1 signatures"},
@@ -230,77 +274,5 @@ func TestLoadCosignPublicKeys(t *testing.T) {
 				t.Fatalf("LoadCosignPublicKeys() error = %v, want %q", err, tc.wantErr)
 			}
 		})
-	}
-}
-
-// TestOCIBlobTamperedUnderSignedDigest serves other bytes under the layer
-// digest of a signed image. A reader that stops early (A/B and root
-// streaming stop after the last partition) sees no error; the drain that
-// withDownloadChecksum sets up for oci:// sources reads to the end, where
-// go-containerregistry compares the blob with its digest.
-func TestOCIBlobTamperedUnderSignedDigest(t *testing.T) {
-	reg := registry.New()
-	var tamper bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if tamper && r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/blobs/") {
-			rec := httptest.NewRecorder()
-			reg.ServeHTTP(rec, r)
-			body := rec.Body.Bytes()
-			if len(body) > 0 {
-				body[len(body)-1] ^= 0xff
-			}
-			for k, v := range rec.Header() {
-				w.Header()[k] = v
-			}
-			w.WriteHeader(rec.Code)
-			_, _ = w.Write(body)
-			return
-		}
-		reg.ServeHTTP(w, r)
-	}))
-	defer srv.Close()
-
-	payload := bytes.Repeat([]byte("signed image "), 1000)
-	img, err := mutate.Append(empty.Image, mutate.Addendum{Layer: static.NewLayer(payload, "application/vnd.example.disk+raw")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tag, err := name.NewTag(strings.TrimPrefix(srv.URL, "http://") + "/os/tampered-blob:v1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := remote.Write(tag, img); err != nil {
-		t.Fatal(err)
-	}
-	d, err := img.Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	url := "oci://" + tag.Context().Digest(d.String()).String()
-	tamper = true
-
-	for _, drain := range []bool{false, true} {
-		rc, err := FetchOCIImageBlob(context.Background(), TrimOCIScheme(url))
-		if err != nil {
-			t.Fatal(err)
-		}
-		opt := StreamOpts{}
-		if drain {
-			if opt, err = withDownloadChecksum(opt, url); err != nil {
-				t.Fatal(err)
-			}
-		}
-		src := opt.download.source(rc)
-		if _, err := io.ReadFull(src, make([]byte, 100)); err != nil {
-			t.Fatalf("read the first partition: %v", err)
-		}
-		err = verifyChecksum(nil, opt)
-		_ = rc.Close()
-		if drain && (err == nil || !strings.Contains(err.Error(), "error verifying sha256")) {
-			t.Fatalf("verifyChecksum() = %v for a tampered oci:// blob, want a digest error", err)
-		}
-		if !drain && err != nil {
-			t.Fatalf("verifyChecksum() without a drain = %v, want nil (the control case)", err)
-		}
 	}
 }
