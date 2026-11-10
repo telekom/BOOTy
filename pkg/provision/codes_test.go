@@ -114,6 +114,9 @@ func TestWithCode(t *testing.T) {
 		{"efi vars", "remove-efi-entries", ErrEFIVarsUnavailable, "BOOTY-EFI-002"},
 		{"canceled", "stream-image", fmt.Errorf("retry canceled: %w", context.Canceled), CodeCanceled},
 		{"deadline", "report-init", context.DeadlineExceeded, CodeCanceled},
+		{"cosign signature fetch", "verify-image", fmt.Errorf("x: %w: %w", image.ErrCosignVerification, image.ErrCosignFetch), "BOOTY-IMG-008"},
+		{"cosign signature fetch timeout", "verify-image", fmt.Errorf("%w: %w", image.ErrCosignFetch, context.DeadlineExceeded), "BOOTY-IMG-008"},
+		{"cosign signature missing", "verify-image", fmt.Errorf("x: %w", image.ErrCosignVerification), "BOOTY-IMG-001"},
 		{"existing code wins", "detect-disk", &CodedError{Code: "BOOTY-NET-001", Err: errors.New("x")}, "BOOTY-NET-001"},
 	}
 	for _, tc := range tests {

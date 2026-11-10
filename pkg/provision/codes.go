@@ -72,6 +72,7 @@ var failureCodes = []FailureCode{
 	{"BOOTY-IMG-005", ClassTransient, "apply-sysexts", "System extension download or install failed."},
 	{"BOOTY-IMG-006", ClassTransient, "prepare-oci-prepulls", "OCI image pre-pull preparation failed."},
 	{"BOOTY-IMG-007", ClassPermanent, AnyStep, "The staged image does not fit in the staging tmpfs; use a raw or compressed raw image or IMAGE_STREAM."},
+	{"BOOTY-IMG-008", ClassTransient, "verify-image", "Fetching the cosign signature failed with a network or registry error (timeout, 5xx, connection error)."},
 
 	{"BOOTY-DSK-001", ClassEnvironment, "release-stale-mounts", "Stale target mounts could not be released."},
 	{"BOOTY-DSK-002", ClassHardware, "disable-lvm", "Disabling LVM failed."},
@@ -145,6 +146,7 @@ const (
 	codeChecksumMismatch = "BOOTY-IMG-003"
 	codeFormatProbe      = "BOOTY-IMG-004"
 	codeStagingFull      = "BOOTY-IMG-007"
+	codeCosignFetch      = "BOOTY-IMG-008"
 	codeDiskInUse        = "BOOTY-DSK-010"
 	codeAmbiguousRoot    = "BOOTY-DSK-012"
 	codeEFIVars          = "BOOTY-EFI-002"
@@ -161,6 +163,9 @@ var sentinelCodes = []struct {
 	err  error
 	code string
 }{
+	// Before context.DeadlineExceeded: a signature fetch that timed out is
+	// transient. image.ErrCosignFetch never wraps context.Canceled.
+	{image.ErrCosignFetch, codeCosignFetch},
 	{context.Canceled, CodeCanceled},
 	{context.DeadlineExceeded, CodeCanceled},
 	{image.ErrChecksumMismatch, codeChecksumMismatch},

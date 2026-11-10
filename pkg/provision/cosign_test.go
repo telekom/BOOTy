@@ -54,6 +54,7 @@ func TestVerifyCosignSignatures(t *testing.T) {
 		imageKeys  []string
 		sysextKeys []string
 		sysextOff  bool
+		sysextTag  bool
 		reject     string // ref whose verification fails
 		wantErr    string
 		wantRefs   []string
@@ -72,6 +73,10 @@ func TestVerifyCosignSignatures(t *testing.T) {
 			imageKeys: []string{keyPath}},
 		{name: "http image without checksum", imageURL: "https://images.example/os.raw", imageKeys: []string{keyPath},
 			wantErr: "no IMAGE_CHECKSUM"},
+		{name: "image tag refused before any fetch", imageURL: "oci://registry.example/os:v1", imageKeys: []string{keyPath},
+			wantErr: "must be pinned by digest"},
+		{name: "sysext tag refused before any fetch", imageURL: imageRef, imageKeys: []string{keyPath}, sysextKeys: []string{keyPath},
+			sysextTag: true, wantErr: `verifying sysext "ext" signature`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -92,7 +97,10 @@ func TestVerifyCosignSignatures(t *testing.T) {
 			cfg.Provision.Image.Checksum = tc.checksum
 			cfg.Provision.Image.CosignPublicKeys = tc.imageKeys
 			cfg.Provision.Sysext.Enabled = !tc.sysextOff
-			cfg.Provision.Sysext.Layers = sysextLayers
+			cfg.Provision.Sysext.Layers = slices.Clone(sysextLayers)
+			if tc.sysextTag {
+				cfg.Provision.Sysext.Layers[1].Source = "oci://registry.example/ext:v1"
+			}
 			cfg.Provision.Sysext.CosignPublicKeys = tc.sysextKeys
 			o := newTestOrchestrator(t, cfg, &mockProvider{})
 
@@ -112,20 +120,41 @@ func TestVerifyCosignSignatures(t *testing.T) {
 
 func TestDryRunCosignKeys(t *testing.T) {
 	keyPath := writeTestCosignKey(t)
+	const (
+		imageRef  = "oci://registry.example/os@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		sysextRef = "oci://registry.example/ext@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	)
 	tests := []struct {
 		name       string
+		imageURLs  []string
+		checksum   string
 		imageKeys  []string
 		sysextKeys []string
+		sysextSrc  string
 		want       DryRunStatus
 	}{
-		{name: "not configured", want: DryRunPass},
-		{name: "image and sysext keys", imageKeys: []string{keyPath}, sysextKeys: []string{keyPath}, want: DryRunPass},
-		{name: "missing sysext key", imageKeys: []string{keyPath}, sysextKeys: []string{keyPath + ".missing"}, want: DryRunFail},
+		{name: "not configured", imageURLs: []string{"oci://registry.example/os:v1"}, want: DryRunPass},
+		{name: "image and sysext keys", imageURLs: []string{imageRef}, imageKeys: []string{keyPath}, sysextKeys: []string{keyPath}, want: DryRunPass},
+		{name: "missing sysext key", imageURLs: []string{imageRef}, imageKeys: []string{keyPath}, sysextKeys: []string{keyPath + ".missing"}, want: DryRunFail},
+		{name: "image tag", imageURLs: []string{"oci://registry.example/os:v1"}, imageKeys: []string{keyPath}, want: DryRunFail},
+		{name: "second image source is a tag", imageURLs: []string{imageRef, " oci://registry.example/os:v1 "}, imageKeys: []string{keyPath}, want: DryRunFail},
+		{name: "image tag without image keys", imageURLs: []string{"oci://registry.example/os:v1"}, sysextKeys: []string{keyPath}, want: DryRunPass},
+		{name: "sysext tag", imageURLs: []string{imageRef}, sysextKeys: []string{keyPath}, sysextSrc: "oci://registry.example/ext:v1", want: DryRunFail},
+		{name: "http image without checksum", imageURLs: []string{"https://images.example/os.raw"}, imageKeys: []string{keyPath}, want: DryRunFail},
+		{name: "http image with checksum", imageURLs: []string{"https://images.example/os.raw"}, checksum: strings.Repeat("a", 64), imageKeys: []string{keyPath}, want: DryRunPass},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.MachineConfig{}
+			cfg.Provision.Image.URLs = tc.imageURLs
+			cfg.Provision.Image.Checksum = tc.checksum
 			cfg.Provision.Image.CosignPublicKeys = tc.imageKeys
+			cfg.Provision.Sysext.Enabled = true
+			src := sysextRef
+			if tc.sysextSrc != "" {
+				src = tc.sysextSrc
+			}
+			cfg.Provision.Sysext.Layers = []config.SysextLayerConfig{{Name: "ext", Source: src}}
 			cfg.Provision.Sysext.CosignPublicKeys = tc.sysextKeys
 			o := newTestOrchestrator(t, cfg, &mockProvider{})
 			if got := o.dryRunCosignKeys(context.Background()); got.Status != tc.want {
