@@ -7,7 +7,12 @@ files and images), phase 2 (CycloneDX and SPDX SBOMs of the ramdisk content
 with SBOM attestations on the release files and the OCI initramfs
 artifacts, see the README section "Ramdisk SBOMs") and phase 3 (reproducible initramfs
 with a double-build CI job, see "Reproducible builds") are done; the other
-phases are design only. It extends
+phases are design only, except that phases 4 and 5 are done for offline
+keys: `IMAGE_COSIGN_PUBKEYS` and `SYSEXT_COSIGN_PUBKEYS` verify cosign
+simple-signing signatures of digest-pinned `oci://` images and sysexts before
+the wipe (README "Cosign verification of OCI images and sysexts"). Keyless
+identities, an offline trusted root and the Sigstore bundle format are still
+design only. It extends
 [proposal-release-pipelines.md](proposal-release-pipelines.md) and
 [proposal-image-signatures.md](proposal-image-signatures.md).
 

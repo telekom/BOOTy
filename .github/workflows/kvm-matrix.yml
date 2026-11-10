@@ -199,6 +199,18 @@ jobs:
             privileged: true
             setup: ""
             go_timeout: 40m
+          # The layered-layout fixture as a digest-pinned oci:// image with
+          # IMAGE_COSIGN_PUBKEYS: signed (with a signed OCI sysext) it
+          # provisions, unsigned it is refused before the wipe.
+          # test/e2e/kvm/cosign_test.go
+          - scenario: cosign-verify
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestCosign"
+            privileged: true
+            setup: ""
+            # Two QEMU runs.
+            go_timeout: 30m
           - scenario: crash-artifacts
             qemu_extra: ""
             test_tag: e2e

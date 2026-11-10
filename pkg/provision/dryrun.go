@@ -55,6 +55,7 @@ func (o *Orchestrator) DryRun(ctx context.Context) error {
 		{"image-prerequisites", o.dryRunImagePrerequisites},
 		{"image-checksum", o.dryRunImageChecksum},
 		{"image-signature", o.dryRunImageSignature},
+		{"cosign-keys", o.dryRunCosignKeys},
 		{"image-mode", o.dryRunImageMode},
 		{"disk-detection", o.dryRunDiskDetection},
 		{"network-link", o.dryRunNetworkLink},
@@ -414,6 +415,29 @@ func (o *Orchestrator) dryRunImageSignature(_ context.Context) DryRunResult {
 	}
 	return DryRunResult{Status: DryRunPass,
 		Message: "image signature verification configured"}
+}
+
+// dryRunCosignKeys loads the configured cosign public keys and runs the
+// offline source checks of verify-image on every image source; the
+// signatures themselves are checked by verify-image.
+func (o *Orchestrator) dryRunCosignKeys(_ context.Context) DryRunResult {
+	imageKeys := o.cfg.Provision.Image.CosignPublicKeys
+	sysextKeys := o.cfg.Provision.Sysext.CosignPublicKeys
+	if len(imageKeys) == 0 && len(sysextKeys) == 0 {
+		return DryRunResult{Status: DryRunPass, Message: "no cosign public keys configured - cosign verification disabled"}
+	}
+	for _, paths := range [][]string{imageKeys, sysextKeys} {
+		if len(paths) == 0 {
+			continue
+		}
+		if _, err := image.LoadCosignPublicKeys(paths); err != nil {
+			return DryRunResult{Status: DryRunFail, Message: err.Error()}
+		}
+	}
+	if err := o.checkCosignSources(dryRunImageSources(o.cfg.Provision.Image.URLs)); err != nil {
+		return DryRunResult{Status: DryRunFail, Message: err.Error()}
+	}
+	return DryRunResult{Status: DryRunPass, Message: fmt.Sprintf("cosign public keys loaded (image %d, sysext %d)", len(imageKeys), len(sysextKeys))}
 }
 
 func (o *Orchestrator) dryRunImageMode(_ context.Context) DryRunResult {

@@ -270,6 +270,7 @@ behaviour changes of this mode.
 | `IMAGE_PARALLEL_RANGES` | `0` | `0` to `16` | Download an HTTP image larger than 8 MiB as that many ranged GETs of 8 MiB at a time, passed on in order; a failed range is fetched again (up to 5 times). Needs the same server support as `IMAGE_RESUME` and pins the URL the same way: a range answered with a redirect, a changed image or a client error fails the download; RAM: about N+1 chunks of 8 MiB. `0` and `1` use one GET. YAML `provision.image.parallelRanges`. |
 | `IMAGE_SIGNATURE_URL` | (unset) | URL | Detached GPG signature of the image. Not supported for `oci://` sources. |
 | `IMAGE_GPG_PUBKEY` | (unset) | file path in the ramdisk | Public key for `IMAGE_SIGNATURE_URL`. |
+| `IMAGE_COSIGN_PUBKEYS` | (unset) | comma-separated PEM public key paths in the ramdisk | Before the wipe, an `oci://` image source must be pinned by digest and carry a cosign signature by one of the keys; an HTTP source needs `IMAGE_CHECKSUM`. See [cosign verification](../README.md#cosign-verification-of-oci-images-and-sysexts). A file may hold several `PUBLIC KEY` blocks (key rotation). Independent of `SYSEXT_COSIGN_PUBKEYS`; set both. Protects against a compromised registry or transport, not against whoever controls the vars (see [threat model](#cosign-threat-model)). YAML `provision.image.cosignPublicKeys`. |
 | `IMAGE_MODE` | `whole-disk` | `whole-disk`, `partition`, `ab` | How BOOTy writes the image. See [A/B partitioning](#ab-partitioning) for `ab`. |
 | `IMAGE_SOURCE_ROOT_LABEL` | (unset) | GPT partition label | Source image root partition to stream into a `PARTITION_LAYOUT` root. Excludes `IMAGE_SOURCE_ROOT_PARTITION`. |
 | `IMAGE_SOURCE_ROOT_PARTITION` | `0` | 1-based partition number | Same as `IMAGE_SOURCE_ROOT_LABEL`, by number. |
@@ -519,6 +520,18 @@ See [Sysext provisioning](sysext-provisioning.md).
 | `SYSEXT_CATALOG_DIR` | `/usr/lib/tcaas-sysext/preloaded` | target path | Inactive catalog directory for preloaded layers. |
 | `SYSEXT_ACTIVE_DIR` | `/var/lib/extensions` | target path | Directory for active layers. |
 | `SYSEXT_ALLOW_INSECURE_HTTP` | `false` | boolean | Accept `http://` layer sources. |
+| `SYSEXT_COSIGN_PUBKEYS` | (unset) | comma-separated PEM public key paths in the ramdisk | Before the wipe, every `oci://` layer source must be pinned by digest and carry a cosign signature by one of the keys; other sources keep `sha256`. Independent of `IMAGE_COSIGN_PUBKEYS`; set both. YAML `provision.sysext.cosignPublicKeys`. |
+
+### Cosign threat model
+
+`IMAGE_COSIGN_PUBKEYS` and `SYSEXT_COSIGN_PUBKEYS` protect against a
+compromised registry or transport: bytes that are not signed by a configured
+key are not written. They do not protect against whoever controls the
+provisioning vars, who can clear the keys, switch the image to an HTTP source
+with their own `IMAGE_CHECKSUM`, or pin an older digest that is still signed.
+The two options are independent: image keys do not check sysexts and sysext
+keys do not check the image, so set both. Both are unset by default. See
+[cosign verification](../README.md#cosign-verification-of-oci-images-and-sysexts).
 
 ## OverlayFS
 

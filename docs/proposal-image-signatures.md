@@ -1,6 +1,15 @@
 # Proposal: Image Signature Verification
 
-## Status: Phase 1 Implemented (Checksum Verification)
+## Status: Tiers 1 and 2 implemented; Tier 3 implemented for offline keys
+
+Tier 3 is implemented for `oci://` images and sysexts with offline public
+keys (`IMAGE_COSIGN_PUBKEYS`, `SYSEXT_COSIGN_PUBKEYS`, see the README section
+"Cosign verification of OCI images and sysexts"). It does not use the cosign
+library: BOOTy reads the simple-signing signatures under the
+`sha256-<hex>.sig` tag with go-containerregistry and verifies them with the
+Go standard library, so the ramdisk gains no dependency. Keyless signatures,
+Rekor and the Sigstore bundle format remain open
+([proposal-supply-chain-trust.md](proposal-supply-chain-trust.md)).
 
 ## Priority: P3
 

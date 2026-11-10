@@ -127,4 +127,11 @@ type ImageConfig struct {
 	// GPGPubKey is the path to the GPG public key for signature verification.
 	// Default: ""
 	GPGPubKey string `yaml:"gpgPubKey" json:"gpgPubKey"`
+
+	// CosignPublicKeys lists PEM public key files. When set, an oci:// image
+	// source must be pinned by digest and carry a cosign signature by one of
+	// the keys; BOOTy checks it before the disk is wiped. HTTP sources keep
+	// Checksum and SignatureURL.
+	// Default: none (no cosign verification)
+	CosignPublicKeys []string `yaml:"cosignPublicKeys,omitempty" json:"cosignPublicKeys,omitempty"`
 }

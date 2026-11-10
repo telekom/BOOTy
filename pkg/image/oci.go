@@ -244,9 +244,10 @@ func OCIDigestReference(url string) (bool, error) {
 	if !IsOCIReference(url) {
 		return false, fmt.Errorf("not an OCI reference")
 	}
-	ref, err := name.ParseReference(TrimOCIScheme(url))
+	trimmed := TrimOCIScheme(url)
+	ref, err := name.ParseReference(trimmed)
 	if err != nil {
-		return false, fmt.Errorf("parse OCI reference: %w", err)
+		return false, fmt.Errorf("parse OCI reference: %w", wrapRedactedOCIRefError(err, trimmed))
 	}
 	_, ok := ref.(name.Digest)
 	return ok, nil

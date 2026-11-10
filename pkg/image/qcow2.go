@@ -73,7 +73,7 @@ func ConvertQCOW2(ctx context.Context, url, device string, opts ...StreamOpts) e
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
-	opt, err := withDownloadChecksum(opt)
+	opt, err := withDownloadChecksum(opt, url)
 	if err != nil {
 		return err
 	}

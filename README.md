@@ -584,6 +584,7 @@ root is mounted.
 | `ROOT_PARTITION_NUMBER` | — | Whole-disk image root partition number; use only when no stable root partition label exists |
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
 | `IMAGE_GPG_PUBKEY` | — | Path to GPG public key for image signature verification |
+| `IMAGE_COSIGN_PUBKEYS` | — | Comma-separated PEM public key paths; an `oci://` image must be digest-pinned and cosign-signed by one of them ([Image Verification](#image-verification)) |
 | `LUKS_ENABLED` | `false` | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* Enable LUKS2 encryption for target partitions |
 | `LUKS_PASSPHRASE` | (unset) | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* Passphrase for initial LUKS volume creation |
 | `LUKS_UNLOCK_METHOD` | `passphrase` | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* Unlock method: `passphrase`, `tpm2`, `clevis`, `keyfile` |
@@ -602,6 +603,7 @@ root is mounted.
 | `SYSEXT_ACTIVE_DIR` | `/var/lib/extensions` | Target directory for active sysext layers |
 | `SYSEXT_LAYERS` | — | JSON array of sysext layer objects |
 | `SYSEXT_ALLOW_INSECURE_HTTP` | `false` | Allow plain HTTP sysext sources on controlled provisioning networks |
+| `SYSEXT_COSIGN_PUBKEYS` | — | Comma-separated PEM public key paths; every `oci://` sysext must be digest-pinned and cosign-signed by one of them |
 | `OVERLAYFS_ENABLED` | `false` | Write Ubuntu overlayroot config into the provisioned target root |
 | `OVERLAYFS_MODE` | `tmpfs` | Overlayroot mode: `tmpfs` for volatile writes or `device` for persistent backing storage |
 | `OVERLAYFS_DEVICE` | — | Backing filesystem for `OVERLAYFS_MODE=device`, e.g. `LABEL=BOOTY-OVERLAY` or `/dev/disk/by-label/BOOTY-OVERLAY` |
@@ -887,11 +889,79 @@ before destructive storage setup starts. When `IMAGE_SIGNATURE_URL` is set,
 `IMAGE_CHECKSUM` is required so the bytes written during the later streaming step
 are bound to the verified image.
 
-`IMAGE_SIGNATURE_URL` is only supported for non-`oci://` image sources today.
+`IMAGE_SIGNATURE_URL` is only supported for non-`oci://` image sources.
 For OCI image sources, use digest-pinned references such as
 `oci://registry.example/os-image@sha256:<digest>` and keep `IMAGE_CHECKSUM`
-enabled when the source is not pinned by digest. Runtime Cosign or Notation
-verification for provisioning `oci://` images is not implemented yet.
+enabled when the source is not pinned by digest.
+
+#### Cosign verification of OCI images and sysexts
+
+```bash
+# PEM public keys (cosign generate-key-pair, cosign public-key --key <kms>).
+# A signature by any one of them is accepted, so a new key can be added
+# before the old one is removed.
+export IMAGE_COSIGN_PUBKEYS="/deploy/file-system/cosign.pub"
+export SYSEXT_COSIGN_PUBKEYS="/deploy/file-system/cosign.pub"
+export IMAGE="oci://registry.example/os-image@sha256:<digest>"
+```
+
+With `IMAGE_COSIGN_PUBKEYS` (YAML `provision.image.cosignPublicKeys`), the
+`verify-image` step checks the cosign signature of an `oci://` image source
+before any disk is wiped. With `SYSEXT_COSIGN_PUBKEYS` (YAML
+`provision.sysext.cosignPublicKeys`) and sysexts enabled, the same step checks
+every `oci://` sysext source. Verification fails closed:
+
+- The reference must be pinned by digest (`@sha256:...`); a tag is refused.
+  The signature binds that digest, and the later pull by the same digest is
+  checked against it, so the bytes written are the bytes signed.
+- A missing signature, a signature by another key, or a signature whose
+  payload names another digest stops provisioning before the wipe.
+- An HTTP image source needs `IMAGE_CHECKSUM` when `IMAGE_COSIGN_PUBKEYS` is
+  set; HTTP and local sysext sources keep their `sha256`.
+
+BOOTy verifies offline against the configured keys and needs no Sigstore
+service. It reads the signatures that `cosign sign --key` and `cosign attach
+signature` store under the `sha256-<hex>.sig` tag of the repository. That is
+the default of cosign 2; cosign 3 writes them with
+`--new-bundle-format=false`, for example without a transparency log:
+
+```bash
+cosign sign --key cosign.key --new-bundle-format=false \
+  --tlog-upload=false --use-signing-config=false \
+  registry.example/os-image@sha256:<digest>
+```
+
+Sign the digest that the reference pins. For an image index that is the
+index digest; the provisioning report records the digest of the platform
+manifest that BOOTy pulled from it. A/B and root streaming read an `oci://`
+image to its end even after the last partition, so a blob that does not
+match its digest fails the run.
+Keys may be ECDSA (P-256, P-384, P-521), RSA (2048 bits or more, PKCS#1
+v1.5) or Ed25519, each in a PEM `PUBLIC KEY` block. A key file may hold
+several `PUBLIC KEY` blocks, so a rotation can concatenate the old and the new
+key; any other block type or text outside the blocks fails the file. Keyless
+(Fulcio certificate) signatures, Rekor entries and the Sigstore bundle format
+stored as OCI referrers are not read. The provisioning report records
+`verification.signature.method: cosign`. A registry or network error while
+fetching the signature (timeout, 5xx, connection error) reports the transient
+failure code `BOOTY-IMG-008`; a missing signature or one that does not verify
+reports `BOOTY-IMG-001`. Dry-run loads the keys and fails when a source that
+needs a signature is a tag, or when an HTTP image has no `IMAGE_CHECKSUM`.
+Both options are unset by default, which keeps every existing source working as
+before.
+
+`IMAGE_COSIGN_PUBKEYS` and `SYSEXT_COSIGN_PUBKEYS` are independent: image keys
+do not check sysexts, and sysext keys do not check the image. Set both, so
+neither the image nor a sysext is pulled unsigned.
+
+**Threat model.** Cosign verification protects against a compromised registry
+or transport: a registry, mirror or network path that serves other bytes than
+the ones signed cannot get them written. It does not protect against whoever
+controls the provisioning vars (`/deploy/vars` or the configuration that the
+provisioning server serves). They choose the keys and sources, so they can
+clear the keys, switch to an HTTP source with their own `IMAGE_CHECKSUM`, or
+pin an older digest that is still signed. Protect the vars and their delivery
+as the trust root of the provisioning run.
 
 ### OCI Image Pre-Pulls
 

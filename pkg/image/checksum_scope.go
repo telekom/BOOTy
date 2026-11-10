@@ -35,8 +35,19 @@ type downloadChecksum struct {
 // withDownloadChecksum moves a download-scope checksum out of opt. The
 // returned options carry no payload checksum, and every verifyChecksum call
 // with them checks the download checksum first.
-func withDownloadChecksum(opt StreamOpts) (StreamOpts, error) {
-	if opt.Checksum == "" || opt.download != nil {
+//
+// An oci:// download without one still gets a downloadChecksum without a
+// hash, so verifyChecksum reads it to the end: go-containerregistry checks
+// the blob against its (cosign-signed) digest only at EOF, and A/B and root
+// streaming stop reading after the last partition they copy.
+func withDownloadChecksum(opt StreamOpts, url string) (StreamOpts, error) {
+	if opt.download != nil {
+		return opt, nil
+	}
+	if opt.Checksum == "" {
+		if IsOCIReference(url) {
+			opt.download = &downloadChecksum{}
+		}
 		return opt, nil
 	}
 	switch strings.ToLower(strings.TrimSpace(opt.ChecksumScope)) {
@@ -65,7 +76,10 @@ func (d *downloadChecksum) source(r io.Reader) io.Reader {
 	if d == nil {
 		return r
 	}
-	d.src = io.TeeReader(r, d.h)
+	d.src = r
+	if d.h != nil {
+		d.src = io.TeeReader(r, d.h)
+	}
 	return d.src
 }
 
@@ -94,7 +108,9 @@ func (d *downloadChecksum) verify() error {
 			d.err = fmt.Errorf("reading the rest of the download for its checksum: %w", err)
 			return
 		}
-		d.err = verifyChecksum(d.h, d.opt)
+		if d.h != nil {
+			d.err = verifyChecksum(d.h, d.opt)
+		}
 	})
 	return d.err
 }
