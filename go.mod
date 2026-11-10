@@ -14,13 +14,13 @@ require (
 	github.com/osrg/gobgp/v4 v4.11.0
 	github.com/pierrec/lz4/v4 v4.1.33
 	github.com/spf13/cobra v1.10.2
-	github.com/telekom/t-caas-go-library v0.1.4
+	github.com/telekom/t-caas-go-library v0.1.5
 	github.com/ulikunitz/xz v0.5.17
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
-	github.com/zcalusic/sysinfo v1.2.1
+	github.com/zcalusic/sysinfo v1.2.2
 	golang.org/x/net v0.62.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
 )
