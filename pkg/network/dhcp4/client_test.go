@@ -675,8 +675,8 @@ func TestLeaseExpiresInInitAfterFailedReboot(t *testing.T) {
 }
 
 // A lease kept after failed INIT-REBOOTs also ends exactly at its expiry
-// while the client is in SELECTING: every DISCOVER gets an OFFER and no
-// REQUEST an answer. The INIT-REBOOT takes 2 s, then each SELECTING sends
+// while the client is in SELECTING: every DISCOVER after the first (a
+// rapid-commit ACK) gets an OFFER and no REQUEST an answer. The INIT-REBOOT takes 2 s, then each SELECTING sends
 // REQUESTs with timeouts of 2, 4, 8, 16 and 32 s.
 func TestLeaseExpiresInSelectingAfterFailedReboot(t *testing.T) {
 	for _, lease := range []uint32{
@@ -685,7 +685,7 @@ func TestLeaseExpiresInSelectingAfterFailedReboot(t *testing.T) {
 		10,  // 2 s into the third REQUEST
 		64,  // at the end of the first SELECTING (INIT expires it)
 		65,  // 1 s into the second SELECTING
-		120, // in the fourth REQUEST of the second SELECTING
+		120, // in the fifth REQUEST of the second SELECTING
 	} {
 		t.Run(fmt.Sprint(lease), func(t *testing.T) {
 			f := newFakeNet()
