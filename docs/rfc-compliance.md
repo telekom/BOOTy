@@ -848,6 +848,7 @@ audited tree, except [#755] (closed; its test is on `main`).
 | [#892] | RFC8415-RELEASE |
 | [#908] | RFC2131-RELEASE-SID, RFC2132-MAXSIZE (found by the third refresh of this audit) |
 | [#915] | RFC4861-RA-OPTLEN |
+| [#916] | 4271-4: the session keepalive is capped at hold/3 (no keyword in the RFC) |
 
 ### Fork branches on GoBGP 3.37.0
 
