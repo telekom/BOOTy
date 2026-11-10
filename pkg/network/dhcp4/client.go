@@ -198,18 +198,8 @@ func (c *Client) initState() state {
 	c.started = c.now()
 	xid := rand.Uint32() //nolint:gosec // a transaction ID
 	for n := 0; ; n++ {
-		// A lease kept after failed INIT-REBOOTs (the carrier came back but
-		// the server does not answer) still ends at its expiry.
-		timeout := c.timeout(n)
-		if left, ok := c.leaseLeft(); ok {
-			if left <= 0 {
-				c.expire()
-			} else {
-				timeout = min(timeout, left)
-			}
-		}
 		r, err := c.exchange(func(tr transport, m *message) error { return tr.broadcast(nil, m) },
-			c.discover(xid), timeout, nil, dhcpv4.MessageTypeOffer, dhcpv4.MessageTypeAck)
+			c.discover(xid), c.leaseTimeout(c.timeout(n)), nil, dhcpv4.MessageTypeOffer, dhcpv4.MessageTypeAck)
 		switch {
 		case interrupted(err):
 			return stateInit
@@ -228,7 +218,7 @@ func (c *Client) initState() state {
 func (c *Client) selecting(xid uint32, offer *Lease) state {
 	for n := 0; n < 5; n++ {
 		r, err := c.exchange(func(tr transport, m *message) error { return tr.broadcast(nil, m) },
-			c.request(xid, nil, offer.ServerID, offer.FixedAddress), c.timeout(n), offer.ServerID, dhcpv4.MessageTypeAck, dhcpv4.MessageTypeNak)
+			c.request(xid, nil, offer.ServerID, offer.FixedAddress), c.leaseTimeout(c.timeout(n)), offer.ServerID, dhcpv4.MessageTypeAck, dhcpv4.MessageTypeNak)
 		switch {
 		case interrupted(err):
 			return stateInit
@@ -379,6 +369,22 @@ func (c *Client) leaseLeft() (time.Duration, bool) {
 		return 0, false
 	}
 	return l.Expire.Sub(c.now()), true
+}
+
+// leaseTimeout bounds a timeout of INIT or SELECTING by the expiry of a
+// lease kept after failed INIT-REBOOTs (the carrier came back but the
+// server does not answer), and ends that lease once it has expired
+// (RFC 2131 4.4.5).
+func (c *Client) leaseTimeout(timeout time.Duration) time.Duration {
+	left, ok := c.leaseLeft()
+	switch {
+	case !ok:
+	case left <= 0:
+		c.expire()
+	default:
+		timeout = min(timeout, left)
+	}
+	return timeout
 }
 
 // expire ends the lease and starts over in INIT.

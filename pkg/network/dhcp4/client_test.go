@@ -3,6 +3,7 @@ package dhcp4
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"net"
 	"slices"
 	"sync"
@@ -670,6 +671,57 @@ func TestLeaseExpiresInInitAfterFailedReboot(t *testing.T) {
 	c.Stop()
 	if !at.Equal(l.Expire) {
 		t.Fatalf("expired at %s, want at the lease expiry %s", at, l.Expire)
+	}
+}
+
+// A lease kept after failed INIT-REBOOTs also ends exactly at its expiry
+// while the client is in SELECTING: every DISCOVER after the first (a
+// rapid-commit ACK) gets an OFFER and no REQUEST an answer. The INIT-REBOOT takes 2 s, then each SELECTING sends
+// REQUESTs with timeouts of 2, 4, 8, 16 and 32 s.
+func TestLeaseExpiresInSelectingAfterFailedReboot(t *testing.T) {
+	for _, lease := range []uint32{
+		3,   // 1 s into the first REQUEST
+		8,   // at the end of the second REQUEST
+		10,  // 2 s into the third REQUEST
+		64,  // at the end of the first SELECTING (INIT expires it)
+		65,  // 1 s into the second SELECTING
+		120, // in the fifth REQUEST of the second SELECTING
+	} {
+		t.Run(fmt.Sprint(lease), func(t *testing.T) {
+			f := newFakeNet()
+			first := true
+			f.answer = func(s sent) []byte {
+				switch {
+				case s.m.typ != dhcpv4.MessageTypeDiscover:
+					return nil
+				case first:
+					first = false
+					return serverReply(s.m, dhcpv4.MessageTypeAck, dhcpv4.OptGeneric(dhcpv4.OptionRapidCommit, nil),
+						dhcpv4.OptGeneric(dhcpv4.OptionIPAddressLeaseTime, binary.BigEndian.AppendUint32(nil, lease)))
+				}
+				return serverReply(s.m, dhcpv4.MessageTypeOffer)
+			}
+			bound, expired := make(chan *Lease, 1), make(chan time.Time, 1)
+			c := f.client()
+			c.OnBound = f.bound(bound)
+			c.OnExpire = func(*Lease) { expired <- c.now() }
+			c.Start()
+			l := <-bound
+			f.boundWait(t)
+			c.Reboot()
+			var at time.Time
+			select {
+			case at = <-expired:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the lease did not expire")
+			}
+			close(f.stopped)
+			c.Stop()
+			if !at.Equal(l.Expire) {
+				d := time.Duration(lease) * time.Second
+				t.Fatalf("expired %s after the bind, want %s (the lease time)", at.Sub(l.Expire)+d, d)
+			}
+		})
 	}
 }
 
