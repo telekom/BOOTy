@@ -103,7 +103,10 @@ the referenced image using BOOTy's normal registry keychain support. BOOTy
 rejects ordinary container-image layers for sysext sources so multi-layer
 artifacts cannot accidentally preload the wrong blob. For OCI sources, set
 `fileName` explicitly when the active/catalog filename must be stable; otherwise
-BOOTy uses `<name>.raw`.
+BOOTy uses `<name>.raw`. With `cosignPublicKeys` (`SYSEXT_COSIGN_PUBKEYS`),
+every OCI source must be pinned by digest and carry a cosign signature by one
+of the keys; BOOTy checks them before the disk is wiped (see
+[cosign verification](../README.md#cosign-verification-of-oci-images-and-sysexts)).
 
 ```yaml
 provision:

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -2541,6 +2542,19 @@ func TestParseVarsImageWriteOptions(t *testing.T) {
 	if _, err := ParseVars(strings.NewReader("IMAGE_SPARSE_WRITE=always\n")); err == nil ||
 		!strings.Contains(err.Error(), "IMAGE_SPARSE_WRITE") {
 		t.Fatalf("ParseVars(IMAGE_SPARSE_WRITE=always) = %v, want an error naming IMAGE_SPARSE_WRITE", err)
+	}
+}
+
+func TestParseVarsCosignPublicKeys(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("IMAGE_COSIGN_PUBKEYS=/deploy/a.pub, /deploy/b.pub\nSYSEXT_COSIGN_PUBKEYS=/deploy/s.pub\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Provision.Image.CosignPublicKeys; !slices.Equal(got, []string{"/deploy/a.pub", "/deploy/b.pub"}) {
+		t.Fatalf("image CosignPublicKeys = %q", got)
+	}
+	if got := cfg.Provision.Sysext.CosignPublicKeys; !slices.Equal(got, []string{"/deploy/s.pub"}) {
+		t.Fatalf("sysext CosignPublicKeys = %q", got)
 	}
 }
 

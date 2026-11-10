@@ -41,6 +41,13 @@ type SysextConfig struct {
 
 	// Layers lists sysext images to copy into the provisioned OS.
 	Layers []SysextLayerConfig `yaml:"layers" json:"layers"`
+
+	// CosignPublicKeys lists PEM public key files. When set, every oci://
+	// layer source must be pinned by digest and carry a cosign signature by
+	// one of the keys; BOOTy checks them before the disk is wiped. Other
+	// sources keep SHA256.
+	// Default: none (no cosign verification)
+	CosignPublicKeys []string `yaml:"cosignPublicKeys,omitempty" json:"cosignPublicKeys,omitempty"`
 }
 
 // SysextLayerConfig identifies one sysext artifact to load into the provisioned

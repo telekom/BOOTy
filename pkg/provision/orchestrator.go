@@ -54,8 +54,10 @@ var (
 	validateFirmwareFn = firmware.Validate
 	loadCheckpointFn   = LoadCheckpoint
 	probeOCIReference  = image.ResolveOCIReference
-	secureBootRoot     = newroot
-	mountBootPart      = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
+	// verifyCosignSignature is replaced by tests.
+	verifyCosignSignature = image.VerifyCosignSignature
+	secureBootRoot        = newroot
+	mountBootPart         = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
 		return mgr.MountPartition(ctx, device, mountpoint)
 	}
 	mountReadOnlyPart = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
@@ -2345,6 +2347,9 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 		}
 		o.imageDigest = digest
 	}
+	if err := o.verifyCosignSignatures(ctx, bestURL); err != nil {
+		return err
+	}
 
 	if o.cfg.Provision.Image.SignatureURL == "" {
 		o.log.Info("no image signature URL configured, skipping verification")
@@ -2355,6 +2360,50 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 	}
 
 	return image.VerifyGPGSignature(ctx, bestURL, o.cfg.Provision.Image.SignatureURL, o.cfg.Provision.Image.GPGPubKey)
+}
+
+// verifyCosignSignatures checks, when cosign keys are configured, the
+// signature of an oci:// image source and of every oci:// sysext source
+// before the disk is wiped. The later pulls use the same digest references,
+// which go-containerregistry checks, so they get the signed bytes. An HTTP
+// image source needs IMAGE_CHECKSUM instead.
+func (o *Orchestrator) verifyCosignSignatures(ctx context.Context, imageURL string) error {
+	if keys := o.cfg.Provision.Image.CosignPublicKeys; len(keys) > 0 {
+		switch {
+		case image.IsOCIReference(imageURL):
+			if err := verifyCosignSource(ctx, imageURL, keys); err != nil {
+				return fmt.Errorf("verifying image signature: %w", err)
+			}
+			o.log.Info("image cosign signature verified", "url", image.RedactURL(imageURL))
+		case strings.TrimSpace(o.cfg.Provision.Image.Checksum) == "":
+			return fmt.Errorf("verifying image signature: cosign keys are configured but the image source %s is not oci:// and has no IMAGE_CHECKSUM", image.RedactURL(imageURL))
+		}
+	}
+	sysext := &o.cfg.Provision.Sysext
+	if !sysext.Enabled || len(sysext.CosignPublicKeys) == 0 {
+		return nil
+	}
+	for i := range sysext.Layers {
+		source := strings.TrimSpace(sysext.Layers[i].Source)
+		if !image.IsOCIReference(source) {
+			continue // checked by its sha256
+		}
+		if err := verifyCosignSource(ctx, source, sysext.CosignPublicKeys); err != nil {
+			return fmt.Errorf("verifying sysext %q signature: %w", sysext.Layers[i].Name, err)
+		}
+		o.log.Info("sysext cosign signature verified", "name", sysext.Layers[i].Name, "url", image.RedactURL(source))
+	}
+	return nil
+}
+
+func verifyCosignSource(ctx context.Context, source string, keyPaths []string) error {
+	keys, err := image.LoadCosignPublicKeys(keyPaths)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, ociPreflightProbeTimeout)
+	defer cancel()
+	return verifyCosignSignature(ctx, source, keys)
 }
 
 func (o *Orchestrator) partprobe(ctx context.Context) error {

@@ -167,7 +167,10 @@ func (o *Orchestrator) buildReport(ctx context.Context) *ProvisionReport {
 	if strings.TrimSpace(cfg.Image.Checksum) != "" {
 		r.Verification.Checksum = ReportStateVerified
 	}
-	if cfg.Image.SignatureURL != "" {
+	switch {
+	case len(cfg.Image.CosignPublicKeys) > 0 && image.IsOCIReference(o.bestImageURL):
+		r.Verification.Signature = ReportSignatureResult{Method: "cosign", Result: ReportStateVerified}
+	case cfg.Image.SignatureURL != "":
 		r.Verification.Signature = ReportSignatureResult{Method: "gpg", Result: ReportStateVerified}
 	}
 	if o.isABImageMode() {

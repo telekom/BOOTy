@@ -1302,7 +1302,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	return false
 }
 
-// applyImageWriteVar handles the image write options.
+// applyImageWriteVar handles the image write and cosign verification options.
 func applyImageWriteVar(cfg *config.MachineConfig, key, value string) bool {
 	switch key {
 	case "IMAGE_SPARSE_WRITE":
@@ -1311,6 +1311,10 @@ func applyImageWriteVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Provision.Image.SkipUnchanged = parseBoolVar(value)
 	case "IMAGE_RESUME":
 		cfg.Provision.Image.Resume = parseBoolVar(value)
+	case "IMAGE_COSIGN_PUBKEYS":
+		cfg.Provision.Image.CosignPublicKeys = splitVarList(value)
+	case "SYSEXT_COSIGN_PUBKEYS":
+		cfg.Provision.Sysext.CosignPublicKeys = splitVarList(value)
 	default:
 		return false
 	}

@@ -1,0 +1,160 @@
+//go:build linux
+
+package provision
+
+import (
+	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/telekom/BOOTy/pkg/config"
+)
+
+func writeTestCosignKey(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "cosign.pub")
+	if err := os.WriteFile(p, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestVerifyCosignSignatures(t *testing.T) {
+	keyPath := writeTestCosignKey(t)
+	const (
+		imageRef  = "oci://registry.example/os@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		sysextRef = "oci://registry.example/ext@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	)
+	sysextLayers := []config.SysextLayerConfig{
+		{Name: "local", Source: "/deploy/ext.raw", SHA256: strings.Repeat("3", 64)},
+		{Name: "ext", Source: " " + sysextRef + " "},
+	}
+	tests := []struct {
+		name       string
+		imageURL   string
+		checksum   string
+		imageKeys  []string
+		sysextKeys []string
+		sysextOff  bool
+		reject     string // ref whose verification fails
+		wantErr    string
+		wantRefs   []string
+	}{
+		{name: "off by default", imageURL: imageRef},
+		{name: "image and sysext", imageURL: imageRef, imageKeys: []string{keyPath}, sysextKeys: []string{keyPath},
+			wantRefs: []string{imageRef, sysextRef}},
+		{name: "unsigned image refused", imageURL: imageRef, imageKeys: []string{keyPath}, reject: imageRef,
+			wantErr: "verifying image signature", wantRefs: []string{imageRef}},
+		{name: "unsigned sysext refused", imageURL: imageRef, sysextKeys: []string{keyPath}, reject: sysextRef,
+			wantErr: `verifying sysext "ext" signature`, wantRefs: []string{sysextRef}},
+		{name: "sysexts disabled", imageURL: imageRef, sysextKeys: []string{keyPath}, sysextOff: true},
+		{name: "missing key file", imageURL: imageRef, imageKeys: []string{keyPath + ".missing"},
+			wantErr: "read cosign public key"},
+		{name: "http image with checksum", imageURL: "https://images.example/os.raw", checksum: strings.Repeat("a", 64),
+			imageKeys: []string{keyPath}},
+		{name: "http image without checksum", imageURL: "https://images.example/os.raw", imageKeys: []string{keyPath},
+			wantErr: "no IMAGE_CHECKSUM"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var refs []string
+			previous := verifyCosignSignature
+			t.Cleanup(func() { verifyCosignSignature = previous })
+			verifyCosignSignature = func(_ context.Context, ref string, keys []crypto.PublicKey) error {
+				refs = append(refs, ref)
+				if len(keys) != 1 {
+					t.Fatalf("keys = %d, want 1", len(keys))
+				}
+				if ref == tc.reject {
+					return errors.New("no signature found")
+				}
+				return nil
+			}
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Image.Checksum = tc.checksum
+			cfg.Provision.Image.CosignPublicKeys = tc.imageKeys
+			cfg.Provision.Sysext.Enabled = !tc.sysextOff
+			cfg.Provision.Sysext.Layers = sysextLayers
+			cfg.Provision.Sysext.CosignPublicKeys = tc.sysextKeys
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+
+			err := o.verifyCosignSignatures(context.Background(), tc.imageURL)
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("verifyCosignSignatures() = %v", err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("verifyCosignSignatures() = %v, want %q", err, tc.wantErr)
+			}
+			if !slices.Equal(refs, tc.wantRefs) {
+				t.Fatalf("verified refs = %q, want %q", refs, tc.wantRefs)
+			}
+		})
+	}
+}
+
+func TestDryRunCosignKeys(t *testing.T) {
+	keyPath := writeTestCosignKey(t)
+	tests := []struct {
+		name       string
+		imageKeys  []string
+		sysextKeys []string
+		want       DryRunStatus
+	}{
+		{name: "not configured", want: DryRunPass},
+		{name: "image and sysext keys", imageKeys: []string{keyPath}, sysextKeys: []string{keyPath}, want: DryRunPass},
+		{name: "missing sysext key", imageKeys: []string{keyPath}, sysextKeys: []string{keyPath + ".missing"}, want: DryRunFail},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Image.CosignPublicKeys = tc.imageKeys
+			cfg.Provision.Sysext.CosignPublicKeys = tc.sysextKeys
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+			if got := o.dryRunCosignKeys(context.Background()); got.Status != tc.want {
+				t.Fatalf("dryRunCosignKeys() = %s (%s), want %s", got.Status, got.Message, tc.want)
+			}
+		})
+	}
+}
+
+func TestReportCosignSignature(t *testing.T) {
+	tests := []struct {
+		name     string
+		imageURL string
+		want     ReportSignatureResult
+	}{
+		{name: "oci image", imageURL: "oci://registry.example/os@sha256:" + strings.Repeat("1", 64),
+			want: ReportSignatureResult{Method: "cosign", Result: ReportStateVerified}},
+		{name: "http image", imageURL: "https://images.example/os.raw",
+			want: ReportSignatureResult{Result: ReportStateNotConfigured}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Image.CosignPublicKeys = []string{"/deploy/cosign.pub"}
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+			o.bestImageURL = tc.imageURL
+			if got := o.buildReport(context.Background()).Verification.Signature; got != tc.want {
+				t.Fatalf("signature = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
