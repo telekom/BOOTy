@@ -781,16 +781,21 @@ func TestReplyWithZeroValidLifetime(t *testing.T) {
 // waitsAtLeast returns the waits of f once there are n of them.
 func (f *fakeNet) waitsAtLeast(t *testing.T, n int) []time.Duration {
 	t.Helper()
-	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+	tick, timeout := time.NewTicker(time.Millisecond), time.After(5*time.Second)
+	defer tick.Stop()
+	for {
 		f.mu.Lock()
 		w := slices.Clone(f.waits)
 		f.mu.Unlock()
 		if len(w) >= n {
 			return w
 		}
+		select {
+		case <-tick.C:
+		case <-timeout:
+			t.Fatalf("fewer than %d waits", n)
+		}
 	}
-	t.Fatalf("fewer than %d waits", n)
-	return nil
 }
 
 // RFC 8415 18.2.9 and 21.24: a SOL_MAX_RT in an ADVERTISE, also one
