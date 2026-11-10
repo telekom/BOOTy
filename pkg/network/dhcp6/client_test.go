@@ -986,9 +986,15 @@ func TestRequestReplyWithZeroValidLifetime(t *testing.T) {
 	revoke := func(msg []byte) []byte { return replyIA(msg, iaAddr(testAddr.String(), 0, 0)) }
 	t.Run("after ADVERTISE", func(t *testing.T) {
 		f := newFakeNet()
+		second := make(chan struct{})
+		solicits := 0
 		f.answer = func(msg []byte) []byte {
 			switch dhcpv6.MessageType(msg[0]) {
 			case msgSolicit:
+				if solicits++; solicits == 2 {
+					close(second)
+					return nil
+				}
 				return serverReply(msg, msgAdvertise, false)
 			case msgRequest:
 				return revoke(msg)
@@ -998,10 +1004,10 @@ func TestRequestReplyWithZeroValidLifetime(t *testing.T) {
 		c := f.client(true)
 		c.OnBound = func(*Lease) { t.Error("bound a revoked address") }
 		c.Start()
-		for deadline := time.Now().Add(5 * time.Second); f.countType(msgSolicit) < 2; time.Sleep(time.Millisecond) {
-			if time.Now().After(deadline) {
-				t.Fatal("no new SOLICIT after the revoking REPLY")
-			}
+		select {
+		case <-second:
+		case <-time.After(5 * time.Second):
+			t.Fatal("no new SOLICIT after the revoking REPLY")
 		}
 		close(f.stopped)
 		c.Stop()
