@@ -202,6 +202,11 @@ func TestOCIDigestReferenceReturnsParseError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
+	// The parse error quotes the reference; its credentials must not leak.
+	_, err = OCIDigestReference("oci://user:s3cr3t@registry.example.com/os?token=s3cr3t")
+	if err == nil || strings.Contains(err.Error(), "s3cr3t") {
+		t.Fatalf("OCIDigestReference() error = %v, want a redacted parse error", err)
+	}
 }
 
 func TestFetchOCILayerRejectsMultiplePayloadLayers(t *testing.T) {

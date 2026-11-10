@@ -91,11 +91,13 @@ func parseCosignPublicKeys(data []byte) ([]crypto.PublicKey, error) {
 		if !bytes.HasPrefix(rest, []byte("-----BEGIN ")) {
 			return nil, errors.New("data outside PEM blocks")
 		}
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
-		if block == nil {
+		// pem.Decode also skips a malformed block and returns the next
+		// one; refuse a decode that consumed more than one BEGIN line.
+		block, next := pem.Decode(rest)
+		if block == nil || bytes.Count(rest[:len(rest)-len(next)], []byte("-----BEGIN ")) != 1 {
 			return nil, errors.New("malformed PEM block")
 		}
+		rest = next
 		if block.Type != "PUBLIC KEY" {
 			return nil, fmt.Errorf("PEM block %q is not a PUBLIC KEY", block.Type)
 		}

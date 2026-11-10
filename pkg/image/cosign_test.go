@@ -402,6 +402,9 @@ func TestLoadCosignPublicKeys(t *testing.T) {
 	trailing := writeKeyFile(t, dir, "trailing.pub", ecPEM, []byte("trailing text\n"))
 	leading := writeKeyFile(t, dir, "leading.pub", []byte("comment\n"), ecPEM)
 	truncated := writeKeyFile(t, dir, "truncated.pub", ecPEM[:len(ecPEM)-10])
+	malformedFirst := writeKeyFile(t, dir, "malformed-first.pub",
+		[]byte("-----BEGIN PUBLIC KEY-----\nnot base64!\n-----END PUBLIC KEY-----\n"), ecPEM)
+	truncatedFirst := writeKeyFile(t, dir, "truncated-first.pub", ecPEM[:len(ecPEM)-30], []byte("\n"), ecPEM)
 
 	tests := []struct {
 		name     string
@@ -425,6 +428,8 @@ func TestLoadCosignPublicKeys(t *testing.T) {
 		{name: "trailing data", paths: []string{trailing}, wantErr: "data outside PEM blocks"},
 		{name: "leading data", paths: []string{leading}, wantErr: "data outside PEM blocks"},
 		{name: "truncated block", paths: []string{truncated}, wantErr: "malformed PEM block"},
+		{name: "malformed block before a valid key", paths: []string{malformedFirst}, wantErr: "malformed PEM block"},
+		{name: "truncated block before a valid key", paths: []string{truncatedFirst}, wantErr: "malformed PEM block"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
