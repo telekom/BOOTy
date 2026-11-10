@@ -201,6 +201,12 @@ func TestValidRA(t *testing.T) {
 		{"short", ra[:8], 255, ll, false},
 		{"not an RA", append([]byte{133}, ra[1:]...), 255, ll, false},
 		{"code 1", append([]byte{134, 1}, ra[2:]...), 255, ll, false},
+		{"one option", append(slices.Clip(ra), 1, 1, 0, 0, 0, 0, 0, 0), 255, ll, true},
+		{"two options", append(slices.Clip(ra), 1, 1, 0, 0, 0, 0, 0, 0, 5, 1, 0, 0, 0, 0, 5, 0xdc), 255, ll, true},
+		{"zero-length option", append(slices.Clip(ra), 1, 0, 0, 0, 0, 0, 0, 0), 255, ll, false},
+		{"zero-length second option", append(slices.Clip(ra), 1, 1, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0), 255, ll, false},
+		{"option past the end", append(slices.Clip(ra), 1, 2, 0, 0, 0, 0, 0, 0), 255, ll, false},
+		{"one octet left", append(slices.Clip(ra), 1), 255, ll, false},
 	} {
 		if got := validRA(tt.b, &ipv6.ControlMessage{HopLimit: tt.hop}, tt.src); got != tt.want {
 			t.Errorf("%s: validRA = %v, want %v", tt.name, got, tt.want)

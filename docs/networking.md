@@ -1622,8 +1622,9 @@ does the same by default: it runs IPv4 ACD on a DHCPv4 address only with
 
 Like networkd with the legacy netplan, every NIC with a DHCP client also
 watches router advertisements (the kernel keeps doing SLAAC). Only an RA
-with code 0 and hop limit 255 from a link-local address counts (RFC 4861
-6.1.2). The
+with code 0 and hop limit 255 from a link-local address, at least 16
+octets long and with options of a non-zero length that fit in the
+packet, counts (RFC 4861 6.1.2). The
 first RA with the M flag starts a stateful DHCPv6 client
 (`pkg/network/dhcp6`), one with only the O flag a stateless one
 (INFORMATION-REQUEST, options 6, 1, 8); a later RA with the M flag
