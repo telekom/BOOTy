@@ -847,6 +847,9 @@ audited tree, except [#755] (closed; its test is on `main`).
 | [#750], [#751], [#753], [#776], [#788], [#790], [#793], [#795], [#819], [#820], [#825] | RFC2131-EXPIRE ([#751]), RFC2131-RENEW and RFC2131-BACKOFF ([#790]), the former PENDING rows of RFC 2131, the DHCPv4 options, RFC 8415 and 4861-15 (in part, see RFC4861-RA-OPTLEN), 4861-16 |
 | [#892] | RFC8415-RELEASE |
 | [#908] | RFC2131-RELEASE-SID, RFC2132-MAXSIZE (found by the third refresh of this audit) |
+| [#915] | RFC4861-RA-OPTLEN |
+| [#916] | 4271-4: the session keepalive is capped at hold/3 (no keyword in the RFC) |
+| [#917] | RFC2131-EXPIRE-SELECTING |
 
 ### Fork branches on GoBGP 3.37.0
 
