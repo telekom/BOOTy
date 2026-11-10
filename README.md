@@ -937,11 +937,31 @@ manifest that BOOTy pulled from it. A/B and root streaming read an `oci://`
 image to its end even after the last partition, so a blob that does not
 match its digest fails the run.
 Keys may be ECDSA (P-256, P-384, P-521), RSA (2048 bits or more, PKCS#1
-v1.5) or Ed25519. Keyless (Fulcio certificate) signatures, Rekor entries and
-the Sigstore bundle format stored as OCI referrers are not read. The
-provisioning report records `verification.signature.method: cosign`. Both
-options are unset by default, which keeps every existing source working as
+v1.5) or Ed25519, each in a PEM `PUBLIC KEY` block. A key file may hold
+several `PUBLIC KEY` blocks, so a rotation can concatenate the old and the new
+key; any other block type or text outside the blocks fails the file. Keyless
+(Fulcio certificate) signatures, Rekor entries and the Sigstore bundle format
+stored as OCI referrers are not read. The provisioning report records
+`verification.signature.method: cosign`. A registry or network error while
+fetching the signature (timeout, 5xx, connection error) reports the transient
+failure code `BOOTY-IMG-008`; a missing signature or one that does not verify
+reports `BOOTY-IMG-001`. Dry-run loads the keys and fails when a source that
+needs a signature is a tag, or when an HTTP image has no `IMAGE_CHECKSUM`.
+Both options are unset by default, which keeps every existing source working as
 before.
+
+`IMAGE_COSIGN_PUBKEYS` and `SYSEXT_COSIGN_PUBKEYS` are independent: image keys
+do not check sysexts, and sysext keys do not check the image. Set both, so
+neither the image nor a sysext is pulled unsigned.
+
+**Threat model.** Cosign verification protects against a compromised registry
+or transport: a registry, mirror or network path that serves other bytes than
+the ones signed cannot get them written. It does not protect against whoever
+controls the provisioning vars (`/deploy/vars` or the configuration that the
+provisioning server serves). They choose the keys and sources, so they can
+clear the keys, switch to an HTTP source with their own `IMAGE_CHECKSUM`, or
+pin an older digest that is still signed. Protect the vars and their delivery
+as the trust root of the provisioning run.
 
 ### OCI Image Pre-Pulls
 
