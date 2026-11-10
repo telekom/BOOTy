@@ -321,6 +321,7 @@ func TestCosignFetchTransient(t *testing.T) {
 		{"connection refused", &url.Error{Op: "Get", URL: "https://r.example", Err: &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}}, true},
 		{"timeout", fmt.Errorf("get: %w", context.DeadlineExceeded), true},
 		{"truncated", io.ErrUnexpectedEOF, true},
+		{"closed before headers", &url.Error{Op: "Get", URL: "https://r.example", Err: io.EOF}, true},
 		{"canceled", fmt.Errorf("get: %w", context.Canceled), false},
 		{"digest mismatch", errors.New("error verifying sha256 checksum"), false},
 	}
@@ -333,6 +334,23 @@ func TestCosignFetchTransient(t *testing.T) {
 				t.Fatalf("cosignFetchError(%v) is ErrCosignFetch = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+// A registry that closes the connection without an answer is a transient
+// failure.
+func TestVerifyCosignSignatureConnectionClosed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	defer srv.Close()
+	ref := strings.TrimPrefix(srv.URL, "http://") + "/os/image@sha256:" + strings.Repeat("1", 64)
+	err := VerifyCosignSignature(context.Background(), ref, []crypto.PublicKey{&newECDSAKey(t).PublicKey})
+	if !errors.Is(err, ErrCosignVerification) || !errors.Is(err, ErrCosignFetch) {
+		t.Fatalf("VerifyCosignSignature() = %v, want ErrCosignVerification and ErrCosignFetch", err)
 	}
 }
 

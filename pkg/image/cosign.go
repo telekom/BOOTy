@@ -213,7 +213,7 @@ func cosignFetchError(err error, reference string) error {
 }
 
 // cosignFetchTransient reports whether err is a timeout, a connection
-// error, a truncated read or a temporary registry error (5xx, 408, 429).
+// error, a connection closed early, a truncated read or a temporary registry error (5xx, 408, 429).
 // A missing signature (404) or a refused request is not.
 func cosignFetchTransient(err error) bool {
 	if errors.Is(err, context.Canceled) {
@@ -225,7 +225,8 @@ func cosignFetchTransient(err error) bool {
 	}
 	var nerr net.Error
 	var opErr *net.OpError
-	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.ErrUnexpectedEOF) ||
+	// io.EOF: the connection closed before the response headers.
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
 		errors.As(err, &opErr) || (errors.As(err, &nerr) && nerr.Timeout())
 }
 
