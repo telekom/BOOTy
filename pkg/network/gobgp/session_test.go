@@ -54,6 +54,33 @@ func TestBuildSessionPeer(t *testing.T) {
 	}
 }
 
+// The session keepalive is capped at hold/3, like FRR; GoBGP alone would
+// keep a longer one against the configured hold time.
+func TestBuildSessionPeerKeepaliveCap(t *testing.T) {
+	for _, tt := range []struct {
+		keepalive, hold uint32
+		want            uint64
+	}{
+		{30, 90, 30},
+		{30, 91, 30},
+		{31, 92, 30},
+		{30, 89, 29},
+		{30, 9, 3},
+		{1, 3, 1},
+		{2, 3, 1},
+		{3, 5, 1},
+		{60, 180, 60},
+		{0, 0, 0}, // unset: GoBGP's default
+		{30, 0, 30},
+	} {
+		s := &network.BGPSession{Name: "192.0.2.1", KeepaliveTime: tt.keepalive, HoldTime: tt.hold, IPv4Unicast: true}
+		tm := buildSessionPeer(&Config{ASN: 65000}, s, s.Name).Timers.Config
+		if tm.KeepaliveInterval != tt.want || tm.HoldTime != uint64(tt.hold) {
+			t.Errorf("timers %d %d: keepalive/hold = %d/%d, want %d/%d", tt.keepalive, tt.hold, tm.KeepaliveInterval, tm.HoldTime, tt.want, tt.hold)
+		}
+	}
+}
+
 func TestValidateSessions(t *testing.T) {
 	ok := network.BGPSession{Name: "192.0.2.1", KeepaliveTime: 3, HoldTime: 9, IPv4Unicast: true}
 	if err := validateSessions([]network.BGPSession{ok}); err != nil {

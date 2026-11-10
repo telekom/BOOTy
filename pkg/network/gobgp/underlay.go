@@ -892,7 +892,7 @@ func (u *UnderlayTier) addSessionPeers(ctx context.Context) error {
 		added++
 		u.log.Info("added BGP peer", "neighbor", s.Name, "address", addr, "vrf", s.VRF,
 			"internal", s.Internal, "remoteASN", peer.Conf.PeerAsn, "localASN", s.LocalASN,
-			"keepalive", s.KeepaliveTime, "hold", s.HoldTime, "families", len(peer.AfiSafis))
+			"keepalive", peer.Timers.Config.KeepaliveInterval, "hold", s.HoldTime, "families", len(peer.AfiSafis))
 	}
 	if added == 0 && lastErr != nil {
 		return fmt.Errorf("no BGP peers added: %w", lastErr)

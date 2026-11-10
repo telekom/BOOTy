@@ -219,7 +219,7 @@ ranked: the legacy FRR profile has none either.
 | 4271-1 | 4.2 | OPEN Version MUST be 4; Unsupported Version Number otherwise | GoBGP | GOBGP: COMPLIANT | `gobgp@v4.11.0-booty.6/pkg/packet/bgp/validate.go:377` | reading |
 | 4271-2 | 4.2, 6.2 | Hold Time MUST be 0 or at least 3; Unacceptable Hold Time otherwise | GoBGP, BOOTy | GOBGP: COMPLIANT | receive: `validate.go:425`; send: BOOTy rejects 1 and 2, and also 0 (FRR `timers 0 0`, which GoBGP would replace with 30/90; a local choice the RFC allows) (`pkg/network/gobgp/config.go:518`, `:497`), tests `TestScenarioBGPTimers`, `TestValidateSessions` | test |
 | 4271-3 | 4.2 | BGP Identifier MUST be an IPv4 address of the speaker, the same for every peer | BOOTy | COMPLIANT | router ID = underlay IPv4, validated in `config.go:448`; one router ID for all peers (`underlay.go:528`) | reading |
-| 4271-4 | 4.4, 10 | KEEPALIVE MUST NOT be sent more often than once per second; "a reasonable maximum time between KEEPALIVE messages would be one third of the Hold Time" (no keyword) | BOOTy, GoBGP | COMPLIANT | A keepalive of 0 is rejected for the global timers and every session (`config.go:492`, `pkg/config/validate.go:1325`). A keepalive above hold/3 is rejected only for `BGP_KEEPALIVE`/`BGP_HOLD` (`config.go:521`); a session takes any keepalive (`config.go:486` `validateSessions`, `families.go:169`). GoBGP keeps it and uses hold/3 only when the negotiated hold time is below the configured one (`gobgp@v4.11.0-booty.6/pkg/server/fsm.go:927` to `:931`), so a session with `timers 30 9` sends a keepalive every 30 s against a 9 s hold time and loses an idle session. Not an RFC requirement; possible improvement: cap the session keepalive at hold/3 in `buildSessionPeer` | reading |
+| 4271-4 | 4.4, 10 | KEEPALIVE MUST NOT be sent more often than once per second; "a reasonable maximum time between KEEPALIVE messages would be one third of the Hold Time" (no keyword) | BOOTy, GoBGP | COMPLIANT | A keepalive of 0 is rejected for the global timers and every session (`config.go:492`, `pkg/config/validate.go:1325`). A keepalive above hold/3 is rejected for `BGP_KEEPALIVE`/`BGP_HOLD` (`config.go:521`). A session takes any keepalive (`config.go:486` `validateSessions`), and since [#916] `buildSessionPeer` lowers one above hold/3 to hold/3, like the keepalive that FRR negotiates (`families.go:161` to `:164`, `:176`); `TestBuildSessionPeerKeepaliveCap`. GoBGP alone keeps it and uses hold/3 only when the negotiated hold time is below the configured one (`gobgp@v4.11.0-booty.6/pkg/server/fsm.go:927` to `:931`), so before [#916] a session with `timers 30 9` sent a keepalive every 30 s against a 9 s hold time and lost an idle session | test |
 | 4271-5 | 4.2 | Hold timer MUST be the smaller of the configured and received hold time | GoBGP | GOBGP: COMPLIANT | `fsm.go:914` | reading |
 | 4271-6 | 4.3 | UPDATE: withdrawn routes, path attributes, NLRI encoding | GoBGP | GOBGP: COMPLIANT | GoBGP encoder; lab `TestProdTplLeafSessions`, `TestProdTplRRSessions` | lab |
 | 4271-7 | 4.5, 6 | NOTIFICATION codes and subcodes for each error | GoBGP | GOBGP: COMPLIANT | `validate.go:376` (OPEN), `bgp.go` MessageError codes | reading |
@@ -261,7 +261,7 @@ ranked: the legacy FRR profile has none either.
 | 4760-4 | 3 | UPDATE with only MP NLRI SHOULD NOT carry NEXT_HOP; receiver SHOULD ignore it | BOOTy, GoBGP | COMPLIANT | EVPN paths carry only MP_REACH_NLRI (`overlay.go:2505`); `TestRFCWireType5`, `TestRFCWireType3`, `TestRFCWireType2` check that no NEXT_HOP attribute is present | test |
 | 4760-5 | 3 | Same prefix not in more than one of NLRI, MP_REACH, MP_UNREACH | GoBGP | GOBGP: COMPLIANT | GoBGP encoder | reading |
 | 4760-6 | 7 | Incorrect MP_REACH/MP_UNREACH: delete the routes of the AFI/SAFI, SHOULD ignore further ones, SHOULD terminate | GoBGP | GOBGP: COMPLIANT | AFI/SAFI disable (`fsm.go:1894`, `:1986`), refined by RFC 7606 §7.11 | reading |
-| 4760-7 | 8 | Capability advertisement for each AFI/SAFI; both sides MUST advertise for a bi-directional exchange | GoBGP, BOOTy | GOBGP: COMPLIANT | `fsm.go:1654`; BOOTy sets the families per peer (`families.go:102` to `:146`, `:221`); lab `TestGoBGPDualEVPNOnNumberedOnly`, `TestProdTplOpenCapabilities` | lab |
+| 4760-7 | 8 | Capability advertisement for each AFI/SAFI; both sides MUST advertise for a bi-directional exchange | GoBGP, BOOTy | GOBGP: COMPLIANT | `fsm.go:1654`; BOOTy sets the families per peer (`families.go:102` to `:146`, `:228`); lab `TestGoBGPDualEVPNOnNumberedOnly`, `TestProdTplOpenCapabilities` | lab |
 | 4760-8 | 8 | Unadvertised families not sent | GoBGP | GOBGP: COMPLIANT | `validate.go:124` rejects families not in the session | reading |
 | 4760-9 | 3 | MP_REACH next hop for EVPN: the VTEP address | BOOTy | COMPLIANT | `overlay.go:2505`; `TestRFCWireType5`, `TestRFCWireType3`, `TestRFCWireType2` | test |
 
@@ -278,7 +278,7 @@ ranked: the legacy FRR profile has none either.
 | 6793-7 | 4.1 | No confed segments in AS4_PATH | GoBGP | GOBGP: COMPLIANT | `message.go:173` | reading |
 | 6793-8 | n/a | 4-octet ASN in BOOTy's RD and RT encodings (RFC 5668 4-octet AS specific type) | BOOTy | COMPLIANT | RD type 2 for an `ASN:NN` RD (`EVPN_RD` or `frr.conf` `rd`) with an AS above 65535 (`policy.go:185`); the default RD `<router-id>:<n>` is type 1 ([#710]). RT type 0x02 for an AS above 65535 (`overlay.go:2729`); `TestParseRouteDistinguisher`, `TestBuildRouteTarget`, `TestBuildType3PathAttrs4ByteASN` | test |
 | 6793-9 | n/a | No silent truncation of a 4-octet ASN RD/RT value | BOOTy | COMPLIANT | VNI above 65535 with 4-octet ASN is rejected (`config.go:386`) | reading |
-| 6793-10 | n/a | 4-octet local AS and remote AS for sessions | BOOTy | COMPLIANT | `families.go:45` to `:191` | reading |
+| 6793-10 | n/a | 4-octet local AS and remote AS for sessions | BOOTy | COMPLIANT | `families.go:45` to `:198` | reading |
 
 ### RFC 7911: ADD-PATH
 
@@ -287,7 +287,7 @@ ranked: the legacy FRR profile has none either.
 | 7911-1 | 2 | Path Identifier unique per (prefix, neighbor); re-advertiser generates its own | GoBGP | GOBGP: COMPLIANT | GoBGP send side; BOOTy does not send multiple paths | reading |
 | 7911-2 | 3 | NLRI extended with a 4-octet Path Identifier when negotiated | GoBGP | GOBGP: COMPLIANT | `bgp.go` `decodePathIdentifier` | reading |
 | 7911-3 | 4 | One ADD-PATH capability for all AFI/SAFIs; unknown Send/Receive values ignored | GoBGP | GOBGP: COMPLIANT | `fsm.go:1613` | reading |
-| 7911-4 | 5 | Send multiple paths only if both sides negotiated (2/3 and 1/3) | GoBGP, BOOTy | GOBGP: COMPLIANT | BOOTy configures receive only (`families.go:215`); lab `TestProdTplOpenCapabilities` (`addPath`) | lab |
+| 7911-4 | 5 | Send multiple paths only if both sides negotiated (2/3 and 1/3) | GoBGP, BOOTy | GOBGP: COMPLIANT | BOOTy configures receive only (`families.go:222`); lab `TestProdTplOpenCapabilities` (`addPath`) | lab |
 | 7911-5 | 5 | Withdraw of an unknown Path Identifier SHOULD be ignored | GoBGP | GOBGP: COMPLIANT | GoBGP adj-in lookup by (prefix, id) | reading |
 | 7911-6 | 5 | SHOULD include the best route when advertising several | GoBGP | N/A | BOOTy does not send add-path | reading |
 | 7911-7 | n/a | Received paths installed with ECMP | BOOTy | COMPLIANT | FIB writer takes equal-cost paths of a destination (`fibselect.go:109`), `TestSelectRoutes*` | test |
@@ -312,9 +312,9 @@ ranked: the legacy FRR profile has none either.
 |---|---|---|---|---|---|---|
 | 4724-1 | 3 | Only one GR capability; receiver uses the last | GoBGP | GOBGP: COMPLIANT | `fsm.go:1693`, `:954` | reading |
 | 4724-2 | 3 | Reserved bits zero | GoBGP | GOBGP: COMPLIANT | GoBGP encoder | reading |
-| 4724-3 | 3, 4.2 | Restart State bit MUST NOT be set unless restarted | GoBGP, BOOTy | GOBGP: COMPLIANT | helper only (`families.go:207`), `restarting` false | reading |
+| 4724-3 | 3, 4.2 | Restart State bit MUST NOT be set unless restarted | GoBGP, BOOTy | GOBGP: COMPLIANT | helper only (`families.go:214`), `restarting` false | reading |
 | 4724-4 | 4 | End-of-RIB MUST be sent after the initial update of each family (when GR is negotiated) | GoBGP | GOBGP: COMPLIANT | `server.go:1330` | reading |
-| 4724-5 | 4.1 | Restarting Speaker procedures (keep forwarding state, defer selection, selection deferral timer) | BOOTy | N/A | BOOTy is helper only and keeps no forwarding state; it sends no family tuples, so peers do not keep its routes (`families.go:199`) | reading |
+| 4724-5 | 4.1 | Restarting Speaker procedures (keep forwarding state, defer selection, selection deferral timer) | BOOTy | N/A | BOOTy is helper only and keeps no forwarding state; it sends no family tuples, so peers do not keep its routes (`families.go:206`) | reading |
 | 4724-6 | 4.2 | Receiving Speaker MUST retain the routes of a restarting peer and mark them stale | GoBGP | GOBGP: COMPLIANT | `server.go:2309` (the graceful restart Helper, `internal/pkg/gr`), `internal/pkg/table/adj.go:310`; lab `TestProdTplRRRestart` | lab |
 | 4724-7 | 4.2 | Previously stale routes MUST be deleted on consecutive restarts; stale routes deleted after Restart Time | GoBGP | GOBGP: COMPLIANT | GoBGP restart timer | reading |
 | 4724-8 | 4.2 | Stale routes replaced by updates; removed at End-of-RIB | GoBGP | GOBGP: COMPLIANT | GoBGP EOR handling (`server.go:2386` to `:2536`) | reading |
@@ -510,7 +510,7 @@ BOOTy processes the EAD (Type-1) routes of remote Ethernet segments.
 | 7432-20 | 9.2.2 | Reserved ESI (0 or MAX): forwarding state from the MAC/IP route alone | BOOTy | COMPLIANT | `handleType2Route` (`overlay.go:1922`); `TestHandleType2RouteInstallsFDB` | test |
 | 7432-21 | 9.2.2 | Non-reserved ESI: forwarding state only with the A-D per ES routes | BOOTy | COMPLIANT | RFC7432-ESI-RX at the first audit. [#767]: the MAC is installed only through the active VTEPs of its ES and not while the ES has none (`esi.go:168`, `syncES`); `TestType2ESIAliasingAndMassWithdraw` | test |
 | 7432-22 | 10 | IP Address Length 32 or 128 | BOOTy | COMPLIANT | `TestRFCWireType2` | test |
-| 7432-23 | 10 | One MAC/IP route per IP of a MAC; withdraw on dissociation | BOOTy | COMPLIANT | one IP (provision IP); routes end with the BGP session (no GR tuples, `families.go:199`) | reading |
+| 7432-23 | 10 | One MAC/IP route per IP of a MAC; withdraw on dissociation | BOOTy | COMPLIANT | one IP (provision IP); routes end with the BGP session (no GR tuples, `families.go:206`) | reading |
 | 7432-24 | 10 | MAC/IP withdraw MUST NOT remove the MAC entry while the MAC-only route lives | BOOTy | COMPLIANT | RFC7432-MACIP-WITHDRAW at the first audit. [#748] keeps every live route of a MAC by route key and points the FDB entry at the best one (`overlay.go:2169`, `:2188`, `:2202`); `TestHandleType2RouteBestPathPerMAC` | test |
 | 7432-25 | 10 | ARP proxy (SHOULD) | BOOTy | N/A | BOOTy is the end host of its BD; the kernel VXLAN `proxy` flag follows netplan | reading |
 | 7432-26 | 10.1 | Default gateway procedures | BOOTy | N/A | see 7432-10 | reading |
@@ -848,6 +848,7 @@ audited tree, except [#755] (closed; its test is on `main`).
 | [#892] | RFC8415-RELEASE |
 | [#908] | RFC2131-RELEASE-SID, RFC2132-MAXSIZE (found by the third refresh of this audit) |
 | [#915] | RFC4861-RA-OPTLEN |
+| [#916] | 4271-4: the session keepalive is capped at hold/3 (no keyword in the RFC) |
 
 ### Fork branches on GoBGP 3.37.0
 
@@ -936,3 +937,4 @@ parity (the row says which).
 [#892]: https://github.com/telekom/BOOTy/pull/892
 [#908]: https://github.com/telekom/BOOTy/pull/908
 [#915]: https://github.com/telekom/BOOTy/pull/915
+[#916]: https://github.com/telekom/BOOTy/pull/916

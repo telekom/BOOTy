@@ -155,6 +155,13 @@ func buildSessionPeer(cfg *Config, s *network.BGPSession, addr string) *apipb.Pe
 	if s.Internal && peerASN == 0 {
 		peerASN = cmp.Or(s.LocalASN, cfg.ASN)
 	}
+	// FRR sends a keepalive at most every hold/3 seconds (RFC 4271 4.4,
+	// 10); GoBGP keeps a longer configured interval unless the peer
+	// lowers the hold time, so "timers 30 9" would lose an idle session.
+	keepalive := s.KeepaliveTime
+	if s.HoldTime > 0 {
+		keepalive = min(keepalive, s.HoldTime/3)
+	}
 	peer := &apipb.Peer{
 		Conf: &apipb.PeerConf{
 			NeighborAddress: addr,
@@ -166,7 +173,7 @@ func buildSessionPeer(cfg *Config, s *network.BGPSession, addr string) *apipb.Pe
 		},
 		Timers: &apipb.Timers{Config: &apipb.TimersConfig{
 			ConnectRetry:           uint64(s.ConnectRetry),
-			KeepaliveInterval:      uint64(s.KeepaliveTime),
+			KeepaliveInterval:      uint64(keepalive),
 			HoldTime:               uint64(s.HoldTime),
 			IdleHoldTimeAfterReset: idleHoldAfterReset,
 			ConnectAtOnce:          cfg.ConnectAtOnce,
