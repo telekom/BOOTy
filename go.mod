@@ -9,7 +9,7 @@ require (
 	github.com/google/go-tpm v0.9.8
 	github.com/gopacket/gopacket v1.7.4
 	github.com/insomniacslk/dhcp v0.0.0-20260901064844-234b97448fae
-	github.com/klauspost/compress v1.20.3
+	github.com/klauspost/compress v1.20.4
 	github.com/mdlayher/packet v1.2.0
 	github.com/osrg/gobgp/v4 v4.11.0
 	github.com/pierrec/lz4/v4 v4.1.33
@@ -53,7 +53,7 @@ require (
 	github.com/u-root/uio v0.0.0-20230220225925-ffce2a382923 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/sync v0.25.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260917231906-eeb232e0883d // indirect
 	google.golang.org/grpc v1.85.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
