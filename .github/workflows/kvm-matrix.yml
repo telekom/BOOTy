@@ -109,7 +109,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
           cache: true
       - name: Vet
         env:
@@ -564,7 +564,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: Install KVM dependencies
         # A slow mirror should fail this step fast instead of eating the job budget.

@@ -175,7 +175,7 @@ func completion(resp []byte) ([]byte, error) {
 func ioctl(fd int, request uintptr, arg unsafe.Pointer) error {
 	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), request, uintptr(arg))
 	if errno != 0 {
-		return errno
+		return errno //nolint:wrapcheck // callers add context and match the errno with errors.Is
 	}
 	return nil
 }
