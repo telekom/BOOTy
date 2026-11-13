@@ -551,6 +551,7 @@ root is mounted.
 | `SECUREBOOT_PINNED_DIGESTS` | — | JSON map of component pins keyed by `shim`, `grub`, and `kernel`; individual digest vars override only their component |
 | `MOK_CERT_PATH` | — | *(Phase 2)* Path to DER-encoded MOK certificate for custom kernel signing |
 | `MOK_PASSWORD` | — | *(Phase 2)* One-time password for MokManager confirmation |
+| `IMAGE_FOLLOW_REDIRECTS` | `true` | `false` fails the HTTP image probe, download and signature download on a redirect, like `curl` without `--location`; not for `oci://`. Preset `false` by `CAPRF_LEGACY_COMPAT` |
 | `IMAGE_CHECKSUM` | — | Expected hex digest of the image file as downloaded (see `IMAGE_CHECKSUM_SCOPE`) |
 | `IMAGE_CHECKSUM_TYPE` | — | Checksum algorithm: `sha256` or `sha512` |
 | `IMAGE_CHECKSUM_SCOPE` | `download` | `download` (file as downloaded) or `decompressed` (decompressed image) |

@@ -33,18 +33,50 @@ var imageHTTPClient = newImageHTTPClient()
 // IMAGE_PARALLEL_RANGES (at most 16) reuses its connections instead of
 // dialing one per range.
 func newImageHTTPClient() *http.Client {
-	c := network.NewHTTPClient(0)
+	c := newRedirectPolicyClient()
 	if t, ok := c.Transport.(*http.Transport); ok {
 		t.MaxIdleConnsPerHost = 17
 	}
 	return c
 }
 
+// followRedirects is IMAGE_FOLLOW_REDIRECTS.
+var followRedirects atomic.Bool
+
+func init() { followRedirects.Store(true) }
+
+// SetFollowRedirects sets IMAGE_FOLLOW_REDIRECTS for the clients that
+// RefreshHTTPClients builds afterwards.
+func SetFollowRedirects(follow bool) {
+	followRedirects.Store(follow)
+}
+
+// ErrRedirectRefused is the error of an image request that got a redirect
+// with IMAGE_FOLLOW_REDIRECTS=false.
+var ErrRedirectRefused = errors.New("redirect refused (IMAGE_FOLLOW_REDIRECTS=false)")
+
+// newRedirectPolicyClient is network.NewHTTPClient(0) that refuses redirects
+// with IMAGE_FOLLOW_REDIRECTS=false.
+func newRedirectPolicyClient() *http.Client {
+	c := network.NewHTTPClient(0)
+	if !followRedirects.Load() {
+		c.CheckRedirect = func(req *http.Request, _ []*http.Request) error {
+			status := 0
+			if req.Response != nil {
+				status = req.Response.StatusCode
+			}
+			return fmt.Errorf("%w: status %d to %s", ErrRedirectRefused, status, RedactURL(req.URL.String()))
+		}
+	}
+	return c
+}
+
 // RefreshHTTPClients rebuilds the image download clients so they pick up
-// network.SetSkipTLSVerify and proxy settings from the environment.
+// network.SetSkipTLSVerify, SetFollowRedirects and proxy settings from the
+// environment.
 func RefreshHTTPClients() {
 	imageHTTPClient = newImageHTTPClient()
-	gpgHTTPClient = network.NewHTTPClient(0)
+	gpgHTTPClient = newRedirectPolicyClient()
 }
 
 // StreamOpts are optional parameters for Stream.
@@ -416,6 +448,10 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 		}
 
 		resp, err := imageHTTPClient.Do(req) //nolint:gosec // URL from trusted config
+		if errors.Is(err, ErrRedirectRefused) {
+			cancel()
+			return nil, fmt.Errorf("fetching image %s: %w", redactedURL, &redactedSourceError{rawSource: url, err: err})
+		}
 		if err != nil {
 			cancel()
 			redactedErr := &redactedSourceError{rawSource: url, err: timesync.ExplainCertTime(err, time.Time{})}

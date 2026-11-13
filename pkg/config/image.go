@@ -31,6 +31,14 @@ type ImageConfig struct {
 	// Default: nil (false, requires HTTPS or OCI)
 	AllowInsecureHTTP *bool `yaml:"allowInsecureHTTP,omitempty" json:"allowInsecureHTTP,omitempty"`
 
+	// FollowRedirects lets the HTTP image requests (the source probe, the
+	// download and the signature download) follow redirects. false fails
+	// the request on the first redirect, like curl without --location in
+	// the CAPRF legacy provisioner. oci:// pulls are not affected.
+	// Preset by legacyCompat: false.
+	// Default: nil (true)
+	FollowRedirects *bool `yaml:"followRedirects,omitempty" json:"followRedirects,omitempty"`
+
 	// Checksum is the expected hex digest of the image. ChecksumScope
 	// selects the bytes it covers. Verified after streaming completes.
 	// Default: "" (no verification)
