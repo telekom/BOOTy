@@ -77,6 +77,8 @@ and, with `OOB_EFI_VAR`, in the `BootyLastResult` UEFI variable.
 | `BOOTY-EFI-007` | permanent | `verify-secureboot-chain` | Secure Boot chain verification failed. |
 | `BOOTY-EFI-008` | hardware | `create-efi-boot-entry` | Creating the EFI boot entry failed. |
 | `BOOTY-EFI-009` | hardware | `create-mirror-efi-boot-entry` | Creating the mirror EFI boot entry failed. |
+| `BOOTY-EFI-010` | permanent | `sign-kernel-modules` | Signing the out-of-tree kernel modules failed. |
+| `BOOTY-EFI-011` | permanent | `enroll-module-signing-key` | Enrolling the module signing key failed. |
 | `BOOTY-OS-001` | config | `configure-overlayfs` | Overlay file system configuration failed. |
 | `BOOTY-OS-002` | config | `set-hostname` | Setting the host name failed. |
 | `BOOTY-OS-003` | config | `copy-provisioner-files` | Copying provisioner files failed. |

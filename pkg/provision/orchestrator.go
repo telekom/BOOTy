@@ -126,6 +126,7 @@ type Orchestrator struct {
 	reportLogged     bool // logProvisionReport sent the report; a retried report-success does not send it again
 	nvmeTargetDevice string
 	firmwareChanged  bool // true if any step changed firmware values requiring hard reboot
+	moduleSigning    *ReportModuleSigning
 	// separateBootMounted is true while mount-boot owns a separate /boot mount.
 	separateBootMounted bool
 	// disksSettled is true after waitForDisks ran.
@@ -202,6 +203,8 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"configure-serial-console", o.configureSerialConsole},
 		{"configure-grub", o.configureGRUB},
 		{"install-efi-fallback", o.installEFIFallbackLoader},
+		// Signing rebuilds the initramfs, so it runs before the chain check.
+		{"sign-kernel-modules", o.signKernelModules},
 		// Validate the final installed boot artifacts after BOOTy has applied
 		// GRUB and EFI fallback mutations, before firmware boot entries point to them.
 		{"verify-secureboot-chain", o.verifySecureBootChain},
@@ -214,6 +217,8 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"run-post-provision-cmds", o.runPostProvisionCmds},
 		{"create-efi-boot-entry", o.createEFIBootEntry},
 		{"create-mirror-efi-boot-entry", o.createMirrorEFIBootEntry},
+		// Last: a failed provisioning must not leave a staged enrollment.
+		{"enroll-module-signing-key", o.enrollModuleSigningKey},
 		{"teardown-chroot", o.teardownChroot},
 		{"report-success", o.reportSuccess},
 	}
@@ -3631,7 +3636,7 @@ func ShouldKeepTargetRootMountedForKexec(cfg *config.MachineConfig, firmwareChan
 		return false
 	}
 	return !cfg.KexecDisabled() &&
-		!cfg.Provision.SecureBoot.ReEnable &&
+		!cfg.Provision.SecureBoot.NeedsFirmwareReboot() &&
 		!firmwareChanged
 }
 

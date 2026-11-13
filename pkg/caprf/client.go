@@ -1282,6 +1282,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"CRASH_ARTIFACTS_UPLOAD_URL":  &cfg.Provision.CrashArtifacts.UploadURL,
 		"MOK_CERT_PATH":               &cfg.Provision.SecureBoot.MOKCertPath,
 		"MOK_PASSWORD":                &cfg.Provision.SecureBoot.MOKPassword,
+		"MODULE_SIGNING_ENROLLMENT":   &cfg.Provision.SecureBoot.ModuleSigning.Enrollment,
+		"MODULE_SIGNING_CERT_DIR":     &cfg.Provision.SecureBoot.ModuleSigning.CertDir,
 		"TOKEN_URL":                   &cfg.Transport.TokenURL,
 		"TOKEN_ALGORITHM":             &cfg.Transport.TokenAlgorithm,
 		"NVME_NAMESPACES":             &cfg.Provision.Disk.NVMeNamespaces,
@@ -1665,7 +1667,7 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 	if handled, err := applyIntVar(cfg, key, value); handled {
 		return true, err
 	}
-	if applyCrashArtifactsBoolVar(cfg, key, value) {
+	if applyCrashArtifactsBoolVar(cfg, key, value) || applyModuleSigningBoolVar(cfg, key, value) {
 		return true, nil
 	}
 	if applyCoreBoolVar(cfg, key, value) {
@@ -1754,6 +1756,18 @@ func applyCrashArtifactsBoolVar(cfg *config.MachineConfig, key, value string) bo
 		cfg.Provision.CrashArtifacts.Enabled = parseBoolVar(value)
 	case "CRASH_ARTIFACTS_INCLUDE_MEMORY_DUMPS":
 		cfg.Provision.CrashArtifacts.IncludeMemoryDumps = parseBoolVar(value)
+	default:
+		return false
+	}
+	return true
+}
+
+func applyModuleSigningBoolVar(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
+	case "MODULE_SIGNING_ENABLED":
+		cfg.Provision.SecureBoot.ModuleSigning.Enabled = parseBoolVar(value)
+	case "MODULE_SIGNING_ALLOW_FAILURE":
+		cfg.Provision.SecureBoot.ModuleSigning.AllowFailure = parseBoolVar(value)
 	default:
 		return false
 	}

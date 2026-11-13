@@ -23,4 +23,66 @@ type SecureBootConfig struct {
 	// MOKPassword is the one-time password for MokManager confirmation on next boot.
 	// Default: ""
 	MOKPassword string `yaml:"mokPassword" json:"mokPassword"`
+
+	// ModuleSigning signs out-of-tree kernel modules of the target with a
+	// per-host key and enrolls its certificate. See docs/module-signing.md.
+	ModuleSigning ModuleSigningConfig `yaml:"moduleSigning" json:"moduleSigning"`
+}
+
+// Module signing enrollment methods.
+const (
+	// ModuleSigningEnrollEFIHelper boots mok-enroll.efi once (BootNext) to
+	// write the certificate into MokList. Needs Secure Boot off during
+	// provisioning.
+	ModuleSigningEnrollEFIHelper = "efi-helper"
+	// ModuleSigningEnrollMokutil queues the certificate with mokutil
+	// --import; MokManager asks for MOKPassword once at the console.
+	ModuleSigningEnrollMokutil = "mokutil"
+	// ModuleSigningEnrollExternal only installs and reports the
+	// certificate; the provisioner enrolls it, for example into db over
+	// Redfish.
+	ModuleSigningEnrollExternal = "external"
+)
+
+// DefaultModuleSigningCertDir is where the certificate is installed in the
+// target.
+const DefaultModuleSigningCertDir = "/usr/share/booty/secureboot"
+
+// ModuleSigningConfig controls per-host signing of out-of-tree modules.
+type ModuleSigningConfig struct {
+	// Enabled signs every module below /lib/modules/*/{updates,extra}.
+	// Default: false
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Enrollment is efi-helper (default), mokutil or external.
+	Enrollment string `yaml:"enrollment" json:"enrollment"`
+	// CertDir is the absolute target directory for the DER certificate.
+	// Default: /usr/share/booty/secureboot
+	CertDir string `yaml:"certDir" json:"certDir"`
+	// AllowFailure continues provisioning when signing or enrollment fails.
+	// Default: false (fail closed)
+	AllowFailure bool `yaml:"allowFailure" json:"allowFailure"`
+}
+
+// EnrollmentMethod returns Enrollment or the default.
+func (m ModuleSigningConfig) EnrollmentMethod() string {
+	if m.Enrollment == "" {
+		return ModuleSigningEnrollEFIHelper
+	}
+	return m.Enrollment
+}
+
+// CertDirOrDefault returns CertDir or the default.
+func (m ModuleSigningConfig) CertDirOrDefault() string {
+	if m.CertDir == "" {
+		return DefaultModuleSigningCertDir
+	}
+	return m.CertDir
+}
+
+// NeedsFirmwareReboot reports whether the handoff must go through the
+// firmware instead of kexec: Secure Boot is re-enabled, or a MOK enrollment
+// runs at the next firmware boot.
+func (s *SecureBootConfig) NeedsFirmwareReboot() bool {
+	m := s.ModuleSigning
+	return s.ReEnable || (m.Enabled && m.EnrollmentMethod() != ModuleSigningEnrollExternal)
 }

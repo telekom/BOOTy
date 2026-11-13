@@ -246,8 +246,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 55 {
-		t.Fatalf("expected 55 provisioning steps, got %d", len(steps))
+	if len(steps) != 57 {
+		t.Fatalf("expected 57 provisioning steps, got %d", len(steps))
 	}
 }
 
@@ -5200,8 +5200,11 @@ func TestNoHostWriterRunsAfterCopyMachineFiles(t *testing.T) {
 		// /boot/efi through mountBoot, which refuses a mountpoint that
 		// resolves outside the target root.
 		"create-mirror-efi-boot-entry": true,
-		"teardown-chroot":              true,
-		"report-success":               true,
+		// Writes mok-enroll.efi to the FAT ESP, which has no symlinks, and
+		// reads the certificate through os.Root.
+		"enroll-module-signing-key": true,
+		"teardown-chroot":           true,
+		"report-success":            true,
 	}
 	for _, step := range steps[requireStepIndex(t, steps, "copy-machine-files")+1:] {
 		if !allowed[step.Name] {

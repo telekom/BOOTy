@@ -506,6 +506,10 @@ These keys apply to the provision and deprovision modes.
 | `SECUREBOOT_SHIM_SHA256` | (unset) | 64 hex digits, optional `sha256:` prefix | Expected digest of the installed shim. |
 | `SECUREBOOT_GRUB_SHA256` | (unset) | same | Expected digest of the installed GRUB EFI binary. |
 | `SECUREBOOT_KERNEL_SHA256` | (unset) | same | Expected digest of the installed kernel. |
+| `MODULE_SIGNING_ENABLED` | `false` | boolean | Sign the out-of-tree modules of the target (`/lib/modules/*/{updates,extra}`) with a new per-host key, run depmod and rebuild the initramfs. The key exists only in memory. See [module signing](module-signing.md). |
+| `MODULE_SIGNING_ENROLLMENT` | `efi-helper` | `efi-helper`, `mokutil`, `external` | How the firmware learns the certificate: `efi-helper` boots `mok-enroll.efi` once to write MokList (Secure Boot must be off while provisioning); `mokutil` queues it for one MokManager confirmation with `MOK_PASSWORD`; `external` leaves it to the provisioner (for example Redfish db enrollment). |
+| `MODULE_SIGNING_CERT_DIR` | `/usr/share/booty/secureboot` | absolute path | Target directory of `booty-module-signing.der`. |
+| `MODULE_SIGNING_ALLOW_FAILURE` | `false` | boolean | Continue provisioning when signing or enrollment fails. By default provisioning fails. |
 | `SECUREBOOT_PINNED_DIGESTS` | (unset) | JSON object with keys `shim`, `grub`, `kernel` | All pins in one key. A single-component key wins over its entry here. |
 
 ## Sysext
@@ -675,7 +679,7 @@ BOOTy parses these keys, but no code acts on the value:
 | `DEBUG_URL` | No code sends to it. Debug dumps go to the log, and `LOG_URL` ships them. |
 | `leaf_asn` | Logged in the debug dump only. |
 | `MOK_CERT_PATH` | MOK enrollment is not implemented. |
-| `MOK_PASSWORD` | MOK enrollment is not implemented. |
+| `MOK_PASSWORD` | Used only by `MODULE_SIGNING_ENROLLMENT=mokutil`. |
 | `RESCUE_TIMEOUT` | See [Rescue](#rescue). |
 
 ## Planned

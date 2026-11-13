@@ -125,8 +125,9 @@ type ReportEncryption struct {
 
 // ReportSecureBoot is the firmware Secure Boot state during provisioning.
 type ReportSecureBoot struct {
-	State    string `json:"state"`
-	ReEnable bool   `json:"reEnable,omitempty"`
+	State         string               `json:"state"`
+	ReEnable      bool                 `json:"reEnable,omitempty"`
+	ModuleSigning *ReportModuleSigning `json:"moduleSigning,omitempty"`
 }
 
 // ReportSysext is one system extension that apply-sysexts installed.
@@ -161,7 +162,7 @@ func (o *Orchestrator) buildReport(ctx context.Context) *ProvisionReport {
 		},
 		Disk:       ReportDisk{Device: o.targetDisk, RootPartition: o.rootPartition, Layout: o.reportLayout(ctx)},
 		Encryption: reportEncryption(o.config.rootDir),
-		SecureBoot: ReportSecureBoot{State: reportSecureBootState(), ReEnable: cfg.SecureBoot.ReEnable},
+		SecureBoot: ReportSecureBoot{State: reportSecureBootState(), ReEnable: cfg.SecureBoot.ReEnable, ModuleSigning: o.moduleSigning},
 		Sysexts:    reportSysexts(&cfg.Sysext),
 	}
 	if strings.TrimSpace(cfg.Image.Checksum) != "" {

@@ -771,6 +771,27 @@ func validateABConfig(imageMode string, disableKexec bool, cfg *ABConfig) error 
 	return nil
 }
 
+func validateModuleSigning(imageMode string, m *ModuleSigningConfig, ab *ABConfig) []string {
+	if !m.Enabled {
+		return nil
+	}
+	var errs []string
+	switch m.EnrollmentMethod() {
+	case ModuleSigningEnrollEFIHelper, ModuleSigningEnrollMokutil:
+		if ab != nil && strings.EqualFold(strings.TrimSpace(imageMode), ImageModeAB) && ab.PreserveExisting {
+			errs = append(errs, "provision.secureBoot.moduleSigning.enrollment "+m.EnrollmentMethod()+
+				" needs a firmware reboot, but provision.ab.preserveExisting uses kexec")
+		}
+	case ModuleSigningEnrollExternal:
+	default:
+		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.enrollment %q: want efi-helper, mokutil or external", m.Enrollment))
+	}
+	if dir := m.CertDirOrDefault(); !path.IsAbs(dir) || path.Clean(dir) != dir {
+		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.certDir %q: must be a clean absolute path", m.CertDir))
+	}
+	return errs
+}
+
 func validateSecureBootConfig(imageMode string, secureBoot *SecureBootConfig, ab *ABConfig) error {
 	if secureBoot == nil {
 		return nil
@@ -795,6 +816,7 @@ func validateSecureBootConfig(imageMode string, secureBoot *SecureBootConfig, ab
 		strings.EqualFold(strings.TrimSpace(imageMode), ImageModeAB) && ab.PreserveExisting {
 		errs = append(errs, "provision.secureBoot.reEnable requires a hard reboot, but provision.ab.preserveExisting uses kexec")
 	}
+	errs = append(errs, validateModuleSigning(imageMode, &secureBoot.ModuleSigning, ab)...)
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}

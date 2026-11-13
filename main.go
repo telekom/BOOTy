@@ -2405,8 +2405,8 @@ func tryKexec(cfg *config.MachineConfig, firmwareChanged bool, releaseTarget fun
 		return false
 	}
 
-	if cfg.Provision.SecureBoot.ReEnable {
-		slog.Info("secure boot re-enable requested, hard reboot required; skipping kexec")
+	if cfg.Provision.SecureBoot.NeedsFirmwareReboot() {
+		slog.Info("secure boot re-enable or MOK enrollment requested, hard reboot required; skipping kexec")
 		return false
 	}
 
