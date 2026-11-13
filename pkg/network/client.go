@@ -20,6 +20,11 @@ func SetSkipTLSVerify(skip bool) {
 	skipTLSVerify.Store(skip)
 }
 
+// SkipTLSVerify returns the value of SetSkipTLSVerify.
+func SkipTLSVerify() bool {
+	return skipTLSVerify.Load()
+}
+
 // NewHTTPClient returns a pre-configured HTTP client suitable for downloads
 // or general API usage. It sets connect and TLS timeouts to prevent hanging
 // on broken connections while leaving the response body read timeout unlimited

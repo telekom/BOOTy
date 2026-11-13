@@ -15,7 +15,11 @@ import (
 
 // NewHTTPClient trusts the CA_BUNDLE_FILE roots of trust.LoadFile.
 func TestNewHTTPClientTrustsCABundle(t *testing.T) {
-	t.Cleanup(trust.Reset)
+	oldSkip := SkipTLSVerify()
+	t.Cleanup(func() {
+		trust.Reset()
+		SetSkipTLSVerify(oldSkip)
+	})
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
