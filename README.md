@@ -510,6 +510,7 @@ root is mounted.
 | `SECURE_ERASE` | `false` | Use NVMe format / ATA secure erase instead of partition wipe |
 | `INSECURE_TRANSPORT` | `false` | Allow insecure HTTP connections. Preset by `CAPRF_LEGACY_COMPAT` |
 | `SKIP_TLS_VERIFY` | `false` | Skip TLS certificate checks for CAPRF callbacks, the connectivity check and images, like `curl --insecure`. Never for `TOKEN_URL`. Preset by `CAPRF_LEGACY_COMPAT` |
+| `CA_BUNDLE_FILE` | — | PEM file in the ramdisk (for example `/deploy/ca-bundle.pem`) whose root certificates every BOOTy HTTPS client trusts in addition to the system roots. An unreadable or invalid file fails the start |
 | `EXPORT_VARS` | `false` | Export every `/deploy/vars` entry to the environment, like `source vars`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `PARTITION_LAYOUT` | — | Custom partition layout specification; data mountpoints such as `/var` or `/home` are seeded from the image root with ACLs and file capabilities, `mountOptions` go to `/etc/fstab` |
 | `PARTITION_LAYOUT_URL` | — | HTTPS URL of the partition layout JSON; `PARTITION_LAYOUT` overrides it |
@@ -1734,6 +1735,7 @@ vrnetlab topologies and the test levels.
 │   ├── telemetry/              # Telemetry models and collectors
 │   ├── tpm/                    # TPM/TPM2 detection, PCR reading, attestation
 │   │   └── cryptenroll/       # systemd-cryptenroll integration for TPM2 LUKS unlock
+│   ├── trust/                  # TLS root pool: system roots plus CA_BUNDLE_FILE
 │   ├── utils/                  # Cmdline parsing, helpers
 │   └── ux/                     # ASCII art & system info display
 ├── test/e2e/                   # E2E tests (ContainerLab + vrnetlab + KVM)

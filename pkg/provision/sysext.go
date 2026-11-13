@@ -29,7 +29,23 @@ const (
 	maxSysextCatalogBytes = 1024 * 1024
 )
 
-var sysextHTTPClient = network.NewHTTPClient(30 * time.Minute)
+var sysextHTTPClient = newSysextHTTPClient()
+
+// newSysextHTTPClient verifies TLS also with SKIP_TLS_VERIFY, as the client
+// built at program start did before.
+func newSysextHTTPClient() *http.Client {
+	c := network.NewHTTPClient(30 * time.Minute)
+	if t, ok := c.Transport.(*http.Transport); ok {
+		t.TLSClientConfig.InsecureSkipVerify = false
+	}
+	return c
+}
+
+// RefreshHTTPClients rebuilds the sysext download client so it trusts the
+// CA_BUNDLE_FILE roots.
+func RefreshHTTPClients() {
+	sysextHTTPClient = newSysextHTTPClient()
+}
 
 var sysextHTTPRetryPolicy = RetryPolicy{
 	MaxRetries:   3,

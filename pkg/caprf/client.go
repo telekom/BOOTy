@@ -32,6 +32,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/timesync"
+	"github.com/telekom/BOOTy/pkg/trust"
 )
 
 // Client communicates with the CAPRF provisioning server.
@@ -74,6 +75,11 @@ func New(varsPath string) (*Client, error) {
 		if err := exportVars(varsPath); err != nil {
 			return nil, fmt.Errorf("export vars: %w", err)
 		}
+	}
+
+	// Before the first HTTPS client: the CAPRF callbacks need the roots.
+	if err := trust.LoadFile(cfg.Transport.CABundleFile); err != nil {
+		return nil, fmt.Errorf("CA_BUNDLE_FILE: %w", err)
 	}
 
 	c := &Client{
@@ -1019,6 +1025,7 @@ func newHTTPClient(timeout time.Duration, skipTLSVerify bool) *http.Client {
 			Proxy: http.ProxyFromEnvironment,
 			TLSClientConfig: &tls.Config{
 				MinVersion:         tls.VersionTLS12,
+				RootCAs:            trust.Roots(),
 				InsecureSkipVerify: skipTLSVerify, //nolint:gosec // opt-in legacy CAPRF parity (curl --insecure)
 			},
 		},
@@ -1284,6 +1291,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"MOK_PASSWORD":                &cfg.Provision.SecureBoot.MOKPassword,
 		"TOKEN_URL":                   &cfg.Transport.TokenURL,
 		"TOKEN_ALGORITHM":             &cfg.Transport.TokenAlgorithm,
+		"CA_BUNDLE_FILE":              &cfg.Transport.CABundleFile,
 		"NVME_NAMESPACES":             &cfg.Provision.Disk.NVMeNamespaces,
 		"SYSEXT_DEFAULT_MODE":         &cfg.Provision.Sysext.DefaultMode,
 		"SYSEXT_CATALOG_DIR":          &cfg.Provision.Sysext.CatalogDir,

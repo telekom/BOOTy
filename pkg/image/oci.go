@@ -2,8 +2,10 @@ package image
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -11,6 +13,8 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
+
+	"github.com/telekom/BOOTy/pkg/trust"
 )
 
 // SystemdSysextMediaType is the OCI layer media type expected for raw
@@ -108,7 +112,7 @@ func selectOCIImageLayer(ctx context.Context, reference string) (v1.Image, v1.La
 		return nil, nil, fmt.Errorf("parse OCI reference %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
 
-	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
+	img, err := remote.Image(ref, RemoteOptions(ctx)...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("pull OCI image %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
@@ -185,7 +189,7 @@ func FetchOCILayerByMediaType(ctx context.Context, reference string, mediaTypes 
 		return nil, fmt.Errorf("parse OCI reference %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
 
-	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
+	img, err := remote.Image(ref, RemoteOptions(ctx)...)
 	if err != nil {
 		return nil, fmt.Errorf("pull OCI image %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
 	}
@@ -259,4 +263,27 @@ func TrimOCIScheme(url string) string {
 		return url[len(ociSchemePrefix):]
 	}
 	return url
+}
+
+// RemoteOptions are the registry options of every OCI pull: the Docker
+// keychain, ctx and ociTransport.
+func RemoteOptions(ctx context.Context) []remote.Option {
+	return []remote.Option{
+		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		remote.WithContext(ctx),
+		remote.WithTransport(ociTransport()),
+	}
+}
+
+// ociTransport is remote.DefaultTransport, with CA_BUNDLE_FILE trusting its
+// roots in addition to the system roots.
+func ociTransport() http.RoundTripper {
+	roots := trust.Roots()
+	t, ok := remote.DefaultTransport.(*http.Transport)
+	if roots == nil || !ok {
+		return remote.DefaultTransport
+	}
+	t = t.Clone()
+	t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+	return t
 }

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"github.com/telekom/BOOTy/pkg/trust"
 )
 
 var skipTLSVerify atomic.Bool
@@ -21,7 +23,8 @@ func SetSkipTLSVerify(skip bool) {
 // NewHTTPClient returns a pre-configured HTTP client suitable for downloads
 // or general API usage. It sets connect and TLS timeouts to prevent hanging
 // on broken connections while leaving the response body read timeout unlimited
-// unless a specific client-level timeout is provided.
+// unless a specific client-level timeout is provided. It trusts the system
+// roots plus the CA_BUNDLE_FILE roots (trust.LoadFile).
 func NewHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
@@ -29,6 +32,7 @@ func NewHTTPClient(timeout time.Duration) *http.Client {
 			Proxy: http.ProxyFromEnvironment,
 			TLSClientConfig: &tls.Config{
 				MinVersion:         tls.VersionTLS12,
+				RootCAs:            trust.Roots(),
 				InsecureSkipVerify: skipTLSVerify.Load(), //nolint:gosec // opt-in legacy CAPRF parity (curl --insecure)
 			},
 			DialContext: (&net.Dialer{
