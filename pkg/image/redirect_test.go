@@ -61,11 +61,11 @@ func TestImageFollowRedirects(t *testing.T) {
 	if n := redirectHits.Load(); n != 1 {
 		t.Fatalf("refused: redirector hits = %d, want 1 (no retry)", n)
 	}
-	if _, err := probeURL(ctx, redirector.URL); !errors.Is(err, ErrRedirectRefused) {
-		t.Fatalf("refused: probe = %v, want ErrRedirectRefused", err)
+	if _, err := probeURL(ctx, redirector.URL); !errors.Is(err, ErrRedirectRefused) || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("refused: probe = %v, want ErrRedirectRefused without the query", err)
 	}
-	if _, err := downloadToTemp(ctx, redirector.URL, "sig-*"); !errors.Is(err, ErrRedirectRefused) {
-		t.Fatalf("refused: signature download = %v, want ErrRedirectRefused", err)
+	if _, err := downloadToTemp(ctx, redirector.URL, "sig-*"); !errors.Is(err, ErrRedirectRefused) || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("refused: signature download = %v, want ErrRedirectRefused without the query", err)
 	}
 	if n := targetHits.Load(); n != 0 {
 		t.Fatalf("refused: target hits = %d, want 0", n)

@@ -55,17 +55,40 @@ func SetFollowRedirects(follow bool) {
 // with IMAGE_FOLLOW_REDIRECTS=false.
 var ErrRedirectRefused = errors.New("redirect refused (IMAGE_FOLLOW_REDIRECTS=false)")
 
+// redirectRefusedError carries the status and the redacted location.
+type redirectRefusedError struct {
+	status   int
+	location string
+}
+
+func (e *redirectRefusedError) Error() string {
+	return fmt.Sprintf("%s: status %d to %s", ErrRedirectRefused, e.status, e.location)
+}
+
+func (e *redirectRefusedError) Unwrap() error { return ErrRedirectRefused }
+
+// withoutRedirectURL returns the redirectRefusedError in err without the
+// *url.Error around it: net/http puts the raw Location, query string
+// included, into that error.
+func withoutRedirectURL(err error) error {
+	var rerr *redirectRefusedError
+	if errors.As(err, &rerr) {
+		return rerr
+	}
+	return err
+}
+
 // newRedirectPolicyClient is network.NewHTTPClient(0) that refuses redirects
 // with IMAGE_FOLLOW_REDIRECTS=false.
 func newRedirectPolicyClient() *http.Client {
 	c := network.NewHTTPClient(0)
 	if !followRedirects.Load() {
 		c.CheckRedirect = func(req *http.Request, _ []*http.Request) error {
-			status := 0
+			rerr := &redirectRefusedError{location: RedactURL(req.URL.String())}
 			if req.Response != nil {
-				status = req.Response.StatusCode
+				rerr.status = req.Response.StatusCode
 			}
-			return fmt.Errorf("%w: status %d to %s", ErrRedirectRefused, status, RedactURL(req.URL.String()))
+			return rerr
 		}
 	}
 	return c
@@ -448,22 +471,17 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 		}
 
 		resp, err := imageHTTPClient.Do(req) //nolint:gosec // URL from trusted config
-		if errors.Is(err, ErrRedirectRefused) {
+		if err = withoutRedirectURL(err); errors.Is(err, ErrRedirectRefused) {
 			cancel()
-			return nil, fmt.Errorf("fetching image %s: %w", redactedURL, &redactedSourceError{rawSource: url, err: err})
+			return nil, fmt.Errorf("fetching image %s: %w", redactedURL, err)
 		}
 		if err != nil {
 			cancel()
 			redactedErr := &redactedSourceError{rawSource: url, err: timesync.ExplainCertTime(err, time.Time{})}
 			lastErr = fmt.Errorf("fetching image %s (attempt %d/%d): %w", redactedURL, attempt+1, maxRetries, redactedErr)
 			slog.Warn("HTTP request failed, retrying", "attempt", attempt+1, "error", redactedErr, "backoff", backoff)
-			if attempt < maxRetries-1 {
-				select {
-				case <-ctx.Done():
-					return nil, fmt.Errorf("context canceled: %w", ctx.Err())
-				case <-time.After(backoff):
-				}
-				backoff *= 2
+			if err := retryWait(ctx, attempt, maxRetries, &backoff); err != nil {
+				return nil, err
 			}
 			continue
 		}
@@ -481,19 +499,27 @@ func httpGetWithRetry(ctx context.Context, url string) (io.ReadCloser, error) {
 		if resp.StatusCode >= 500 {
 			lastErr = fmt.Errorf("server error %d for %s (attempt %d/%d)", resp.StatusCode, redactedURL, attempt+1, maxRetries)
 			slog.Warn("HTTP server error, retrying", "attempt", attempt+1, "status", resp.StatusCode, "backoff", backoff)
-			if attempt < maxRetries-1 {
-				select {
-				case <-ctx.Done():
-					return nil, fmt.Errorf("context canceled: %w", ctx.Err())
-				case <-time.After(backoff):
-				}
-				backoff *= 2
+			if err := retryWait(ctx, attempt, maxRetries, &backoff); err != nil {
+				return nil, err
 			}
 			continue
 		}
 		return nil, fmt.Errorf("unexpected status %d for %s", resp.StatusCode, redactedURL)
 	}
 	return nil, lastErr
+}
+
+// retryWait waits backoff (waitBackoff) and doubles it, except after the
+// last attempt.
+func retryWait(ctx context.Context, attempt, maxRetries int, backoff *time.Duration) error {
+	if attempt >= maxRetries-1 {
+		return nil
+	}
+	if err := waitBackoff(ctx, *backoff); err != nil {
+		return err
+	}
+	*backoff *= 2
+	return nil
 }
 
 // imageIdleReadTimeout is how long an image download may deliver no data
