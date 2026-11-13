@@ -13,6 +13,7 @@ import (
 
 	ociname "github.com/google/go-containerregistry/pkg/name"
 	imageutil "github.com/telekom/BOOTy/pkg/image"
+	"github.com/telekom/BOOTy/pkg/logging"
 	"github.com/telekom/BOOTy/pkg/network"
 	"github.com/telekom/BOOTy/pkg/network/frrconf"
 	"github.com/telekom/BOOTy/pkg/network/lldp"
@@ -108,6 +109,7 @@ func (c *Config) Validate() error {
 		errs = append(errs, err.Error())
 	}
 	errs = append(errs, validateTokenRenewal(&c.Transport)...)
+	errs = append(errs, validateLogging(&c.Transport)...)
 	errs = append(errs, validateTime(&c.Time)...)
 
 	if len(errs) > 0 {
@@ -1276,6 +1278,18 @@ func validateDiskSettle(d *DiskConfig) []string {
 		return []string{fmt.Sprintf("provision.disk.settleTimeoutSec must be between 0 and %d, got %d", MaxDiskSettleTimeoutSec, *t)}
 	}
 	return nil
+}
+
+// validateLogging checks LOG_LEVEL and LOG_FORMAT.
+func validateLogging(t *TransportConfig) []string {
+	var errs []string
+	if _, err := logging.ParseLevel(t.LogLevel); err != nil {
+		errs = append(errs, "transport.logLevel (LOG_LEVEL): "+err.Error())
+	}
+	if _, err := logging.ParseFormat(t.LogFormat); err != nil {
+		errs = append(errs, "transport.logFormat (LOG_FORMAT): "+err.Error())
+	}
+	return errs
 }
 
 // MaxTokenRenewRetries bounds TOKEN_RENEW_RETRIES.

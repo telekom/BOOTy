@@ -65,3 +65,32 @@ func TestPairSyncCopiesToPeerDirectory(t *testing.T) {
 		t.Fatalf("marker after synchronization: %v", err)
 	}
 }
+
+func TestSetupLogging(t *testing.T) {
+	origLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(origLogger); slog.SetLogLoggerLevel(slog.LevelInfo) })
+
+	var buf bytes.Buffer
+	if err := setupLogging(&buf, "debug", "json"); err != nil {
+		t.Fatal(err)
+	}
+	slog.Debug("synchronizing EFI system partition", "source", "/boot/efi")
+	if out := buf.String(); !strings.Contains(out, `"level":"DEBUG"`) || !strings.Contains(out, `"source":"/boot/efi"`) {
+		t.Fatalf("json output = %q", out)
+	}
+
+	// text keeps the default logger and only changes its level.
+	slog.SetDefault(origLogger)
+	if err := setupLogging(&buf, "warn", "text"); err != nil {
+		t.Fatal(err)
+	}
+	if slog.Default().Enabled(t.Context(), slog.LevelInfo) || !slog.Default().Enabled(t.Context(), slog.LevelWarn) {
+		t.Fatal("text with warn: info enabled or warn disabled")
+	}
+
+	for _, bad := range [][2]string{{"trace", "text"}, {"info", "console"}} {
+		if err := setupLogging(&buf, bad[0], bad[1]); err == nil {
+			t.Errorf("setupLogging(%q, %q) accepted an invalid value", bad[0], bad[1])
+		}
+	}
+}

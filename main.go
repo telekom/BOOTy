@@ -110,13 +110,15 @@ type provisionHandoffOps struct {
 }
 
 func main() {
+	// LOG_LEVEL and LOG_FORMAT from the kernel command line; the vars file
+	// can override them (setupLoggingFromVars).
+	setupLogging(os.Getenv("LOG_LEVEL"), os.Getenv("LOG_FORMAT"))
 	// "booty lldp ..." is the LLDP diagnosis command of the rescue shell.
 	// PID 1 is the agent: the kernel passes unknown command line words to
 	// init as arguments.
 	if len(os.Args) > 1 && os.Args[1] == "lldp" && os.Getpid() != 1 {
 		os.Exit(lldp.CLI(os.Args[2:], os.Stdout, os.Stderr, lldp.CLIDeps{NICs: network.DetectPhysicalNICsContext}))
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
 	// Ensure PATH includes standard binary directories. As PID 1 in an
 	// initramfs the kernel default may only contain /sbin:/bin; make sure
@@ -466,6 +468,7 @@ func doKexecExecute(stopNetwork func()) error {
 
 func runCAPRF(ctx context.Context) {
 	startOOBStatus(ctx, nil)
+	setupLoggingFromVars(varsPath)
 	client, err := caprf.New(varsPath)
 	if err != nil {
 		slog.Error("failed to create CAPRF client", "error", err)
@@ -518,8 +521,7 @@ func runCAPRF(ctx context.Context) {
 	// Wire remote log shipping.
 	if cfg.Transport.LogURL != "" {
 		originalSlogHandler = slog.Default().Handler()
-		remoteInner := slog.NewTextHandler(os.Stderr, nil)
-		caprfRemoteLogHandler = caprf.NewRemoteHandler(client, remoteInner, slog.LevelInfo, 8192)
+		caprfRemoteLogHandler = caprf.NewRemoteHandler(client, originalSlogHandler, &logLevel, 8192)
 		defer flushObservability()
 		slog.SetDefault(slog.New(caprfRemoteLogHandler))
 	}

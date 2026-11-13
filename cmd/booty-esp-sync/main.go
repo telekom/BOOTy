@@ -3,10 +3,12 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -15,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/telekom/BOOTy/pkg/espsync"
+	"github.com/telekom/BOOTy/pkg/logging"
 	"golang.org/x/sys/unix"
 )
 
@@ -28,7 +31,12 @@ func main() {
 	lockPath := flag.String("lock", "/run/lock/booty-esp-sync.lock", "synchronization lock")
 	marker := flag.String("marker", "/run/booty/esp-sync.ready", "optional marker written after a successful synchronization")
 	once := flag.Bool("once", false, "synchronize once and exit")
+	logLevel := flag.String("log-level", cmp.Or(os.Getenv("LOG_LEVEL"), "info"), "log level: debug, info, warn or error (env LOG_LEVEL)")
+	logFormat := flag.String("log-format", cmp.Or(os.Getenv("LOG_FORMAT"), logging.FormatText), "log format: text or json (env LOG_FORMAT)")
 	flag.Parse()
+	if err := setupLogging(os.Stderr, *logLevel, *logFormat); err != nil {
+		fatal(err)
+	}
 	if (*firstPartUUID == "") != (*secondPartUUID == "") {
 		fatal(errors.New("partuuid-a and partuuid-b must be provided together"))
 	}
@@ -189,4 +197,30 @@ func mountpointOrDestination(mounted bool, mountpoint, destination string) strin
 	}
 	return destination
 }
-func fatal(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
+
+// setupLogging sets the level of the default logger. text keeps the line
+// format of the Go log package ("2006/01/02 15:04:05 INFO msg key=value"),
+// which journald stores; json switches to one JSON object per line.
+func setupLogging(w io.Writer, level, format string) error {
+	l, err := logging.ParseLevel(level)
+	if err != nil {
+		return err
+	}
+	f, err := logging.ParseFormat(format)
+	if err != nil {
+		return err
+	}
+	if f == logging.FormatJSON {
+		slog.SetDefault(slog.New(logging.NewHandler(w, f, l)))
+		return nil
+	}
+	slog.SetLogLoggerLevel(l)
+	return nil
+}
+
+// fatal logs err at error level and exits with 1. systemd restarts the
+// service (Restart=on-failure).
+func fatal(err error) {
+	slog.Error("booty-esp-sync failed", "error", err)
+	os.Exit(1)
+}

@@ -162,10 +162,11 @@ func isShellIdentifier(s string) bool {
 	return true
 }
 
-// FailureConfig reads only CAPRF_LEGACY_COMPAT and FAILURE_ACTION from the
-// vars file and returns a config with the resulting FailureAction. It also
-// works when the rest of the file does not parse, so BOOTy can still wait
-// instead of rebooting after a vars file error.
+// FailureConfig reads only CAPRF_LEGACY_COMPAT, FAILURE_ACTION, LOG_LEVEL
+// and LOG_FORMAT from the vars file and returns a config with the resulting
+// FailureAction and log settings. It also works when the rest of the file
+// does not parse, so BOOTy can still wait instead of rebooting after a vars
+// file error, and sets up logging before the full parse.
 func FailureConfig(varsPath string) *config.MachineConfig {
 	cfg := &config.MachineConfig{}
 	f, err := os.Open(varsPath) //nolint:gosec // trusted path from ISO
@@ -190,6 +191,10 @@ func FailureConfig(varsPath string) *config.MachineConfig {
 					value = ""
 				}
 				cfg.FailureAction = strings.ToLower(strings.TrimSpace(value))
+			case "LOG_LEVEL":
+				cfg.Transport.LogLevel = value
+			case "LOG_FORMAT":
+				cfg.Transport.LogFormat = value
 			}
 		}
 		if err != nil {
@@ -1243,6 +1248,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"MODE":                        &cfg.Mode,
 		"OS_FAMILY":                   &cfg.OSFamily,
 		"LOG_URL":                     &cfg.Transport.LogURL,
+		"LOG_LEVEL":                   &cfg.Transport.LogLevel,
+		"LOG_FORMAT":                  &cfg.Transport.LogFormat,
 		"INIT_URL":                    &cfg.Transport.InitURL,
 		"ERROR_URL":                   &cfg.Transport.ErrorURL,
 		"SUCCESS_URL":                 &cfg.Transport.SuccessURL,
