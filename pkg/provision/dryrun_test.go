@@ -27,6 +27,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/health"
+	"github.com/telekom/BOOTy/pkg/image"
 )
 
 type dryRunProvider struct {
@@ -406,6 +407,29 @@ func TestDryRunImageReachability(t *testing.T) {
 	result := o.dryRunImageReachability(context.Background())
 	if result.Status != DryRunPass {
 		t.Errorf("got %s, want pass: %s", result.Status, result.Message)
+	}
+}
+
+// The dry-run probe refuses a redirect with IMAGE_FOLLOW_REDIRECTS=false,
+// like the image download, and does not quote the location query.
+func TestDryRunImageReachabilityRefusesRedirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/elsewhere.img?sig=secret", http.StatusFound)
+	}))
+	defer srv.Close()
+	t.Cleanup(func() { image.SetFollowRedirects(true) })
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/test.img"}
+	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
+
+	image.SetFollowRedirects(false)
+	result := o.dryRunImageReachability(context.Background())
+	if result.Status != DryRunFail || !strings.Contains(result.Message, "IMAGE_FOLLOW_REDIRECTS=false") {
+		t.Fatalf("got %s %q, want a refused redirect", result.Status, result.Message)
+	}
+	if strings.Contains(result.Message, "secret") {
+		t.Errorf("message %q quotes the redirect query", result.Message)
 	}
 }
 

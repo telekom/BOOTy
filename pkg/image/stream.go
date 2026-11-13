@@ -33,7 +33,7 @@ var imageHTTPClient = newImageHTTPClient()
 // IMAGE_PARALLEL_RANGES (at most 16) reuses its connections instead of
 // dialing one per range.
 func newImageHTTPClient() *http.Client {
-	c := newRedirectPolicyClient()
+	c := NewRedirectPolicyClient(0)
 	if t, ok := c.Transport.(*http.Transport); ok {
 		t.MaxIdleConnsPerHost = 17
 	}
@@ -78,10 +78,10 @@ func withoutRedirectURL(err error) error {
 	return err
 }
 
-// newRedirectPolicyClient is network.NewHTTPClient(0) that refuses redirects
-// with IMAGE_FOLLOW_REDIRECTS=false.
-func newRedirectPolicyClient() *http.Client {
-	c := network.NewHTTPClient(0)
+// NewRedirectPolicyClient is network.NewHTTPClient(timeout) that refuses
+// redirects with IMAGE_FOLLOW_REDIRECTS=false.
+func NewRedirectPolicyClient(timeout time.Duration) *http.Client {
+	c := network.NewHTTPClient(timeout)
 	if !followRedirects.Load() {
 		c.CheckRedirect = func(req *http.Request, _ []*http.Request) error {
 			rerr := &redirectRefusedError{location: RedactURL(req.URL.String())}
@@ -99,7 +99,7 @@ func newRedirectPolicyClient() *http.Client {
 // environment.
 func RefreshHTTPClients() {
 	imageHTTPClient = newImageHTTPClient()
-	gpgHTTPClient = newRedirectPolicyClient()
+	gpgHTTPClient = NewRedirectPolicyClient(0)
 }
 
 // StreamOpts are optional parameters for Stream.
