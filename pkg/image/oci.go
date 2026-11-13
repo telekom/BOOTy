@@ -3,10 +3,12 @@ package image
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -275,15 +277,28 @@ func RemoteOptions(ctx context.Context) []remote.Option {
 	}
 }
 
+// ociTransportCache is the transport of ociTransport for one roots pool, so
+// that every OCI pull reuses its connections.
+var ociTransportCache struct {
+	sync.Mutex
+	roots *x509.CertPool
+	t     *http.Transport
+}
+
 // ociTransport is remote.DefaultTransport, with CA_BUNDLE_FILE trusting its
 // roots in addition to the system roots.
 func ociTransport() http.RoundTripper {
 	roots := trust.Roots()
-	t, ok := remote.DefaultTransport.(*http.Transport)
+	base, ok := remote.DefaultTransport.(*http.Transport)
 	if roots == nil || !ok {
 		return remote.DefaultTransport
 	}
-	t = t.Clone()
-	t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
-	return t
+	ociTransportCache.Lock()
+	defer ociTransportCache.Unlock()
+	if ociTransportCache.roots != roots {
+		t := base.Clone()
+		t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+		ociTransportCache.roots, ociTransportCache.t = roots, t
+	}
+	return ociTransportCache.t
 }

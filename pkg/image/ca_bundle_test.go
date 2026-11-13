@@ -25,8 +25,10 @@ func TestCABundleImageClients(t *testing.T) {
 	defer srv.Close()
 	oldBackoff := retryBackoffBase
 	retryBackoffBase = time.Millisecond
+	oldSkip := network.SkipTLSVerify()
 	t.Cleanup(func() {
 		retryBackoffBase = oldBackoff
+		network.SetSkipTLSVerify(oldSkip)
 		trust.Reset()
 		RefreshHTTPClients()
 	})
@@ -59,6 +61,9 @@ func TestCABundleImageClients(t *testing.T) {
 		t.Fatalf("probe with the CA bundle = %v", err)
 	}
 
+	if ociTransport() != ociTransport() {
+		t.Error("ociTransport() is not cached for the same roots")
+	}
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, http.NoBody)
 	resp, err := ociTransport().RoundTrip(req)
 	if err != nil {
