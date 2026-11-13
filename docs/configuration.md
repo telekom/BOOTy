@@ -150,8 +150,8 @@ destinations. `LOG_URL` and `LOG_FLUSH_TIMEOUT_SEC` are in
 
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
-| `LOG_LEVEL` | (unset) (`info`) | `debug`, `info`, `warn`, `error`, any letter case | Lowest level that BOOTy logs on the console and ships to `LOG_URL`. Also read from the process environment (kernel command line) at start; the vars entry wins. An invalid vars value stops the run; an invalid environment value logs a warning and uses `info`. YAML `transport.logLevel`. |
-| `LOG_FORMAT` | (unset) (`text`) | `text`, `json`, any letter case | Console line format: slog `key=value` text or one JSON object per line. `LOG_URL` lines keep their `[LEVEL] message key=value` form. Also read from the process environment, like `LOG_LEVEL`. YAML `transport.logFormat`. |
+| `LOG_LEVEL` | (unset) (`info`) | `debug`, `info`, `warn` (or `warning`), `error`, any letter case | Lowest level that BOOTy logs on the console and ships to `LOG_URL`. Also read from the process environment (kernel command line) at start; the vars entry wins. An invalid value logs `ignoring log setting` and uses `info`; it does not stop the run. YAML `transport.logLevel`. |
+| `LOG_FORMAT` | (unset) (`text`) | `text`, `json`, any letter case | Console line format: slog `key=value` text or one JSON object per line. `LOG_URL` lines keep their `[LEVEL] message key=value` form. Also read from the process environment, like `LOG_LEVEL`; an invalid value uses `text`. Output that bypasses slog (download progress, `dd`, FRR start, rescue messages) stays plain text. YAML `transport.logFormat`. |
 | `DEBUG_URL` | (unset) | URL | BOOTy sends the kernel ring buffer (`dmesg`, redacted) to this URL once, after the vars file is read. A failure is logged at warning level. |
 
 ## Time sync

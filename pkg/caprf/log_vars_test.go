@@ -15,9 +15,11 @@ func TestParseVarsLogKeys(t *testing.T) {
 	if cfg.Transport.LogLevel != "debug" || cfg.Transport.LogFormat != "JSON" {
 		t.Fatalf("LogLevel = %q, LogFormat = %q", cfg.Transport.LogLevel, cfg.Transport.LogFormat)
 	}
+	// An invalid value does not stop the run: setupLogging falls back to
+	// the default and logs a warning.
 	for _, line := range []string{"LOG_LEVEL=trace\n", "LOG_FORMAT=console\n"} {
-		if _, err := ParseVars(strings.NewReader(line)); err == nil {
-			t.Errorf("ParseVars(%q) accepted an invalid value", line)
+		if _, err := ParseVars(strings.NewReader(line)); err != nil {
+			t.Errorf("ParseVars(%q) = %v, want no error", line, err)
 		}
 	}
 }

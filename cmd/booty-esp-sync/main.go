@@ -35,7 +35,8 @@ func main() {
 	logFormat := flag.String("log-format", cmp.Or(os.Getenv("LOG_FORMAT"), logging.FormatText), "log format: text or json (env LOG_FORMAT)")
 	flag.Parse()
 	if err := setupLogging(os.Stderr, *logLevel, *logFormat); err != nil {
-		fatal(err)
+		// Not fatal: systemd would restart the service in a loop.
+		slog.Warn("ignoring log setting", "error", err)
 	}
 	if (*firstPartUUID == "") != (*secondPartUUID == "") {
 		fatal(errors.New("partuuid-a and partuuid-b must be provided together"))
@@ -200,22 +201,17 @@ func mountpointOrDestination(mounted bool, mountpoint, destination string) strin
 
 // setupLogging sets the level of the default logger. text keeps the line
 // format of the Go log package ("2006/01/02 15:04:05 INFO msg key=value"),
-// which journald stores; json switches to one JSON object per line.
+// which journald stores; json switches to one JSON object per line. An
+// invalid value uses the default (info, text) and is returned as an error.
 func setupLogging(w io.Writer, level, format string) error {
-	l, err := logging.ParseLevel(level)
-	if err != nil {
-		return err
-	}
-	f, err := logging.ParseFormat(format)
-	if err != nil {
-		return err
-	}
+	l, levelErr := logging.ParseLevel(level)
+	f, formatErr := logging.ParseFormat(format)
 	if f == logging.FormatJSON {
 		slog.SetDefault(slog.New(logging.NewHandler(w, f, l)))
-		return nil
+	} else {
+		slog.SetLogLoggerLevel(l)
 	}
-	slog.SetLogLoggerLevel(l)
-	return nil
+	return errors.Join(levelErr, formatErr)
 }
 
 // fatal logs err at error level and exits with 1. systemd restarts the

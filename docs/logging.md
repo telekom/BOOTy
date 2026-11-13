@@ -13,7 +13,7 @@ the code by level and package; a unit test keeps it in sync with the code.
 | `booty lldp neighbors\|status` | rescue shell of the ramdisk | `LOG_LEVEL` environment variable | `LOG_FORMAT` environment variable; the command output itself is text or `--json` | `info`, `text` |
 | `booty-esp-sync` | `booty-esp-sync.service` in the installed OS, when the ESPs are mirrored | `--log-level` flag, else the `LOG_LEVEL` environment variable | `--log-format` flag, else the `LOG_FORMAT` environment variable | `info`, `text` |
 
-Levels: `debug`, `info`, `warn`, `error`, in any letter case. Each level
+Levels: `debug`, `info`, `warn` (alias `warning`), `error`, in any letter case. Each level
 includes the levels above it: `warn` logs `WARN` and `ERROR` lines. Formats:
 `text` and `json`.
 
@@ -31,9 +31,9 @@ BOOTy reads the settings twice:
    from the first log line on. An invalid value logs
    `ignoring log setting` (WARN) and uses the default.
 2. Before the full parse of `/deploy/vars`. A `LOG_LEVEL` or `LOG_FORMAT`
-   entry there wins over the environment. The full parse then validates the
-   entries: an invalid value is a vars error and stops the run like every
-   other invalid key (see [Vars file format](configuration.md#vars-file-format)).
+   entry there wins over the environment. An invalid value logs
+   `ignoring log setting` (WARN) and uses the default for that setting; it
+   never stops the run.
 
 ```bash
 # /deploy/vars
@@ -43,7 +43,12 @@ LOG_FORMAT=json
 
 `LOG_LEVEL` applies to the console and to `LOG_URL`. Loggers that packages
 keep (`component=dhcp`, `component=provision`, ...) share the level, so a
-level from the vars file reaches them too. The vars keys are listed in
+level from the vars file reaches them too. A `LOG_FORMAT` from the vars
+file does not: the few loggers that BOOTy creates before it reads the vars
+file (the out-of-band status reporter, the block device watch) keep the
+format of the environment, so with `LOG_FORMAT=json` only in the vars file
+their lines stay text. Set `LOG_FORMAT` on the kernel command line for a
+console that is JSON from the first line. The vars keys are listed in
 [Configuration: Logging](configuration.md#logging).
 
 ### `booty-esp-sync`
@@ -60,9 +65,11 @@ Environment=LOG_FORMAT=json
 
 `text` keeps the line format of the Go `log` package:
 `2026/11/13 10:00:00 INFO synchronizing EFI system partition source=/boot/efi destination=/run/booty/esp-sync`.
-journald stores stderr. A fatal error logs `booty-esp-sync failed` (ERROR)
-and exits with 1; systemd restarts the service. An invalid flag or
-environment value is such a fatal error.
+journald stores stderr. An invalid level or format logs
+`ignoring log setting` (WARN) and uses the default, so a typo does not make
+systemd restart the service in a loop. A fatal error logs
+`booty-esp-sync failed` (ERROR) and exits with 1; systemd restarts the
+service.
 
 ## Destinations of the ramdisk agent
 
@@ -72,7 +79,8 @@ environment value is such a fatal error.
 | `LOG_URL` | every log line, one HTTP POST per line, in order | `LOG_LEVEL` | always `[LEVEL] message key=value ...`, independent of `LOG_FORMAT` |
 | `DEBUG_URL` | the kernel ring buffer, once, after the vars file is read | not leveled | plain text |
 | Active consoles (`/sys/class/tty/console/active`) | `BOOTY1` out-of-band status lines at each phase change, see `OOB_STATUS` | not leveled | fixed `BOOTY1 key=value` |
-| stdout | the start banner and the system summary (`ux.Captain`, `ux.SysInfo`) | not leveled | plain text |
+| stdout | the start banner and the system summary (`ux.Captain`, `ux.SysInfo`), and a screen clear (`ESC[2J`, `utils.ClearScreen`) | not leveled | plain text |
+| stdout, stderr | output that does not go through slog: the image download progress (`\rDownloading... N MB complete`, `pkg/image` `tickerProgress`, ended by an empty line in the stream and qcow2 paths), `dd status=progress` of the partition copy (A/B and partition images), the output of the FRR daemon start (`frrinit.sh`, `systemctl`), and the rescue mode messages (`SSH daemon started ...`, `Mounted ...`, `Auto-mounted N disk(s) ...`) | not leveled | plain text |
 
 `/dev/console` is the last `console=` of the kernel command line, so the
 log lines reach that one console: the serial console with
@@ -83,13 +91,25 @@ only kernel errors); `DEBUG_URL` gets the whole ring buffer, and BOOTy logs
 the kernel's Secure Boot and lockdown lines as `kernel security state`
 (INFO).
 
+With `LOG_FORMAT=json`, the console is not pure JSON: the lines in the two
+rows above, the kernel messages and the `BOOTY1` lines are plain text. A
+JSON consumer of the serial console must skip lines that are not JSON
+objects.
+
 `LOG_URL` details (buffer, drop order, flush before kexec, reboot or power
 off) are in [Configuration](configuration.md#caprf-endpoints-authentication-and-transport)
-(`LOG_URL`, `LOG_FLUSH_TIMEOUT_SEC`). With `LOG_URL`, BOOTy redacts secrets
-(attributes named like `token`, `password`, `secret`, `key`; JWTs, PEM keys,
-bearer tokens and URL credentials in the text) before the line reaches the
-console and the server. Without `LOG_URL` the console lines are not
-redacted by the handler; the debug dumps redact their own data.
+(`LOG_URL`, `LOG_FLUSH_TIMEOUT_SEC`).
+
+Redaction: the console handler redacts every log line from the first one
+on, with or without `LOG_URL`. It replaces the value of an attribute whose
+key (or group) names a secret (`token`, `password`, `secret`, `credential`,
+`authorization`, `private`, `session`, `auth`, `cert`, `key`, ...) with
+`[REDACTED]`, and removes JWTs, PEM private keys, LUKS key dumps,
+`Authorization` headers, bearer tokens, URL credentials and `password=`,
+`token:`-style values from the message and from every string or error
+value. The `LOG_URL` handler applies the same rules to the line it ships.
+Output that bypasses slog (the stdout and stderr rows above) is not
+redacted.
 
 The `pkg/logging` Kafka handler is not wired into any binary.
 
@@ -233,6 +253,13 @@ show one line per stage and per notable result:
 ### DEBUG
 
 Detail for diagnosis; not shipped at the default level.
+
+`LOG_LEVEL=debug` is chatty with GoBGP/EVPN: every route update, FDB and
+neighbor change is a line, and DHCP logs each packet. With `LOG_URL` each
+line is one HTTP POST to CAPRF. The buffer holds 8192 lines or 4 MiB; when
+it is full it drops the oldest DEBUG lines first, then INFO, so the WARN and
+ERROR lines survive, and `LOG_URL` gets a `BOOTY-LOG-001` line with the
+counts. Use debug for a diagnosis run, not as the fleet default.
 
 - DHCPv4 and DHCPv6 packets: every send and receive with the message type,
   `ciaddr` and wait, the bound lease (`addr`, `server`, `expire`), RELEASE,
@@ -389,7 +416,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 - `step made no progress within its budget, stopping the watchdog keepalive; the hardware resets the host`
 
-### WARN (367 messages)
+### WARN (373 messages)
 
 #### WARN `.`
 
@@ -443,6 +470,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 #### WARN `cmd/booty-esp-sync`
 
+- `ignoring log setting`
 - `peer EFI system partition is missing, the mirror is degraded; nothing to synchronize`
 - `unmount destination ESP`
 
@@ -476,7 +504,6 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 #### WARN `pkg/disk`
 
-- `<msg>`
 - `ATA security erase failed`
 - `block devices still changing, continuing`
 - `cannot list disks for discard`
@@ -484,7 +511,9 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `cannot parse lsblk output, wiping the disk only`
 - `cannot read removable attribute; treating as removable`
 - `cannot read the disk vendor for the secure erase method`
+- `cannot remove the member label, wipefs clears it`
 - `cannot unmount, leaving it`
+- `cannot zero the device edge`
 - `chroot bind rollback failed`
 - `chroot unmount failed`
 - `device state: cannot read /proc/partitions`
@@ -505,6 +534,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `mdev -s failed`
 - `partprobe failed, trying blockdev --rereadpt`
 - `secure erase failed, SECURE_ERASE_FALLBACK=wipe: wiping the disk instead; the data is not erased`
+- `sgdisk --zap-all failed, wipefs clears the partition table signatures`
 - `skipping removable media device`
 - `sync before partprobe failed`
 - `wipefs failed`
@@ -732,7 +762,6 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 #### WARN `pkg/provision`
 
-- `<action> failed, continuing because EFI_BOOT_ENTRY_REQUIRED=false`
 - `=== CONFIG DUMP ===`
 - `=== DEBUG DUMP END ===`
 - `=== DEBUG DUMP START ===`
@@ -751,6 +780,8 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `cannot list target disk partitions`
 - `cannot publish serial console artifact for CAPRF`
 - `cannot resolve the /boot fstab source on the target disk, keeping /boot on the root filesystem`
+- `create EFI boot entry failed, continuing because EFI_BOOT_ENTRY_REQUIRED=false`
+- `create mirror EFI boot entry failed, continuing because EFI_BOOT_ENTRY_REQUIRED=false`
 - `debug`
 - `debug command failed`
 - `debug env`
@@ -772,6 +803,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `invalid rescue mode, defaulting to reboot`
 - `marshal provisioning report`
 - `mellanox: cannot list PCI devices, skipping`
+- `mount efivarfs failed, continuing because EFI_BOOT_ENTRY_REQUIRED=false`
 - `nic firmware collection failed`
 - `no /boot/efi mountpoint found in partition layout; efi boot entry creation may be skipped`
 - `no /boot/grub on the root filesystem and no /boot entry in fstab`
@@ -779,6 +811,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `no serial console configured`
 - `provisioning report not written to the target`
 - `provisioning report: reporting the configured partition layout`
+- `remove EFI boot entries failed, continuing because EFI_BOOT_ENTRY_REQUIRED=false`
 - `reporting the reboot-required status failed, retrying`
 - `retrying step`
 - `root /etc/ not mounted, skipping DNS configuration`
@@ -848,11 +881,10 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `progress resumed, petting the watchdog again`
 - `watchdog keepalive failed`
 
-### INFO (458 messages)
+### INFO (464 messages)
 
 #### INFO `.`
 
-- `<name> replaces the netplan or frr.conf value`
 - `BGP hostname set`
 - `CAPRF mode active`
 - `CAPRF run complete`
@@ -885,7 +917,12 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `network.bgp.communityLists replaces the frr.conf community-lists`
 - `network.bgp.routeMaps replaces the frr.conf route-maps`
 - `network.bgp.sessions replaces the frr.conf sessions`
+- `network.blackholeRoutes replaces the netplan or frr.conf value`
 - `network.devices replaces the provisioner netplan files`
+- `network.emitLLDP replaces the netplan or frr.conf value`
+- `network.evpn.type5Networks replaces the netplan or frr.conf value`
+- `network.loopbackAddresses replaces the netplan or frr.conf value`
+- `network.noAcceptRA replaces the netplan or frr.conf value`
 - `no BootyLastResult UEFI variable: not a UEFI host`
 - `no EFI firmware, skipping kernel module`
 - `no IPMI interface found, using the underlay IP rules`
@@ -926,7 +963,6 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 #### INFO `pkg/disk`
 
-- `<msg>: tool not available`
 - `ATA secure erase`
 - `NVMe secure erase`
 - `RAID array created`
@@ -946,6 +982,8 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `block devices settled`
 - `block devices unchanged since they settled`
 - `blockdev --rereadpt succeeded`
+- `cannot remove the member label, wipefs clears it: tool not available`
+- `cannot zero the device edge: tool not available`
 - `checking filesystem`
 - `checking filesystem in preen mode`
 - `chroot binary not found, using syscall fallback`
@@ -981,6 +1019,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `selected disk by serial`
 - `selected mirror pair`
 - `setting up lvm`
+- `sgdisk --zap-all failed, wipefs clears the partition table signatures: tool not available`
 - `shrank filesystem for mirror metadata`
 - `skipping format for lvm pv partition`
 - `stopping RAID arrays`

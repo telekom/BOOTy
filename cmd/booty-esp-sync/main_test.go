@@ -88,9 +88,15 @@ func TestSetupLogging(t *testing.T) {
 		t.Fatal("text with warn: info enabled or warn disabled")
 	}
 
-	for _, bad := range [][2]string{{"trace", "text"}, {"info", "console"}} {
-		if err := setupLogging(&buf, bad[0], bad[1]); err == nil {
-			t.Errorf("setupLogging(%q, %q) accepted an invalid value", bad[0], bad[1])
-		}
+	// An invalid value falls back to info (not fatal: systemd would
+	// restart the service in a loop).
+	if err := setupLogging(&buf, "trace", "text"); err == nil {
+		t.Error("setupLogging accepted level trace")
+	}
+	if slog.Default().Enabled(t.Context(), slog.LevelDebug) || !slog.Default().Enabled(t.Context(), slog.LevelInfo) {
+		t.Fatal("invalid level did not fall back to info")
+	}
+	if err := setupLogging(&buf, "info", "console"); err == nil {
+		t.Error("setupLogging accepted format console")
 	}
 }
