@@ -113,6 +113,9 @@ func (c *Client) warnTransport() {
 	}
 	if config.BoolOr(c.cfg.Transport.SkipTLSVerify, false) {
 		c.log.Warn("tls certificate verification disabled, like curl --insecure in the legacy CAPRF provisioner")
+		if c.cfg.Transport.CABundleFile != "" {
+			c.log.Warn("CA_BUNDLE_FILE has no effect on the CAPRF callbacks, the connectivity check and image downloads: SKIP_TLS_VERIFY=true skips their certificate check")
+		}
 	}
 }
 

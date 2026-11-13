@@ -1,8 +1,10 @@
 package caprf
 
 import (
+	"bytes"
 	"context"
 	"encoding/pem"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -59,5 +61,29 @@ func TestNewCABundleFile(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("server got %d requests, want 1", calls)
+	}
+}
+
+// SKIP_TLS_VERIFY=true makes CA_BUNDLE_FILE useless for the clients that
+// skip the check: warnTransport says so once.
+func TestWarnTransportCABundleWithSkipTLSVerify(t *testing.T) {
+	for _, tt := range []struct {
+		skip   bool
+		bundle string
+		want   int
+	}{
+		{skip: true, bundle: "/ca.pem", want: 1},
+		{skip: true, bundle: "", want: 0},
+		{skip: false, bundle: "/ca.pem", want: 0},
+	} {
+		var buf bytes.Buffer
+		cfg := &config.MachineConfig{}
+		cfg.Transport.SkipTLSVerify = &tt.skip
+		cfg.Transport.CABundleFile = tt.bundle
+		c := &Client{cfg: cfg, log: slog.New(slog.NewTextHandler(&buf, nil))}
+		c.warnTransport()
+		if got := strings.Count(buf.String(), "CA_BUNDLE_FILE has no effect"); got != tt.want {
+			t.Errorf("skip=%v bundle=%q: %d warnings, want %d:\n%s", tt.skip, tt.bundle, got, tt.want, buf.String())
+		}
 	}
 }
