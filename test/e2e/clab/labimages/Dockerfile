@@ -16,7 +16,7 @@
 # .github/dependabot.yml (CONTRIBUTING.md).
 
 FROM quay.io/frrouting/frr:10.3.1@sha256:f90d26a9fd5c14fc5795a73b4254ac88bc3186c45bbeb220a225fb6182de812c AS frr
-FROM nginx:1.31.8-alpine@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11 AS nginx
+FROM nginx:1.31.8-alpine@sha256:fed7e14be83cbd2661a75cdc5b872d936cf155d46c327084d30b8df19ae88d72 AS nginx
 FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc AS alpine
 FROM ghcr.io/srl-labs/network-multitool:v0.5.0@sha256:ecfbd74784a490a2aec688e63a2224c1c8625b0e0d9e5d9fcd19217647089067 AS multitool
 # test/e2e/bfd/frr-interop.sh runs the BFD interop test in this image.
