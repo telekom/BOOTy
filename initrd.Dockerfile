@@ -1,10 +1,10 @@
-# syntax=docker/dockerfile:1.27.1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+# syntax=docker/dockerfile:1.28.0@sha256:bb22d9815c728170f72750f4e5b0d672e06176142e1d602c7e66c050100b7e5b
 # Dependabot reads only FROM lines, not this syntax directive
 # (dependabot/dependabot-core#4078): update the frontend pin by hand. The build
 # needs only RUN --mount=type=cache, stable since dockerfile:1.2.
 
 # Build LVM2 as an init
-FROM gcc:16@sha256:9af8c7003ad451f09496c7182f320c58554e10ec080e7038e0aa5e41146c916b AS lvm
+FROM gcc:16@sha256:b8a42d6804296fbe7a54e17e9d60c3100d9e8dbe7ef88c748cae2ddb00d63ba2 AS lvm
 ARG LVM2_VERSION=2.03.27
 ARG LVM2_SHA256=3133415905b9b46d152d064865d52f32eee4fcbeb0e8a69e3510caeaae0c56a9
 # One mirror that is down or fails TLS must not fail the whole build: try
@@ -42,7 +42,7 @@ RUN printf '{"name":"lvm2","version":"%s","purl":"pkg:generic/lvm2@%s?checksum=s
       "${LVM2_VERSION}" "${LVM2_VERSION}" "${LVM2_SHA256}" "${LVM2_VERSION}" "$(sha256sum lvm | cut -d' ' -f1)" > /sbom-source.json
 
 # Build scripted fdisk (sfdisk)
-FROM gcc:16@sha256:9af8c7003ad451f09496c7182f320c58554e10ec080e7038e0aa5e41146c916b AS sfdisk
+FROM gcc:16@sha256:b8a42d6804296fbe7a54e17e9d60c3100d9e8dbe7ef88c748cae2ddb00d63ba2 AS sfdisk
 ARG UTIL_LINUX_REF=5305e6c70b274f679329b79c0e1ef5a07e9dc1a6
 RUN apt-get -o Acquire::Retries=5 update -y && apt-get -o Acquire::Retries=5 install -y bison autopoint gettext flex
 RUN set -eu; \
@@ -71,7 +71,7 @@ RUN printf '{"name":"util-linux","version":"%s","purl":"pkg:github/util-linux/ut
       "${UTIL_LINUX_REF}" "${UTIL_LINUX_REF}" "$(sha256sum sfdisk.static | cut -d' ' -f1)" > /sbom-source.json
 
 # Build BOOTy as an init
-FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS dev-packages
+FROM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS dev-packages
 RUN set -eu; \
     n=0; \
     until apk add --no-cache git ca-certificates gcc linux-headers musl-dev; do \
@@ -823,7 +823,7 @@ FROM scratch AS check-iso
 COPY --from=check-iso-builder /booty-check.iso .
 
 # ── Micro target: pure-Go BOOTy only, no external binaries ────────────────
-FROM golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e AS micro-dev
+FROM golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9 AS micro-dev
 ARG BOOTY_VERSION=dev
 ARG BOOTY_BUILD=unknown
 ARG BOOTY_COMMIT_TIME=

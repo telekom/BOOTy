@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CONTAINERLAB_VERSION: "0.76.1"
+  CONTAINERLAB_VERSION: "0.82.0"
 
 permissions:
   contents: read
@@ -45,13 +45,13 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
           cache: true
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
-          version: v2.14.0
+          version: v2.15.0
 
   test:
     name: Test
@@ -64,7 +64,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
           cache: true
 
       - name: Install swtpm and qemu-utils
@@ -133,7 +133,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
           cache: true
 
       - name: Run govulncheck
@@ -157,7 +157,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
           cache: true
 
       - name: Run E2E tests
@@ -216,7 +216,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
           cache: true
 
       - uses: ./.github/actions/baseline-libc
@@ -643,7 +643,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: Install QEMU and dependencies
         run: |
@@ -827,7 +827,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: Generate test disk image
         run: sudo test/e2e/clab/create-test-image.sh test/e2e/clab/images
@@ -957,7 +957,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: Build BOOTy test container image
         run: test/e2e/clab/docker-build-retry.sh -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
@@ -1083,7 +1083,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: Install UEFI and ISO dependencies
         run: |
@@ -1324,7 +1324,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: Install disk utilities
         run: |
@@ -1444,7 +1444,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: Build BOOTy test container image
         run: test/e2e/clab/docker-build-retry.sh -t booty-test:latest -f test/e2e/clab/booty-test.Dockerfile .
@@ -1566,7 +1566,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
@@ -1704,7 +1704,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
@@ -1854,7 +1854,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -1908,7 +1908,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: Build GoBGP test image
         run: test/e2e/clab/docker-build-retry.sh -t booty-gobgp-test:latest -f test/e2e/clab/booty-gobgp-test.Dockerfile .
@@ -1983,7 +1983,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: BGP_CONNECT_AT_ONCE for the lab (manual input)
         if: github.event_name == 'workflow_dispatch' && inputs.connect_at_once
@@ -2129,7 +2129,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: BGP_CONNECT_AT_ONCE for the lab (manual input)
         if: github.event_name == 'workflow_dispatch' && inputs.connect_at_once
@@ -2276,7 +2276,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: BGP_CONNECT_AT_ONCE for the lab (manual input)
         if: github.event_name == 'workflow_dispatch' && inputs.connect_at_once
@@ -2422,7 +2422,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: Build BOOTy vrnetlab VM image
         run: test/e2e/clab/docker-build-retry.sh -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
@@ -2594,7 +2594,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.27.2"
+          go-version: "1.27.4"
 
       - name: Build BOOTy vrnetlab VM image
         run: test/e2e/clab/docker-build-retry.sh -t booty-vrnetlab:latest -f test/e2e/clab/vrnetlab/Dockerfile .
