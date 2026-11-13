@@ -19,7 +19,8 @@ import (
 //
 // The payload can not change the settings that the running ramdisk already
 // uses: the transport (tokens, callback URLs, TLS), the agent endpoints, the
-// network, MODE, DRY_RUN and CAPRF_LEGACY_COMPAT. It can not change a URL
+// network, MODE, DRY_RUN, CAPRF_LEGACY_COMPAT and the cosign verification
+// policy of the image and the sysexts. It can not change a URL
 // that BOOTy posts to with the bearer token (inventory, firmware, health,
 // telemetry, crash artifacts). Unknown keys are rejected too. A payload
 // with only blank and comment lines returns no keys.
@@ -73,6 +74,9 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 			[]string{cfg.Telemetry.URL, cfg.Telemetry.MetricsURL, cfg.Telemetry.EventURL}},
 		{"crash artifact", []string{ref.Provision.CrashArtifacts.PrepareURL, ref.Provision.CrashArtifacts.UploadURL},
 			[]string{cfg.Provision.CrashArtifacts.PrepareURL, cfg.Provision.CrashArtifacts.UploadURL}},
+		// The signature policy: a payload may change the image, but not
+		// weaken what its signature is checked against.
+		{"cosign", cosignVars(ref), cosignVars(cfg)},
 	} {
 		if !reflect.DeepEqual(s.ref, s.cand) {
 			fixed = append(fixed, s.name)
@@ -83,6 +87,15 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 			strings.Join(fixed, ", "))
 	}
 	return cfg, keys, nil
+}
+
+// cosignVars returns the cosign verification settings of cfg.
+func cosignVars(cfg *config.MachineConfig) []any {
+	im, sx := &cfg.Provision.Image, &cfg.Provision.Sysext
+	return []any{
+		im.CosignPublicKeys, im.CosignTrustedRoot, im.CosignIdentityRegexp, im.CosignOIDCIssuer,
+		sx.CosignPublicKeys, sx.CosignTrustedRoot, sx.CosignIdentityRegexp, sx.CosignOIDCIssuer,
+	}
 }
 
 // payloadKeys returns the sorted, unique keys of the payload lines, read

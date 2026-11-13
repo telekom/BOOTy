@@ -585,6 +585,9 @@ root is mounted.
 | `IMAGE_SIGNATURE_URL` | — | URL to detached GPG signature for image verification |
 | `IMAGE_GPG_PUBKEY` | — | Path to GPG public key for image signature verification |
 | `IMAGE_COSIGN_PUBKEYS` | — | Comma-separated PEM public key paths; an `oci://` image must be digest-pinned and cosign-signed by one of them ([Image Verification](#image-verification)) |
+| `IMAGE_COSIGN_TRUSTED_ROOT` | — | Sigstore `trusted_root.json` in the ramdisk; an `oci://` image must be digest-pinned and keyless-signed ([Keyless cosign verification](#keyless-cosign-verification)) |
+| `IMAGE_COSIGN_IDENTITY_REGEXP` | — | Regexp the whole certificate SAN must match (keyless) |
+| `IMAGE_COSIGN_OIDC_ISSUER` | — | OIDC issuer the certificate must name (keyless) |
 | `LUKS_ENABLED` | `false` | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* Enable LUKS2 encryption for target partitions |
 | `LUKS_PASSPHRASE` | (unset) | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* Passphrase for initial LUKS volume creation |
 | `LUKS_UNLOCK_METHOD` | `passphrase` | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* Unlock method: `passphrase`, `tpm2`, `clevis`, `keyfile` |
@@ -604,6 +607,9 @@ root is mounted.
 | `SYSEXT_LAYERS` | — | JSON array of sysext layer objects |
 | `SYSEXT_ALLOW_INSECURE_HTTP` | `false` | Allow plain HTTP sysext sources on controlled provisioning networks |
 | `SYSEXT_COSIGN_PUBKEYS` | — | Comma-separated PEM public key paths; every `oci://` sysext must be digest-pinned and cosign-signed by one of them |
+| `SYSEXT_COSIGN_TRUSTED_ROOT` | — | Keyless verification of every `oci://` sysext, as `IMAGE_COSIGN_TRUSTED_ROOT` |
+| `SYSEXT_COSIGN_IDENTITY_REGEXP` | — | Regexp the whole certificate SAN of sysext signatures must match |
+| `SYSEXT_COSIGN_OIDC_ISSUER` | — | OIDC issuer of sysext signatures |
 | `OVERLAYFS_ENABLED` | `false` | Write Ubuntu overlayroot config into the provisioned target root |
 | `OVERLAYFS_MODE` | `tmpfs` | Overlayroot mode: `tmpfs` for volatile writes or `device` for persistent backing storage |
 | `OVERLAYFS_DEVICE` | — | Backing filesystem for `OVERLAYFS_MODE=device`, e.g. `LABEL=BOOTY-OVERLAY` or `/dev/disk/by-label/BOOTY-OVERLAY` |
@@ -940,8 +946,7 @@ Keys may be ECDSA (P-256, P-384, P-521), RSA (2048 bits or more, PKCS#1
 v1.5) or Ed25519, each in a PEM `PUBLIC KEY` block. A key file may hold
 several `PUBLIC KEY` blocks, so a rotation can concatenate the old and the new
 key; any other block type or text outside the blocks fails the file. Keyless
-(Fulcio certificate) signatures, Rekor entries and the Sigstore bundle format
-stored as OCI referrers are not read. The provisioning report records
+signatures are covered by the options of the next section. The provisioning report records
 `verification.signature.method: cosign`. A registry or network error while
 fetching the signature (timeout, 5xx, connection error) reports the transient
 failure code `BOOTY-IMG-008`; a missing signature or one that does not verify
@@ -953,6 +958,57 @@ before.
 `IMAGE_COSIGN_PUBKEYS` and `SYSEXT_COSIGN_PUBKEYS` are independent: image keys
 do not check sysexts, and sysext keys do not check the image. Set both, so
 neither the image nor a sysext is pulled unsigned.
+
+#### Keyless cosign verification
+
+```bash
+# trusted_root.json of the Sigstore instance (Fulcio CAs, CT log and Rekor
+# keys), shipped in the ramdisk or the config; BOOTy never fetches it.
+export IMAGE_COSIGN_TRUSTED_ROOT="/deploy/file-system/trusted_root.json"
+export IMAGE_COSIGN_IDENTITY_REGEXP='https://ci\.example\.com/os/image//\.ci/build\.yml@refs/heads/main'
+export IMAGE_COSIGN_OIDC_ISSUER="https://ci.example.com"
+export IMAGE="oci://registry.example/os-image@sha256:<digest>"
+# The same three SYSEXT_COSIGN_* options check oci:// sysexts.
+```
+
+With these three options (YAML `provision.image.cosignTrustedRoot`,
+`cosignIdentityRegexp`, `cosignOIDCIssuer`; `provision.sysext.*` and
+`SYSEXT_COSIGN_*` for sysexts), `verify-image` checks a keyless cosign
+signature of the digest-pinned `oci://` source before any disk is wiped, offline:
+
+- the Fulcio certificate chains to a certificate authority of the trusted
+  root at the time the transparency log recorded the signature, so a
+  certificate that has expired since is fine, one that had expired by then
+  is not;
+- an SCT embedded in the certificate verifies against a CT log key of the
+  trusted root;
+- a Rekor entry verifies against a Rekor key of the trusted root: its signed
+  entry timestamp (SET), and its inclusion proof and signed checkpoint when
+  present (required from bundle v0.2 on), and it records the signature, the
+  certificate and the hash of the signed payload;
+- the signature verifies with the certificate key and covers the image
+  digest;
+- the certificate SAN (URI or e-mail) matches
+  `IMAGE_COSIGN_IDENTITY_REGEXP` in full (as if wrapped in `^(?:...)$`), and
+  its OIDC issuer extension equals `IMAGE_COSIGN_OIDC_ISSUER`.
+
+BOOTy reads the Sigstore bundle that `cosign sign` (cosign 3) attaches to the
+image as an OCI referrer (a DSSE envelope with an in-toto statement of
+predicate type `https://sigstore.dev/cosign/sign/v1` about the digest), and
+the keyless signatures under the `sha256-<hex>.sig` tag that cosign 2 and
+`cosign sign --new-bundle-format=false` write. Registries without the
+referrers API are read through the `sha256-<hex>` fallback tag. Any missing or
+failing part stops provisioning with `BOOTY-IMG-001`; a registry or network
+error reports `BOOTY-IMG-008`. A missing one of the three options fails
+`verify-image` and dry-run. Rekor v2 entries (checkpoint only, no SET) and
+RFC 3161 timestamps are not supported yet and are refused.
+
+Keys and a keyless policy can be configured together: a signature that
+satisfies either is accepted (keys are checked first), for example while
+moving from keys to keyless signing. A standby command payload can not
+change any `IMAGE_COSIGN_*` or `SYSEXT_COSIGN_*` option. The verifier uses
+the Go standard library; `sigstore-go` would add about 5.6 MB to the binary
+(see [library adoption](docs/library-adoption.md#sigstore-go)).
 
 **Threat model.** Cosign verification protects against a compromised registry
 or transport: a registry, mirror or network path that serves other bytes than

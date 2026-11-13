@@ -75,11 +75,42 @@ func TestMergeCommandVarsRejectsRuntimeSettings(t *testing.T) {
 		"LOG_URL=https://x.example.com/log":          "transport",
 		"SUCCESS_ACTION=later":                       "payload keys SUCCESS_ACTION do not parse or validate",
 		"LUKS_DEVICE=/dev/sda":                       "LUKS_DEVICE",
+		"SYSEXT_COSIGN_PUBKEYS=/deploy/other.pub":    "cosign",
+		"IMAGE_COSIGN_IDENTITY_REGEXP=.*":            "cosign",
+		"IMAGE_COSIGN_OIDC_ISSUER=https://x.example": "cosign",
+		"SYSEXT_COSIGN_TRUSTED_ROOT=/deploy/tr.json": "cosign",
+		"SYSEXT_COSIGN_IDENTITY_REGEXP=.*":           "cosign",
+		"SYSEXT_COSIGN_OIDC_ISSUER=https://x":        "cosign",
 	} {
 		_, _, err := MergeCommandVars([]byte(commandBaseVars), []byte(payload))
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("payload %q: error = %v, want it to name %q", payload, err, want)
 		}
+	}
+}
+
+// A payload can not clear or change a cosign policy of the base vars; it
+// may repeat it.
+func TestMergeCommandVarsKeepsCosignPolicy(t *testing.T) {
+	base := commandBaseVars + `IMAGE_COSIGN_PUBKEYS=/deploy/c.pub
+IMAGE_COSIGN_TRUSTED_ROOT=/deploy/trusted_root.json
+IMAGE_COSIGN_IDENTITY_REGEXP=https://ci\.example/.*
+IMAGE_COSIGN_OIDC_ISSUER=https://ci.example
+SYSEXT_COSIGN_TRUSTED_ROOT=/deploy/trusted_root.json
+`
+	for _, payload := range []string{
+		"IMAGE_COSIGN_PUBKEYS=",
+		"IMAGE_COSIGN_TRUSTED_ROOT=",
+		"IMAGE_COSIGN_IDENTITY_REGEXP=.*",
+		"IMAGE_COSIGN_OIDC_ISSUER=https://other.example",
+		"SYSEXT_COSIGN_TRUSTED_ROOT=",
+	} {
+		if _, _, err := MergeCommandVars([]byte(base), []byte(payload)); err == nil || !strings.Contains(err.Error(), "cosign") {
+			t.Errorf("payload %q: error = %v, want a cosign rejection", payload, err)
+		}
+	}
+	if _, _, err := MergeCommandVars([]byte(base), []byte("IMAGE_COSIGN_OIDC_ISSUER=https://ci.example\nHOSTNAME=x")); err != nil {
+		t.Errorf("repeating the policy: %v", err)
 	}
 }
 

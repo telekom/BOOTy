@@ -67,6 +67,37 @@ remain a module-download/tooling cost, not linked agent code.
 | `pkg/executil` → direct `os/exec` | Already uses `os/exec`; the remaining PID registry prevents PID 1 from stealing managed child exit statuses. Output bounds and sanitized diagnostics are application policy. Removing the wrapper is not equivalent to upstream adoption. |
 | `pkg/buildinfo` → `runtime/debug` | Already calls `debug.ReadBuildInfo`; flavor/linker defaults, formatting and component estimates are BOOTy-specific. |
 
+## sigstore-go
+
+Keyless cosign verification (`IMAGE_COSIGN_TRUSTED_ROOT`) does not use
+[`github.com/sigstore/sigstore-go`](https://pkg.go.dev/github.com/sigstore/sigstore-go).
+Measured on Go 1.27.4, `CGO_ENABLED=0`, `-trimpath -tags grpcnotrace
+-ldflags '-s -w'`, on `main` 749ae043, with and without one file that calls
+`root.NewTrustedRootFromPath`, `bundle.Bundle.UnmarshalJSON` and
+`verify.NewVerifier(...).Verify` (SCT, transparency log and observer
+timestamp thresholds of 1):
+
+| Target | `main` | with sigstore-go v1.4.0 | Delta | Delta gzip -9 | Delta xz -9 |
+|---|---:|---:|---:|---:|---:|
+| linux/amd64 | 30,875,808 | 36,610,208 | +5,734,400 (+18.6%) | +1,864,186 | +1,286,768 |
+| linux/arm64 | 28,770,464 | 34,209,952 | +5,439,488 (+18.9%) | +1,693,124 | +1,105,900 |
+
+The standard-library verifier of this change adds 126,976 bytes on amd64
+(31,002,784; +50,799 gzip -9) and 131,072 bytes on arm64 (28,901,536;
++48,354 gzip -9), measured the same way.
+
+It links the Rekor types with go-openapi, in-toto, go-tuf and the
+timestamp-authority client. The compressed growth alone is more than the 5%
+headroom of the initramfs size budgets (`test/e2e/build_flavours_e2e_test.go`).
+BOOTy verifies the subset that cosign writes for images (Fulcio chain at the
+integrated time, embedded SCT, Rekor v1 SET, inclusion proof and checkpoint,
+DSSE or message signature) with the standard library in `pkg/image/sigstore.go`.
+It is checked against a bundle that the public-good instance signed
+(`pkg/image/testdata/sigstore`) and against bundles from the local Sigstore in
+`pkg/image/sigstoretest`, which sigstore-go v1.4.0 also accepts (and rejects
+when the SCT, SET, inclusion proof or issuer is broken). Revisit sigstore-go
+when Rekor v2 entries or RFC 3161 timestamps are needed.
+
 ## Verification
 
 The coverage-first PR adds characterization tests on the original implementation.

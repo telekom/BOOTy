@@ -417,27 +417,31 @@ func (o *Orchestrator) dryRunImageSignature(_ context.Context) DryRunResult {
 		Message: "image signature verification configured"}
 }
 
-// dryRunCosignKeys loads the configured cosign public keys and runs the
-// offline source checks of verify-image on every image source; the
-// signatures themselves are checked by verify-image.
+// dryRunCosignKeys loads the configured cosign public keys and keyless
+// trusted roots and runs the offline source checks of verify-image on every
+// image source; the signatures themselves are checked by verify-image.
 func (o *Orchestrator) dryRunCosignKeys(_ context.Context) DryRunResult {
-	imageKeys := o.cfg.Provision.Image.CosignPublicKeys
-	sysextKeys := o.cfg.Provision.Sysext.CosignPublicKeys
-	if len(imageKeys) == 0 && len(sysextKeys) == 0 {
-		return DryRunResult{Status: DryRunPass, Message: "no cosign public keys configured - cosign verification disabled"}
-	}
-	for _, paths := range [][]string{imageKeys, sysextKeys} {
-		if len(paths) == 0 {
-			continue
-		}
-		if _, err := image.LoadCosignPublicKeys(paths); err != nil {
-			return DryRunResult{Status: DryRunFail, Message: err.Error()}
-		}
+	imagePolicy := imageCosignPolicy(&o.cfg.Provision.Image)
+	sysextPolicy := sysextCosignPolicy(&o.cfg.Provision.Sysext)
+	if !imagePolicy.enabled() && !sysextPolicy.enabled() {
+		return DryRunResult{Status: DryRunPass, Message: "no cosign public keys or keyless policy configured - cosign verification disabled"}
 	}
 	if err := o.checkCosignSources(dryRunImageSources(o.cfg.Provision.Image.URLs)); err != nil {
 		return DryRunResult{Status: DryRunFail, Message: err.Error()}
 	}
-	return DryRunResult{Status: DryRunPass, Message: fmt.Sprintf("cosign public keys loaded (image %d, sysext %d)", len(imageKeys), len(sysextKeys))}
+	for _, c := range []struct {
+		prefix string
+		policy cosignPolicy
+	}{{"IMAGE", imagePolicy}, {"SYSEXT", sysextPolicy}} {
+		if err := c.policy.checkKeyless(c.prefix); err != nil {
+			return DryRunResult{Status: DryRunFail, Message: err.Error()}
+		}
+		if _, _, err := c.policy.load(); err != nil {
+			return DryRunResult{Status: DryRunFail, Message: err.Error()}
+		}
+	}
+	return DryRunResult{Status: DryRunPass, Message: fmt.Sprintf("cosign policy loaded (image %d keys, keyless %t; sysext %d keys, keyless %t)",
+		len(imagePolicy.keys), imagePolicy.keyless(), len(sysextPolicy.keys), sysextPolicy.keyless())}
 }
 
 func (o *Orchestrator) dryRunImageMode(_ context.Context) DryRunResult {

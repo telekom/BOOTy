@@ -211,6 +211,19 @@ jobs:
             setup: ""
             # Two QEMU runs.
             go_timeout: 30m
+          # The same fixture with keyless verification against a local
+          # Sigstore (pkg/image/sigstoretest): a cosign 3 bundle referrer on
+          # the image and a cosign 2 .sig tag signature on the sysext
+          # provision, another identity is refused before the wipe.
+          # test/e2e/kvm/cosign_keyless_test.go
+          - scenario: cosign-keyless
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestKeylessCosign"
+            privileged: true
+            setup: ""
+            # Two QEMU runs.
+            go_timeout: 30m
           - scenario: crash-artifacts
             qemu_extra: ""
             test_tag: e2e

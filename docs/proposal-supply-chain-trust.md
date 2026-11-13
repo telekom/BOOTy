@@ -10,9 +10,12 @@ with a double-build CI job, see "Reproducible builds") are done; the other
 phases are design only, except that phases 4 and 5 are done for offline
 keys: `IMAGE_COSIGN_PUBKEYS` and `SYSEXT_COSIGN_PUBKEYS` verify cosign
 simple-signing signatures of digest-pinned `oci://` images and sysexts before
-the wipe (README "Cosign verification of OCI images and sysexts"). Keyless
-identities, an offline trusted root and the Sigstore bundle format are still
-design only. It extends
+the wipe (README "Cosign verification of OCI images and sysexts"), and
+`IMAGE_COSIGN_TRUSTED_ROOT` / `SYSEXT_COSIGN_TRUSTED_ROOT` with an identity
+regexp and an OIDC issuer verify keyless signatures offline against a
+trusted root in the ramdisk, in the Sigstore bundle format and the `.sig` tag
+layout (README "Keyless cosign verification"). Rekor v2 entries and RFC 3161
+timestamps are not read yet. It extends
 [proposal-release-pipelines.md](proposal-release-pipelines.md) and
 [proposal-image-signatures.md](proposal-image-signatures.md).
 
@@ -73,9 +76,11 @@ verification of OCI-packaged OS images and sysexts inside BOOTy.
 - Ramdisk SBOM: generate from the Debian package database of the build
   stages plus Go build info of each binary (syft on the unpacked initramfs,
   verify coverage).
-- In-BOOTy verification: use `sigstore-go` (verify size) to verify a cosign
-  bundle offline against a trusted root in the ramdisk; policy keys per
-  source (identity and issuer for keyless, public key otherwise).
+- In-BOOTy verification: verify a cosign bundle offline against a trusted
+  root in the ramdisk; policy keys per source (identity and issuer for
+  keyless, public key otherwise). Done with a standard-library verifier:
+  `sigstore-go` v1.4.0 grows the static binary by about 5.6 MB (see
+  [library adoption](library-adoption.md#sigstore-go)).
 
 ## Interfaces
 
