@@ -65,6 +65,8 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 		{"MODE", ref.Mode, cfg.Mode},
 		{"DRY_RUN", ref.DryRun, cfg.DryRun},
 		{"CAPRF_LEGACY_COMPAT", ref.LegacyCompat, cfg.LegacyCompat},
+		// main.go applies it once, before the first image client.
+		{"IMAGE_FOLLOW_REDIRECTS", ref.Provision.Image.FollowRedirects, cfg.Provision.Image.FollowRedirects},
 		// URLs that receive bearer-token POSTs.
 		{"INVENTORY_URL", ref.Provision.Inventory.URL, cfg.Provision.Inventory.URL},
 		{"FIRMWARE_URL", ref.Provision.Firmware.URL, cfg.Provision.Firmware.URL},
