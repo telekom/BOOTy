@@ -285,9 +285,10 @@ counts. Use debug for a diagnosis run, not as the fleet default.
 
 The catalog lists the message (`msg`) of every log call of the code, by
 level and package (`.` is the ramdisk agent's `main` package; the
-`booty-esp-sync` binary is `cmd/booty-esp-sync` and `pkg/espsync`). An
-`<expression>` part is computed at run time; `pkg/disk` `<msg>` is the step
-that `logStepFailure` names (for example `cannot zero the device edge`).
+`booty-esp-sync` binary is `cmd/booty-esp-sync` and `pkg/espsync`). Every
+message is a literal; the test fails on a computed one. A wrapper that logs one of its
+parameters (`pkg/disk` `logStepFailure`) is listed with the message of each
+call site.
 
 `TestLoggingDocCatalog` in `logging_doc_test.go` scans the Go files (not
 tests, `test/`, `hack/`) for `slog` level calls and fails when this block
