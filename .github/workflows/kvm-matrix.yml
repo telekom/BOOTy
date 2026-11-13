@@ -271,7 +271,7 @@ jobs:
             test_regex: "^TestProvisionImage.*OptionsQEMU$"
             privileged: true
             setup: ""
-            go_timeout: 50m
+            go_timeout: 40m
           - scenario: disk-wipe
             qemu_extra: ""
             test_tag: e2e
