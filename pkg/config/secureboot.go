@@ -104,9 +104,11 @@ func (m ModuleSigningConfig) CertDirOrDefault() string {
 }
 
 // NeedsFirmwareReboot reports whether the handoff must go through the
-// firmware instead of kexec: Secure Boot is re-enabled, or a MOK enrollment
-// runs at the next firmware boot.
+// firmware instead of kexec: Secure Boot is re-enabled, or a module signing
+// certificate is enrolled. That takes effect at the next firmware boot with
+// every enrollment method.
 func (s *SecureBootConfig) NeedsFirmwareReboot() bool {
-	m := s.ModuleSigning
-	return s.ReEnable || (s.SigningMode() != SigningOff && m.EnrollmentMethod() != ModuleSigningEnrollExternal)
+	// external too: a certificate enrolled in db over Redfish takes effect at
+	// the next POST, and kexec would start the kernel without it.
+	return s.ReEnable || s.SigningMode() != SigningOff
 }
