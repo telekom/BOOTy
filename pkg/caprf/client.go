@@ -1233,7 +1233,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	if applyNetworkStringVar(cfg, key, value) || applySecureBootDigestVar(cfg, key, value) || applyPartitionLayoutSourceVar(cfg, key, value) || applyImageWriteVar(cfg, key, value) {
 		return true
 	}
-	if applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) || applyCheckStringVar(cfg, key, value) {
+	if applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) || applyCheckStringVar(cfg, key, value) ||
+		applyMOKStringVar(cfg, key, value) {
 		return true
 	}
 
@@ -1288,10 +1289,6 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"EVENT_URL":                   &cfg.Telemetry.EventURL,
 		"CRASH_ARTIFACTS_PREPARE_URL": &cfg.Provision.CrashArtifacts.PrepareURL,
 		"CRASH_ARTIFACTS_UPLOAD_URL":  &cfg.Provision.CrashArtifacts.UploadURL,
-		"MOK_CERT_PATH":               &cfg.Provision.SecureBoot.MOKCertPath,
-		"MOK_PASSWORD":                &cfg.Provision.SecureBoot.MOKPassword,
-		"MODULE_SIGNING_ENROLLMENT":   &cfg.Provision.SecureBoot.ModuleSigning.Enrollment,
-		"MODULE_SIGNING_CERT_DIR":     &cfg.Provision.SecureBoot.ModuleSigning.CertDir,
 		"TOKEN_URL":                   &cfg.Transport.TokenURL,
 		"TOKEN_ALGORITHM":             &cfg.Transport.TokenAlgorithm,
 		"CA_BUNDLE_FILE":              &cfg.Transport.CABundleFile,
@@ -1311,6 +1308,24 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		return true
 	}
 	return false
+}
+
+// applyMOKStringVar handles MOK enrollment and module signing options.
+func applyMOKStringVar(cfg *config.MachineConfig, key, value string) bool {
+	sb := &cfg.Provision.SecureBoot
+	switch key {
+	case "MOK_CERT_PATH":
+		sb.MOKCertPath = value
+	case "MOK_PASSWORD":
+		sb.MOKPassword = value
+	case "MODULE_SIGNING_ENROLLMENT":
+		sb.ModuleSigning.Enrollment = value
+	case "MODULE_SIGNING_CERT_DIR":
+		sb.ModuleSigning.CertDir = value
+	default:
+		return false
+	}
+	return true
 }
 
 // applyImageWriteVar handles the image write and cosign verification options.
