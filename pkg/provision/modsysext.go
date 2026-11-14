@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -177,15 +178,12 @@ func installModuleSysext(root *os.Root, image, hashTree, rootHash string, sig []
 	if err := root.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", moduleSysextDir, err)
 	}
-	files := map[string][]byte{".roothash": []byte(rootHash + "\n"), ".roothash.p7s": sig}
 	for ext, src := range map[string]string{".raw": image, ".verity": hashTree} {
-		data, err := os.ReadFile(src) //nolint:gosec // staging file
-		if err != nil {
-			return fmt.Errorf("read sysext %s: %w", ext, err)
+		if err := copyIntoRoot(root, src, path.Join(dir, moduleSysextName+ext)); err != nil {
+			return fmt.Errorf("install sysext %s: %w", ext, err)
 		}
-		files[ext] = data
 	}
-	for ext, data := range files {
+	for ext, data := range map[string][]byte{".roothash": []byte(rootHash + "\n"), ".roothash.p7s": sig} {
 		if err := root.WriteFile(path.Join(dir, moduleSysextName+ext), data, 0o644); err != nil {
 			return fmt.Errorf("install sysext %s: %w", ext, err)
 		}
@@ -208,12 +206,32 @@ func installModuleSysext(root *os.Root, image, hashTree, rootHash string, sig []
 	return nil
 }
 
-// targetOSRelease returns ID and VERSION_ID of the target, which
-// systemd-sysext compares with extension-release.
-func targetOSRelease(root *os.Root) (id, version string, err error) {
-	data, err := root.ReadFile("usr/lib/os-release")
+// copyIntoRoot streams src to dst inside root: the image is already in RAM
+// once, in the staging directory.
+func copyIntoRoot(root *os.Root, src, dst string) error {
+	in, err := os.Open(src) //nolint:gosec // staging file
 	if err != nil {
-		if data, err = root.ReadFile("etc/os-release"); err != nil {
+		return err //nolint:wrapcheck // the caller names the file
+	}
+	defer func() { _ = in.Close() }()
+	out, err := root.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err //nolint:wrapcheck // the caller names the file
+	}
+	_, err = io.Copy(out, in)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	return err //nolint:wrapcheck // the caller names the file
+}
+
+// targetOSRelease returns ID and VERSION_ID of the target, which
+// systemd-sysext compares with extension-release. /etc/os-release takes
+// precedence over /usr/lib/os-release, as for systemd.
+func targetOSRelease(root *os.Root) (id, version string, err error) {
+	data, err := root.ReadFile("etc/os-release")
+	if err != nil {
+		if data, err = root.ReadFile("usr/lib/os-release"); err != nil {
 			return "", "", fmt.Errorf("read target os-release: %w", err)
 		}
 	}
