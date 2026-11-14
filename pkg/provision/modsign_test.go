@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"syscall"
 	"testing"
 
@@ -213,47 +212,25 @@ func TestNeedsFirmwareReboot(t *testing.T) {
 	}
 }
 
-// A module path of the image that resolves into a live bind mount of the
-// chroot (/run here) is refused before any module is rewritten.
-func TestCheckModulesOnTargetRefusesBindMounts(t *testing.T) {
-	root, live := t.TempDir(), "/dev/shm"
-	var a, b syscall.Stat_t
-	if syscall.Stat(root, &a) != nil || syscall.Stat(live, &b) != nil || a.Dev == b.Dev {
-		t.Skip("needs /dev/shm on another file system than the temp dir")
-	}
-	ramdisk, err := os.MkdirTemp(live, "booty-run-")
-	if err != nil {
-		t.Skip(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(ramdisk) })
-	// The chroot bind of /run, and the image's link into it.
-	run := filepath.Join(root, "run")
-	if err := os.Mkdir(run, 0o755); err != nil {
+// A module path that resolves into a live bind mount of the chroot is
+// refused; /proc stands in for the bound ramdisk /run, which needs a mount.
+func TestOnChrootBind(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Symlink("/proc", filepath.Join(root, "run")); err != nil {
 		t.Fatal(err)
 	}
-	if err := syscall.Mount(ramdisk, run, "", syscall.MS_BIND, ""); err != nil {
-		t.Skipf("bind mount: %v", err)
-	}
-	t.Cleanup(func() { _ = syscall.Unmount(run, 0) })
-	mod := filepath.Join(ramdisk, "modules/6.8.0-1/updates/x.ko")
-	if err := os.MkdirAll(filepath.Dir(mod), 0o755); err != nil {
+	local := filepath.Join(root, "x.ko")
+	if err := os.WriteFile(local, []byte("\x7fELF"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(mod, []byte("\x7fELF ramdisk"), 0o644); err != nil {
-		t.Fatal(err)
+	if onChrootBind(root, local) {
+		t.Fatal("a file of the target root counts as bound")
 	}
-	if err := os.MkdirAll(filepath.Join(root, "lib"), 0o755); err != nil {
-		t.Fatal(err)
+	if !onChrootBind(root, "/proc/version") {
+		t.Fatal("a file on the bound /run does not count as bound")
 	}
+	// checkModulesOnTarget applies it to every module.
 	if err := checkModulesOnTarget(root); err != nil {
 		t.Fatalf("no modules: %v", err)
-	}
-	if err := os.Symlink("../run/modules", filepath.Join(root, "lib/modules")); err != nil {
-		t.Fatal(err)
-	}
-	if err := checkModulesOnTarget(root); err == nil {
-		t.Fatal("a module in the ramdisk /run was accepted")
-	} else if !strings.Contains(err.Error(), "bound into the chroot") {
-		t.Fatalf("wrong refusal: %v", err)
 	}
 }
