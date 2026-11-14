@@ -102,9 +102,11 @@ boot-services-only variable without authentication. shim reads it, deletes
 it if it has the runtime attribute (the OS could have written it), checks the
 `EFI_SIGNATURE_LIST` structure, and copies it with its built-in vendor
 certificate to the volatile `MokListRT` and to the MOK configuration table.
-The kernel reads those into the `.machine` keyring (Linux 5.18+, when shim
-sets `MokListTrustedRT`, the default since shim 15.6) or, on older distro
-kernels, into a keyring that verifies modules.
+Upstream kernels read those into the `.machine` keyring (Linux 5.18+, when
+shim sets `MokListTrustedRT`, the default since shim 15.6). That keyring is
+linked to the secondary keyring, which verifies modules. Some distribution
+kernels use the `.platform` keyring instead and verify modules with it
+through a distribution patch, as the Ubuntu kernels below do.
 
 `mok-enroll.efi` writes `MokList` like MokManager does after the user
 confirms: same GUID, attributes `NV|BS`, the certificate appended as an X.509
@@ -114,7 +116,7 @@ reprovisioned host keeps exactly one BOOTy certificate and other MOK entries
 stay. It refuses a malformed `MokList` or payload and then changes nothing. A
 `MokList` with other attributes than NV|BS (the OS could have written it) is
 discarded, as shim does, and never carried over. The helper refuses to run
-when `SecureBoot` is not 0, and deletes `Boot<BootCurrent>` only when its
+when `SecureBoot` reads 1, and deletes `Boot<BootCurrent>` only when its
 description is `booty-mok-enroll`.
 
 The helper is unsigned, and it must stay unsigned: signed, it would let OS
@@ -124,10 +126,14 @@ can write it too; treat it as a hint, and check the `MokList` event in the
 TPM event log (PCR 14) instead.
 
 Tested: Ubuntu 24.04 (shim-signed 1.58+15.8, kernel 6.8.0-139) and Ubuntu
-26.04 (shim-signed 1.59+15.8, kernel 7.0.0-34); `MokListTrustedRT` was 1 and
-the key appeared in `/proc/keys` (`.machine`). Required versions: shim 15.6
-or newer with Linux 5.18 or newer, or a distro kernel that loads
-`MokListRT` into a module-verifying keyring. Debian 12 and 13 ship shim
+26.04 (shim-signed 1.59+15.8, kernel 7.0.0-34). On both, `MokListTrustedRT`
+was 1, the kernel logged `integrity: Loaded X.509 cert 'BOOTy module
+signing …'`, and the key was in `.platform`, not `.machine`: `/proc/keys`
+listed `.machine: empty` and `.platform: 7`. Those kernels verify modules
+against `.platform` (Debian/Ubuntu patch), so the module loads. The same
+patch explains option (b). Required versions: shim 15.6 or newer with Linux
+5.18 or newer (`.machine`), or a distribution kernel that verifies modules
+with the keyring that it loads `MokListRT` into. Debian 12 and 13 ship shim
 15.8 and newer; they were not run in CI. The
 certificate is a CA with `keyCertSign`, because kernels built with
 `CONFIG_INTEGRITY_CA_MACHINE_KEYRING` accept only CA certificates from MOK
