@@ -16,10 +16,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"math/big"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -66,15 +69,24 @@ const (
 	maxUKISize  = 512 << 20
 )
 
-// ukiMeasuredSections are the UKI sections that systemd-stub measures into
-// PCR 11, as systemd-measure options. Other sections (.text, .sbat of the
-// stub code, .reloc, .pcrsig) are not passed.
-var ukiMeasuredSections = []string{
-	"linux", "osrel", "cmdline", "initrd", "ucode", "splash", "dtb", "dtbauto", "hwids", "uname", "sbat", "pcrpkey",
+// ukiRebuildArgs maps the UKI sections that per-host signing carries over
+// to the ukify build options. ukify makes .sbat, .pcrpkey and .pcrsig
+// itself and takes the stub (.text and the other code sections) from the
+// image. A UKI with any other UKI section is refused.
+var ukiRebuildArgs = map[string]string{
+	"linux": "--linux=", "initrd": "--initrd=", "cmdline": "--cmdline=@", "osrel": "--os-release=@",
+	"ucode": "--microcode=", "splash": "--splash=", "dtb": "--devicetree=",
 }
 
+// ukiOtherSections are UKI sections that a rebuild would drop.
+var ukiOtherSections = []string{"dtbauto", "hwids", "efifw", "profile", "pcrsig"}
+
+// The uname that goes into the ukify command line.
+var ukiUnamePattern = regexp.MustCompile(`^[A-Za-z0-9._+-]{1,128}$`)
+
 // The extra binaries that per-host signing runs in the target.
-var ukiPerHostTools = []string{"usr/bin/ukify", "usr/lib/systemd/systemd-measure", "usr/bin/sbsign"}
+var ukiPerHostTools = []string{"usr/bin/ukify", "usr/lib/systemd/systemd-measure", "usr/bin/sbsign",
+	"usr/lib/systemd/boot/efi/linuxx64.efi.stub"}
 
 // The binaries that the installed system needs to bind the volume.
 var ukiTargetTools = []string{"usr/bin/systemd-cryptenroll", "usr/sbin/cryptsetup"}
@@ -355,40 +367,32 @@ func (o *Orchestrator) signUKIPerHost(ctx context.Context, root string, st *ukiS
 	}
 	defer wipeMemfd(sbKeyFile)
 
-	files := map[string][]byte{
-		"in.efi": data, "pcr.pub": pubPEM,
-		"sb.crt": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: st.cert}),
+	files := map[string][]byte{"pcr.pub": pubPEM, "sb.crt": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: st.cert})}
+	args, err := ukiRebuildCommand(sections, files)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	measure := []string{"/usr/lib/systemd/systemd-measure", "sign", "--bank=sha256", "--json=short",
-		"--private-key=" + procFD(pcrKeyFile), "--public-key=" + ukiWorkDir + "/pcr.pub"}
-	for _, name := range ukiMeasuredSections {
-		if b, ok := sections[name]; ok {
-			files["sec-"+name] = b
-			measure = append(measure, "--"+name+"="+ukiWorkDir+"/sec-"+name)
-		}
-	}
+	w := ukiWorkDir
+	args = append(args, "--pcr-private-key="+procFD(pcrKeyFile), "--pcr-public-key="+w+"/pcr.pub", "--pcr-banks=sha256",
+		"--secureboot-private-key="+procFD(sbKeyFile), "--secureboot-certificate="+w+"/sb.crt", "--output="+w+"/signed.efi")
 	for name, b := range files {
-		if err := os.WriteFile(filepath.Join(ukiWorkDir, name), b, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(w, name), b, 0o600); err != nil {
 			return nil, nil, nil, fmt.Errorf("write %s: %w", name, err)
 		}
 	}
-	w := ukiWorkDir
-	cmd := strings.Join(measure, " ") + " >" + w + "/pcrsig.json && " +
-		"ukify build --join-pcrsig=" + w + "/in.efi --pcrsig=@" + w + "/pcrsig.json --output=" + w + "/joined.efi && " +
-		"sbsign --key " + procFD(sbKeyFile) + " --cert " + w + "/sb.crt --output " + w + "/signed.efi " + w + "/joined.efi"
-	if out, err := o.disk.ChrootRun(ctx, root, cmd); err != nil {
+	if out, err := o.disk.ChrootRun(ctx, root, strings.Join(args, " ")); err != nil {
 		return nil, nil, nil, fmt.Errorf("sign the UKI: %s: %w", strings.TrimSpace(string(out)), err)
-	}
-	if sigJSON, err = os.ReadFile(filepath.Join(w, "pcrsig.json")); err != nil {
-		return nil, nil, nil, fmt.Errorf("read the PCR signature: %w", err)
 	}
 	if signed, err = os.ReadFile(filepath.Join(w, "signed.efi")); err != nil {
 		return nil, nil, nil, fmt.Errorf("read the signed UKI: %w", err)
 	}
-	if secs, ok, err := ukiSections(signed); err != nil {
+	secs, ok, err := ukiSections(signed)
+	if err != nil {
 		return nil, nil, nil, fmt.Errorf("the signed UKI: %w", err)
-	} else if !ok || !bytes.Equal(bytes.Trim(secs["pcrsig"], " \n\x00"), bytes.Trim(sigJSON, " \n\x00")) {
-		return nil, nil, nil, errors.New("the signed UKI lacks the Secure Boot signature or the .pcrsig of this run")
+	}
+	sigJSON = bytes.TrimRight(secs["pcrsig"], "\x00")
+	if !ok || len(sigJSON) == 0 || !bytes.Equal(bytes.TrimRight(secs["pcrpkey"], "\x00"), pubPEM) {
+		return nil, nil, nil, errors.New("the signed UKI lacks the Secure Boot signature, the .pcrsig or the .pcrpkey of this run")
 	}
 	o.log.Info("UKI signed with per-host keys; the private keys are wiped", "certSHA256", st.certSHA256)
 	return signed, pubPEM, sigJSON, nil
@@ -417,6 +421,32 @@ func (o *Orchestrator) newPerHostKeys(st *ukiState) (pcrKey, sbKey *rsa.PrivateK
 	sum := sha256.Sum256(st.cert)
 	st.certSHA256 = hex.EncodeToString(sum[:])
 	return pcrKey, sbKey, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}), nil
+}
+
+// ukiRebuildCommand returns the ukify build command that rebuilds the UKI
+// from its sections, which it adds to files (written to ukiWorkDir).
+func ukiRebuildCommand(sections, files map[string][]byte) ([]string, error) {
+	for _, name := range ukiOtherSections {
+		if sections[name] != nil {
+			return nil, fmt.Errorf("per-host signing cannot rebuild a UKI with a .%s section", name)
+		}
+	}
+	// ukify writes the unsigned UKI to TMPDIR first.
+	args := []string{"TMPDIR=" + ukiWorkDir, "ukify", "build"}
+	for _, name := range slices.Sorted(maps.Keys(ukiRebuildArgs)) {
+		if b, ok := sections[name]; ok {
+			files["sec-"+name] = b
+			args = append(args, ukiRebuildArgs[name]+ukiWorkDir+"/sec-"+name)
+		}
+	}
+	if u, ok := sections["uname"]; ok {
+		uname := strings.TrimRight(string(u), "\x00\n")
+		if !ukiUnamePattern.MatchString(uname) {
+			return nil, fmt.Errorf("unexpected .uname %q", uname)
+		}
+		args = append(args, "--uname="+uname)
+	}
+	return args, nil
 }
 
 func ukiCertificate(key *rsa.PrivateKey, cn string) ([]byte, error) {

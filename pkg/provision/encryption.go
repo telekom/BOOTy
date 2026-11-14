@@ -973,7 +973,10 @@ systemd-cryptenroll --unlock-key-file=/dev/null --wipe-slot=tpm2 --tpm2-device=a
 	--tpm2-pcrs="$TPM2_PCRS" "$dev"
 say "the TPM2 unseals with PCR $TPM2_PCRS and the signed PCR 11 policy"
 if cryptsetup luksDump "$dev" | grep -q "^  $LUKS_ENROLL_SLOT: luks2"; then
-	cryptsetup open --test-passphrase --key-slot "$LUKS_ENROLL_SLOT" --key-file /dev/null "$dev"
+	# cryptsetup reads nothing from /dev/null; an empty file is the empty passphrase.
+	empty=$(mktemp)
+	cryptsetup open --test-passphrase --key-slot "$LUKS_ENROLL_SLOT" --key-file "$empty" "$dev"
+	rm -f "$empty"
 	cryptsetup -q luksKillSlot "$dev" "$LUKS_ENROLL_SLOT"
 fi
 systemctl disable ` + luksUnitName + `

@@ -228,8 +228,8 @@ func TestPrepareUKIPerHost(t *testing.T) {
 		t.Fatalf("%d keys generated, want the PCR policy key and the Secure Boot key", *n)
 	}
 	script := strings.Join(cmd.calls[0].args, " ")
-	for _, want := range []string{"systemd-measure sign", "--linux=", "--cmdline=", "--osrel=", "--private-key=/proc/",
-		"ukify build --join-pcrsig=", "sbsign --key /proc/"} {
+	for _, want := range []string{"ukify build", "--linux=", "--cmdline=@", "--os-release=@", "--pcr-private-key=/proc/",
+		"--secureboot-private-key=/proc/", "--pcr-banks=sha256"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("signing command lacks %q: %s", want, script)
 		}
