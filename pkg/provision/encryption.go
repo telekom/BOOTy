@@ -59,6 +59,9 @@ const (
 	luksTPM2PCRs     = "7+14"
 	luksRecoverySlot = 0
 	luksEnrollSlot   = 1
+	// luksLVMVolumeGroup is the volume group whose physical volume BOOTy
+	// encrypts when the target partition has the Linux LVM type.
+	luksLVMVolumeGroup = "tcaas"
 )
 
 // The libraries that systemd-cryptsetup and systemd-cryptenroll dlopen for
@@ -129,6 +132,8 @@ type encryptionState struct {
 	luksUUID  string
 	enrollKey []byte
 	isRoot    bool
+	lvm       bool   // the partition is the physical volume of VG tcaas
+	rootLV    string // with lvm: the logical volume that holds the root, or ""
 }
 
 func (o *Orchestrator) encryptionEnabled() bool {
@@ -169,9 +174,11 @@ func (o *Orchestrator) streamEncryptedImage(ctx context.Context, url string, opt
 	o.log.Info("streaming image into a LUKS2 partition", "url", image.RedactURL(url), "disk", o.targetDisk, "luksUUID", st.luksUUID)
 	err = image.StreamEncryptedRoot(ctx, url, o.targetDisk, image.EncryptedRoot{
 		Number: num,
-		Open: func(ctx context.Context, number int, size int64) (string, error) {
+		Open: func(ctx context.Context, number int, size int64, lvm bool) (string, error) {
+			st.lvm = lvm
 			return o.formatEncryptedPartition(ctx, st, number, size)
 		},
+		Check: checkLVMRamdisk,
 	}, opts...)
 	if errors.Is(err, image.ErrEncryptedRootUnsupported) && o.cfg.Provision.DiskEncryption.AllowFailure {
 		// Refused before the first disk write.
@@ -181,12 +188,122 @@ func (o *Orchestrator) streamEncryptedImage(ctx context.Context, url string, opt
 		return image.Stream(ctx, url, o.targetDisk, opts...)
 	}
 	if err != nil {
-		clear(st.enrollKey)
-		_ = runCryptsetup(context.Background(), nil, nil, "close", luksMapperName)
+		err = classifyImageStreamError(url, err)
+	} else if st.lvm {
+		err = o.openEncryptedVG(ctx, st)
+	}
+	if err != nil {
+		o.abortEncryptedStream(st)
 		// A retry would find the partition formatted already.
-		return &PermanentError{Err: fmt.Errorf("%w: %w", errDiskEncryption, classifyImageStreamError(url, err))}
+		return &PermanentError{Err: fmt.Errorf("%w: %w", errDiskEncryption, err)}
 	}
 	o.encryption = st
+	return nil
+}
+
+// abortEncryptedStream drops the enrollment key and closes what a failed
+// stream-image opened. Best effort: the run fails anyway.
+func (o *Orchestrator) abortEncryptedStream(st *encryptionState) {
+	clear(st.enrollKey)
+	if st.lvm {
+		_, _ = runLVM(context.Background(), "vgchange", "--devices", luks.MappedPath(luksMapperName), "-an", luksLVMVolumeGroup)
+	}
+	_ = runCryptsetup(context.Background(), nil, nil, "close", luksMapperName)
+}
+
+// openEncryptedVG runs after the physical volume is in the mapping: it checks
+// that the volume belongs to VG tcaas, grows it to the mapping, activates the
+// VG and finds the logical volume that holds the root. --devices keeps LVM on
+// the mapping, so a VG tcaas on another disk (an old installation) is not
+// touched or confused with this one.
+func (o *Orchestrator) openEncryptedVG(ctx context.Context, st *encryptionState) error {
+	// The root is on LVM only with DISK_ENCRYPTION_TARGET=root and no root
+	// selector; a numbered target is a data VG, so a backup OS in it never
+	// replaces the selected root.
+	if st.isRoot && (strings.TrimSpace(o.cfg.Provision.Disk.RootPartitionLabel) != "" || o.cfg.Provision.Disk.RootPartitionNumber != 0) {
+		return errors.New("ROOT_PARTITION_LABEL and ROOT_PARTITION_NUMBER select a root partition, but the root is on LVM; set DISK_ENCRYPTION_TARGET to the partition number for a data VG")
+	}
+	mapped := luks.MappedPath(luksMapperName)
+	lvm := func(cmd string, args ...string) (string, error) {
+		return runLVM(ctx, append([]string{cmd, "--devices", mapped}, args...)...)
+	}
+	vg, err := lvm("pvs", "--noheadings", "-o", "vg_name", mapped)
+	if err != nil {
+		return err
+	}
+	if vg != luksLVMVolumeGroup {
+		return fmt.Errorf("the LVM physical volume %s belongs to VG %q, want %q", st.device, vg, luksLVMVolumeGroup)
+	}
+	if _, err := lvm("pvresize", mapped); err != nil {
+		return err
+	}
+	if _, err := lvm("vgchange", "-ay", luksLVMVolumeGroup); err != nil {
+		return err
+	}
+	// The ramdisk has no udev, which an lvm built for it leaves the device
+	// nodes of the logical volumes to.
+	if _, err := lvm("vgmknodes", luksLVMVolumeGroup); err != nil {
+		return err
+	}
+	if st.isRoot {
+		lvs, err := lvm("lvs", "--noheadings", "-o", "lv_dm_path", luksLVMVolumeGroup)
+		if err != nil {
+			return err
+		}
+		if st.rootLV, err = o.findRootLV(ctx, strings.Fields(lvs)); err != nil {
+			return err
+		}
+	}
+	o.log.Info("LVM physical volume opened in the LUKS2 mapping", "device", st.device, "vg", luksLVMVolumeGroup, "rootLV", st.rootLV)
+	return nil
+}
+
+// findRootLV returns the first logical volume that holds a root file system.
+func (o *Orchestrator) findRootLV(ctx context.Context, lvs []string) (string, error) {
+	for _, lv := range lvs {
+		isRoot, err := isRootFilesystem(ctx, o, lv)
+		if err != nil {
+			return "", err
+		}
+		if isRoot {
+			return lv, nil
+		}
+	}
+	return "", fmt.Errorf("no logical volume of VG %s holds a root file system", luksLVMVolumeGroup)
+}
+
+// isRootFilesystem mounts device read-only without journal replay and
+// reports whether it holds a root file system; a device that does not mount
+// (swap, no file system) does not. A variable for tests.
+var isRootFilesystem = func(ctx context.Context, o *Orchestrator, device string) (bool, error) {
+	dir, err := os.MkdirTemp("", "booty-root-lv-")
+	if err != nil {
+		return false, fmt.Errorf("create root probe mountpoint: %w", err)
+	}
+	defer func() { _ = os.Remove(dir) }()
+	if err := o.disk.MountPartitionInspect(ctx, device, dir); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, fmt.Errorf("root probe: %w", ctxErr)
+		}
+		return false, nil //nolint:nilerr // not a mountable file system
+	}
+	isRoot := looksLikeRootFilesystem(dir)
+	if err := o.disk.Unmount(dir); err != nil {
+		return false, fmt.Errorf("unmount root probe %s: %w", device, err)
+	}
+	return isRoot, nil
+}
+
+// checkLVMRamdisk runs before stream-image writes any image byte (wipe-disks
+// has cleared the target already): an LVM physical volume needs lvm in the
+// ramdisk.
+func checkLVMRamdisk(lvm bool) error {
+	if !lvm {
+		return nil
+	}
+	if _, err := executil.LookPath("lvm"); err != nil {
+		return fmt.Errorf("ramdisk, for the LVM physical volume: %w", err)
+	}
 	return nil
 }
 
@@ -274,7 +391,7 @@ func (o *Orchestrator) prepareDiskEncryption(ctx context.Context) error {
 		clear(st.enrollKey)
 		return errors.New("the root needs a separate /boot partition: GRUB cannot read the kernel from an encrypted root")
 	}
-	if err := checkEncryptionTarget(newroot, o.cfg.Provision.DiskEncryption.StatusURL != ""); err != nil {
+	if err := checkEncryptionTarget(newroot, o.cfg.Provision.DiskEncryption.StatusURL != "", st.lvm); err != nil {
 		clear(st.enrollKey)
 		return err
 	}
@@ -346,7 +463,13 @@ func (o *Orchestrator) closeEncryptedDisk(ctx context.Context) error {
 		return nil
 	}
 	mapped := luks.MappedPath(luksMapperName)
-	if !st.isRoot {
+	if st.lvm {
+		// stream-image grew the physical volume; the logical volumes keep
+		// the sizes of the image.
+		if _, err := runLVM(ctx, "vgchange", "--devices", mapped, "-an", luksLVMVolumeGroup); err != nil {
+			return fmt.Errorf("deactivate VG %s: %w", luksLVMVolumeGroup, err)
+		}
+	} else if !st.isRoot {
 		if err := o.disk.CheckExtFilesystemPreen(ctx, mapped); err != nil {
 			return err
 		}
@@ -477,12 +600,16 @@ func unusableGrubHash() (string, error) {
 }
 
 // checkEncryptionTarget checks that the image can unlock the volume with
-// dracut and systemd-cryptsetup and bind it with systemd-cryptenroll.
-func checkEncryptionTarget(root string, curl bool) error {
+// dracut and systemd-cryptsetup and bind it with systemd-cryptenroll, and
+// with lvm activate the VG in the initramfs.
+func checkEncryptionTarget(root string, curl, lvm bool) error {
 	var missing []string
 	tools := luksTargetTools
 	if curl {
 		tools = append(slices.Clone(tools), "usr/bin/curl")
+	}
+	if lvm {
+		tools = append(slices.Clone(tools), "usr/sbin/lvm")
 	}
 	for _, rel := range tools {
 		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
@@ -496,7 +623,7 @@ func checkEncryptionTarget(root string, curl bool) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("the image lacks %s (Ubuntu: dracut, systemd-cryptsetup, libtss2-rc0t64; see docs/disk-encryption.md)", strings.Join(missing, ", "))
+		return fmt.Errorf("the image lacks %s (Ubuntu: dracut, systemd-cryptsetup, libtss2-rc0t64, lvm2 for LVM; see docs/disk-encryption.md)", strings.Join(missing, ", "))
 	}
 	return nil
 }
@@ -540,16 +667,9 @@ func writeEncryptionFiles(root string, st *encryptionState, e *encryptionExtras)
 		{luksEnvPath, []byte(fmt.Sprintf("LUKS_UUID='%s'\nLUKS_NAME='%s'\nLUKS_ENROLL_SLOT='%d'\nTPM2_PCRS='%s'\n"+
 			"HOST='%s'\nSTATUS_URL='%s'\nSTATUS_CA='%s'\nMOK_WAIT='%s'\n",
 			st.luksUUID, luksMapperName, luksEnrollSlot, luksTPM2PCRs, e.hostname, e.statusURL, statusCA, mokWait)), 0o644},
-		// A host-only build adds tpm2-tss for tpm2-device= in crypttab,
-		// which needs tpm2-tools, and then drops systemd-cryptsetup. The
-		// generic build (the Ubuntu default) with the libraries listed here
-		// does not.
-		{luksDracutConf, []byte("# Written by BOOTy: unlock the LUKS2 volume in the initramfs (docs/disk-encryption.md).\n" +
-			"hostonly=\"no\"\n" +
-			"add_dracutmodules+=\" crypt systemd-cryptsetup \"\n" +
-			"install_items+=\" /etc/crypttab " + strings.Join(e.libs, " ") + " \"\n"), 0o644},
+		{luksDracutConf, []byte(luksDracutConfText(e.libs, st.lvm)), 0o644},
 		{luksDracutKeyConf, []byte(luksDracutKeyConfText), 0o644},
-		{luksGrubConf, []byte(luksGrubDefaults), 0o644},
+		{luksGrubConf, []byte(luksGrubDefaultsText(st)), 0o644},
 		{luksGrubLock, []byte(luksGrubLockScript(e.grubHash)), 0o755},
 		{luksScriptPath, []byte(luksEnrollScript), 0o755},
 		{"/etc/systemd/system/" + luksUnitName, []byte(luksEnrollUnitText(e.statusURL != "")), 0o644},
@@ -588,6 +708,22 @@ func statusAuthHeader(token string) []byte {
 	return []byte("Authorization: Bearer " + token + "\n")
 }
 
+// luksDracutConfText is the dracut configuration of the unlock. A host-only
+// build adds tpm2-tss for tpm2-device= in crypttab, which needs tpm2-tools,
+// and then drops systemd-cryptsetup. The generic build (the Ubuntu default)
+// with the libraries listed here does not. With lvm the lvm module activates
+// VG tcaas on the opened volume.
+func luksDracutConfText(libs []string, lvm bool) string {
+	modules := " crypt systemd-cryptsetup "
+	if lvm {
+		modules += "lvm "
+	}
+	return "# Written by BOOTy: unlock the LUKS2 volume in the initramfs (docs/disk-encryption.md).\n" +
+		"hostonly=\"no\"\n" +
+		"add_dracutmodules+=\"" + modules + "\"\n" +
+		"install_items+=\" /etc/crypttab " + strings.Join(libs, " ") + " \"\n"
+}
+
 const luksDracutKeyConfText = "# Written by BOOTy: removed by " + luksUnitName + " after the TPM2 enrollment.\n" +
 	"install_items+=\" " + luksEnrollKeyPath + " \"\n"
 
@@ -596,6 +732,16 @@ const luksDracutKeyConfText = "# Written by BOOTy: removed by " + luksUnitName +
 // a root shell after the TPM2 unlocked the root.
 const luksGrubDefaults = "# Written by BOOTy (docs/disk-encryption.md).\n" +
 	"GRUB_FORCE_PARTUUID=\nGRUB_DISABLE_RECOVERY=true\n"
+
+// luksGrubDefaultsText is luksGrubDefaults; with lvm the kernel command line
+// also names the LUKS2 volume and VG tcaas for the initramfs. The command
+// line is in neither PCR 7 nor PCR 14.
+func luksGrubDefaultsText(st *encryptionState) string {
+	if !st.lvm {
+		return luksGrubDefaults
+	}
+	return luksGrubDefaults + fmt.Sprintf("GRUB_CMDLINE_LINUX=\"$GRUB_CMDLINE_LINUX rd.luks.uuid=%s rd.lvm.vg=%s\"\n", st.luksUUID, luksLVMVolumeGroup)
+}
 
 // luksGrubLockScript is a grub.d script: a superuser with an unusable
 // password locks the editor and the GRUB shell, so nobody changes the
@@ -687,6 +833,21 @@ func addEnrollKey(ctx context.Context, st *encryptionState, recovery []byte, kdf
 	// at offset 0. The ramdisk has no /dev/fd.
 	args := append([]string{"luksAddKey", "--key-file", "-", "--key-slot", strconv.Itoa(luksEnrollSlot), "--batch-mode"}, kdf...)
 	return runCryptsetup(ctx, recovery, f, append(args, st.device, "/proc/self/fd/3")...)
+}
+
+// runLVM runs lvm and returns its standard output, trimmed. Warnings go to
+// standard error and stay out of the parsed output; lvm warns about every
+// descriptor that BOOTy (PID 1) holds open, which the environment turns off.
+// A variable for tests.
+var runLVM = func(ctx context.Context, args ...string) (string, error) {
+	cmd := executil.CommandContext(ctx, "lvm", args...)
+	cmd.Env = append(os.Environ(), "LVM_SUPPRESS_FD_WARNINGS=1")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("lvm %s: %s: %w", args[0], strings.TrimSpace(stderr.String()), err)
+	}
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 // runCryptsetup runs cryptsetup with key material on stdin only, never in
