@@ -83,6 +83,7 @@ func TestOpenEncryptedVG(t *testing.T) {
 		"lvm pvs --devices /dev/mapper/booty_crypt --noheadings -o vg_name /dev/mapper/booty_crypt",
 		"lvm pvresize --devices /dev/mapper/booty_crypt /dev/mapper/booty_crypt",
 		"lvm vgchange --devices /dev/mapper/booty_crypt -ay tcaas",
+		"lvm vgmknodes --devices /dev/mapper/booty_crypt tcaas",
 		"lvm lvs --devices /dev/mapper/booty_crypt --noheadings -o lv_dm_path tcaas",
 	}
 	if got := cmd.lines; strings.Join(got, "|") != strings.Join(want, "|") {

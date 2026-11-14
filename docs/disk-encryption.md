@@ -123,7 +123,8 @@ and locked configuration keys apply.
      fails the run;
   2. `lvm pvresize` grows it to the mapping. The logical volumes keep the
      sizes of the image; the space of the grown disk stays free in the VG;
-  3. `lvm vgchange -ay tcaas` activates it, and BOOTy mounts each logical
+  3. `lvm vgchange -ay tcaas` activates it (`lvm vgmknodes` creates the
+     device nodes, the ramdisk has no udev), and BOOTy mounts each logical
      volume read-only to find the root (`/etc/os-release`, or `/etc` and
      `/usr`; only with `DISK_ENCRYPTION_TARGET=root`). A VG without a root
      fails the run.

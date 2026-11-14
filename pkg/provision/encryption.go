@@ -233,6 +233,11 @@ func (o *Orchestrator) openEncryptedVG(ctx context.Context, st *encryptionState)
 	if _, err := lvm("vgchange", "-ay", luksLVMVolumeGroup); err != nil {
 		return err
 	}
+	// The ramdisk has no udev, which an lvm built for it leaves the device
+	// nodes of the logical volumes to.
+	if _, err := lvm("vgmknodes", luksLVMVolumeGroup); err != nil {
+		return err
+	}
 	if st.isRoot {
 		lvs, err := lvm("lvs", "--noheadings", "-o", "lv_dm_path", luksLVMVolumeGroup)
 		if err != nil {
