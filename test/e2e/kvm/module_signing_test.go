@@ -8,6 +8,7 @@ import (
 	"debug/elf"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,8 +118,11 @@ func TestModuleSigningSecureBootVM(t *testing.T) {
 	setSecureBoot(t, vars, false)
 	disk := filepath.Join(dir, "disk.qcow2")
 	run(t, "create disk", "qemu-img", "create", "-f", "qcow2", disk, "6G")
-	tpm := startSWTPM(t, filepath.Join(dir, "tpm"))
+	// swtpm exits when QEMU disconnects, so every boot gets a new one.
+	boots := 0
 	vm := func(extra ...string) []string {
+		boots++
+		tpm := startSWTPM(t, filepath.Join(dir, fmt.Sprintf("tpm%d", boots)))
 		return append([]string{
 			"-machine", "q35,smm=on,accel=kvm:tcg", "-cpu", mirrorQEMUCPUModel(), "-m", "2048", "-smp", "2",
 			"-nographic", "-no-reboot",
@@ -208,8 +212,8 @@ func prepareModuleImage(t *testing.T, osImage, dir string) string {
 	loop := strings.TrimSpace(string(runOutput(t, "attach image", "losetup", "-P", "--show", "-f", raw)))
 	mnt := filepath.Join(dir, "mnt")
 	// Best effort on failure; the success path below unmounts and detaches.
-	defer func() { _ = exec.Command("losetup", "-d", loop).Run() }()
-	defer func() { _ = exec.Command("umount", mnt).Run() }()
+	defer func() { _ = exec.CommandContext(context.Background(), "losetup", "-d", loop).Run() }()
+	defer func() { _ = exec.CommandContext(context.Background(), "umount", mnt).Run() }()
 	if err := os.Mkdir(mnt, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +270,7 @@ func pickTestModules(t *testing.T, kernelDir string, n int) []testModule {
 			t.Fatal(err)
 		}
 		if strings.HasSuffix(matches[0], ".zst") {
-			cmd := exec.Command("zstd", "-dc")
+			cmd := exec.CommandContext(t.Context(), "zstd", "-dc")
 			cmd.Stdin = bytes.NewReader(data)
 			if data, err = cmd.Output(); err != nil {
 				t.Fatalf("zstd -d %s: %v", matches[0], err)

@@ -263,9 +263,7 @@ func (s *moduleSigner) sign(module []byte) ([]byte, error) {
 	var trailer [moduleSigTrailerLen]byte
 	trailer[2] = pkeyIDPKCS7
 	binary.BigEndian.PutUint32(trailer[8:], uint32(len(p7))) //nolint:gosec // a few hundred bytes
-	out := make([]byte, 0, len(mod)+len(p7)+len(trailer)+len(moduleSigMagic))
-	out = append(append(append(append(out, mod...), p7...), trailer[:]...), moduleSigMagic...)
-	return out, nil
+	return slices.Concat(mod, p7, trailer[:], []byte(moduleSigMagic)), nil
 }
 
 // StripModuleSignature returns the module without its appended signature.
