@@ -771,13 +771,20 @@ func validateABConfig(imageMode string, disableKexec bool, cfg *ABConfig) error 
 	return nil
 }
 
-func validateModuleSigning(imageMode string, m *ModuleSigningConfig, ab *ABConfig) []string {
+func validateModuleSigning(imageMode string, reEnable bool, m *ModuleSigningConfig, ab *ABConfig) []string {
 	if !m.Enabled {
 		return nil
 	}
 	var errs []string
 	switch m.EnrollmentMethod() {
 	case ModuleSigningEnrollEFIHelper, ModuleSigningEnrollMokutil:
+		// The provisioner re-enables Secure Boot when BOOTy reports success,
+		// before the enrollment boot; the firmware would then refuse the
+		// unsigned helper and the enrollment would be lost silently.
+		if reEnable && m.EnrollmentMethod() == ModuleSigningEnrollEFIHelper {
+			errs = append(errs, "provision.secureBoot.moduleSigning.enrollment efi-helper needs Secure Boot off at the next boot, "+
+				"but provision.secureBoot.reEnable turns it on before; turn it on after the enrollment boot instead")
+		}
 		if ab != nil && strings.EqualFold(strings.TrimSpace(imageMode), ImageModeAB) && ab.PreserveExisting {
 			errs = append(errs, "provision.secureBoot.moduleSigning.enrollment "+m.EnrollmentMethod()+
 				" needs a firmware reboot, but provision.ab.preserveExisting uses kexec")
@@ -816,7 +823,7 @@ func validateSecureBootConfig(imageMode string, secureBoot *SecureBootConfig, ab
 		strings.EqualFold(strings.TrimSpace(imageMode), ImageModeAB) && ab.PreserveExisting {
 		errs = append(errs, "provision.secureBoot.reEnable requires a hard reboot, but provision.ab.preserveExisting uses kexec")
 	}
-	errs = append(errs, validateModuleSigning(imageMode, &secureBoot.ModuleSigning, ab)...)
+	errs = append(errs, validateModuleSigning(imageMode, secureBoot.ReEnable, &secureBoot.ModuleSigning, ab)...)
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}

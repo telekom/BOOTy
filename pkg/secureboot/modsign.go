@@ -41,6 +41,11 @@ const pkeyIDPKCS7 = 2
 // keys used past 2030.
 const moduleSigningKeyBits = 3072
 
+// maxModuleSize caps a module file and its decompressed form. The image is
+// only semi-trusted, and running out of memory kills PID 1. The largest
+// distribution modules (GPU drivers) are below 100 MiB uncompressed.
+const maxModuleSize = 256 << 20
+
 // ModuleDirs are the directories below /lib/modules/<kernel> that hold
 // out-of-tree modules: updates (DKMS on Debian and Ubuntu) and extra (DKMS
 // and kmod packages on RHEL-like systems).
@@ -112,6 +117,9 @@ func findModules(fsys fs.FS) ([]string, error) {
 	}
 	var modules []string
 	for _, k := range kernels {
+		if !k.IsDir() {
+			continue
+		}
 		for _, dir := range ModuleDirs {
 			base := path.Join("lib/modules", k.Name(), dir)
 			err := fs.WalkDir(fsys, base, func(p string, d fs.DirEntry, err error) error {
@@ -210,15 +218,21 @@ func (s *moduleSigner) destroy() {
 	s.key = nil
 }
 
-// signFile signs one module in place, keeping its compression and mode.
+// signFile signs one module in place, keeping its compression. The file is
+// rewritten, not replaced, so its owner, mode and extended attributes (the
+// SELinux label modules_object_t on RHEL-like images) stay.
 func (s *moduleSigner) signFile(root *os.Root, name string) error {
-	info, err := root.Stat(name)
+	f, err := root.OpenFile(name, os.O_RDWR, 0)
 	if err != nil {
-		return fmt.Errorf("stat: %w", err)
+		return fmt.Errorf("open: %w", err)
 	}
-	data, err := root.ReadFile(name)
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxModuleSize+1))
 	if err != nil {
 		return fmt.Errorf("read: %w", err)
+	}
+	if len(data) > maxModuleSize {
+		return fmt.Errorf("larger than %d bytes", maxModuleSize)
 	}
 	raw, err := decompressModule(name, data)
 	if err != nil {
@@ -232,13 +246,14 @@ func (s *moduleSigner) signFile(root *os.Root, name string) error {
 	if err != nil {
 		return fmt.Errorf("compress: %w", err)
 	}
-	tmp := name + ".booty-sign"
-	if err := root.WriteFile(tmp, out, info.Mode().Perm()); err != nil {
+	if _, err := f.WriteAt(out, 0); err != nil {
 		return fmt.Errorf("write: %w", err)
 	}
-	if err := root.Rename(tmp, name); err != nil {
-		_ = root.Remove(tmp)
-		return fmt.Errorf("replace: %w", err)
+	if err := f.Truncate(int64(len(out))); err != nil {
+		return fmt.Errorf("truncate: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close: %w", err)
 	}
 	return nil
 }
@@ -349,7 +364,7 @@ func decompressModule(name string, data []byte) ([]byte, error) {
 	var r io.Reader
 	switch {
 	case strings.HasSuffix(name, ".zst"):
-		dec, err := zstd.NewReader(nil)
+		dec, err := zstd.NewReader(nil, zstd.WithDecoderMaxMemory(maxModuleSize))
 		if err != nil {
 			return nil, err
 		}
@@ -370,7 +385,11 @@ func decompressModule(name string, data []byte) ([]byte, error) {
 	default:
 		return data, nil
 	}
-	return io.ReadAll(r)
+	raw, err := io.ReadAll(io.LimitReader(r, maxModuleSize+1))
+	if err == nil && len(raw) > maxModuleSize {
+		err = fmt.Errorf("decompressed module larger than %d bytes", maxModuleSize)
+	}
+	return raw, err
 }
 
 // compressModule compresses a module like its file name says.

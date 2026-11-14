@@ -1,6 +1,6 @@
 # Per-host module signing
 
-Status: spike. Opt-in with `MODULE_SIGNING_ENABLED=true`; off by default.
+Status: experimental. Opt-in with `MODULE_SIGNING_ENABLED=true`; off by default.
 
 Out-of-tree kernel modules (DKMS output, vendor drivers) in a whole-disk
 image are either unsigned or signed with a key shared by every host that got
@@ -23,13 +23,18 @@ After the image is written and the target root is mounted:
      attributes, `struct module_signature` and the magic string). An existing
      signature is replaced. Files are read and written through `os.Root`, so a
      symlink in the image cannot redirect a write;
+   - modules are rewritten in place, so owner, mode and extended attributes
+     (the SELinux label) stay; files larger than 256 MiB, compressed or not,
+     are refused;
    - destroy the private key (see [Key handling](#key-handling));
    - install the DER certificate as
      `<MODULE_SIGNING_CERT_DIR>/booty-module-signing.der`
      (default `/usr/share/booty/secureboot`);
    - run `depmod -a <kernel>` and `update-initramfs -u -k all` (or
      `dracut --force --regenerate-all`) in the target chroot.
-2. `enroll-module-signing-key` (after the firmware boot entries):
+2. `enroll-module-signing-key` (after the firmware boot entries) enrolls the
+   certificate created in step 1 of this run, never a file read from the
+   image (on a resume, `sign-kernel-modules` runs again):
    - `efi-helper` (default): copy `mok-enroll.efi` to
      `\EFI\BOOTy\mok-enroll.efi` on the ESP, create an inactive boot entry
      whose optional data is the certificate as an `EFI_SIGNATURE_LIST`, and
@@ -47,7 +52,10 @@ After the image is written and the target root is mounted:
    firmware runs `mok-enroll.efi`, which merges the certificate into
    `MokList`, deletes its boot entry, sets `BOOTyMokEnroll` to `ok` (or an
    error), and resets. The provisioner then turns Secure Boot on
-   (`SECUREBOOT_REENABLE=true`, Redfish or firmware setup).
+   after the enrollment boot, over Redfish or in the firmware setup.
+   `SECUREBOOT_REENABLE=true` is rejected with `efi-helper`: the provisioner
+   acts on it when BOOTy reports success, before the enrollment boot, and the
+   firmware would then refuse the unsigned helper.
 
 Any signing or enrollment error fails provisioning (`BOOTY-EFI-010`,
 `BOOTY-EFI-011`) unless `MODULE_SIGNING_ALLOW_FAILURE=true`.
@@ -92,9 +100,19 @@ kernels, into a keyring that verifies modules.
 `mok-enroll.efi` writes `MokList` like MokManager does after the user
 confirms: same GUID, attributes `NV|BS`, the certificate appended as an X.509
 signature list. It removes earlier lists owned by the BOOTy owner GUID
-`11378d35-e20e-4116-94d7-758d7540a17f`, so a reprovisioned host keeps exactly
-one BOOTy certificate and other MOK entries stay. It refuses a malformed
-`MokList` or payload and then changes nothing.
+`11378d35-e20e-4116-94d7-758d7540a17f` (lists of exactly one signature), so a
+reprovisioned host keeps exactly one BOOTy certificate and other MOK entries
+stay. It refuses a malformed `MokList` or payload and then changes nothing. A
+`MokList` with other attributes than NV|BS (the OS could have written it) is
+discarded, as shim does, and never carried over. The helper refuses to run
+when `SecureBoot` is not 0, and deletes `Boot<BootCurrent>` only when its
+description is `booty-mok-enroll`.
+
+The helper is unsigned, and it must stay unsigned: signed, it would let OS
+root add any certificate to `MokList` with Secure Boot on, through a boot
+entry and `BootNext`. `BOOTyMokEnroll` has the runtime attribute, so the OS
+can write it too; treat it as a hint, and check the `MokList` event in the
+TPM event log (PCR 14) instead.
 
 Tested: Ubuntu 24.04 (shim-signed 1.58+15.8, kernel 6.8.0-139) and Ubuntu
 26.04 (shim-signed 1.59+15.8, kernel 7.0.0-34); `MokListTrustedRT` was 1 and

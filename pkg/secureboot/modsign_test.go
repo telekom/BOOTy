@@ -34,6 +34,8 @@ func writeModules(t *testing.T, root string) map[string][]byte {
 		writeFile(t, filepath.Join(root, name), data)
 	}
 	writeFile(t, filepath.Join(root, "lib/modules/6.8.0-1/kernel/fs/intree.ko"), []byte("in-tree"))
+	// Not a kernel directory: skipped.
+	writeFile(t, filepath.Join(root, "lib/modules/README"), []byte("stray"))
 	return plain
 }
 
@@ -51,9 +53,17 @@ func TestSignModuleTree(t *testing.T) {
 	root := t.TempDir()
 	plain := writeModules(t, root)
 
+	before, err := os.Stat(filepath.Join(root, "lib/modules/6.8.0-1/updates/dkms/a.ko"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	res, err := SignModuleTree(root, "BOOTy test")
 	if err != nil {
 		t.Fatalf("SignModuleTree: %v", err)
+	}
+	// Rewritten in place: same inode, so owner and xattrs (SELinux) stay.
+	if after, err := os.Stat(filepath.Join(root, "lib/modules/6.8.0-1/updates/dkms/a.ko")); err != nil || !os.SameFile(before, after) {
+		t.Fatalf("module file was replaced, not rewritten: %v", err)
 	}
 	cert, err := x509.ParseCertificate(res.CertDER)
 	if err != nil {

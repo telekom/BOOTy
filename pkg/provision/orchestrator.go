@@ -217,7 +217,10 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"run-post-provision-cmds", o.runPostProvisionCmds},
 		{"create-efi-boot-entry", o.createEFIBootEntry},
 		{"create-mirror-efi-boot-entry", o.createMirrorEFIBootEntry},
-		// Last: a failed provisioning must not leave a staged enrollment.
+		// After every step that changes the target, so a failed provisioning
+		// rarely leaves a staged enrollment. If teardown or the report fails
+		// later, the helper still enrolls the certificate of this run; its
+		// key is gone and a reprovisioning replaces it.
 		{"enroll-module-signing-key", o.enrollModuleSigningKey},
 		{"teardown-chroot", o.teardownChroot},
 		{"report-success", o.reportSuccess},
@@ -292,6 +295,10 @@ func resumeStateSteps() map[string]struct{} {
 		// file is not written again (see reportWritten).
 		"write-provision-report": {},
 		"teardown-chroot":        {},
+		// The per-host key and its certificate exist only in memory, and
+		// enroll-module-signing-key enrolls only the certificate of this run.
+		// Signing again replaces the earlier signatures and certificate.
+		"sign-kernel-modules": {},
 	}
 }
 

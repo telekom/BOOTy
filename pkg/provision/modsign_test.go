@@ -86,6 +86,23 @@ func TestSignKernelModulesFailsClosed(t *testing.T) {
 	}
 }
 
+// The enrollment never falls back to a certificate that the image ships at
+// the certificate path (a failed signing with MODULE_SIGNING_ALLOW_FAILURE).
+func TestEnrollModuleSigningKeyNeedsCertOfThisRun(t *testing.T) {
+	o, _ := newTestOrchestratorWithCommander(t,
+		moduleSigningConfig(config.ModuleSigningConfig{Enabled: true, Enrollment: config.ModuleSigningEnrollExternal}), &mockProvider{})
+	planted := filepath.Join(o.config.rootDir, config.DefaultModuleSigningCertDir, moduleCertFile)
+	if err := os.MkdirAll(filepath.Dir(planted), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planted, []byte("attacker certificate"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.enrollModuleSigningKey(context.Background()); err == nil {
+		t.Fatal("enrollment without a certificate of this run succeeded")
+	}
+}
+
 func TestMOKHelperEntries(t *testing.T) {
 	out := "BootCurrent: 0001\nBootOrder: 0001,0000\nBoot0000* ubuntu\tHD(1,GPT)\n" +
 		"Boot0003  booty-mok-enroll\tHD(1,GPT)/\\EFI\\BOOTy\\mok-enroll.efi\n" +

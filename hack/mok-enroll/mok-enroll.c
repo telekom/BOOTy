@@ -16,7 +16,10 @@
 //
 // MokList is a boot-services-only variable: the OS cannot write it, only
 // code that runs before ExitBootServices. This program is unsigned, so the
-// firmware runs it only while Secure Boot is off. See docs/module-signing.md.
+// firmware runs it only while Secure Boot is off, and it refuses to run when
+// SecureBoot reads 1. Never sign it: with Secure Boot on, OS root could
+// create a boot entry for it and add any certificate to MokList. See
+// docs/module-signing.md.
 #include <efi.h>
 #include <efilib.h>
 
@@ -37,11 +40,14 @@ typedef struct {
 } esl_t;
 
 // booty_owned reports whether the signature list at p (n bytes, already
-// bounds-checked by the caller) is an X.509 list whose owner is BOOTy.
-static BOOLEAN booty_owned(const UINT8 *p, UINT32 n)
+// bounds-checked by the caller) is an X.509 list of exactly one signature
+// whose owner is BOOTy. A list with more signatures is never BOOTy's, so
+// merge cannot drop the certificates of other owners with it.
+static BOOLEAN booty_owned(const UINT8 *p, UINTN n)
 {
 	const esl_t *l = (const esl_t *)p;
-	if (n < ESL_HDR || l->header_size > n - ESL_HDR || n - ESL_HDR - l->header_size < sizeof(EFI_GUID))
+	if (n < ESL_HDR || l->header_size > n - ESL_HDR || l->sig_size != n - ESL_HDR - l->header_size ||
+	    l->sig_size < sizeof(EFI_GUID))
 		return FALSE;
 	return CompareMem(&l->type, &cert_x509, sizeof(EFI_GUID)) == 0 &&
 	       CompareMem(p + ESL_HDR + l->header_size, &booty_owner, sizeof(EFI_GUID)) == 0;
@@ -97,8 +103,24 @@ static EFI_STATUS merge(UINT8 *old, UINTN old_size, UINT8 *payload, UINT32 n, UI
 	return EFI_SUCCESS;
 }
 
+// secure_boot_on reports whether SecureBoot reads 1. Firmware without Secure
+// Boot support has no SecureBoot variable and loads any image anyway; with
+// Secure Boot on, UEFI requires the variable.
+static BOOLEAN secure_boot_on(void)
+{
+	UINT8 sb = 0;
+	UINTN size = sizeof(sb);
+	EFI_STATUS s = uefi_call_wrapper(RT->GetVariable, 5, L"SecureBoot", &global_var, NULL, &size, &sb);
+	return !EFI_ERROR(s) && sb != 0;
+}
+
+// delete_own_entry deletes Boot<BootCurrent> if it is the helper entry that
+// BOOTy created (EFI_LOAD_OPTION: UINT32 attributes, UINT16 file path
+// length, then the description).
 static void delete_own_entry(void)
 {
+	static const CHAR16 label[] = L"booty-mok-enroll";
+	UINT8 opt[6 + sizeof(label)];
 	UINT16 current = 0;
 	UINTN size = sizeof(current);
 	CHAR16 name[] = L"Boot0000";
@@ -106,7 +128,23 @@ static void delete_own_entry(void)
 	if (!EFI_ERROR(s)) {
 		for (int i = 0; i < 4; i++)
 			name[7 - i] = L"0123456789ABCDEF"[(current >> (4 * i)) & 0xf];
-		s = uefi_call_wrapper(RT->SetVariable, 5, name, &global_var, 0, 0, NULL);
+		size = sizeof(opt);
+		s = uefi_call_wrapper(RT->GetVariable, 5, name, &global_var, NULL, &size, opt);
+		// A longer entry returns EFI_BUFFER_TOO_SMALL: the label is followed
+		// by the file path and the payload.
+		if (s == EFI_BUFFER_TOO_SMALL) {
+			UINT8 *full = AllocatePool(size);
+			s = full == NULL ? EFI_OUT_OF_RESOURCES
+					 : uefi_call_wrapper(RT->GetVariable, 5, name, &global_var, NULL, &size, full);
+			if (!EFI_ERROR(s))
+				CopyMem(opt, full, sizeof(opt));
+			if (full != NULL)
+				FreePool(full);
+		}
+		if (!EFI_ERROR(s) && (size < sizeof(opt) || CompareMem(opt + 6, label, sizeof(label)) != 0))
+			s = EFI_NOT_FOUND;
+		if (!EFI_ERROR(s))
+			s = uefi_call_wrapper(RT->SetVariable, 5, name, &global_var, 0, 0, NULL);
 	}
 	if (EFI_ERROR(s))
 		Print(L"BOOTy mok-enroll: cannot delete its boot entry: %r\n", s);
@@ -121,6 +159,8 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
 	EFI_STATUS s;
 
 	InitializeLib(image, systab);
+	if (secure_boot_on())
+		return fail(L"Secure Boot is on, MokList left unchanged", (CHAR8 *)"error secure-boot", EFI_ACCESS_DENIED);
 	s = uefi_call_wrapper(BS->HandleProtocol, 3, image, &LoadedImageProtocol, (void **)&li);
 	if (EFI_ERROR(s))
 		return fail(L"loaded image protocol", (CHAR8 *)"error loaded-image", s);
@@ -139,14 +179,20 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
 		old_size = 0;
 	else if (EFI_ERROR(s))
 		return fail(L"read MokList", (CHAR8 *)"error read", s);
+	// A MokList with other attributes (the runtime attribute: the OS could
+	// have written it) is not trusted: shim deletes it, so do the same and
+	// never carry its entries over into an NV|BS MokList.
+	if (old_size > 0 && attrs != MOK_ATTRS) {
+		Print(L"BOOTy mok-enroll: discarding a MokList with attributes 0x%x\n", attrs);
+		s = uefi_call_wrapper(RT->SetVariable, 5, L"MokList", &shim_lock, 0, 0, NULL);
+		if (EFI_ERROR(s))
+			return fail(L"delete untrusted MokList", (CHAR8 *)"error delete", s);
+		old_size = 0;
+	}
 
 	s = merge(old, old_size, li->LoadOptions, li->LoadOptionsSize, &merged, &merged_size);
 	if (EFI_ERROR(s))
 		return fail(L"MokList is malformed, left unchanged", (CHAR8 *)"error malformed", s);
-	// A variable cannot change attributes in place. shim deletes a MokList
-	// with the runtime attribute anyway, so replace it.
-	if (old_size > 0 && attrs != MOK_ATTRS)
-		uefi_call_wrapper(RT->SetVariable, 5, L"MokList", &shim_lock, 0, 0, NULL);
 	s = uefi_call_wrapper(RT->SetVariable, 5, L"MokList", &shim_lock, MOK_ATTRS, merged_size, merged);
 	if (EFI_ERROR(s))
 		return fail(L"write MokList", (CHAR8 *)"error write", s);

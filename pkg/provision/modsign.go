@@ -105,8 +105,12 @@ func (o *Orchestrator) doSignKernelModules(ctx context.Context, ms config.Module
 	return nil
 }
 
-// enrollModuleSigningKey makes the firmware trust the installed certificate.
-// It reads the certificate from the target, so it also works after a resume.
+// enrollModuleSigningKey makes the firmware trust the certificate that
+// sign-kernel-modules created in this run. It never enrolls a certificate
+// read from the image: with MODULE_SIGNING_ALLOW_FAILURE a failed signing
+// leaves whatever the image ships at the certificate path, for a key its
+// author holds. sign-kernel-modules runs again on a resume for the same
+// reason.
 func (o *Orchestrator) enrollModuleSigningKey(ctx context.Context) error {
 	ms := o.cfg.Provision.SecureBoot.ModuleSigning
 	if !ms.Enabled {
@@ -116,23 +120,30 @@ func (o *Orchestrator) enrollModuleSigningKey(ctx context.Context) error {
 }
 
 func (o *Orchestrator) doEnrollModuleSigningKey(ctx context.Context, ms config.ModuleSigningConfig) error {
-	rel := path.Join(ms.CertDirOrDefault(), moduleCertFile)
-	certPath := filepath.Join(o.config.rootDir, rel)
+	if o.moduleSigning == nil {
+		return errors.New("no module signing certificate from this run to enroll")
+	}
+	cert := o.moduleSigning.Cert
 	switch ms.EnrollmentMethod() {
 	case config.ModuleSigningEnrollExternal:
-		o.log.Info("module signing certificate left for the provisioner to enroll", "cert", certPath)
+		o.log.Info("module signing certificate left for the provisioner to enroll", "cert", o.moduleSigning.CertPath)
 		return nil
 	case config.ModuleSigningEnrollMokutil:
-		return secureboot.NewMOKEnroller(certPath, o.cfg.Provision.SecureBoot.MOKPassword).Enroll(ctx)
-	}
-	root, err := os.OpenRoot(o.config.rootDir)
-	if err != nil {
-		return fmt.Errorf("open target root: %w", err)
-	}
-	defer func() { _ = root.Close() }()
-	cert, err := root.ReadFile(strings.TrimPrefix(rel, "/"))
-	if err != nil {
-		return fmt.Errorf("read module signing certificate: %w", err)
+		// mokutil runs on the ramdisk, so give it a copy of the certificate
+		// of this run rather than a path inside the image.
+		f, err := os.CreateTemp("", "booty-module-signing-*.der")
+		if err != nil {
+			return fmt.Errorf("module signing certificate: %w", err)
+		}
+		defer func() { _ = os.Remove(f.Name()) }()
+		_, err = f.Write(cert)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return fmt.Errorf("write module signing certificate: %w", err)
+		}
+		return secureboot.NewMOKEnroller(f.Name(), o.cfg.Provision.SecureBoot.MOKPassword).Enroll(ctx)
 	}
 	return o.stageMOKHelper(ctx, cert)
 }
@@ -147,8 +158,12 @@ func (o *Orchestrator) stageMOKHelper(ctx context.Context, cert []byte) error {
 	if ok, reason := efiRuntimeReady(); !ok {
 		return fmt.Errorf("efi-helper enrollment: %s: %w", reason, ErrEFIVarsUnavailable)
 	}
-	if enabled, err := o.secureBootEnabled(); err != nil || enabled {
-		return fmt.Errorf("efi-helper enrollment needs Secure Boot off during provisioning (enabled=%v): %w", enabled, err)
+	enabled, err := o.secureBootEnabled()
+	if err != nil {
+		return fmt.Errorf("efi-helper enrollment: read the Secure Boot state: %w", err)
+	}
+	if enabled {
+		return errors.New("efi-helper enrollment needs Secure Boot off during provisioning: the firmware refuses the unsigned mok-enroll.efi")
 	}
 	helper, err := os.ReadFile(mokHelperPath)
 	if err != nil {
