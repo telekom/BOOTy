@@ -92,9 +92,9 @@ changed.
 | `MODE` | What BOOTy does |
 |--------|-----------------|
 | `provision` | Runs the provisioning pipeline: writes the image to the target disk and configures the installed OS. |
-| `deprovision`, `hard` | Wipes the disks and removes the EFI boot entries. Without a disk override it wipes every disk. |
+| `deprovision`, `hard` | Crypto-erases the LUKS2 headers on the disks it wipes (`DEPROVISION_CRYPTO_ERASE`), wipes the disks and removes the EFI boot entries. Without a disk override it wipes every disk. |
 | `soft-deprovision`, `soft` | Renames `grub.cfg` to `grub.cfg.bak` in `/boot/grub` and `/boot/grub2` on the installed root. The disk is not wiped. An existing `grub.cfg.bak` counts as done, so a rerun succeeds. If no `grub.cfg` or `grub.cfg.bak` exists, or the root cannot be unmounted after the rename, BOOTy reports an error, not success. |
-| `decommission` | Wipes every disk and removes every EFI boot entry in `BootOrder`. Failures are logged and do not stop the run. CAPRF uses this mode for the `force-clean` annotation. |
+| `decommission` | Crypto-erases the LUKS2 headers (this step fails the run on an error), wipes every disk and removes every EFI boot entry in `BootOrder`. Failures are logged and do not stop the run. CAPRF uses this mode for the `force-clean` annotation. |
 | `standby` | Sends a heartbeat to `HEARTBEAT_URL` every 30 seconds and long polls `COMMANDS_URL` (`?wait=20`), at most every 10 seconds. It runs the `provision`, `deprovision`, `reboot` and `health-check` commands. Both URLs are required. See [Agent mode contract](#agent-mode-contract). |
 | `dry-run` | Runs read-only checks (configuration, image, disk, EFI, health) and reports the result. It does not set up the network and does not write to disks. `DRY_RUN=true` selects this mode. |
 | `check` | Runs the hardware health checks and reports the result. |
@@ -214,6 +214,34 @@ EXTRA_KERNEL_PARAMS=intel_iommu=on
   [GoBGP and EVPN](configuration.md#gobgp-and-evpn) and
   [FRR](configuration.md#frr)), `MODE`, `DRY_RUN` and `CAPRF_LEGACY_COMPAT`.
   The command type selects the mode.
+- A payload can change the image, but not the policy its signature is
+  checked against: the `IMAGE_COSIGN_*` and `SYSEXT_COSIGN_*` options (keys,
+  trusted root, identity, issuer) are fixed too. With such a policy in
+  `/deploy/vars`, a payload can not add an image or sysext source that is not
+  `oci://` (checked only by a checksum) or change the checksum of one
+  (`IMAGE_CHECKSUM`, `IMAGE_CHECKSUM_TYPE`, `IMAGE_CHECKSUM_SCOPE`, a layer
+  `sha256`); it can drop one or switch to another `oci://` source. A deploy
+  archive is held to the same rules: its `deploy/vars` must keep the cosign
+  options of `/deploy/vars`, and it can not write a cosign key or trusted
+  root path (under `/deploy` or through `deploy/file-system`; paths are
+  compared with their symlinks resolved). BOOTy reads the keys and trusted
+  roots once when standby starts and verifies only against these copies;
+  any other key or root path fails.
+- With `PROVISIONER_FILES_TARGET=ramdisk` (in `/deploy/vars` or the archive
+  vars), standby copies the archive's `deploy/file-system` over the ramdisk
+  root before the run. Under a cosign policy that copy may only contain
+  `etc/hosts`, `etc/resolv.conf`, the `CA_BUNDLE_FILE` path and files under
+  `etc/ssl` and `etc/pki`; an archive with anything else (a binary, a
+  library preload, `root/.docker/config.json` with a credential helper) is
+  refused, because it would run code in the process that verifies the
+  signatures. There is no option to widen the list. Without a cosign policy
+  the copy is not restricted, so whoever can send commands can replace any
+  ramdisk file, BOOTy included: use a cosign policy where that matters.
+- An `/etc/hosts` in that copy can point the CAPRF and registry host names
+  elsewhere. With `INSECURE_TRANSPORT` or `SKIP_TLS_VERIFY` nothing then
+  checks the server, so the bearer token can go to whoever the archive
+  names: do not combine these with `PROVISIONER_FILES_TARGET=ramdisk`
+  command archives.
 - A payload can not redirect a request that carries the bearer token:
   `INVENTORY_URL`, `FIRMWARE_URL`, `HEALTH_CHECK_URL`, `TELEMETRY_URL`,
   `METRICS_URL`, `EVENT_URL`, `CRASH_ARTIFACTS_PREPARE_URL` and

@@ -256,6 +256,88 @@ resumed run (`BOOTY_RESUME`) or a retry after the format fails at
 `parse-partitions` or at the LUKS check and needs a new provisioning. No
 resumed step writes to the encrypted partition before that check.
 
+## Crypto-erase at deprovision
+
+On by default; `DEPROVISION_CRYPTO_ERASE=false` turns it off. Without a
+LUKS2 header on the disks nothing changes: BOOTy reads the headers itself
+and runs no tool.
+
+`deprovision`/`hard` and `decommission` run the step `crypto-erase` right
+before the wipe (after `stop-raid`, before `wipe-disks`; before
+`decommission-wipe`). In hard deprovisioning it runs the config checks of
+`wipe-disks` first, so a run that would fail before its wipe erases
+nothing, and it skips when `wipe-disks` keeps the disks (`IMAGE_MODE=ab`
+with `AB_PRESERVE_EXISTING=true`). `decommission` always wipes and does not
+look at the provisioning layout. `soft-deprovision` wipes nothing and does not run it.
+
+1. **Which devices.** The disks that the wipe after it clears: the
+   deprovision device (`DEPROVISION_DEVICE` or `DISK_DEVICE`) and its mirror
+   companion, or every disk that the wipe of all disks takes (no loop, md,
+   dm, ram or optical devices; disks in use are skipped like in the wipe; a
+   named disk in use fails, like its wipe). On each, the whole disk and
+   every partition (from sysfs) are checked for a LUKS2 header: the primary
+   copy at 0 (`LUKS\xba\xbe`, version 2) or a secondary copy at 16 KiB to
+   4 MiB (`SKUL\xba\xbe`) whose `hdr_offset` names that offset, so a header
+   whose primary copy was lost is found too, also behind a read error at
+   another copy. A secondary copy at its
+   `hdr_offset` with another version or an `hdr_size` that does not match
+   is damaged, not foreign: it fails the run, also when a later read of
+   the device fails. Every LUKS2 header there counts as
+   BOOTy-managed: the LUKS2 format has no field that tells the header of
+   #939 from another one (random UUID, no label), and the disks are wiped
+   next anyway, so the step never writes to a disk that the run would leave
+   alone. LUKS2 inside an md array or an LVM volume is not looked at (BOOTy
+   does not create it); LUKS1 is not touched by this step.
+2. **Erase.** For each header, `cryptsetup luksErase --batch-mode <dev>`
+   destroys every keyslot; then `dd` writes zeros over the header area as
+   the header declares it: both copies (2 × `hdr_size`) and the keyslots
+   area (`config.keyslots_size`), at most to the end of the device. The data
+   area is not overwritten here (the wipe and, with `WIPE_DEPTH=thorough`,
+   `blkdiscard` follow): without a key it is noise.
+3. **Check.** BOOTy drops the cached blocks of the device and reads it
+   again; a header copy that is still there fails the run. A header that
+   is gone before its erase (a second path to the same disk, such as a
+   dual-ported SAS disk without dm-multipath) counts as erased.
+4. **Report.** The success status names each device and its LUKS UUID:
+   `deprovisioning complete handoff=… ; crypto-erased: /dev/sda2
+   luksUUID=…`. The header comes from the disk, so a UUID field that is
+   not a UUID is reported as `luksUUID=invalid`. A device that cannot be read (no media, I/O error) is
+   skipped and named (`; crypto-erase could not read: /dev/sdb`); BOOTy
+   cannot erase it, and the wipe after it handles it as before. With
+   `DEPROVISION_CRYPTO_ERASE=false` the status says `; crypto-erase off`.
+
+**Fail closed.** A damaged header (the magic is there, the header does not
+parse), a failed `luksErase`, `dd` or check fails the run with
+`BOOTY-DSK-029` before the wipe, also in `decommission`, which otherwise
+does not stop on disk errors. A missing `cryptsetup` in the ramdisk fails
+too when a LUKS2 header is found. Set `DEPROVISION_CRYPTO_ERASE=false` to
+deprovision such a host with the wipe only.
+
+**Escrow.** `DISK_ENCRYPTION_RECOVERY_KEY_URL` has one call: it receives a
+new recovery key. There is no call that marks a key invalid, so BOOTy sends
+nothing to it at deprovision and does not invent one. After a successful
+crypto-erase the escrowed key opens nothing; the consumer that serves the
+URL can drop it by the `luksUUID` in the deprovision status, which is the
+`luksUUID` of the escrow body. Match it together with the host: whoever
+used the disk can write any UUID into its header.
+
+**Not in standby payloads.** A standby command payload cannot change
+`DEPROVISION_CRYPTO_ERASE` (the payload is refused), and a deploy archive
+gets the value of the vars file back, like the `DISK_ENCRYPTION*` keys
+except the target. Turning it off would leave the keyslots of a disk that
+leaves the host to whoever holds the recovery key, a silent downgrade of
+the same kind as `DISK_ENCRYPTION_ALLOW_FAILURE`. To turn it off for a
+standby host, change the vars file and boot the ramdisk again.
+
+**Logs.** `INFO`: `crypto-erasing LUKS2 device` (device, `luksUUID`,
+`headerBytes`), `LUKS2 keyslots and header destroyed` and `LUKS2 header
+already gone`. `WARN`:
+`crypto-erase is off (DEPROVISION_CRYPTO_ERASE=false)…`, `cannot read the
+device to look for a LUKS2 header`, `cannot list the partitions to look for
+LUKS2 headers`. `DEBUG`: `no LUKS2 header on the disks to wipe`. A failure
+is the step error (`ERROR deprovisioning step failed step=crypto-erase`).
+No key is involved, so nothing is redacted.
+
 ## PCR changes
 
 These change PCR 7 or 14, so the TPM2 refuses and the recovery key is
@@ -351,6 +433,16 @@ KVM scenarios (`.github/workflows/kvm-matrix.yml`):
   `DISK_ENCRYPTION_TARGET=2` the root stays plain, `/data` mounts through
   the mapping (fstab rewritten), its file system has grown to the disk end
   inside LUKS, and the enrollment key unlocks it.
+- `disk-encryption-crypto-erase-ubuntu-26.04`
+  (`TestDiskEncryptionCryptoEraseVM`): provision with encryption, take a
+  header backup, then `MODE=deprovision` with `WIPE_DEPTH=quick` (which
+  leaves partition contents alone, so only the crypto-erase can remove the
+  header). The success status names the device and the escrowed
+  `luksUUID`. At the old partition start both header copies and the
+  keyslots area are zeros, the data area is not, `cryptsetup isLuks` and
+  `luksDump` find nothing; the old metadata without the keyslots area
+  written back is a valid header again, but the recovery key opens no
+  keyslot (with the full backup, the control, it opens).
 - `disk-encryption-off-ubuntu-26.04` (`TestDiskEncryptionOffVM`): the same
   image without the keys: no encryption step runs, the partition table is
   the image's with the root grown, the root is plain ext4, and no BOOTy
