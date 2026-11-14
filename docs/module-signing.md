@@ -269,7 +269,8 @@ At boot, `systemd-sysext` opens the image with dm-verity and passes the
 signature to the kernel. The kernel checks it against the secondary keyring
 (`CONFIG_DM_VERITY_VERIFY_ROOTHASH_SIG_SECONDARY_KEYRING`, which includes
 `.machine`), then against `.platform`
-(`CONFIG_DM_VERITY_VERIFY_ROOTHASH_SIG_PLATFORM_KEYRING`, Linux 6.11+). The
+(`CONFIG_DM_VERITY_VERIFY_ROOTHASH_SIG_PLATFORM_KEYRING`; Linux 6.8 lacks the
+option, and the Ubuntu 26.04 kernel enables it). The
 signature verifies only where the keyring that holds the MOK is in that list.
 The overlay then shadows the unsigned modules of the base `/usr` with the
 signed copies at the same paths, so `modprobe` and the `modules.dep` of the
