@@ -526,6 +526,7 @@ jobs:
             setup: |
               sudo apt-get install -y --no-install-recommends gcc binutils gnu-efi efibootmgr zstd
               sudo apt-get install -y --no-install-recommends python3-virt-firmware || sudo pip3 install --break-system-packages virt-firmware
+              gcc -Q --help=target | grep -E "^ +-march="
               sh hack/mok-enroll/build.sh mok-enroll.efi
               echo "BOOTY_MOK_ENROLL_EFI=${PWD}/mok-enroll.efi" >> "${GITHUB_ENV}"
           - scenario: module-signing-ubuntu-26.04
@@ -542,6 +543,7 @@ jobs:
             setup: |
               sudo apt-get install -y --no-install-recommends gcc binutils gnu-efi efibootmgr zstd
               sudo apt-get install -y --no-install-recommends python3-virt-firmware || sudo pip3 install --break-system-packages virt-firmware
+              gcc -Q --help=target | grep -E "^ +-march="
               sh hack/mok-enroll/build.sh mok-enroll.efi
               echo "BOOTY_MOK_ENROLL_EFI=${PWD}/mok-enroll.efi" >> "${GITHUB_ENV}"
           - scenario: luks-verify

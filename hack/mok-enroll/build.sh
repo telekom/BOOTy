@@ -1,5 +1,7 @@
 #!/bin/sh
-# Builds mok-enroll.efi (x86_64) with gnu-efi:
+# Builds mok-enroll.efi (x86_64) with gnu-efi. Firmware does not enable
+# SSE/AVX state, so the code uses general registers only (some distro gcc
+# default to x86-64-v3):
 #   apt-get install gcc binutils gnu-efi && hack/mok-enroll/build.sh out.efi
 set -eu
 src="$(dirname "$0")/mok-enroll.c"
@@ -13,10 +15,15 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 gcc -I/usr/include/efi -I/usr/include/efi/x86_64 -fpic -fshort-wchar -ffreestanding \
 	-fno-stack-protector -fno-stack-check -fno-strict-aliasing -mno-red-zone \
-	-maccumulate-outgoing-args -DGNU_EFI_USE_MS_ABI -Wall -Werror -O2 \
+	-maccumulate-outgoing-args -march=x86-64 -mgeneral-regs-only -DGNU_EFI_USE_MS_ABI -Wall -Werror -O2 \
 	-c "$src" -o "$tmp/mok-enroll.o"
 ld -nostdlib -znocombreloc -shared -Bsymbolic -T "$lds" -L "$libdir" \
 	"$crt0" "$tmp/mok-enroll.o" -o "$tmp/mok-enroll.so" -lefi -lgnuefi
 objcopy -j .text -j .sdata -j .data -j .rodata -j .dynamic -j .dynsym -j .rel \
 	-j .rela -j '.rel.*' -j '.rela.*' -j .reloc -O pei-x86-64 \
 	--subsystem=10 "$tmp/mok-enroll.so" "$out"
+# VEX (AVX) instructions fault with #UD before the OS enables XSAVE.
+if objdump -d "$out" | grep -qE '\sv[a-z0-9]+\s+.*%[xyz]mm'; then
+	echo "$out contains AVX instructions" >&2
+	exit 1
+fi
