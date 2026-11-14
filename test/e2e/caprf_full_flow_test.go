@@ -432,7 +432,7 @@ func TestCAPRFServerFullProtocol(t *testing.T) {
 			DebugURL:   baseURL + "/debug",
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 
 	if err := client.ReportStatus(ctx, config.StatusInit, "provisioning started"); err != nil {
 		t.Fatal(err)
@@ -494,7 +494,7 @@ func TestCAPRFErrorFlowWithServer(t *testing.T) {
 			ErrorURL: baseURL + "/status/error",
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 
 	_ = client.ReportStatus(ctx, config.StatusInit, "starting")
 	_ = client.ReportStatus(ctx, config.StatusError, "step detect-disk failed: no suitable disk")
@@ -981,7 +981,7 @@ func TestConcurrentStatusReportingE2E(t *testing.T) {
 			LogURL:     baseURL + "/log",
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
@@ -1073,7 +1073,7 @@ dns_resolver="8.8.8.8"
 		t.Error("expected DHCP mode (no ASN in vars)")
 	}
 
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	ctx := context.Background()
 
 	cmd := newMockCommander()
@@ -1302,7 +1302,7 @@ func TestCAPRFClientEmptyURLs(t *testing.T) {
 			Token: "test-token",
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	ctx := context.Background()
 
 	if err := client.ReportStatus(ctx, config.StatusInit, "init"); err != nil {
@@ -1361,7 +1361,7 @@ func TestCAPRFImageServeAndStreamE2E(t *testing.T) {
 			SuccessURL: baseURL + "/status/success",
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	if err := client.ReportStatus(context.Background(), config.StatusSuccess, "image written"); err != nil {
 		t.Fatal(err)
 	}
@@ -1548,7 +1548,7 @@ func TestCAPRFServerUnreachable(t *testing.T) {
 			InitURL: "http://127.0.0.1:1/status/init",
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	err := client.ReportStatus(context.Background(), config.StatusInit, "test")
 	if err == nil {
 		t.Error("expected error for unreachable server")

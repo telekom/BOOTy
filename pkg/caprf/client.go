@@ -32,6 +32,7 @@ import (
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/network/netplan"
 	"github.com/telekom/BOOTy/pkg/timesync"
+	"github.com/telekom/BOOTy/pkg/trust"
 )
 
 // Client communicates with the CAPRF provisioning server.
@@ -76,14 +77,11 @@ func New(varsPath string) (*Client, error) {
 		}
 	}
 
-	c := &Client{
-		httpClient: newHTTPClient(30*time.Second, config.BoolOr(cfg.Transport.SkipTLSVerify, false)),
-		cfg:        cfg,
-		vars:       vars,
-		log:        slog.Default().With("component", "caprf"),
-		started:    time.Now(),
+	c, err := NewFromConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
-	c.warnTransport()
+	c.vars = vars
 	return c, nil
 }
 
@@ -107,6 +105,9 @@ func (c *Client) warnTransport() {
 	}
 	if config.BoolOr(c.cfg.Transport.SkipTLSVerify, false) {
 		c.log.Warn("tls certificate verification disabled, like curl --insecure in the legacy CAPRF provisioner")
+		if c.cfg.Transport.CABundleFile != "" {
+			c.log.Warn("CA_BUNDLE_FILE has no effect on the CAPRF callbacks, the connectivity check and image downloads: SKIP_TLS_VERIFY=true skips their certificate check")
+		}
 	}
 }
 
@@ -200,8 +201,14 @@ func FailureConfig(varsPath string) *config.MachineConfig {
 	return cfg
 }
 
-// NewFromConfig creates a CAPRF client from an already-parsed config.
-func NewFromConfig(cfg *config.MachineConfig) *Client {
+// NewFromConfig creates a CAPRF client from an already-parsed config. It
+// loads cfg.Transport.CABundleFile into the trusted roots first and fails if
+// the bundle cannot be read or parsed.
+func NewFromConfig(cfg *config.MachineConfig) (*Client, error) {
+	// Before the first HTTPS client: the CAPRF callbacks need the roots.
+	if err := trust.LoadFile(cfg.Transport.CABundleFile); err != nil {
+		return nil, fmt.Errorf("CA_BUNDLE_FILE: %w", err)
+	}
 	c := &Client{
 		httpClient: newHTTPClient(30*time.Second, config.BoolOr(cfg.Transport.SkipTLSVerify, false)),
 		cfg:        cfg,
@@ -209,7 +216,7 @@ func NewFromConfig(cfg *config.MachineConfig) *Client {
 		started:    time.Now(),
 	}
 	c.warnTransport()
-	return c
+	return c, nil
 }
 
 // AcquireToken exchanges the bootstrap token for a JWT if a token URL
@@ -1019,6 +1026,7 @@ func newHTTPClient(timeout time.Duration, skipTLSVerify bool) *http.Client {
 			Proxy: http.ProxyFromEnvironment,
 			TLSClientConfig: &tls.Config{
 				MinVersion:         tls.VersionTLS12,
+				RootCAs:            trust.Roots(),
 				InsecureSkipVerify: skipTLSVerify, //nolint:gosec // opt-in legacy CAPRF parity (curl --insecure)
 			},
 		},
@@ -1286,6 +1294,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"MODULE_SIGNING_CERT_DIR":     &cfg.Provision.SecureBoot.ModuleSigning.CertDir,
 		"TOKEN_URL":                   &cfg.Transport.TokenURL,
 		"TOKEN_ALGORITHM":             &cfg.Transport.TokenAlgorithm,
+		"CA_BUNDLE_FILE":              &cfg.Transport.CABundleFile,
 		"NVME_NAMESPACES":             &cfg.Provision.Disk.NVMeNamespaces,
 		"SYSEXT_DEFAULT_MODE":         &cfg.Provision.Sysext.DefaultMode,
 		"SYSEXT_CATALOG_DIR":          &cfg.Provision.Sysext.CatalogDir,

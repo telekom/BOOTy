@@ -1264,7 +1264,7 @@ func TestFlushObservabilityBeforeReboot(t *testing.T) {
 	defer srv.Close()
 
 	cfg := &config.MachineConfig{Transport: config.TransportConfig{LogURL: srv.URL}}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 
 	baseHandler := slog.NewTextHandler(os.Stderr, nil)
 	originalSlogHandler = baseHandler
@@ -3060,4 +3060,12 @@ func TestFRRVersionBelow(t *testing.T) {
 			t.Errorf("frrVersionBelow(%q, 8.3) = %v, want %v", v, got, want)
 		}
 	}
+}
+
+// mustClient returns the client of a NewFromConfig call that must succeed.
+func mustClient(c *caprf.Client, err error) *caprf.Client {
+	if err != nil {
+		panic(err)
+	}
+	return c
 }

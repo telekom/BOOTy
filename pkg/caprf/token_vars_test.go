@@ -61,7 +61,7 @@ func TestTokenExpiryWithoutRenewalCallsTheFatalHandler(t *testing.T) {
 				t.Fatal(err)
 			}
 			cfg.Transport.TokenRenewMarginSeconds = tt.margin
-			c := NewFromConfig(cfg)
+			c := mustClient(NewFromConfig(cfg))
 			fatal := make(chan error, 1)
 			c.SetTokenRenewalFatalHandler(func(err error) { fatal <- err })
 			ctx, cancel := context.WithCancel(context.Background())
@@ -97,7 +97,7 @@ func TestTokenURLExchangeWinsOverTheExpiryVars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := NewFromConfig(cfg)
+	c := mustClient(NewFromConfig(cfg))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := c.AcquireToken(ctx); err != nil {

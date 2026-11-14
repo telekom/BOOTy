@@ -22,7 +22,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
@@ -158,7 +157,7 @@ func VerifyCosignSignature(ctx context.Context, reference string, keys []crypto.
 	}
 	digest := digestRef.DigestStr()
 	sigTag := digestRef.Context().Tag(strings.Replace(digest, ":", "-", 1) + ".sig")
-	sigImg, err := remote.Image(sigTag, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
+	sigImg, err := remote.Image(sigTag, RemoteOptions(ctx)...)
 	if err != nil {
 		if cosignFetchTransient(err) {
 			return fmt.Errorf("%w: %w: %s: %w", ErrCosignVerification, ErrCosignFetch, redacted, wrapRedactedOCIRefError(err, reference))

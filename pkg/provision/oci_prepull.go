@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
@@ -156,7 +155,7 @@ func pullOCIPrePullImageArchive(
 	}
 
 	slog.Info("pulling oci pre-pull image", "ref", imageutil.RedactOCIRef(rawRef))
-	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
+	img, err := remote.Image(ref, imageutil.RemoteOptions(ctx)...)
 	if err != nil {
 		return ociPrePullResult{}, fmt.Errorf("pull oci image %q: %w", imageutil.RedactOCIRef(rawRef), err)
 	}

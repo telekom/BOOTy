@@ -286,7 +286,7 @@ func TestCAPRFProvisioningStatusFlow(t *testing.T) {
 			LogURL:     srvURL + "/log",
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	ctx := context.Background()
 
 	// Simulate provisioning lifecycle: init → success.
@@ -335,7 +335,7 @@ func TestCAPRFDeprovisionStatusFlow(t *testing.T) {
 			SuccessURL: srvURL + "/status/success",
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	ctx := context.Background()
 
 	// Deprovision reports init then success.
@@ -380,7 +380,7 @@ func TestCAPRFErrorStatusFlow(t *testing.T) {
 			ErrorURL: srvURL + "/status/error",
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	ctx := context.Background()
 
 	if err := client.ReportStatus(ctx, config.StatusInit, "starting"); err != nil {
@@ -401,7 +401,7 @@ func TestCAPRFErrorStatusFlow(t *testing.T) {
 
 func TestCAPRFNoURLSkipsStatus(t *testing.T) {
 	cfg := &config.MachineConfig{} // no URLs set
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	ctx := context.Background()
 
 	// Should not error — just skips.
@@ -426,7 +426,7 @@ func TestCAPRFServerRejectsAuth(t *testing.T) {
 			InitURL: srvURL + "/status/init",
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	ctx := context.Background()
 
 	err := client.ReportStatus(ctx, config.StatusInit, "start")
@@ -573,7 +573,7 @@ dns_resolver="8.8.8.8"
 	}
 
 	// Create client and use it for status reporting.
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	ctx := context.Background()
 
 	if err := client.ReportStatus(ctx, config.StatusInit, "provisioning started"); err != nil {
@@ -604,7 +604,7 @@ dns_resolver="8.8.8.8"
 // --- CAPRF Client: Heartbeat and FetchCommands are no-ops ---
 
 func TestCAPRFHeartbeatAndFetchCommandsNoop(t *testing.T) {
-	client := caprf.NewFromConfig(&config.MachineConfig{})
+	client := mustClient(caprf.NewFromConfig(&config.MachineConfig{}))
 	ctx := context.Background()
 
 	if err := client.Heartbeat(ctx); err != nil {
@@ -653,7 +653,7 @@ func TestDHCPModeWaitForConnectivity(t *testing.T) {
 
 func TestCAPRFClientImplementsProviderInterface(t *testing.T) {
 	// Compile-time verification that *caprf.Client satisfies config.Provider.
-	var _ config.Provider = caprf.NewFromConfig(&config.MachineConfig{})
+	var _ config.Provider = mustClient(caprf.NewFromConfig(&config.MachineConfig{}))
 }
 
 // --- Feature Gate: Kexec with Extra Kernel Params ---
@@ -731,7 +731,7 @@ func TestCAPRFDebugEndpoint(t *testing.T) {
 			DebugURL: srvURL + "/debug",
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	ctx := context.Background()
 
 	if err := client.ShipDebug(ctx, "debug payload"); err != nil {
@@ -750,7 +750,7 @@ func TestCAPRFUnknownStatusRejected(t *testing.T) {
 			InitURL: "http://localhost:1/init",
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	ctx := context.Background()
 
 	err := client.ReportStatus(ctx, config.Status("unknown"), "msg")
@@ -774,4 +774,12 @@ func TestStatusConstants(t *testing.T) {
 	if config.StatusError != "error" {
 		t.Errorf("StatusError = %q", config.StatusError)
 	}
+}
+
+// mustClient returns the client of a NewFromConfig call that must succeed.
+func mustClient(c *caprf.Client, err error) *caprf.Client {
+	if err != nil {
+		panic(err)
+	}
+	return c
 }

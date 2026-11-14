@@ -353,7 +353,7 @@ func TestClientReportStatus(t *testing.T) {
 		},
 	}
 
-	client := NewFromConfig(cfg)
+	client := mustClient(NewFromConfig(cfg))
 	ctx := context.Background()
 
 	// Report init.
@@ -396,7 +396,7 @@ func TestClientShipLog(t *testing.T) {
 		},
 	}
 
-	client := NewFromConfig(cfg)
+	client := mustClient(NewFromConfig(cfg))
 	if err := client.ShipLog(context.Background(), "test log line"); err != nil {
 		t.Fatal(err)
 	}
@@ -413,14 +413,14 @@ func TestClientShipLog(t *testing.T) {
 }
 
 func TestClientHeartbeatNoop(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{})
+	client := mustClient(NewFromConfig(&config.MachineConfig{}))
 	if err := client.Heartbeat(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestClientFetchCommandsNoop(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{})
+	client := mustClient(NewFromConfig(&config.MachineConfig{}))
 	cmds, err := client.FetchCommands(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -441,10 +441,10 @@ func TestClientReportInventory(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{Token: "test-token"},
 		Provision: config.ProvisionConfig{Inventory: config.InventoryConfig{URL: srv.URL + "/inventory"}},
-	})
+	}))
 
 	data := []byte(`{"system":{"vendor":"Dell"}}`)
 	if err := client.ReportInventory(context.Background(), data); err != nil {
@@ -459,7 +459,7 @@ func TestClientReportInventory(t *testing.T) {
 }
 
 func TestClientReportInventoryNoURL(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{})
+	client := mustClient(NewFromConfig(&config.MachineConfig{}))
 	// Should be a no-op when no URL is configured.
 	if err := client.ReportInventory(context.Background(), []byte(`{}`)); err != nil {
 		t.Fatalf("ReportInventory() with no URL should not error: %v", err)
@@ -500,10 +500,10 @@ func TestReportCrashArtifactsPreparePresignedPUTNoAuthorization(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{Token: "crash-token"},
 		Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{PrepareURL: srv.URL + "/crash/prepare"}},
-	})
+	}))
 	err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), archivePath)
 	if err != nil {
 		t.Fatalf("ReportCrashArtifacts() error: %v", err)
@@ -544,10 +544,10 @@ func TestReportCrashArtifactsRejectsPresignedPUTBearerAuth(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{Token: "crash-token"},
 		Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{PrepareURL: srv.URL + "/crash/prepare"}},
-	})
+	}))
 	err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), archivePath)
 	if err == nil {
 		t.Fatal("expected presigned bearer auth to be rejected")
@@ -577,10 +577,10 @@ func TestReportCrashArtifactsDirectCAPRFUploadUsesBearer(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{Token: "crash-token"},
 		Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{UploadURL: srv.URL + "/crash/upload"}},
-	})
+	}))
 	if err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), archivePath); err != nil {
 		t.Fatalf("ReportCrashArtifacts() error: %v", err)
 	}
@@ -596,7 +596,7 @@ func TestReportCrashArtifactsDirectCAPRFUploadUsesBearer(t *testing.T) {
 }
 
 func TestReportCrashArtifactsNoURLNoop(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{})
+	client := mustClient(NewFromConfig(&config.MachineConfig{}))
 	err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), writeCrashArchiveFixture(t))
 	if !errors.Is(err, crash.ErrNoUploadURL) {
 		t.Fatalf("ReportCrashArtifacts() error = %v, want ErrNoUploadURL", err)
@@ -604,7 +604,7 @@ func TestReportCrashArtifactsNoURLNoop(t *testing.T) {
 }
 
 func TestReportCrashArtifactsRejectsInsecureRemoteUpload(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{UploadURL: "http://example.com/crash/upload"}}})
+	client := mustClient(NewFromConfig(&config.MachineConfig{Provision: config.ProvisionConfig{CrashArtifacts: config.CrashArtifactsConfig{UploadURL: "http://example.com/crash/upload"}}}))
 	err := client.ReportCrashArtifacts(context.Background(), crashRequestFixture(), writeCrashArchiveFixture(t))
 	if !errors.Is(err, errInsecureTransport) {
 		t.Fatalf("ReportCrashArtifacts() error = %v, want errInsecureTransport", err)
@@ -633,7 +633,7 @@ func writeCrashArchiveFixture(t *testing.T) string {
 }
 
 func TestClientNoURLSkips(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{})
+	client := mustClient(NewFromConfig(&config.MachineConfig{}))
 
 	// ShipLog with no URL should be a no-op.
 	if err := client.ShipLog(context.Background(), "test"); err != nil {
@@ -754,7 +754,7 @@ func TestGetConfig(t *testing.T) {
 		Hostname: "config-host",
 		Mode:     "provision",
 	}
-	client := NewFromConfig(cfg)
+	client := mustClient(NewFromConfig(cfg))
 	got, err := client.GetConfig(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -774,7 +774,7 @@ func TestClientShipDebug(t *testing.T) {
 		},
 	}
 
-	client := NewFromConfig(cfg)
+	client := mustClient(NewFromConfig(cfg))
 	if err := client.ShipDebug(context.Background(), "debug message"); err != nil {
 		t.Fatal(err)
 	}
@@ -791,7 +791,7 @@ func TestClientShipDebug(t *testing.T) {
 }
 
 func TestReportStatusUnknown(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{})
+	client := mustClient(NewFromConfig(&config.MachineConfig{}))
 	err := client.ReportStatus(context.Background(), config.Status("invalid"), "msg")
 	if err == nil {
 		t.Fatal("expected error for unknown status")
@@ -810,7 +810,7 @@ func TestPostWithAuthNon2xx(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Transport: config.TransportConfig{InitURL: srv.URL + "/status/init"},
 	}
-	client := NewFromConfig(cfg)
+	client := mustClient(NewFromConfig(cfg))
 	err := client.ReportStatus(context.Background(), config.StatusInit, "test")
 	if err == nil {
 		t.Fatal("expected error for 500 response")
@@ -1057,7 +1057,7 @@ func TestClientHeartbeat(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{HeartbeatURL: srv.URL}})
+	client := mustClient(NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{HeartbeatURL: srv.URL}}))
 	if err := client.Heartbeat(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1077,7 +1077,7 @@ func TestClientFetchCommands(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL + "?machine=m1"}})
+	client := mustClient(NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL + "?machine=m1"}}))
 	cmds, err := client.FetchCommands(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -1096,7 +1096,7 @@ func TestClientFetchCommandsNoContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL}})
+	client := mustClient(NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL}}))
 	cmds, err := client.FetchCommands(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -1112,7 +1112,7 @@ func TestClientFetchCommandsNotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL}})
+	client := mustClient(NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL}}))
 	cmds, err := client.FetchCommands(context.Background())
 	if err == nil {
 		t.Fatal("expected error on 404")
@@ -1131,7 +1131,7 @@ func TestClientFetchCommandsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL}})
+	client := mustClient(NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL}}))
 	_, err := client.FetchCommands(context.Background())
 	if err == nil {
 		t.Error("expected error on 500")
@@ -1754,10 +1754,10 @@ func TestReportFirmware(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{Token: "test-token"},
 		Provision: config.ProvisionConfig{Firmware: config.FirmwareConfig{URL: srv.URL}},
-	})
+	}))
 
 	data := []byte(`{"bios":{"version":"U50"}}`)
 	if err := client.ReportFirmware(context.Background(), data); err != nil {
@@ -1769,7 +1769,7 @@ func TestReportFirmware(t *testing.T) {
 }
 
 func TestReportFirmwareNoURL(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{})
+	client := mustClient(NewFromConfig(&config.MachineConfig{}))
 	err := client.ReportFirmware(context.Background(), []byte(`{}`))
 	if err != nil {
 		t.Errorf("expected nil error when no URL, got %v", err)
@@ -1874,7 +1874,7 @@ func TestClientReportHealthChecks(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{Health: config.HealthConfig{ReportURL: srv.URL}})
+	client := mustClient(NewFromConfig(&config.MachineConfig{Health: config.HealthConfig{ReportURL: srv.URL}}))
 	results := []health.CheckResult{
 		{Name: "disk-presence", Status: "pass", Severity: "critical", Message: "ok"},
 	}
@@ -1893,7 +1893,7 @@ func TestClientReportHealthChecks(t *testing.T) {
 }
 
 func TestClientReportHealthChecksNoURL(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{})
+	client := mustClient(NewFromConfig(&config.MachineConfig{}))
 	err := client.ReportHealthChecks(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1911,7 +1911,7 @@ func TestClientAcknowledgeCommand(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL + "/commands"}})
+	client := mustClient(NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: srv.URL + "/commands"}}))
 	err := client.AcknowledgeCommand(context.Background(), "cmd-123", "completed", "done")
 	if err != nil {
 		t.Fatal(err)
@@ -1932,7 +1932,7 @@ func TestClientAcknowledgeCommand(t *testing.T) {
 }
 
 func TestClientAcknowledgeCommandNoURL(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{})
+	client := mustClient(NewFromConfig(&config.MachineConfig{}))
 	err := client.AcknowledgeCommand(context.Background(), "cmd-1", "completed", "")
 	if err != nil {
 		t.Fatal(err)
@@ -1940,7 +1940,7 @@ func TestClientAcknowledgeCommandNoURL(t *testing.T) {
 }
 
 func TestClientFetchCommandsRejectsInsecureRemoteURL(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: "http://caprf.example.com/commands"}})
+	client := mustClient(NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: "http://caprf.example.com/commands"}}))
 
 	_, err := client.FetchCommands(context.Background())
 	if err == nil {
@@ -1952,7 +1952,7 @@ func TestClientFetchCommandsRejectsInsecureRemoteURL(t *testing.T) {
 }
 
 func TestClientAcknowledgeCommandRejectsInsecureRemoteURL(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: "http://caprf.example.com/commands"}})
+	client := mustClient(NewFromConfig(&config.MachineConfig{Agent: config.AgentConfig{CommandsURL: "http://caprf.example.com/commands"}}))
 
 	err := client.AcknowledgeCommand(context.Background(), "cmd-1", "completed", "")
 	if err == nil {
@@ -1964,19 +1964,19 @@ func TestClientAcknowledgeCommandRejectsInsecureRemoteURL(t *testing.T) {
 }
 
 func TestAcquireTokenNoURL(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{Transport: config.TransportConfig{Token: "bootstrap"}})
+	client := mustClient(NewFromConfig(&config.MachineConfig{Transport: config.TransportConfig{Token: "bootstrap"}}))
 	if err := client.AcquireToken(context.Background()); err != nil {
 		t.Fatalf("AcquireToken() with no URL should succeed: %v", err)
 	}
 }
 
 func TestAcquireTokenRequiresHostname(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{
 			Token:    "bootstrap-token",
 			TokenURL: "https://auth.example.com/token",
 		},
-	})
+	}))
 
 	err := client.AcquireToken(context.Background())
 	if err == nil {
@@ -1988,10 +1988,10 @@ func TestAcquireTokenRequiresHostname(t *testing.T) {
 }
 
 func TestAcquireTokenRequiresBootstrapToken(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Hostname:  "test-host",
 		Transport: config.TransportConfig{TokenURL: "https://auth.example.com/token"},
-	})
+	}))
 	err := client.AcquireToken(context.Background())
 	if err == nil {
 		t.Fatal("expected error when Token is empty but TokenURL is set")
@@ -2002,14 +2002,14 @@ func TestAcquireTokenRequiresBootstrapToken(t *testing.T) {
 }
 
 func TestAcquireTokenRejectsInvalidAlgorithm(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Hostname: "worker-01",
 		Transport: config.TransportConfig{
 			Token:          "bootstrap-token",
 			TokenURL:       "https://auth.example.com/token",
 			TokenAlgorithm: "HS256",
 		},
-	})
+	}))
 
 	err := client.AcquireToken(context.Background())
 	if err == nil {
@@ -2031,10 +2031,10 @@ func TestAcquireTokenWithServer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Hostname:  "test-host",
 		Transport: config.TransportConfig{Token: "bootstrap-token", TokenURL: srv.URL},
-	})
+	}))
 	if err := client.AcquireToken(context.Background()); err != nil {
 		t.Fatalf("AcquireToken() error: %v", err)
 	}
@@ -2058,13 +2058,13 @@ func TestAcquireTokenErrorRedactsTokenURL(t *testing.T) {
 	tokenURL.RawQuery = "token=abc"
 	tokenURL.Fragment = "frag"
 
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Hostname: "test-host",
 		Transport: config.TransportConfig{
 			Token:    "bootstrap-token",
 			TokenURL: tokenURL.String(),
 		},
-	})
+	}))
 	err = client.AcquireToken(context.Background())
 	if err == nil {
 		t.Fatal("expected token acquisition error")
@@ -2088,9 +2088,9 @@ func TestAcquireTokenErrorRedactsTokenURL(t *testing.T) {
 }
 
 func TestReportMetrics_TelemetryDisabled(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Telemetry: config.TelemetryConfig{Enabled: false, MetricsURL: "http://example.com/metrics"},
-	})
+	}))
 	// Should no-op when telemetry is disabled.
 	if err := client.ReportMetrics(context.Background(), []byte(`{}`)); err != nil {
 		t.Fatalf("ReportMetrics() error: %v", err)
@@ -2105,10 +2105,10 @@ func TestReportMetrics_TelemetryEnabled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{Token: "test-token"},
 		Telemetry: config.TelemetryConfig{Enabled: true, MetricsURL: srv.URL + "/metrics"},
-	})
+	}))
 	data := []byte(`{"stepRetries":3}`)
 	if err := client.ReportMetrics(context.Background(), data); err != nil {
 		t.Fatalf("ReportMetrics() error: %v", err)
@@ -2125,9 +2125,9 @@ func TestReportMetrics_FallbackToTelemetryURL(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Telemetry: config.TelemetryConfig{Enabled: true, URL: srv.URL + "/telemetry"},
-	})
+	}))
 	if err := client.ReportMetrics(context.Background(), []byte(`{}`)); err != nil {
 		t.Fatalf("ReportMetrics() error: %v", err)
 	}
@@ -2137,7 +2137,7 @@ func TestReportMetrics_FallbackToTelemetryURL(t *testing.T) {
 }
 
 func TestReportMetrics_NoURL(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{Telemetry: config.TelemetryConfig{Enabled: true}})
+	client := mustClient(NewFromConfig(&config.MachineConfig{Telemetry: config.TelemetryConfig{Enabled: true}}))
 	// No MetricsURL or TelemetryURL — should silently no-op.
 	if err := client.ReportMetrics(context.Background(), []byte(`{}`)); err != nil {
 		t.Fatalf("ReportMetrics() error: %v", err)
@@ -2145,9 +2145,9 @@ func TestReportMetrics_NoURL(t *testing.T) {
 }
 
 func TestSendEvent_TelemetryDisabled(t *testing.T) {
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Telemetry: config.TelemetryConfig{Enabled: false, EventURL: "http://example.com/events"},
-	})
+	}))
 	if err := client.SendEvent(context.Background(), []byte(`{}`)); err != nil {
 		t.Fatalf("SendEvent() error: %v", err)
 	}
@@ -2160,10 +2160,10 @@ func TestSendEvent_TelemetryEnabled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewFromConfig(&config.MachineConfig{
+	client := mustClient(NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{Token: "test-token"},
 		Telemetry: config.TelemetryConfig{Enabled: true, EventURL: srv.URL + "/events"},
-	})
+	}))
 	if err := client.SendEvent(context.Background(), []byte(`{"event":"started"}`)); err != nil {
 		t.Fatalf("SendEvent() error: %v", err)
 	}
@@ -2310,7 +2310,7 @@ func TestRedactedURLRemovesCredentialsQueryAndFragment(t *testing.T) {
 }
 
 func TestRequireSecureEndpointParseErrorRedactsSensitiveURLParts(t *testing.T) {
-	c := NewFromConfig(&config.MachineConfig{})
+	c := mustClient(NewFromConfig(&config.MachineConfig{}))
 	err := c.requireSecureEndpoint(malformedCAPRFEndpointWithSensitiveParts(), "commands polling")
 	if err == nil {
 		t.Fatal("expected parse error")
@@ -2320,10 +2320,10 @@ func TestRequireSecureEndpointParseErrorRedactsSensitiveURLParts(t *testing.T) {
 }
 
 func TestFetchCommandsCreateRequestErrorRedactsSensitiveURLParts(t *testing.T) {
-	c := NewFromConfig(&config.MachineConfig{
+	c := mustClient(NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{Insecure: new(true)},
 		Agent:     config.AgentConfig{CommandsURL: malformedCAPRFEndpointWithSensitiveParts()},
-	})
+	}))
 	_, err := c.FetchCommands(context.Background())
 	if err == nil {
 		t.Fatal("expected request construction error")
@@ -2333,10 +2333,10 @@ func TestFetchCommandsCreateRequestErrorRedactsSensitiveURLParts(t *testing.T) {
 }
 
 func TestAcknowledgeCommandBuildURLErrorRedactsSensitiveURLParts(t *testing.T) {
-	c := NewFromConfig(&config.MachineConfig{
+	c := mustClient(NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{Insecure: new(true)},
 		Agent:     config.AgentConfig{CommandsURL: malformedCAPRFEndpointWithSensitiveParts()},
-	})
+	}))
 	err := c.AcknowledgeCommand(context.Background(), "cmd-placeholder", "completed", "")
 	if err == nil {
 		t.Fatal("expected ack URL build error")
@@ -2346,7 +2346,7 @@ func TestAcknowledgeCommandBuildURLErrorRedactsSensitiveURLParts(t *testing.T) {
 }
 
 func TestDoPostCreateRequestErrorRedactsSensitiveURLParts(t *testing.T) {
-	c := NewFromConfig(&config.MachineConfig{})
+	c := mustClient(NewFromConfig(&config.MachineConfig{}))
 	err := c.doPost(context.Background(), malformedCAPRFEndpointWithSensitiveParts(), "body")
 	if err == nil {
 		t.Fatal("expected request construction error")
@@ -2456,7 +2456,7 @@ func TestDoPostErrorRedactsQueryToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewFromConfig(&config.MachineConfig{})
+	c := mustClient(NewFromConfig(&config.MachineConfig{}))
 	err := c.doPost(context.Background(), srv.URL+"/status?token=abc#frag", "body")
 	if err == nil {
 		t.Fatal("expected POST status error")

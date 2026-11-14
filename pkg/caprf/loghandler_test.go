@@ -23,7 +23,7 @@ func TestRemoteHandlerShipsLogs(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Transport: config.TransportConfig{Token: "handler-token", LogURL: ts.server.URL + "/log"},
 	}
-	client := NewFromConfig(cfg)
+	client := mustClient(NewFromConfig(cfg))
 
 	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 	handler := NewRemoteHandler(client, inner, slog.LevelInfo, 100)
@@ -47,7 +47,7 @@ func TestRemoteHandlerLevelFilter(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Transport: config.TransportConfig{Token: "filter-token", LogURL: ts.server.URL + "/log"},
 	}
-	client := NewFromConfig(cfg)
+	client := mustClient(NewFromConfig(cfg))
 
 	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 	handler := NewRemoteHandler(client, inner, slog.LevelWarn, 100)
@@ -72,7 +72,7 @@ func TestRemoteHandlerWithAttrsAndGroups(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Transport: config.TransportConfig{Token: "attrs-token", LogURL: ts.server.URL + "/log"},
 	}
-	client := NewFromConfig(cfg)
+	client := mustClient(NewFromConfig(cfg))
 
 	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 	handler := NewRemoteHandler(client, inner, slog.LevelInfo, 100)
@@ -106,7 +106,7 @@ func TestRemoteHandlerEnabled(t *testing.T) {
 
 func TestRemoteHandlerCloseIdempotent(t *testing.T) {
 	cfg := &config.MachineConfig{}
-	client := NewFromConfig(cfg)
+	client := mustClient(NewFromConfig(cfg))
 	inner := slog.NewTextHandler(os.Stderr, nil)
 	handler := NewRemoteHandler(client, inner, slog.LevelInfo, 10)
 
@@ -144,7 +144,7 @@ func TestRemoteHandlerCloseFromDerivedHandlers(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Transport: config.TransportConfig{Token: "derived-close-token", LogURL: srv.URL + "/log"},
 	}
-	client := NewFromConfig(cfg)
+	client := mustClient(NewFromConfig(cfg))
 
 	inner := slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug})
 	root := NewRemoteHandler(client, inner, slog.LevelInfo, 10)
@@ -352,7 +352,7 @@ func TestHandleRedactsSensitiveAttrs_Grouped(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Transport: config.TransportConfig{Token: "redact-group-token", LogURL: srv.URL + "/log"},
 	}
-	client := NewFromConfig(cfg)
+	client := mustClient(NewFromConfig(cfg))
 
 	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 	handler := NewRemoteHandler(client, inner, slog.LevelInfo, 100)
@@ -393,7 +393,7 @@ func TestHandleRedactsSensitiveAttrs(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Transport: config.TransportConfig{Token: "redact-test-token", LogURL: srv.URL + "/log"},
 	}
-	client := NewFromConfig(cfg)
+	client := mustClient(NewFromConfig(cfg))
 
 	inner := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
 	handler := NewRemoteHandler(client, inner, slog.LevelInfo, 100)
@@ -428,7 +428,7 @@ func TestHandleRedactsSensitiveAttrsInLocalLog(t *testing.T) {
 	cfg := &config.MachineConfig{
 		Transport: config.TransportConfig{Token: "redact-local-token", LogURL: ts.server.URL + "/log"},
 	}
-	client := NewFromConfig(cfg)
+	client := mustClient(NewFromConfig(cfg))
 
 	var local bytes.Buffer
 	inner := slog.NewTextHandler(&local, &slog.HandlerOptions{Level: slog.LevelDebug})
@@ -455,7 +455,7 @@ func TestHandleRedactsSensitiveAttrsInLocalLog(t *testing.T) {
 func TestRemoteHandlerLogAfterCloseDoesNotPanic(t *testing.T) {
 	var count atomic.Int64
 	inner := &countingHandler{level: slog.LevelInfo, count: &count}
-	root := NewRemoteHandler(NewFromConfig(&config.MachineConfig{}), inner, slog.LevelInfo, 10)
+	root := NewRemoteHandler(mustClient(NewFromConfig(&config.MachineConfig{})), inner, slog.LevelInfo, 10)
 	logger := slog.New(root).With("tier", "overlay")
 
 	root.Close()
@@ -468,7 +468,7 @@ func TestRemoteHandlerLogAfterCloseDoesNotPanic(t *testing.T) {
 
 func TestRemoteHandlerConcurrentLogAndClose(t *testing.T) {
 	inner := slog.NewTextHandler(io.Discard, nil)
-	root := NewRemoteHandler(NewFromConfig(&config.MachineConfig{}), inner, slog.LevelInfo, 10)
+	root := NewRemoteHandler(mustClient(NewFromConfig(&config.MachineConfig{})), inner, slog.LevelInfo, 10)
 	logger := slog.New(root).With("tier", "underlay")
 
 	var wg sync.WaitGroup
