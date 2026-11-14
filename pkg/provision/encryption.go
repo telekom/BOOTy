@@ -809,15 +809,19 @@ if [ -e "$bound" ]; then
 fi
 
 step=start
-# An interrupted earlier phase 1 left originals behind: restore them first.
-for old in /boot/initrd.img-*.booty-old; do
-	[ -e "$old" ] && mv "$old" "${old%.booty-old}"
-done
-restore() {
-	# Images that a failed or interrupted swap replaced come back.
+# A .booty-old link brings back the original image; where the swap did not
+# happen yet it is the same file as the image and only goes away.
+restore_images() {
 	for old in /boot/initrd.img-*.booty-old; do
-		[ -e "$old" ] && mv "$old" "${old%.booty-old}"
+		[ -e "$old" ] || continue
+		img=${old%.booty-old}
+		if [ "$old" -ef "$img" ]; then rm -f "$old"; else mv -f "$old" "$img"; fi
 	done
+}
+# An interrupted earlier phase 1 left originals behind.
+restore_images
+restore() {
+	restore_images
 	crypttab_line "$key luks,x-initrd.attach"
 	printf '%s\ninstall_items+=" %s "\n' "# Written by BOOTy: removed by ` + luksUnitName + ` after the TPM2 enrollment." "$key" >"$keyconf"
 	rm -f /boot/initrd.img-*.booty-new

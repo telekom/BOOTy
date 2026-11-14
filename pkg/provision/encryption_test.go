@@ -471,7 +471,7 @@ func TestEnrollScriptKeepsOriginalImagesUntilCommit(t *testing.T) {
 	p1 := luksEnrollScript[strings.Index(luksEnrollScript, "step=start"):]
 	inOrder(t, p1, "restore() {", `ln -f "$img" "$img.booty-old"`, `mv "$img.booty-new" "$img"`, "trap - EXIT", "rm -f /boot/initrd.img-*.booty-old")
 	restore := p1[strings.Index(p1, "restore() {"):strings.Index(p1, "trap restore EXIT")]
-	if !strings.Contains(restore, `mv "$old" "${old%.booty-old}"`) {
+	if !strings.Contains(restore, "restore_images") || !strings.Contains(luksEnrollScript, `if [ "$old" -ef "$img" ]; then rm -f "$old"; else mv -f "$old" "$img"; fi`) {
 		t.Fatal("restore does not bring the original images back")
 	}
 }

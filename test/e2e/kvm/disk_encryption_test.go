@@ -139,7 +139,12 @@ func newLUKSVMWith(t *testing.T, dataPartition bool) *luksVM {
 	copyBinary(t, varsTemplate, v.vars)
 	setLUKSSecureBoot(t, v.vars, false)
 	v.disk = filepath.Join(v.dir, "disk.qcow2")
-	run(t, "create disk", "qemu-img", "create", "-f", "qcow2", v.disk, "6G")
+	size := "6G"
+	if dataPartition {
+		// The image is 6 GiB then; the data partition grows into the rest.
+		size = "9G"
+	}
+	run(t, "create disk", "qemu-img", "create", "-f", "qcow2", v.disk, size)
 	return v
 }
 
@@ -351,7 +356,7 @@ func TestDiskEncryptionTPM2DataPartitionVM(t *testing.T) {
 	for _, l := range []string{"ROOT_TYPE=part", "DATA_TYPE=crypt", "DATA_MARKER=booty-data", "TPM2_TOKENS=0", "ENROLL_KEY=present", "KEYSLOTS=0,1,"} {
 		luksRequireLine(t, report, l)
 	}
-	// 512 MiB in the image; grown to the disk end inside the mapping.
+	// 512 MiB in the image; grown to the disk end (about 3 GiB) inside the mapping.
 	var size int64
 	if _, err := fmt.Sscan(luksField(report, "DATA_BYTES"), &size); err != nil || size < 1<<30 {
 		t.Fatalf("data file system %d bytes, want it grown past 1 GiB (%v)", size, err)
