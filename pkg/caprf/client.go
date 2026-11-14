@@ -1223,6 +1223,9 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 	if key == "LOG_FLUSH_TIMEOUT_SEC" {
 		return applyLogFlushTimeoutVar(cfg, value)
 	}
+	if key == "DEPROVISION_CRYPTO_ERASE" {
+		return applyCryptoEraseVar(cfg, value)
+	}
 	if handled, err := applySRIOVVar(cfg, key, value); handled {
 		return err
 	}
@@ -1241,6 +1244,22 @@ func applyLogFlushTimeoutVar(cfg *config.MachineConfig, value string) error {
 		return fmt.Errorf("invalid LOG_FLUSH_TIMEOUT_SEC: %w", err)
 	}
 	cfg.Transport.LogFlushTimeoutSec = &n
+	return nil
+}
+
+// applyCryptoEraseVar sets DEPROVISION_CRYPTO_ERASE strictly, like the
+// disk encryption booleans: a typo must not turn the crypto-erase off. An
+// empty value is unset (on).
+func applyCryptoEraseVar(cfg *config.MachineConfig, value string) error {
+	cfg.Deprovision.CryptoErase = nil
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	on, err := parseWatchdogBool(value)
+	if err != nil {
+		return fmt.Errorf("invalid DEPROVISION_CRYPTO_ERASE: %w", err)
+	}
+	cfg.Deprovision.CryptoErase = &on
 	return nil
 }
 

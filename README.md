@@ -1342,7 +1342,9 @@ opened volume. The recovery key goes to `DISK_ENCRYPTION_RECOVERY_KEY_URL`
 first; the installed system binds the volume to the TPM2 (PCR 7+14) on its
 first boot with Secure Boot on. It protects disks at rest, not against
 someone with the server or its console. See
-[docs/disk-encryption.md](docs/disk-encryption.md). The vars parser still
+[docs/disk-encryption.md](docs/disk-encryption.md). Hard deprovisioning and
+decommission crypto-erase every LUKS2 header on the disks they wipe
+(`DEPROVISION_CRYPTO_ERASE=false` skips it). The vars parser still
 rejects every key that starts with `LUKS_`.
 
 ### JWT Authentication
