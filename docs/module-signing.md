@@ -11,7 +11,10 @@ Status: experimental and opt-in. `SECUREBOOT_SIGNING` selects the mode:
 The enrollment (`MODULE_SIGNING_ENROLLMENT`: `efi-helper`, `mokutil`,
 `external`) is the same for `per-host` and `ci`. With `ci`, every host that
 gets the image trusts the CI key, the shared-key trade-off that `per-host`
-avoids: a leaked CI key can sign modules for all of them. The UKI/PCR 11
+avoids: a leaked CI key can sign modules for all of them. The CI certificate
+must carry the module-signing-only EKU `1.3.6.1.4.1.2312.16.1.2`, or BOOTy
+refuses it: shim trusts every other `MokList` certificate for boot loaders
+and kernels too, and the image alone chooses this one. The UKI/PCR 11
 signing work is meant to use the same setting and modes.
 
 Out-of-tree kernel modules (DKMS output, vendor drivers) in a whole-disk
@@ -34,7 +37,11 @@ After the image is written and the target root is mounted:
      the kernel's `scripts/sign-file` (detached CMS, SHA-256, no signed
      attributes, `struct module_signature` and the magic string). An existing
      signature is replaced. Files are read and written through `os.Root`, so a
-     symlink in the image cannot redirect a write;
+     symlink in the image cannot redirect a write. Every module is checked
+     before the first one is rewritten, and a file that is not ELF is
+     refused: the signature is a bare RSA signature over the content, so
+     signing image-chosen bytes would let the image obtain, for example, a
+     certificate issued by the per-host key;
    - modules are rewritten in place, so owner, mode and extended attributes
      (the SELinux label) stay; files larger than 256 MiB, compressed or not,
      are refused;
@@ -54,9 +61,10 @@ After the image is written and the target root is mounted:
      it can run only through `BootNext`. OVMF boots it; firmware that skips
      inactive `BootNext` entries needs an active one (not tested on
      hardware);
-   - `mokutil`: `mokutil --import` with `MOK_PASSWORD`, run in the target
-     (the ramdisks do not ship mokutil; shim-based targets do); MokManager
-     asks for the password once at the console;
+   - `mokutil`: BOOTy writes `MokNew` and `MokAuth` (SHA-256 over `MokNew`
+     and the UCS-2 `MOK_PASSWORD`) itself, as `mokutil --import
+     --simple-hash` does; no binary of the image runs with the password.
+     MokManager asks for the password once at the console;
    - `external`: nothing; the provisioner enrolls the certificate.
 3. The provisioning report (`secureBoot.moduleSigning`) carries the
    certificate, its SHA-256 and the number of signed modules, so the
@@ -175,8 +183,8 @@ BOOTy only emits the certificate for this path (`enrollment: external`).
 
 ### (c) mokutil
 
-The existing `MOKEnroller` path. It needs someone (or a BMC console script)
-to confirm in MokManager, so it is a fallback only.
+`MokNew` and `MokAuth`, written by BOOTy. It needs someone (or a BMC
+console script) to confirm in MokManager, so it is a fallback only.
 
 ## Security analysis
 
@@ -209,13 +217,13 @@ makes such a change break automatic unlock.
 Without reprovisioning, `mokutil --delete` (one MokManager confirmation) or
 `MokListX` removes it.
 
-## LUKS2 + TPM2 (follow-up)
+## LUKS2 + TPM2
 
-The key must be sealed to the final state. With `efi-helper`, BOOTy runs
-with Secure Boot off and before `MokList` changes, so PCR 7 (Secure Boot
-state, PK, KEK, db, dbx, and the authorities shim used) and PCR 14 (MOK)
-during provisioning differ from the first Secure Boot boot. Measured in the
-KVM scenario (OVMF with the Microsoft keys):
+[Disk encryption](disk-encryption.md) (`DISK_ENCRYPTION=luks2-tpm2`) binds
+the volume to PCR 7+14 on the first boot with Secure Boot on, not while
+BOOTy runs: Secure Boot is off then, and `MokList` changes at the
+enrollment boot. Measured in the KVM scenario (OVMF with the Microsoft
+keys):
 
 | | PCR 7 | PCR 14 |
 |---|---|---|
@@ -228,23 +236,11 @@ although their MOKs differ: module signatures are checked by the kernel and
 are not measured, and shim measures `MokList` into PCR 14. A policy on PCR 7
 alone does not notice an extra MOK; PCR 7+14 does.
 
-Proposed order:
-
-1. BOOTy (after `sign-kernel-modules`): `cryptsetup reencrypt --encrypt
-   --type luks2 --reduce-device-size 32M` on the root partition after
-   shrinking the file system by 32 MiB; slot 0 gets a random recovery key,
-   slot 1 a one-time enrollment key in `/etc/booty/luks-enroll.key` on the
-   encrypted root; crypttab gets `tpm2-device=auto`.
-2. The recovery key goes to the provisioner over a new
-   `LUKS_RECOVERY_KEY_URL` (same token and TLS as the status callback). It is
-   never logged or put in the report. Escrow is the provisioner's choice.
-3. First Secure Boot boot (in the target, after the enrollment boot and the
-   switch to Secure Boot on): a one-shot unit runs `systemd-cryptenroll
-   --tpm2-device=auto --tpm2-pcrs=7+14 --unlock-key-file=...`, then wipes
-   slot 1 and the key file. Until then the root unlocks with the recovery
-   key only, so the first boot needs the key once (BMC console or network
-   unlock), or the provisioner predicts PCR 7 and 14 with
-   `systemd-pcrlock` from the expected variables.
+With `efi-helper` the enrollment boot runs with Secure Boot off, so the
+binding sees the final `MokList`. With `mokutil` the binding waits while a
+MOK request is pending in MokManager. With `external`, a `db` update after
+the binding changes PCR 7; see
+[Module signing](disk-encryption.md#module-signing) there.
 
 ## dm-verity roots (experimental)
 

@@ -484,6 +484,7 @@ func runCAPRF(ctx context.Context) {
 		reboot()
 	}
 	network.SetSkipTLSVerify(config.BoolOr(cfg.Transport.SkipTLSVerify, false))
+	image.SetFollowRedirects(config.BoolOr(cfg.Provision.Image.FollowRedirects, true))
 	image.RefreshHTTPClients()
 	provision.RefreshHTTPClients()
 

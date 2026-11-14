@@ -154,8 +154,17 @@ func (o *Orchestrator) readCISigningCert(sb *config.SecureBootConfig) error {
 	if err != nil {
 		return fmt.Errorf("read CI module signing certificate: %w", err)
 	}
-	if _, err := x509.ParseCertificate(der); err != nil {
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
 		return fmt.Errorf("CI module signing certificate %s is not a DER X.509 certificate: %w", sb.MOKCertPath, err)
+	}
+	// The image chooses this certificate and BOOTy enrolls it unattended.
+	// shim trusts MokList for boot images too, except certificates with the
+	// module-signing-only EKU: without it the CI key could sign boot loaders
+	// and kernels that every host with the image boots.
+	if !secureboot.IsModuleSigningOnly(cert) {
+		return fmt.Errorf("CI module signing certificate %s lacks the module-signing-only extended key usage %s",
+			sb.MOKCertPath, secureboot.OIDModuleSigningOnly)
 	}
 	sum := sha256.Sum256(der)
 	o.moduleSigning = &ReportModuleSigning{
@@ -231,21 +240,14 @@ func (o *Orchestrator) doEnrollModuleSigningKey(ctx context.Context, ms config.M
 		o.log.Info("module signing certificate left for the provisioner to enroll", "cert", o.moduleSigning.CertPath)
 		return nil
 	case config.ModuleSigningEnrollMokutil:
-		// mokutil runs in the target (the ramdisks lack it), with a copy of
-		// the certificate of this run in /run, which the chroot shares.
-		f, err := os.CreateTemp("/run", "booty-module-signing-*.der")
-		if err != nil {
-			return fmt.Errorf("module signing certificate: %w", err)
+		if ok, reason := efiRuntimeReady(); !ok {
+			return fmt.Errorf("mokutil enrollment: %s: %w", reason, ErrEFIVarsUnavailable)
 		}
-		defer func() { _ = os.Remove(f.Name()) }()
-		_, err = f.Write(cert)
-		if cerr := f.Close(); err == nil {
-			err = cerr
+		if err := secureboot.QueueMOKEnrollment(efi.NewEFIVarReader(reportEFIVarsDir), cert, o.cfg.Provision.SecureBoot.MOKPassword); err != nil {
+			return err //nolint:wrapcheck // names the variables
 		}
-		if err != nil {
-			return fmt.Errorf("write module signing certificate: %w", err)
-		}
-		return secureboot.NewMOKEnroller(f.Name(), o.cfg.Provision.SecureBoot.MOKPassword).InChroot(o.config.rootDir).Enroll(ctx)
+		o.log.Info("MOK enrollment queued: MokManager asks for MOK_PASSWORD at the next boot")
+		return nil
 	}
 	return o.stageMOKHelper(ctx, cert)
 }

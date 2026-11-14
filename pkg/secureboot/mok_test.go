@@ -15,7 +15,7 @@ import (
 func fakeMokutil(t *testing.T, exitCode int, output string) func() {
 	t.Helper()
 	orig := mokutilCommand
-	mokutilCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+	mokutilCommand = func(ctx context.Context, _ ...string) *exec.Cmd {
 		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestHelperProcess")
 		cmd.Env = append(os.Environ(), "GO_HELPER=1",
 			"HELPER_EXIT="+strconv.Itoa(exitCode), "HELPER_OUT="+output)

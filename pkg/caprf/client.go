@@ -1083,6 +1083,10 @@ func (c *Client) doPost(ctx context.Context, url, body string) error {
 }
 
 func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error {
+	return c.doPostJSONClient(ctx, c.httpClient, url, data)
+}
+
+func (c *Client) doPostJSONClient(ctx context.Context, client *http.Client, url string, data []byte) error {
 	redacted := redactedURL(url)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url,
 		bytes.NewReader(data))
@@ -1094,7 +1098,7 @@ func (c *Client) doPostJSON(ctx context.Context, url string, data []byte) error 
 		return err
 	}
 
-	resp, err := c.httpClient.Do(req) //nolint:gosec // URL from trusted config
+	resp, err := client.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", redacted, redactedURLError(req.URL.String(), err))
 	}
@@ -1194,6 +1198,9 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 		return nil
 	}
 	if handled, err := applyWatchdogVar(cfg, key, value); handled {
+		return err
+	}
+	if handled, err := applyDiskEncryptionVar(cfg, key, value); handled {
 		return err
 	}
 	if handled, err := applyUint32Var(cfg, key, value); handled {

@@ -61,7 +61,8 @@ Rules, from `parseVarLine` and `unquoteVarValue`:
 - A value can not span more lines. A line longer than 64 KiB stops the parse.
 - When a key occurs more than once, the last entry wins.
 - BOOTy ignores unknown keys, except keys that start with `LUKS_`. A `LUKS_`
-  key stops the parse with "is not supported yet".
+  key stops the parse with "is not supported yet"; disk encryption uses the
+  `DISK_ENCRYPTION_*` keys.
 - An integer key with a value that is not an integer stops the parse.
 - After the parse, `Config.Validate` checks enum values and cross-field rules.
   A validation error stops the run.
@@ -238,6 +239,7 @@ defaults.
 | Bearer token over plain HTTP | `INSECURE_TRANSPORT` | `transport.insecure` | `false` | `true` |
 | No TLS certificate check, like `curl --insecure` | `SKIP_TLS_VERIFY` | `transport.skipTLSVerify` | `false` | `true` |
 | Plain HTTP image URLs | `IMAGE_ALLOW_INSECURE_HTTP` | `provision.image.allowInsecureHTTP` | `false` | `true` |
+| Follow redirects of the HTTP image requests | `IMAGE_FOLLOW_REDIRECTS` | `provision.image.followRedirects` | `true` | `false` |
 | Export the vars entries, like `source vars` | `EXPORT_VARS` | `transport.exportVars` | `false` | `true` |
 | Provisioner files into the ramdisk, like `copy_files` | `PROVISIONER_FILES_TARGET` | `provisionerFilesTarget` | `target` | `ramdisk` |
 | Write the installed OS `resolv.conf` | `WRITE_RESOLV_CONF` | `provision.writeResolvConf` | `true` | `false` |
@@ -263,13 +265,14 @@ behaviour changes of this mode.
 |-----|---------|--------|-------------|
 | `IMAGE` | (unset) | URLs separated by commas or spaces | OS image sources: `https://`, `http://` or `oci://`. With more than one URL, BOOTy probes each URL with a ranged GET and uses the fastest. Required for provisioning. |
 | `IMAGE_ALLOW_INSECURE_HTTP` | `false` | boolean | Accept `http://` image URLs. YAML `provision.image.allowInsecureHTTP`. Preset: `true`. |
+| `IMAGE_FOLLOW_REDIRECTS` | `true` | boolean | Follow HTTP redirects in the image requests: the source probe, the first image GET and the `IMAGE_SIGNATURE_URL` download. `false` fails the request on the first redirect (`301`, `302`, `303`, `307`, `308`) with `redirect refused (IMAGE_FOLLOW_REDIRECTS=false): status 302 to <location>` (query string redacted), without a request to the redirect target and without a retry; with several `IMAGE` URLs a redirecting source loses the probe. Like the image `curl` calls of the CAPRF legacy provisioner, which have no `--location`. `oci://` pulls are not affected (registries redirect blob downloads to storage). The ranged GETs of `IMAGE_RESUME` and `IMAGE_PARALLEL_RANGES` never follow redirects. YAML `provision.image.followRedirects`. Preset: `false`. |
 | `IMAGE_CHECKSUM` | (unset) | hex digest, optional `sha256:` or `sha512:` prefix | Expected digest of the image; `IMAGE_CHECKSUM_SCOPE` selects the bytes. Required for `oci://` sources that are not pinned by digest, and with `IMAGE_SIGNATURE_URL`. A mismatch fails the run: whole-disk streaming wipes the start of the target disk, A/B and partition-layout root streaming invalidate the target partitions they wrote. |
 | `IMAGE_CHECKSUM_TYPE` | from digest length | `sha256`, `sha512` | Hash algorithm of `IMAGE_CHECKSUM`. |
 | `IMAGE_CHECKSUM_SCOPE` | `download` | `download`, `decompressed` | Bytes that `IMAGE_CHECKSUM` covers. `download`: the file as downloaded, before decompression or qcow2 conversion, like the `.sha256` files published next to `.lz4` images and like the CAPRF legacy provisioner. `decompressed`: the decompressed image; for qcow2 the converted raw image. For `oci://` sources `download` hashes the file pushed as an artifact layer (`oras push image.raw.zst:application/vnd.tcaas.node-image+raw.zst`: the `.raw.zst` file, also checked against the layer digest), or the content of a container layer (`application/vnd.oci.image.layer.v1.tar+gzip` and the other container types) without its transport compression; `decompressed` hashes the image that BOOTy decompresses from it. A mismatch error names the scope. YAML `provision.image.checksumScope`. |
 | `IMAGE_STREAM` | `false` | boolean | Forbid staging the image in RAM: every image is written as one stream (download, decompress, write). A QCOW2 image then fails before the disk wipe, and `IMAGE_MODE=partition` is invalid. Raw and compressed raw images stream anyway. See [image formats](disk.md#streaming-and-staging). YAML `provision.image.stream`. |
 | `IMAGE_SPARSE_WRITE` | `off` | `off`, `auto` | `auto`: whole-disk streaming does not write the all-zero 64 KiB blocks of the image. It zeroes each run of them with one hole punch (`fallocate` `PUNCH_HOLE`, which the kernel sends to the device as WRITE ZEROES without a fallback; the device may deallocate), and only where the device guarantees that the range reads back as zeros. A device that cannot falls back to writing the zeros. See [faster image writes](disk.md#faster-image-writes). YAML `provision.image.sparseWrite`. |
 | `IMAGE_SKIP_UNCHANGED` | `false` | boolean | Whole-disk streaming reads each 64 KiB block of the target before it writes it, and skips the write when the target already holds the block; all-zero blocks are always zeroed or written. Reinstalling the same image then writes only the blocks that differ; the download and `IMAGE_CHECKSUM` still cover the whole image. Needs `WIPE_DEPTH=quick` without `SECURE_ERASE` and `DISCARD_NVME`, and a disk that reads deallocated blocks deterministically or an OS that never discards. See [faster image writes](disk.md#faster-image-writes). YAML `provision.image.skipUnchanged`. |
-| `IMAGE_RESUME` | `false` | boolean | Continue an HTTP image download that breaks mid-body: BOOTy requests the rest from the last byte received (`Range`) with `If-Range` and `If-Match` set to the strong `ETag` of the first response, so the bytes come from the same image, up to 5 times per download. Ranged GETs go to the URL that answered the first GET (after its redirects) and do not follow redirects: a redirect, a changed image or a client error fails the download. Servers without `Accept-Ranges: bytes`, a strong `ETag` and a `Content-Length` download in one GET as before. `oci://` sources do not resume. See [faster image writes](disk.md#faster-image-writes). YAML `provision.image.resume`. |
+| `IMAGE_RESUME` | `false` | boolean | Continue an HTTP image download that breaks mid-body: BOOTy requests the rest from the last byte received (`Range`) with `If-Range` and `If-Match` set to the strong `ETag` of the first response, so the bytes come from the same image, up to 5 times per download. Ranged GETs go to the URL that answered the first GET (after its redirects, see `IMAGE_FOLLOW_REDIRECTS`) and do not follow redirects: a redirect, a changed image or a client error fails the download. Servers without `Accept-Ranges: bytes`, a strong `ETag` and a `Content-Length` download in one GET as before. `oci://` sources do not resume. See [faster image writes](disk.md#faster-image-writes). YAML `provision.image.resume`. |
 | `IMAGE_PARALLEL_RANGES` | `0` | `0` to `16` | Download an HTTP image larger than 8 MiB as that many ranged GETs of 8 MiB at a time, passed on in order; a failed range is fetched again (up to 5 times). Needs the same server support as `IMAGE_RESUME` and pins the URL the same way: a range answered with a redirect, a changed image or a client error fails the download; RAM: about N+1 chunks of 8 MiB. `0` and `1` use one GET. YAML `provision.image.parallelRanges`. |
 | `IMAGE_SIGNATURE_URL` | (unset) | URL | Detached GPG signature of the image. Not supported for `oci://` sources. |
 | `IMAGE_GPG_PUBKEY` | (unset) | file path in the ramdisk | Public key for `IMAGE_SIGNATURE_URL`. |
@@ -510,12 +513,30 @@ These keys apply to the provision and deprovision modes.
 | `SECUREBOOT_GRUB_SHA256` | (unset) | same | Expected digest of the installed GRUB EFI binary. |
 | `SECUREBOOT_KERNEL_SHA256` | (unset) | same | Expected digest of the installed kernel. |
 | `SECUREBOOT_SIGNING` | `off` | `per-host`, `ci`, `off` | Who signs the out-of-tree kernel modules of the target (`/lib/modules/*/{updates,extra}`). `per-host`: BOOTy signs them with a new per-host key, which exists only in memory, runs depmod and rebuilds the initramfs. `ci`: the image arrives signed by CI, and BOOTy holds no key and only enrolls `MOK_CERT_PATH`. `off`: nothing is signed or enrolled, and provisioning runs as without the feature. See [module signing](module-signing.md). |
-| `MOK_CERT_PATH` | (unset) | absolute path in the target | With `SECUREBOOT_SIGNING=ci`: the DER certificate of the CI key that signed the modules, enrolled like the per-host one. |
+| `MOK_CERT_PATH` | (unset) | absolute path in the target | With `SECUREBOOT_SIGNING=ci`: the DER certificate of the CI key that signed the modules, enrolled like the per-host one. It must have the module-signing-only EKU `1.3.6.1.4.1.2312.16.1.2`. |
 | `MODULE_SIGNING_ENROLLMENT` | `efi-helper` | `efi-helper`, `mokutil`, `external` | How the firmware learns the certificate: `efi-helper` boots `mok-enroll.efi` once to write MokList (Secure Boot must be off while provisioning and at the next boot, so not with `SECUREBOOT_REENABLE=true`); `mokutil` queues it for one MokManager confirmation with `MOK_PASSWORD`; `external` leaves it to the provisioner (for example Redfish db enrollment). |
 | `MODULE_SIGNING_TARGET` | `in-place` | `in-place`, `sysext` | Experimental `sysext`: leave `/usr` of the target unchanged (dm-verity roots) and install the signed modules as a per-host system extension with a signed dm-verity root hash in `/var/lib/extensions`. Needs `SECUREBOOT_SIGNING=per-host`, a merged `/usr` and a `MODULE_SIGNING_CERT_DIR` below `/usr`. See [dm-verity roots](module-signing.md#dm-verity-roots-experimental). |
 | `MODULE_SIGNING_CERT_DIR` | `/usr/share/booty/secureboot` | absolute path outside `/run`, `/proc`, `/sys`, `/dev` | Target directory of `booty-module-signing.der`. |
 | `MODULE_SIGNING_ALLOW_FAILURE` | `false` | boolean | Continue provisioning when signing or enrollment fails. By default provisioning fails. |
 | `SECUREBOOT_PINNED_DIGESTS` | (unset) | JSON object with keys `shim`, `grub`, `kernel` | All pins in one key. A single-component key wins over its entry here. |
+
+## Disk encryption
+
+See [Disk encryption](disk-encryption.md), including its threat model.
+Requires a TPM2, Secure Boot in user mode, a whole-disk raw GPT image whose
+encrypted partition is the last one, and an image with dracut,
+`systemd-cryptsetup` and the TPM2 libraries. Turns kexec off. Without
+`DISK_ENCRYPTION` none of this changes anything. A standby command payload
+or deploy archive can change only `DISK_ENCRYPTION_TARGET`.
+
+| Key | Default | Values | Description |
+|-----|---------|--------|-------------|
+| `DISK_ENCRYPTION` | (unset) | `luks2-tpm2` | Format `DISK_ENCRYPTION_TARGET` with LUKS2 while the image is written and write that partition into the opened volume. The installed system binds it to the TPM2 (PCR 7+14) on its first boot with Secure Boot on. Not with disk mirroring, RAID, `PARTITION_LAYOUT`, an image mode other than `whole-disk`, or `SKIP_TLS_VERIFY` (also not its `CAPRF_LEGACY_COMPAT` preset). YAML `provision.diskEncryption.mode`. |
+| `DISK_ENCRYPTION_TARGET` | `root` | `root`, partition number | Partition of the image to encrypt. Must be the last partition, ext4 for a data partition; not the ESP. The root needs a separate `/boot` partition. YAML `provision.diskEncryption.target`. |
+| `DISK_ENCRYPTION_RECOVERY_KEY_URL` | (unset) | URL | Required with `DISK_ENCRYPTION`. BOOTy posts the recovery key here (JSON, bearer token) before it formats the partition; any answer other than 2xx, a redirect included, fails the run. HTTPS with TLS verification (`CA_BUNDLE_FILE` roots apply); plain HTTP only on loopback, `INSECURE_TRANSPORT` does not apply. BOOTy never logs or stores the key. YAML `provision.diskEncryption.recoveryKeyURL`. |
+| `DISK_ENCRYPTION_STATUS_URL` | (unset) | https URL | The installed system posts the enrollment result here (`tpm2-bound`, `slot1-removed` or `failed`; JSON, the bearer token of the provisioning run, no key). Best effort. The token is stored in the target until the enrollment ends. YAML `provision.diskEncryption.statusURL`. |
+| `DISK_ENCRYPTION_ALLOW_FAILURE` | `false` | `true`, `false`, `1`, `0`, `yes`, `no` | Provision without encryption when a check before the first disk write fails (no TPM, Secure Boot check, ramdisk tools, unsupported image layout). Errors after the first write always fail the run. Any other value stops the parse. YAML `provision.diskEncryption.allowFailure`. |
+| `DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK` | `false` | same as above | Encrypt although the firmware has no Secure Boot or is in setup mode (no PK). The installed system still binds only with Secure Boot on in user mode; until then the enrollment key unlocks. YAML `provision.diskEncryption.skipSecureBootCheck`. |
 
 ## Sysext
 
@@ -640,6 +661,7 @@ of waiting for the CAPRF provision timeout.
   | `mirror-root`, `check-filesystem`, `resize-filesystem` | 1 h | Copies and file system checks of large file systems |
   | `run-machine-commands`, `run-post-provision-cmds` | 1 h | Operator commands |
   | `sign-kernel-modules` | 1 h | Module signing and initramfs rebuilds (`SECUREBOOT_SIGNING=per-host`) |
+  | `close-encrypted-disk` | 1 h | Grows the file system of an encrypted data partition offline |
   | every other step | `WATCHDOG_TIMEOUT_SEC` (300 s) | |
 
 - Handoff: before kexec and reboot BOOTy disarms the watchdog with the magic
@@ -691,5 +713,6 @@ BOOTy parses these keys, but no code acts on the value:
 
 - `LUKS_*` keys, for example `LUKS_ENABLED`: the parser rejects every key
   that starts with `LUKS_`. The `pkg/disk/luks` library is not part of the
-  provisioning flow.
+  provisioning flow; see [Disk encryption](#disk-encryption) for the
+  implemented keys.
 - Planned (#622): `NETWORK_WAIT_MAX_ATTEMPTS`.
