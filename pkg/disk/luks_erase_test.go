@@ -107,6 +107,9 @@ func luks2Header(secondary bool, hdrSize, keyslots int64, json string) []byte {
 	}
 	binary.BigEndian.PutUint16(h[6:], 2)
 	binary.BigEndian.PutUint64(h[8:], uint64(hdrSize))
+	if secondary {
+		binary.BigEndian.PutUint64(h[256:], uint64(hdrSize)) // hdr_offset
+	}
 	copy(h[168:], testLUKSUUID)
 	if json == "" {
 		json = `{"keyslots":{"0":{"type":"luks2"}},"segments":{"0":{"offset":"` + strconv.FormatInt(2*hdrSize+keyslots, 10) +
@@ -278,5 +281,25 @@ func TestCryptoEraseLUKS2HeaderAlreadyGone(t *testing.T) {
 	}
 	if err := f.m.CryptoEraseLUKS2(context.Background(), found[0]); err != nil || len(f.cmd.calls) != 0 {
 		t.Fatalf("CryptoEraseLUKS2() = %v, calls %v; want nothing to do", err, callList(f.cmd.calls))
+	}
+}
+
+// A genuine secondary copy (at its hdr_offset) with a broken hdr_size is a
+// damaged header, not a foreign one: the run must fail, not skip it.
+func TestFindLUKS2DamagedSecondaryOnlyFails(t *testing.T) {
+	f := newLUKSFixture(t, map[string]int64{"sda": 64 << 20, "sda1": 8 << 20})
+	f.writeLUKS2(t, "sda1", false, 16<<10, 1<<20)
+	dev, err := os.OpenFile(filepath.Join(f.dev, "sda1"), os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hdrSize := make([]byte, 8)
+	binary.BigEndian.PutUint64(hdrSize, 8192)
+	if _, err := dev.WriteAt(hdrSize, 16<<10+8); err != nil {
+		t.Fatal(err)
+	}
+	dev.Close()
+	if _, _, err := f.m.FindLUKS2([]string{"/dev/sda"}); !errors.Is(err, errBadLUKS2Header) {
+		t.Fatalf("FindLUKS2() = %v, want errBadLUKS2Header", err)
 	}
 }

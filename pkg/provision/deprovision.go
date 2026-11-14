@@ -104,12 +104,8 @@ func (o *Orchestrator) cryptoErase(ctx context.Context) error {
 		o.cryptoEraseNote = "; crypto-erase off (DEPROVISION_CRYPTO_ERASE=false)"
 		return nil
 	}
-	// The config checks of wipe-disks, so a run that would not wipe does
-	// not erase either.
-	if err := o.ensureABPartitionLayout(); err != nil {
-		return err
-	}
-	if err := o.validatePartitionLayoutConfig(); err != nil {
+	o.cryptoEraseNote = ""
+	if wipes, err := o.hardDeprovisionWipes(); !wipes || err != nil {
 		return err
 	}
 	o.waitForDisks(ctx, "", "") // decommission has selected no disk yet
@@ -136,7 +132,6 @@ func (o *Orchestrator) cryptoErase(ctx context.Context) error {
 		o.log.Info("LUKS2 keyslots and header destroyed", "device", d.Device, "luksUUID", d.UUID)
 		erased = append(erased, d.Device+" luksUUID="+d.UUID)
 	}
-	o.cryptoEraseNote = ""
 	if len(erased) > 0 {
 		o.cryptoEraseNote = "; crypto-erased: " + strings.Join(erased, ", ")
 	}
@@ -144,6 +139,27 @@ func (o *Orchestrator) cryptoErase(ctx context.Context) error {
 		o.cryptoEraseNote += "; crypto-erase could not read: " + strings.Join(unreadable, ", ")
 	}
 	return nil
+}
+
+// hardDeprovisionWipes runs the config checks of wipe-disks, so a hard
+// deprovision that would fail before its wipe erases nothing, and reports
+// false when wipe-disks keeps the disks (A/B preserve-existing).
+// Decommission always wipes and does not use the provisioning layout.
+func (o *Orchestrator) hardDeprovisionWipes() (bool, error) {
+	if o.cfg.Mode == "decommission" {
+		return true, nil
+	}
+	if err := o.ensureABPartitionLayout(); err != nil {
+		return false, err
+	}
+	if err := o.validatePartitionLayoutConfig(); err != nil {
+		return false, err
+	}
+	if o.isABImageMode() && o.cfg.Provision.AB.PreserveExisting {
+		o.log.Info("A/B preserveExisting keeps the disks, skipping crypto-erase")
+		return false, nil
+	}
+	return true, nil
 }
 
 // decommissionWipe matches decommission_wipe in the CAPRF legacy

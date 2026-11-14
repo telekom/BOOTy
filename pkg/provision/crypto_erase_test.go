@@ -67,3 +67,26 @@ func TestCryptoEraseWithoutLUKS(t *testing.T) {
 		t.Fatalf("cryptoErase() = %v, note %q", err, o.cryptoEraseNote)
 	}
 }
+
+// A/B preserve-existing keeps the disks in hard deprovisioning: no
+// crypto-erase either. Decommission ignores the provisioning layout.
+func TestCryptoEraseFollowsTheWipePolicy(t *testing.T) {
+	cfg := &config.MachineConfig{Mode: "hard"}
+	cfg.Provision.Image.Mode = config.ImageModeAB
+	cfg.Provision.AB.PreserveExisting = true
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	o.disk.SetSysfsRoot(filepath.Join(t.TempDir(), "missing")) // any disk access fails
+	if wipes, err := o.hardDeprovisionWipes(); wipes || err != nil {
+		t.Fatalf("hardDeprovisionWipes() = %v, %v; want false", wipes, err)
+	}
+	if err := o.cryptoErase(context.Background()); err != nil || len(cmd.calls) != 0 {
+		t.Fatalf("cryptoErase() = %v, calls %v", err, cmd.calls)
+	}
+	// A layout naming a missing disk does not stop decommission.
+	cfg = &config.MachineConfig{Mode: "decommission"}
+	cfg.Provision.Disk.PartitionLayout = &config.PartitionLayout{Device: "/dev/bootytest-missing"}
+	o = newTestOrchestrator(t, cfg, &mockProvider{})
+	if wipes, err := o.hardDeprovisionWipes(); !wipes || err != nil {
+		t.Fatalf("decommission: hardDeprovisionWipes() = %v, %v; want true", wipes, err)
+	}
+}

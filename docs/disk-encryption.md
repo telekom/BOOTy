@@ -264,8 +264,11 @@ and runs no tool.
 
 `deprovision`/`hard` and `decommission` run the step `crypto-erase` right
 before the wipe (after `stop-raid`, before `wipe-disks`; before
-`decommission-wipe`). It runs the config checks of `wipe-disks` first, so
-a run that would fail before its wipe erases nothing. `soft-deprovision` wipes nothing and does not run it.
+`decommission-wipe`). In hard deprovisioning it runs the config checks of
+`wipe-disks` first, so a run that would fail before its wipe erases
+nothing, and it skips when `wipe-disks` keeps the disks (`IMAGE_MODE=ab`
+with `AB_PRESERVE_EXISTING=true`). `decommission` always wipes and does not
+look at the provisioning layout. `soft-deprovision` wipes nothing and does not run it.
 
 1. **Which devices.** The disks that the wipe after it clears: the
    deprovision device (`DEPROVISION_DEVICE` or `DISK_DEVICE`) and its mirror
@@ -273,9 +276,11 @@ a run that would fail before its wipe erases nothing. `soft-deprovision` wipes n
    dm, ram or optical devices; disks in use are skipped like in the wipe; a
    named disk in use fails, like its wipe). On each, the whole disk and
    every partition (from sysfs) are checked for a LUKS2 header: the primary
-   copy at 0 (`LUKS\xba\xbe`, version 2) or a secondary copy at its own
-   `hdr_size` (16 KiB to 4 MiB, `SKUL\xba\xbe`), so a header whose primary
-   copy was lost is found too. Every LUKS2 header there counts as
+   copy at 0 (`LUKS\xba\xbe`, version 2) or a secondary copy at 16 KiB to
+   4 MiB (`SKUL\xba\xbe`) whose `hdr_offset` names that offset, so a header
+   whose primary copy was lost is found too. A secondary copy at its
+   `hdr_offset` with an `hdr_size` that does not match is damaged, not
+   foreign: it fails the run. Every LUKS2 header there counts as
    BOOTy-managed: the LUKS2 format has no field that tells the header of
    #939 from another one (random UUID, no label), and the disks are wiped
    next anyway, so the step never writes to a disk that the run would leave

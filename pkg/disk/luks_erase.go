@@ -205,13 +205,15 @@ func parseLUKS2Header(r io.ReaderAt, off int64) (LUKS2Device, error) {
 	if off > 0 {
 		magic = luks2SecondaryMagic
 	}
-	hdrSize := int64(binary.BigEndian.Uint64(bin[8:16])) //nolint:gosec // checked below
-	// A secondary magic not at its own hdr_size belongs to a header that
+	// hdr_offset (byte 256) is where the copy says it is. A secondary
+	// copy that is not at its own hdr_offset belongs to a header that
 	// starts elsewhere, such as a partition seen from its disk.
-	if !bytes.Equal(bin[:6], magic) || binary.BigEndian.Uint16(bin[6:8]) != 2 || (off > 0 && off != hdrSize) {
+	hdrOffset := binary.BigEndian.Uint64(bin[256:264])
+	if !bytes.Equal(bin[:6], magic) || binary.BigEndian.Uint16(bin[6:8]) != 2 || (off > 0 && hdrOffset != uint64(off)) {
 		return LUKS2Device{}, errNoLUKS2
 	}
-	if hdrSize < luks2MinHeader || hdrSize > luks2MaxHeader || hdrSize&(hdrSize-1) != 0 {
+	hdrSize := int64(binary.BigEndian.Uint64(bin[8:16])) //nolint:gosec // checked below
+	if hdrSize < luks2MinHeader || hdrSize > luks2MaxHeader || hdrSize&(hdrSize-1) != 0 || (off > 0 && off != hdrSize) {
 		return LUKS2Device{}, fmt.Errorf("%w: hdr_size %d at offset %d", errBadLUKS2Header, hdrSize, off)
 	}
 	js := make([]byte, hdrSize-luks2BinaryHeader)
