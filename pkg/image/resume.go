@@ -52,7 +52,7 @@ var errRangeRejected = errors.New("the server rejected the range request")
 
 // finalRangeError reports whether retrying the ranged GET cannot help.
 func finalRangeError(err error) bool {
-	return errors.Is(err, errImageChanged) || errors.Is(err, errRangeRejected)
+	return errors.Is(err, errImageChanged) || errors.Is(err, errRangeRejected) || errors.Is(err, ErrRedirectRefused)
 }
 
 // rangeValidator returns the strong ETag of resp, or "" when resp does not
