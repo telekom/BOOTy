@@ -5,6 +5,7 @@ package provision
 import (
 	"bufio"
 	"context"
+	"crypto"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,14 +49,19 @@ var readProcCmdline = func() ([]byte, error) {
 
 const ociPreflightProbeTimeout = 10 * time.Second
 
+// cosignKeylessTimeout bounds the keyless check, which reads the referrers
+// and the .sig tag of a source.
+const cosignKeylessTimeout = 30 * time.Second
+
 var (
 	evalRootSymlinks   = filepath.EvalSymlinks
 	collectFirmwareFn  = firmware.Collect
 	validateFirmwareFn = firmware.Validate
 	loadCheckpointFn   = LoadCheckpoint
 	probeOCIReference  = image.ResolveOCIReference
-	// verifyCosignSignature is replaced by tests.
+	// verifyCosignSignature and verifyCosignKeyless are replaced by tests.
 	verifyCosignSignature = image.VerifyCosignSignature
+	verifyCosignKeyless   = image.VerifyCosignKeyless
 	secureBootRoot        = newroot
 	mountBootPart         = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
 		return mgr.MountPartition(ctx, device, mountpoint)
@@ -101,7 +107,9 @@ type Orchestrator struct {
 	// Runtime state set during provisioning.
 	targetDisk string
 	// skippedDisks are the disks in use that a wipe of all disks skipped.
-	skippedDisks     []string
+	skippedDisks []string
+	// cryptoEraseNote is the status suffix of crypto-erase.
+	cryptoEraseNote  string
 	mirrorDisk       string           // second root disk when DISK_MIRRORING_MODE selected a pair
 	resumeMirrorPair [2]string        // mirror pair restored from a resume checkpoint
 	targetPartitions []disk.Partition // partitions parse-partitions found on targetDisk
@@ -2387,23 +2395,25 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 	return image.VerifyGPGSignature(ctx, bestURL, o.cfg.Provision.Image.SignatureURL, o.cfg.Provision.Image.GPGPubKey)
 }
 
-// verifyCosignSignatures checks, when cosign keys are configured, the
-// signature of an oci:// image source and of every oci:// sysext source
-// before the disk is wiped. The later pulls use the same digest references,
-// which go-containerregistry checks, so they get the signed bytes. An HTTP
-// image source needs IMAGE_CHECKSUM instead.
+// verifyCosignSignatures checks, when a cosign policy (keys or keyless) is
+// configured, the signature of an oci:// image source and of every oci://
+// sysext source before the disk is wiped. The later pulls use the same
+// digest references, which go-containerregistry checks, so they get the
+// signed bytes. An HTTP image source needs IMAGE_CHECKSUM instead.
 func (o *Orchestrator) verifyCosignSignatures(ctx context.Context, imageURL string) error {
 	if err := o.checkCosignSources([]string{imageURL}); err != nil {
 		return err
 	}
-	if keys := o.cfg.Provision.Image.CosignPublicKeys; len(keys) > 0 && image.IsOCIReference(imageURL) {
-		if err := verifyCosignSource(ctx, imageURL, keys); err != nil {
+	if p := imageCosignPolicy(&o.cfg.Provision.Image); p.enabled() && image.IsOCIReference(imageURL) {
+		method, err := verifyCosignSource(ctx, imageURL, p)
+		if err != nil {
 			return fmt.Errorf("verifying image signature: %w", err)
 		}
-		o.log.Info("image cosign signature verified", "url", image.RedactURL(imageURL))
+		o.log.Info("image cosign signature verified", "url", image.RedactURL(imageURL), "method", method)
 	}
 	sysext := &o.cfg.Provision.Sysext
-	if !sysext.Enabled || len(sysext.CosignPublicKeys) == 0 {
+	p := sysextCosignPolicy(sysext)
+	if !sysext.Enabled || !p.enabled() {
 		return nil
 	}
 	for i := range sysext.Layers {
@@ -2411,20 +2421,25 @@ func (o *Orchestrator) verifyCosignSignatures(ctx context.Context, imageURL stri
 		if !image.IsOCIReference(source) {
 			continue // checked by its sha256
 		}
-		if err := verifyCosignSource(ctx, source, sysext.CosignPublicKeys); err != nil {
+		method, err := verifyCosignSource(ctx, source, p)
+		if err != nil {
 			return fmt.Errorf("verifying sysext %q signature: %w", sysext.Layers[i].Name, err)
 		}
-		o.log.Info("sysext cosign signature verified", "name", sysext.Layers[i].Name, "url", image.RedactURL(source))
+		o.log.Info("sysext cosign signature verified", "name", sysext.Layers[i].Name, "url", image.RedactURL(source), "method", method)
 	}
 	return nil
 }
 
 // checkCosignSources runs the offline checks of verifyCosignSignatures on
-// the image sources and the sysext sources: with cosign keys, an oci://
-// source must be pinned by digest, and an HTTP image source needs
-// IMAGE_CHECKSUM. Dry-run calls it with every configured image source.
+// the image sources and the sysext sources: a keyless policy needs all
+// three options, and with a policy an oci:// source must be pinned by
+// digest and an HTTP image source needs IMAGE_CHECKSUM. Dry-run calls it
+// with every configured image source.
 func (o *Orchestrator) checkCosignSources(imageURLs []string) error {
-	if len(o.cfg.Provision.Image.CosignPublicKeys) > 0 {
+	if p := imageCosignPolicy(&o.cfg.Provision.Image); p.enabled() {
+		if err := p.checkKeyless("IMAGE"); err != nil {
+			return fmt.Errorf("verifying image signature: %w", err)
+		}
 		for _, u := range imageURLs {
 			u = strings.TrimSpace(u)
 			switch {
@@ -2433,13 +2448,17 @@ func (o *Orchestrator) checkCosignSources(imageURLs []string) error {
 					return fmt.Errorf("verifying image signature: %w", err)
 				}
 			case strings.TrimSpace(o.cfg.Provision.Image.Checksum) == "":
-				return fmt.Errorf("verifying image signature: cosign keys are configured but the image source %s is not oci:// and has no IMAGE_CHECKSUM", image.RedactURL(u))
+				return fmt.Errorf("verifying image signature: cosign verification is configured but the image source %s is not oci:// and has no IMAGE_CHECKSUM", image.RedactURL(u))
 			}
 		}
 	}
 	sysext := &o.cfg.Provision.Sysext
-	if !sysext.Enabled || len(sysext.CosignPublicKeys) == 0 {
+	p := sysextCosignPolicy(sysext)
+	if !sysext.Enabled || !p.enabled() {
 		return nil
+	}
+	if err := p.checkKeyless("SYSEXT"); err != nil {
+		return fmt.Errorf("verifying sysext signatures: %w", err)
 	}
 	for i := range sysext.Layers {
 		source := strings.TrimSpace(sysext.Layers[i].Source)
@@ -2464,14 +2483,83 @@ func requireOCIDigest(source string) error {
 	return nil
 }
 
-func verifyCosignSource(ctx context.Context, source string, keyPaths []string) error {
-	keys, err := image.LoadCosignPublicKeys(keyPaths)
-	if err != nil {
-		return err
+// cosignPolicy is the cosign verification configuration of the image or of
+// the sysexts: public keys, a keyless policy, or both. With both, a
+// signature of either kind is accepted.
+type cosignPolicy struct {
+	keys                          []string
+	trustedRoot, identity, issuer string
+}
+
+func imageCosignPolicy(c *config.ImageConfig) cosignPolicy {
+	return cosignPolicy{c.CosignPublicKeys, c.CosignTrustedRoot, c.CosignIdentityRegexp, c.CosignOIDCIssuer}
+}
+
+func sysextCosignPolicy(c *config.SysextConfig) cosignPolicy {
+	return cosignPolicy{c.CosignPublicKeys, c.CosignTrustedRoot, c.CosignIdentityRegexp, c.CosignOIDCIssuer}
+}
+
+func (p cosignPolicy) enabled() bool { return len(p.keys) > 0 || p.keyless() }
+
+func (p cosignPolicy) keyless() bool {
+	return p.trustedRoot != "" || p.identity != "" || p.issuer != ""
+}
+
+// checkKeyless refuses a keyless policy with a missing option, so a typo
+// can not leave a source unchecked.
+func (p cosignPolicy) checkKeyless(prefix string) error {
+	if p.keyless() && (p.trustedRoot == "" || p.identity == "" || p.issuer == "") {
+		return fmt.Errorf("%w: keyless verification needs %s_COSIGN_TRUSTED_ROOT, %s_COSIGN_IDENTITY_REGEXP and %s_COSIGN_OIDC_ISSUER",
+			image.ErrCosignVerification, prefix, prefix, prefix)
 	}
-	ctx, cancel := context.WithTimeout(ctx, ociPreflightProbeTimeout)
-	defer cancel()
-	return verifyCosignSignature(ctx, source, keys)
+	return nil
+}
+
+// load reads the keys and the trusted root of the policy.
+func (p cosignPolicy) load() ([]crypto.PublicKey, *image.CosignKeyless, error) {
+	var keys []crypto.PublicKey
+	var keyless *image.CosignKeyless
+	var err error
+	if len(p.keys) > 0 {
+		if keys, err = image.LoadCosignPublicKeys(p.keys); err != nil {
+			return nil, nil, err
+		}
+	}
+	if p.keyless() {
+		if keyless, err = image.LoadCosignKeyless(p.trustedRoot, p.identity, p.issuer); err != nil {
+			return nil, nil, err
+		}
+	}
+	return keys, keyless, nil
+}
+
+// verifyCosignSource accepts a signature by one of the keys or one that
+// satisfies the keyless policy and returns which ("key" or "keyless").
+func verifyCosignSource(ctx context.Context, source string, p cosignPolicy) (string, error) {
+	keys, keyless, err := p.load()
+	if err != nil {
+		return "", err
+	}
+	var errs []error
+	if keys != nil {
+		keyCtx, cancel := context.WithTimeout(ctx, ociPreflightProbeTimeout)
+		err := verifyCosignSignature(keyCtx, source, keys)
+		cancel()
+		if err == nil {
+			return "key", nil
+		}
+		errs = append(errs, err)
+	}
+	if keyless != nil {
+		keylessCtx, cancel := context.WithTimeout(ctx, cosignKeylessTimeout)
+		err := verifyCosignKeyless(keylessCtx, source, keyless)
+		cancel()
+		if err == nil {
+			return "keyless", nil
+		}
+		errs = append(errs, err)
+	}
+	return "", errors.Join(errs...)
 }
 
 func (o *Orchestrator) partprobe(ctx context.Context) error {

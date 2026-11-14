@@ -15,6 +15,7 @@ import (
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/health"
+	"github.com/telekom/BOOTy/pkg/image"
 	"github.com/telekom/BOOTy/pkg/provision"
 	"github.com/telekom/BOOTy/pkg/rescue"
 )
@@ -73,6 +74,10 @@ func (m *StandbyMode) Run(ctx context.Context) error {
 	if err := m.validateConfig(); err != nil {
 		return err
 	}
+	// The cosign keys and trusted roots of the base config are read now,
+	// before any command can replace files in the ramdisk: verification
+	// only uses these copies (#933 review).
+	image.PinCosignFiles(m.deps.Cfg.CosignTrustFiles()...)
 
 	// The ramdisk runs from RAM only (CAPRF may eject the ISO): the RAM in
 	// use is the footprint of kernel, unpacked initramfs and BOOTy.
