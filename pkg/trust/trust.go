@@ -56,18 +56,26 @@ func LoadFile(path string) error {
 }
 
 // ParsePEM parses a bundle of PEM CERTIFICATE blocks. Text before a block is
-// ignored, like openssl does. Other block types, broken certificates, data
-// after the last block (a truncated block) and a bundle without a certificate
-// are errors, so a wrong file fails instead of being half used.
+// ignored, like openssl does. Other block types, broken certificates, a
+// malformed block (truncated or with invalid base64) anywhere in the bundle,
+// data after the last block and a bundle without a certificate are errors,
+// so a wrong file fails instead of being half used.
 func ParsePEM(data []byte) ([]*x509.Certificate, error) {
+	begin := []byte("-----BEGIN")
 	var certs []*x509.Certificate
 	rest := data
 	for {
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
-		if block == nil {
+		i := bytes.Index(rest, begin)
+		if i < 0 {
 			break
 		}
+		// pem.Decode skips a malformed block and returns the next valid
+		// one: a second BEGIN in the consumed bytes means it skipped one.
+		block, next := pem.Decode(rest[i:])
+		if block == nil || bytes.Contains(rest[i+len(begin):len(rest)-len(next)], begin) {
+			return nil, fmt.Errorf("PEM block %d is malformed", len(certs)+1)
+		}
+		rest = next
 		if block.Type != "CERTIFICATE" {
 			return nil, fmt.Errorf("PEM block %d is %q, want CERTIFICATE", len(certs)+1, block.Type)
 		}

@@ -31,6 +31,8 @@ func TestParsePEM(t *testing.T) {
 	cert := certPEM(t, srv)
 	key := "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"
 	broken := "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"
+	badBase64 := "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n"
+	truncated := cert[:len(cert)/2]
 	for _, tt := range []struct {
 		name    string
 		data    string
@@ -43,7 +45,13 @@ func TestParsePEM(t *testing.T) {
 		{name: "only text", data: "not a certificate\n", wantErr: "not a PEM certificate"},
 		{name: "private key", data: cert + key, wantErr: `"PRIVATE KEY"`},
 		{name: "broken DER", data: broken, wantErr: "PEM block 1"},
-		{name: "truncated", data: cert + cert[:len(cert)/2], wantErr: "after PEM block 1"},
+		{name: "truncated last", data: cert + truncated, wantErr: "PEM block 2 is malformed"},
+		{name: "truncated first", data: truncated + cert, wantErr: "PEM block 1 is malformed"},
+		{name: "truncated middle", data: cert + truncated + cert, wantErr: "PEM block 2 is malformed"},
+		{name: "invalid base64 first", data: badBase64 + cert, wantErr: "PEM block 1 is malformed"},
+		{name: "invalid base64 middle", data: cert + badBase64 + cert, wantErr: "PEM block 2 is malformed"},
+		{name: "invalid base64 last", data: cert + badBase64, wantErr: "PEM block 2 is malformed"},
+		{name: "text after the last block", data: cert + "trailer\n", wantErr: "after PEM block 1"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			certs, err := ParsePEM([]byte(tt.data))
