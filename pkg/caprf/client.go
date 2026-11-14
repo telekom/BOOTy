@@ -3,8 +3,8 @@ package caprf
 
 import (
 	"bufio"
-	"cmp"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
