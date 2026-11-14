@@ -130,6 +130,8 @@ type Orchestrator struct {
 	separateBootMounted bool
 	// disksSettled is true after waitForDisks ran.
 	disksSettled bool
+	// encryption is set by prepare-disk-encryption for encrypt-disk.
+	encryption *encryptionState
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -200,6 +202,8 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"configure-kubelet", o.configureKubelet},
 		{"prepare-oci-prepulls", o.prepareOCIPrePulls},
 		{"configure-serial-console", o.configureSerialConsole},
+		// Before configure-grub, which picks up its GRUB override.
+		{"prepare-disk-encryption", o.prepareDiskEncryption},
 		{"configure-grub", o.configureGRUB},
 		{"install-efi-fallback", o.installEFIFallbackLoader},
 		// Validate the final installed boot artifacts after BOOTy has applied
@@ -215,6 +219,8 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"create-efi-boot-entry", o.createEFIBootEntry},
 		{"create-mirror-efi-boot-entry", o.createMirrorEFIBootEntry},
 		{"teardown-chroot", o.teardownChroot},
+		// Needs the target unmounted, so after teardown-chroot.
+		{"encrypt-disk", o.encryptDisk},
 		{"report-success", o.reportSuccess},
 	}
 }
@@ -287,6 +293,8 @@ func resumeStateSteps() map[string]struct{} {
 		// file is not written again (see reportWritten).
 		"write-provision-report": {},
 		"teardown-chroot":        {},
+		// The enrollment key lives in memory until encrypt-disk.
+		"prepare-disk-encryption": {},
 	}
 }
 

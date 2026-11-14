@@ -12,7 +12,9 @@ Bind LUKS2 key slots to TPM2 PCR policies during provisioning, enabling
 unattended encrypted boot without manual passphrase entry. Uses Go `go-tpm`
 library for direct TPM2 operations (preferred), with `systemd-cryptenroll`
 binary as fallback. Configurable PCR binding (default: PCR 7 for SecureBoot
-state). Never bind to PCR 14: shim measures the MokList into it. BOOTy
+state). Do not bind to PCR 14 during provisioning: shim measures the MokList into it
+and it is not final yet; [disk encryption](disk-encryption.md) binds PCR 7+14 on the
+first Secure Boot boot of the installed OS. BOOTy
 extends its own events into PCR 23 only, see [PCR plan](usage-security-telemetry.md#pcr-plan).
 
 ## Motivation

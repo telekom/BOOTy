@@ -61,7 +61,8 @@ Rules, from `parseVarLine` and `unquoteVarValue`:
 - A value can not span more lines. A line longer than 64 KiB stops the parse.
 - When a key occurs more than once, the last entry wins.
 - BOOTy ignores unknown keys, except keys that start with `LUKS_`. A `LUKS_`
-  key stops the parse with "is not supported yet".
+  key stops the parse with "is not supported yet"; disk encryption uses the
+  `DISK_ENCRYPTION_*` keys.
 - An integer key with a value that is not an integer stops the parse.
 - After the parse, `Config.Validate` checks enum values and cross-field rules.
   A validation error stops the run.
@@ -511,6 +512,19 @@ These keys apply to the provision and deprovision modes.
 | `SECUREBOOT_KERNEL_SHA256` | (unset) | same | Expected digest of the installed kernel. |
 | `SECUREBOOT_PINNED_DIGESTS` | (unset) | JSON object with keys `shim`, `grub`, `kernel` | All pins in one key. A single-component key wins over its entry here. |
 
+## Disk encryption
+
+See [Disk encryption](disk-encryption.md). Requires a TPM2, Secure Boot, a
+whole-disk image and an image with dracut, `systemd-cryptsetup` and the TPM2
+libraries. Turns kexec off.
+
+| Key | Default | Values | Description |
+|-----|---------|--------|-------------|
+| `DISK_ENCRYPTION` | (unset) | `luks2-tpm2` | Encrypt `DISK_ENCRYPTION_TARGET` in place with LUKS2 after the image is written. The installed system binds it to the TPM2 (PCR 7+14) on its first boot with Secure Boot on. Not with disk mirroring, RAID, `PARTITION_LAYOUT` or an image mode other than `whole-disk`. YAML `provision.diskEncryption.mode`. |
+| `DISK_ENCRYPTION_TARGET` | `root` | `root`, partition number | Partition of the target disk to encrypt. ext4 only; not `/boot` or the ESP. The root needs a separate `/boot` partition. YAML `provision.diskEncryption.target`. |
+| `DISK_ENCRYPTION_RECOVERY_KEY_URL` | (unset) | URL | Required with `DISK_ENCRYPTION`. BOOTy posts the recovery key here (JSON, bearer token, HTTPS unless `INSECURE_TRANSPORT`) before the disk changes; any answer other than 2xx fails the run. BOOTy never logs or stores the key. YAML `provision.diskEncryption.recoveryKeyURL`. |
+| `DISK_ENCRYPTION_ALLOW_FAILURE` | `false` | `true`, `false`, `1`, `0`, `yes`, `no` | Provision without encryption when the checks before the first disk change fail (no TPM, image without the tools, unsupported layout). Errors after that always fail the run. Any other value stops the parse. YAML `provision.diskEncryption.allowFailure`. |
+
 ## Sysext
 
 See [Sysext provisioning](sysext-provisioning.md).
@@ -633,6 +647,7 @@ of waiting for the CAPRF provision timeout.
   | `stream-image` | 1 h | Image modes that write with `dd`; the HTTP download reports every written byte |
   | `mirror-root`, `check-filesystem`, `resize-filesystem` | 1 h | Copies and file system checks of large file systems |
   | `run-machine-commands`, `run-post-provision-cmds` | 1 h | Operator commands |
+  | `encrypt-disk` | 24 h | `cryptsetup reencrypt` rewrites the whole partition without progress output |
   | every other step | `WATCHDOG_TIMEOUT_SEC` (300 s) | |
 
 - Handoff: before kexec and reboot BOOTy disarms the watchdog with the magic
@@ -685,5 +700,6 @@ BOOTy parses these keys, but no code acts on the value:
 
 - `LUKS_*` keys, for example `LUKS_ENABLED`: the parser rejects every key
   that starts with `LUKS_`. The `pkg/disk/luks` library is not part of the
-  provisioning flow.
+  provisioning flow; see [Disk encryption](#disk-encryption) for the
+  implemented keys.
 - Planned (#622): `NETWORK_WAIT_MAX_ATTEMPTS`.

@@ -68,6 +68,8 @@ and, with `OOB_EFI_VAR`, in the `BootyLastResult` UEFI variable.
 | `BOOTY-DSK-023` | hardware | `decommission-wipe` | Decommission disk wipe failed. |
 | `BOOTY-DSK-024` | transient | `fetch-partition-layout` | Fetching the partition layout from PARTITION_LAYOUT_URL failed. |
 | `BOOTY-DSK-025` | permanent | `load-image-partition-layout` | Reading or applying the partition layout from the image failed. |
+| `BOOTY-DSK-026` | config | `prepare-disk-encryption` | Disk encryption cannot be set up: no TPM, the image lacks the tools, an unsupported layout, or writing the unlock configuration failed. |
+| `BOOTY-DSK-027` | permanent | `encrypt-disk` | Handing over the recovery key or encrypting the partition failed. |
 | `BOOTY-EFI-001` | environment | `mount-efivarfs` | Mounting efivarfs failed. |
 | `BOOTY-EFI-002` | environment | `*` | EFI variables unavailable. |
 | `BOOTY-EFI-003` | hardware | `remove-efi-entries` | Removing EFI boot entries failed. |

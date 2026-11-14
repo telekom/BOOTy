@@ -61,6 +61,9 @@ var DefaultStepBudgets = map[string]time.Duration{
 	"resize-filesystem":       time.Hour,
 	"run-machine-commands":    time.Hour,
 	"run-post-provision-cmds": time.Hour,
+	// cryptsetup reencrypt rewrites the whole partition without progress
+	// output: about 15 h for 8 TB at 150 MB/s.
+	"encrypt-disk": 24 * time.Hour,
 }
 
 // Supervisor pets a Device while the active step makes progress. Outside a

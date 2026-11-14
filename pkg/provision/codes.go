@@ -99,6 +99,8 @@ var failureCodes = []FailureCode{
 	{"BOOTY-DSK-023", ClassHardware, "decommission-wipe", "Decommission disk wipe failed."},
 	{"BOOTY-DSK-024", ClassTransient, "fetch-partition-layout", "Fetching the partition layout from PARTITION_LAYOUT_URL failed."},
 	{"BOOTY-DSK-025", ClassPermanent, "load-image-partition-layout", "Reading or applying the partition layout from the image failed."},
+	{"BOOTY-DSK-026", ClassConfig, "prepare-disk-encryption", "Disk encryption cannot be set up: no TPM, the image lacks the tools, an unsupported layout, or writing the unlock configuration failed."},
+	{"BOOTY-DSK-027", ClassPermanent, "encrypt-disk", "Handing over the recovery key or encrypting the partition failed."},
 
 	{"BOOTY-EFI-001", ClassEnvironment, "mount-efivarfs", "Mounting efivarfs failed."},
 	{"BOOTY-EFI-002", ClassEnvironment, AnyStep, "EFI variables unavailable."},

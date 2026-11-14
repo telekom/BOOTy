@@ -1196,6 +1196,9 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 	if handled, err := applyWatchdogVar(cfg, key, value); handled {
 		return err
 	}
+	if handled, err := applyDiskEncryptionVar(cfg, key, value); handled {
+		return err
+	}
 	if handled, err := applyUint32Var(cfg, key, value); handled {
 		return err
 	}
