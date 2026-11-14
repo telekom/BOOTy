@@ -36,12 +36,22 @@ const (
 	moduleSysextWants  = "etc/systemd/system/sysinit.target.wants/systemd-sysext.service"
 )
 
-const moduleSysextDropInUnit = `# BOOTy (MODULE_SIGNING_TARGET=sysext): merge only system extensions whose
-# dm-verity root hash signature the kernel accepts. systemd 255 asks for a
-# passphrase when the kernel refuses the signature; the timeout keeps that
-# from blocking the boot.
+// moduleSysextGuard fails the refresh when an extension could merge
+// without a signature: the image policy covers disk images only, not
+// directory trees in the search paths or the writable upper directory of
+// --mutable. Without the guard, enabling systemd-sysext.service would let
+// anyone who can write /var put files over /usr.
+const moduleSysextGuard = `for e in /etc/extensions/* /run/extensions/* /var/lib/extensions/* /usr/local/lib/extensions/* /var/lib/extensions.mutable; do ` +
+	`if [ -d "$e" ]; then echo "BOOTy: refusing to merge $e, which no image policy covers" >&2; exit 1; fi; done`
+
+var moduleSysextDropInUnit = `# BOOTy (MODULE_SIGNING_TARGET=sysext): merge only system extensions whose
+# dm-verity root hash signature the kernel accepts, and none while a
+# directory extension, which the image policy does not cover, is present.
+# systemd 255 asks for a passphrase when the kernel refuses the signature;
+# the timeout keeps that from blocking the boot.
 [Service]
 TimeoutStartSec=90s
+ExecStartPre=/bin/sh -c '` + strings.ReplaceAll(moduleSysextGuard, "$", "$$") + `'
 ExecStart=
 ExecStart=/usr/bin/systemd-sysext refresh --image-policy=` + moduleSysextPolicy + "\n"
 

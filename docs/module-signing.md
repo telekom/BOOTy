@@ -272,7 +272,12 @@ With `SECUREBOOT_SIGNING=per-host` and `MODULE_SIGNING_TARGET=sysext`,
    `.roothash.p7s` (detached CMS signature, the format of module signatures);
 5. enables `systemd-sysext.service` with a drop-in that refreshes with
    `--image-policy=root=signed+absent:usr=signed+absent`, so only images
-   with a signed root hash merge.
+   with a signed root hash merge. The image policy does not cover
+   directory extensions, so the drop-in also fails the refresh (nothing
+   merges) while a directory is in `/etc/extensions`, `/run/extensions`,
+   `/var/lib/extensions` or `/usr/local/lib/extensions`, or
+   `/var/lib/extensions.mutable` exists: otherwise anyone who can write
+   `/var` could put files over `/usr`.
 
 At boot, `systemd-sysext` opens the image with dm-verity and passes the
 signature to the kernel. The kernel checks it against the secondary keyring
@@ -290,7 +295,8 @@ signing.
 ### Limits
 
 - The image policy applies to every extension on the host: unsigned
-  extensions (for example from `SYSEXT_LAYERS`) no longer merge.
+  extensions (for example from `SYSEXT_LAYERS`) no longer merge, and a
+  directory extension stops every merge.
 - ext4, not EROFS or squashfs: `mkfs.ext4` is already in the ramdisk, and
   EROFS would add erofs-utils to every ramdisk. dm-verity and the signature
   work the same way. EROFS is the better production format (smaller, built

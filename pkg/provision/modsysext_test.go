@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -80,5 +81,48 @@ func TestSignKernelModulesSysextNeedsMergedUsr(t *testing.T) {
 	}
 	if err := o.signKernelModules(context.Background()); err == nil || !strings.Contains(err.Error(), "merged /usr") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// The image policy does not cover directory extensions: the guard fails
+// the refresh when one is in a search path.
+func TestModuleSysextGuard(t *testing.T) {
+	if !strings.Contains(moduleSysextDropInUnit, "ExecStartPre=/bin/sh -c 'for e in /etc/extensions/* ") ||
+		!strings.Contains(moduleSysextDropInUnit, `[ -d "$$e" ]`) {
+		t.Fatalf("drop-in lacks the guard:\n%s", moduleSysextDropInUnit)
+	}
+	dir := t.TempDir()
+	guard := strings.ReplaceAll(moduleSysextGuard, "/var/lib/extensions", dir+"/var/lib/extensions")
+	for _, p := range []string{"/etc/extensions", "/run/extensions", "/usr/local/lib/extensions"} {
+		guard = strings.ReplaceAll(guard, p+"/*", dir+p+"/*")
+	}
+	ext := filepath.Join(dir, "var/lib/extensions")
+	touch := func(name string) {
+		if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{"booty-modules.raw", "booty-modules.verity", "booty-modules.roothash", "booty-modules.roothash.p7s"} {
+		touch(filepath.Join(ext, f))
+	}
+	run := func() error { return exec.CommandContext(t.Context(), "sh", "-c", guard).Run() }
+	if err := run(); err != nil {
+		t.Fatalf("images only: %v", err)
+	}
+	touch(filepath.Join(ext, "evil/usr/lib/extension-release.d/extension-release.evil"))
+	if err := run(); err == nil {
+		t.Fatal("a directory extension passed the guard")
+	}
+	if err := os.RemoveAll(filepath.Join(ext, "evil")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "var/lib/extensions.mutable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(); err == nil {
+		t.Fatal("a mutable upper directory passed the guard")
 	}
 }
