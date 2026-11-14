@@ -17,8 +17,11 @@ var (
 	sensitiveAssignPattern = regexp.MustCompile(
 		`(?i)(^|[\s,;&?=])` +
 			`([A-Za-z0-9_.-]*(?:password|passwd|passphrase|token|secret|credential|authorization|auth|private)[A-Za-z0-9_.-]*|` +
-			`(?:api[-_]?key|secret[-_]?key|private[-_]?key|access[-_]?key|luks[-_]?key|master[-_]?key|volume[-_]?key|key|x-amz-signature|signature|sig))` +
+			`(?:api[-_]?key|secret[-_]?key|private[-_]?key|access[-_]?key|luks[-_]?key|master[-_]?key|volume[-_]?key|key))` +
 			`\s*([=:])\s*("[^"]*"|'[^']*'|[^\s,;&]+)`)
+	// signedURLParamPattern matches signed URL query parameters. Only "=":
+	// "signature:" is prose in errors ("verifying image signature: ...").
+	signedURLParamPattern = regexp.MustCompile(`(?i)(^|[\s,;&?])(x-amz-signature|signature|sig)(=)("[^"]*"|'[^']*'|[^\s,;&]+)`)
 )
 
 // RedactText replaces known secret shapes in free text with [REDACTED]:
@@ -35,5 +38,6 @@ func RedactText(s string) string {
 	s = authorizationPattern.ReplaceAllString(s, `${1}${2}: [REDACTED]`)
 	s = bearerPattern.ReplaceAllString(s, `Bearer [REDACTED]`)
 	s = urlCredentialPattern.ReplaceAllString(s, `${1}[REDACTED]@`)
+	s = signedURLParamPattern.ReplaceAllString(s, `${1}${2}${3}[REDACTED]`)
 	return sensitiveAssignPattern.ReplaceAllString(s, `${1}${2}${3}[REDACTED]`)
 }

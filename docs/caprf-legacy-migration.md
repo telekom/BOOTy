@@ -139,7 +139,7 @@ Detail for these rows is in [Disk handling](disk.md).
 | `source vars` exports every entry, so `https_proxy` and `no_proxy` apply | Unknown keys ignored. Proxy only from the process environment. | Every entry with a shell identifier as key is exported. Proxy entries apply to callbacks, the connectivity check and image downloads. | Merged (#589) | `EXPORT_VARS=true` |
 | `copy_files`: `/deploy/file-system` into the ramdisk before the network starts, netplan files mode `0600`, symlinks skipped | Copied into the installed OS (`copy-provisioner-files` step). Symlinks skipped. | Copied into the ramdisk before the network starts. Netplan files get mode `0600`. Not copied into the installed OS. If the copy fails, BOOTy waits without a callback. | Merged (#588) | `PROVISIONER_FILES_TARGET=ramdisk` |
 | Ramdisk `/etc/resolv.conf` from the provisioner files, never rewritten. Installed OS `resolv.conf` not written. | Ramdisk `resolv.conf` written from `dns_resolver` or netplan. Installed OS `resolv.conf` written from `dns_resolver`. | A provisioner `/etc/resolv.conf` stays in the ramdisk. The installed OS `resolv.conf` is not written. | Merged (#588) | `PROVISIONER_FILES_TARGET=ramdisk`, `WRITE_RESOLV_CONF=false` |
-| `debug()` progress lines to `DEBUG_URL` | `DEBUG_URL` is read but not used. Progress goes to the log and `LOG_URL`. | Same | Not implemented | Not needed |
+| `debug()` progress lines to `DEBUG_URL` | `DEBUG_URL` gets the kernel log once. Progress goes to the log and `LOG_URL`. | Same | Not implemented | Not needed |
 
 ### Installed OS configuration
 
