@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"strings"
@@ -140,9 +141,10 @@ func TestNewHandlerRedactsPointersAndFallbacks(t *testing.T) {
 		slog.New(NewHandler(&buf, format, slog.LevelDebug)).Info("values",
 			"detail", &detail,
 			"obj", unmarshalable{Password: "s3cr3t", C: make(chan int)},
+			"creds", credsStringer{Password: "pw-value"},
 			"mac", mac, "net", cidr)
 		out := buf.String()
-		for _, secret := range []string{"hunter2", "s3cr3t"} {
+		for _, secret := range []string{"hunter2", "s3cr3t", "pw-value"} {
 			if strings.Contains(out, secret) {
 				t.Errorf("%s: %q not redacted in %q", format, secret, out)
 			}
@@ -152,3 +154,9 @@ func TestNewHandlerRedactsPointersAndFallbacks(t *testing.T) {
 		}
 	}
 }
+
+type credsStringer struct {
+	Password string `json:"password"`
+}
+
+func (c credsStringer) String() string { return fmt.Sprintf("%+v", struct{ Password string }(c)) }

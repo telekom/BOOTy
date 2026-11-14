@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"reflect"
 	"slices"
 	"strings"
@@ -113,9 +114,13 @@ func redactComposite(v slog.Value) (any, bool) {
 	default:
 		return nil, false
 	}
-	if s, ok := x.(fmt.Stringer); ok {
-		// Keep the own text form (net.HardwareAddr, *net.IPNet), redacted.
-		return RedactText(s.String()), true
+	// Keep the text form of these, not base64 or a map. Only these: another
+	// String method can print {Password:x}, which RedactText misses.
+	switch n := x.(type) {
+	case net.HardwareAddr:
+		return n.String(), true
+	case *net.IPNet:
+		return n.String(), true
 	}
 	b, err := json.Marshal(x)
 	if err != nil {
