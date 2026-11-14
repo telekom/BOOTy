@@ -109,6 +109,9 @@ topology:
         - data/no-mdadm-arrays:/usr/local/bin/mdadm:ro
       env:
         BOOTY_NO_REBOOT: "1"
+        # Like LOG_LEVEL=debug on the kernel command line; see
+        # TestBootLogLevelFromEnvironment.
+        LOG_LEVEL: debug
       exec:
         # Without DISK_DEVICE, hard deprovision wipes every disk in
         # /sys/block, which in this privileged container are the disks of
