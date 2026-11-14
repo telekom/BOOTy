@@ -130,7 +130,9 @@ func (o *Orchestrator) moduleSigningResult(action string, err error) error {
 	if err == nil {
 		return nil
 	}
-	if o.cfg.Provision.SecureBoot.ModuleSigning.AllowFailure {
+	// Re-signed modules without their certificate installed are refused
+	// with Secure Boot on: that is no failure to skip.
+	if o.cfg.Provision.SecureBoot.ModuleSigning.AllowFailure && !errors.Is(err, secureboot.ErrModulesModified) {
 		o.log.Warn(action+" failed, continuing because MODULE_SIGNING_ALLOW_FAILURE=true", "error", err)
 		return nil
 	}
@@ -201,11 +203,16 @@ func (o *Orchestrator) doSignKernelModules(ctx context.Context, ms config.Module
 		return err
 	}
 	certPath := path.Join(ms.CertDirOrDefault(), moduleCertFile)
+	// Without the certificate nothing enrolls the key of the signed modules.
+	modified := error(nil)
+	if len(res.Modules) > 0 {
+		modified = secureboot.ErrModulesModified
+	}
 	if err := writeTargetRootFile(root, filepath.Join(root, certPath), res.CertDER); err != nil {
-		return fmt.Errorf("install module signing certificate: %w", err)
+		return errors.Join(fmt.Errorf("install module signing certificate: %w", err), modified)
 	}
 	if onChrootBind(root, filepath.Join(root, certPath)) {
-		return fmt.Errorf("install module signing certificate: %s resolves to a ramdisk file system bound into the chroot", certPath)
+		return errors.Join(fmt.Errorf("install module signing certificate: %s resolves to a ramdisk file system bound into the chroot", certPath), modified)
 	}
 	sum := sha256.Sum256(res.CertDER)
 	o.moduleSigning = &ReportModuleSigning{

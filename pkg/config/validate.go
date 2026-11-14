@@ -107,6 +107,7 @@ func (c *Config) Validate() error {
 	if err := validateSecureBootConfig(c.Provision.Image.Mode, &c.Provision.SecureBoot, &c.Provision.AB); err != nil {
 		errs = append(errs, err.Error())
 	}
+	errs = append(errs, c.validateModuleSigningMirror()...)
 	errs = append(errs, c.validateDiskEncryption()...)
 	errs = append(errs, validateTokenRenewal(&c.Transport)...)
 	errs = append(errs, validateTime(&c.Time)...)
@@ -817,6 +818,26 @@ func validateModuleSigning(imageMode string, sb *SecureBootConfig, ab *ABConfig)
 		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.certDir %q: must be a clean absolute path outside /run, /proc, /sys and /dev", m.CertDir))
 	}
 	return errs
+}
+
+// validateModuleSigningMirror rejects efi-helper enrollment with disk
+// mirroring: mok-enroll.efi and BootNext are on the primary disk only, so a
+// host that boots from the mirror after the primary failed never enrolls
+// the key of its signed modules.
+func (c *Config) validateModuleSigningMirror() []string {
+	sb := &c.Provision.SecureBoot
+	if mode := sb.SigningMode(); (mode != SigningPerHost && mode != SigningCI) ||
+		sb.ModuleSigning.EnrollmentMethod() != ModuleSigningEnrollEFIHelper {
+		return nil
+	}
+	d := &c.Provision.Disk
+	mirror := strings.ToLower(strings.TrimSpace(d.MirroringMode))
+	// detect-disk ignores the mirroring mode when Device or SerialNumber is set.
+	if mirror == "" || mirror == "none" || strings.TrimSpace(d.Device) != "" || strings.TrimSpace(d.SerialNumber) != "" {
+		return nil
+	}
+	return []string{"provision.secureBoot.moduleSigning.enrollment efi-helper stages mok-enroll.efi on the primary disk only; " +
+		"with provision.disk.mirroringMode " + mirror + " use mokutil or external"}
 }
 
 // underChrootBind reports whether dir is below a directory that the chroot
