@@ -115,6 +115,15 @@ type TransportConfig struct {
 	// Default: nil (false)
 	SkipTLSVerify *bool `yaml:"skipTLSVerify,omitempty" json:"skipTLSVerify,omitempty"`
 
+	// CABundleFile is a PEM file in the ramdisk with root certificates that
+	// BOOTy trusts in addition to the system roots, for every HTTPS client:
+	// the CAPRF callbacks, TokenURL, the time sync Date probe, image, OCI
+	// and sysext downloads and the crash artifact upload. A file that cannot
+	// be read or parsed fails the start. SkipTLSVerify still skips the
+	// check where it applies.
+	// Default: "" (system roots only)
+	CABundleFile string `yaml:"caBundleFile,omitempty" json:"caBundleFile,omitempty"`
+
 	// ExportVars exports every vars file entry whose key is a valid shell
 	// identifier to the process environment, like `source vars` in the
 	// CAPRF legacy scripts. Proxy entries such as https_proxy then apply to

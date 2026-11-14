@@ -95,7 +95,7 @@ func TestRescueModeStatusReporting(t *testing.T) {
 		t.Fatalf("Mode = %q, want provision", cfg.Mode)
 	}
 
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	ctx := context.Background()
 
 	if err := client.ReportStatus(ctx, config.StatusInit, "rescue-mode-active"); err != nil {
@@ -150,7 +150,7 @@ func TestRescueModeCommandPolling(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	cmds, err := client.FetchCommands(context.Background())
 	if err != nil {
 		t.Fatalf("FetchCommands: %v", err)
