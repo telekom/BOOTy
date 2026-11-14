@@ -81,12 +81,13 @@ func redactAttr(groups []string, a slog.Attr) slog.Attr {
 	return a
 }
 
-// redactComposite redacts a map, struct, slice or array value: RedactText on
-// its rendered form misses secrets that follow a map key or a struct field
-// name ("map[text:password=x]", {"password":"x"}). It walks the JSON form,
-// which is what the JSON handler writes: a sensitive key gets
-// [REDACTED], a string gets RedactText. ok is false when nothing changed,
-// so the handler renders the original value.
+// redactComposite returns a redacted copy of a map, struct, slice or array
+// value; ok is false for every other value. RedactText on the rendered form
+// misses secrets that follow a map key or a struct field name
+// ("map[text:password=x]", {"password":"x"}), and the text handler would
+// also print fields that the JSON form hides (json:"-", unexported). So
+// both handlers get the JSON form of the value, walked: a sensitive key
+// gets [REDACTED], a string gets RedactText.
 func redactComposite(v slog.Value) (any, bool) {
 	if v.Kind() != slog.KindAny {
 		return nil, false
@@ -106,46 +107,35 @@ func redactComposite(v slog.Value) (any, bool) {
 	}
 	b, err := json.Marshal(x)
 	if err != nil {
-		// The handler can not render it as JSON either; redact the text.
-		s := fmt.Sprintf("%+v", x)
-		if r := RedactText(s); r != s {
-			return r, true
-		}
-		return nil, false
+		// No JSON form: only the redacted text, never the value itself.
+		return RedactText(fmt.Sprintf("%+v", x)), true
 	}
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.UseNumber()
 	var tree any
-	if dec.Decode(&tree) != nil {
-		return nil, false
+	if err := dec.Decode(&tree); err != nil {
+		return redactedLogValue, true
 	}
-	return redactTree(tree)
+	return redactTree(tree), true
 }
 
-// redactTree redacts a decoded JSON value and reports whether it changed.
-func redactTree(v any) (any, bool) {
-	changed := false
+// redactTree redacts a decoded JSON value in place.
+func redactTree(v any) any {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, e := range t {
 			if isSensitiveLogKey(k) {
-				t[k], changed = redactedLogValue, true
-				continue
-			}
-			if r, ok := redactTree(e); ok {
-				t[k], changed = r, true
+				t[k] = redactedLogValue
+			} else {
+				t[k] = redactTree(e)
 			}
 		}
 	case []any:
 		for i, e := range t {
-			if r, ok := redactTree(e); ok {
-				t[i], changed = r, true
-			}
+			t[i] = redactTree(e)
 		}
 	case string:
-		if r := RedactText(t); r != t {
-			return r, true
-		}
+		return RedactText(t)
 	}
-	return v, changed
+	return v
 }

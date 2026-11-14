@@ -90,6 +90,8 @@ func TestNewHandlerRedactsComposites(t *testing.T) {
 	type creds struct {
 		User     string `json:"user"`
 		Password string `json:"password"`
+		Hidden   string `json:"-"`
+		secret   string
 	}
 	plain := map[string]int{"disks": 2}
 	for _, format := range []string{FormatText, FormatJSON} {
@@ -97,10 +99,10 @@ func TestNewHandlerRedactsComposites(t *testing.T) {
 		slog.New(NewHandler(&buf, format, slog.LevelDebug)).Info("composite",
 			"detail", map[string]string{"text": "password=hunter2"},
 			"nested", map[string]any{"list": []string{"ok", "token=s3cr3t"}},
-			"creds", &creds{User: "admin", Password: "pw-value"},
+			"creds", &creds{User: "admin", Password: "pw-value", Hidden: "hidden-value", secret: "unexported-value"},
 			"plain", plain)
 		out := buf.String()
-		for _, secret := range []string{"hunter2", "s3cr3t", "pw-value"} {
+		for _, secret := range []string{"hunter2", "s3cr3t", "pw-value", "hidden-value", "unexported-value"} {
 			if strings.Contains(out, secret) {
 				t.Errorf("%s: %q not redacted in %q", format, secret, out)
 			}
