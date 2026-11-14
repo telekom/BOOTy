@@ -598,9 +598,11 @@ Remaining:
 | `DISK_ENCRYPTION_RECOVERY_KEY_URL`, `DISK_ENCRYPTION_TARGET`, `DISK_ENCRYPTION_ALLOW_FAILURE`, `DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK` | as for `luks2-tpm2` |
 | `DISK_ENCRYPTION_STATUS_URL` | not supported with the UKI mode yet (refused) |
 
-With `SECUREBOOT_SIGNING=off` and `DISK_ENCRYPTION` unset or `luks2-tpm2`
-nothing of this runs: no annotation is read, no key is made, no boot entry
-is added.
+Without `DISK_ENCRYPTION=luks2-tpm2-uki` nothing of this runs: no
+annotation is read, no key is made, no boot entry is added.
+`SECUREBOOT_SIGNING` is the setting of per-host module signing (#935) too;
+once both are in, one per-host key could sign the modules and the UKI with
+one enrollment.
 
 ### Limitations
 

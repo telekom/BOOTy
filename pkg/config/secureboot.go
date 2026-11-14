@@ -33,17 +33,17 @@ type SecureBootConfig struct {
 	Signing string `yaml:"signing" json:"signing"`
 }
 
-// Secure Boot signing modes (SecureBootConfig.Signing).
+// Secure Boot signing modes (SecureBootConfig.Signing), as in #935.
 const (
-	SecureBootSigningOff     = "off"
-	SecureBootSigningPerHost = "per-host"
-	SecureBootSigningCI      = "ci"
+	SigningOff     = "off"
+	SigningPerHost = "per-host"
+	SigningCI      = "ci"
 )
 
 // SigningMode returns Signing or the default "off".
 func (s *SecureBootConfig) SigningMode() string {
 	if s.Signing == "" {
-		return SecureBootSigningOff
+		return SigningOff
 	}
 	return s.Signing
 }

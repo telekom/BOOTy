@@ -156,9 +156,9 @@ func (o *Orchestrator) prepareUKI(ctx context.Context, root, esp string) (*ukiSt
 	st := &ukiState{signing: signing, loader: `\` + strings.ReplaceAll(u.rel, "/", `\`)}
 	var pubPEM, sigJSON []byte
 	switch signing {
-	case config.SecureBootSigningCI:
+	case config.SigningCI:
 		pubPEM, sigJSON, err = o.checkCIUKI(u.sections, u.signed)
-	case config.SecureBootSigningPerHost:
+	case config.SigningPerHost:
 		pubPEM, sigJSON, err = o.installPerHostUKI(ctx, root, esp, st, u)
 	default:
 		err = fmt.Errorf("SECUREBOOT_SIGNING %q cannot sign a UKI", signing)
@@ -236,7 +236,7 @@ func (o *Orchestrator) installPerHostUKI(ctx context.Context, root, esp string, 
 
 func checkUKITarget(root, signing string) error {
 	tools := ukiTargetTools
-	if signing == config.SecureBootSigningPerHost {
+	if signing == config.SigningPerHost {
 		tools = append(append([]string(nil), tools...), ukiPerHostTools...)
 	}
 	return checkTargetFiles(root, tools, "Ubuntu: systemd-cryptsetup, libtss2-rc0t64; per-host signing also systemd-ukify, sbsigntool")

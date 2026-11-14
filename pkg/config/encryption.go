@@ -122,34 +122,33 @@ func (c *Config) validateDiskEncryption() []string {
 // installed system (sourced from a shell file, posted with curl
 // --proto =https) and the TLS verification of the key hand-off.
 // validateUKISigning checks SECUREBOOT_SIGNING against the disk encryption
-// mode: the UKI mode needs a signer, and the signer is used only by it.
+// mode: the UKI mode needs a signer.
 // The UKI digest comes from the signed image manifest, so the image must
 // be cosign-verified.
 func (c *Config) validateUKISigning() []string {
 	d := &c.Provision.DiskEncryption
 	signing := c.Provision.SecureBoot.SigningMode()
 	switch signing {
-	case SecureBootSigningOff, SecureBootSigningPerHost, SecureBootSigningCI:
+	case SigningOff, SigningPerHost, SigningCI:
 	default:
 		return []string{fmt.Sprintf("provision.secureBoot.signing %q: want %q, %q or %q",
-			c.Provision.SecureBoot.Signing, SecureBootSigningOff, SecureBootSigningPerHost, SecureBootSigningCI)}
+			c.Provision.SecureBoot.Signing, SigningOff, SigningPerHost, SigningCI)}
 	}
 	var errs []string
 	if !d.UKI() {
-		if signing != SecureBootSigningOff {
-			errs = append(errs, fmt.Sprintf("provision.secureBoot.signing %q needs provision.diskEncryption.mode %q", signing, DiskEncryptionLUKS2TPM2UKI))
-		}
+		// Without the UKI mode the signer has nothing to sign here; module
+		// signing (#935) uses the same setting.
 		if d.PCRPublicKeyFile != "" {
 			errs = append(errs, fmt.Sprintf("provision.diskEncryption.pcrPublicKeyFile needs provision.diskEncryption.mode %q", DiskEncryptionLUKS2TPM2UKI))
 		}
 		return errs
 	}
-	if signing == SecureBootSigningOff {
+	if signing == SigningOff {
 		errs = append(errs, fmt.Sprintf("provision.diskEncryption.mode %q needs provision.secureBoot.signing %q or %q",
-			DiskEncryptionLUKS2TPM2UKI, SecureBootSigningPerHost, SecureBootSigningCI))
+			DiskEncryptionLUKS2TPM2UKI, SigningPerHost, SigningCI))
 	}
-	if d.PCRPublicKeyFile != "" && signing != SecureBootSigningCI {
-		errs = append(errs, fmt.Sprintf("provision.diskEncryption.pcrPublicKeyFile needs provision.secureBoot.signing %q: with %q BOOTy makes the key", SecureBootSigningCI, signing))
+	if d.PCRPublicKeyFile != "" && signing != SigningCI {
+		errs = append(errs, fmt.Sprintf("provision.diskEncryption.pcrPublicKeyFile needs provision.secureBoot.signing %q: with %q BOOTy makes the key", SigningCI, signing))
 	}
 	if len(c.Provision.Image.CosignPublicKeys) == 0 {
 		errs = append(errs, fmt.Sprintf("provision.diskEncryption.mode %q needs provision.image.cosignPublicKeys: the UKI digest comes from the signed image manifest", DiskEncryptionLUKS2TPM2UKI))

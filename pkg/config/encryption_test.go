@@ -63,11 +63,8 @@ func TestValidateUKISigning(t *testing.T) {
 		{"uki without signer", uki(""), `needs provision.secureBoot.signing "per-host" or "ci"`},
 		{"uki without cosign", func(c *Config) { uki("ci")(c); c.Provision.Image.CosignPublicKeys = nil }, "needs provision.image.cosignPublicKeys"},
 		{"pinned key with per-host", func(c *Config) { uki("per-host")(c); c.Provision.DiskEncryption.PCRPublicKeyFile = "/pcr.pem" }, "BOOTy makes the key"},
-		{"signer without uki", func(c *Config) { c.Provision.SecureBoot.Signing = "ci" }, `needs provision.diskEncryption.mode "luks2-tpm2-uki"`},
-		{"signer with plain luks", func(c *Config) {
-			c.Provision.DiskEncryption = DiskEncryptionConfig{Mode: DiskEncryptionLUKS2TPM2, RecoveryKeyURL: "https://p/key"}
-			c.Provision.SecureBoot.Signing = "per-host"
-		}, `needs provision.diskEncryption.mode "luks2-tpm2-uki"`},
+		{"signer without uki", func(c *Config) { c.Provision.SecureBoot.Signing = "ci" }, ""},
+		{"pinned key without uki", func(c *Config) { c.Provision.DiskEncryption.PCRPublicKeyFile = "/pcr.pem" }, `needs provision.diskEncryption.mode "luks2-tpm2-uki"`},
 		{"bad signer", func(c *Config) { c.Provision.SecureBoot.Signing = "vendor" }, `want "off", "per-host" or "ci"`},
 	}
 	for _, tt := range tests {

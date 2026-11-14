@@ -161,7 +161,7 @@ func TestPrepareUKICIMakesNoKey(t *testing.T) {
 	pub := testPublicKeyPEM(t)
 	sig := `{"sha256":[{"pcrs":[11],"sig":"x"}]}`
 	uki := testPE(t, true, [2]string{".linux", "k"}, [2]string{".pcrpkey", string(pub)}, [2]string{".pcrsig", sig})
-	o, cmd, root, esp := ukiTestHost(t, config.SecureBootSigningCI, uki)
+	o, cmd, root, esp := ukiTestHost(t, config.SigningCI, uki)
 
 	pinned := filepath.Join(t.TempDir(), "pcr.pem")
 	if err := os.WriteFile(pinned, pub, 0o644); err != nil {
@@ -197,7 +197,7 @@ func TestPrepareUKICIMakesNoKey(t *testing.T) {
 		"unsigned":  testPE(t, false, [2]string{".linux", "k"}, [2]string{".pcrpkey", string(pub)}, [2]string{".pcrsig", sig}),
 		"no pcrsig": testPE(t, true, [2]string{".linux", "k"}, [2]string{".pcrpkey", string(pub)}),
 	} {
-		o, _, root, esp := ukiTestHost(t, config.SecureBootSigningCI, bad)
+		o, _, root, esp := ukiTestHost(t, config.SigningCI, bad)
 		if _, err := o.prepareUKI(context.Background(), root, esp); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
@@ -218,7 +218,7 @@ func TestPrepareUKICIMakesNoKey(t *testing.T) {
 func TestPrepareUKIPerHost(t *testing.T) {
 	n := countKeyGeneration(t, false)
 	uki := testPE(t, false, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}, [2]string{".osrel", "ID=x"})
-	o, cmd, root, esp := ukiTestHost(t, config.SecureBootSigningPerHost, uki)
+	o, cmd, root, esp := ukiTestHost(t, config.SigningPerHost, uki)
 	cmd.setResult("chroot "+root, []byte("sbsign: failed"), errors.New("exit 1"))
 	_, err := o.prepareUKI(context.Background(), root, esp)
 	if err == nil || !strings.Contains(err.Error(), "sign the UKI") {
@@ -246,14 +246,14 @@ func TestPrepareUKIPerHost(t *testing.T) {
 
 	// An already signed UKI is refused before any key is made.
 	*n = 0
-	o, _, root, esp = ukiTestHost(t, config.SecureBootSigningPerHost, testPE(t, true, [2]string{".linux", "k"}))
+	o, _, root, esp = ukiTestHost(t, config.SigningPerHost, testPE(t, true, [2]string{".linux", "k"}))
 	if _, err := o.prepareUKI(context.Background(), root, esp); err == nil || *n != 0 {
 		t.Fatalf("signed UKI: err=%v keys=%d", err, *n)
 	}
 }
 
 func TestPrepareUKINeedsOneUKI(t *testing.T) {
-	o, _, root, esp := ukiTestHost(t, config.SecureBootSigningCI, testPE(t, true, [2]string{".linux", "k"}))
+	o, _, root, esp := ukiTestHost(t, config.SigningCI, testPE(t, true, [2]string{".linux", "k"}))
 	if err := os.WriteFile(filepath.Join(esp, "EFI/Linux/other.efi"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
