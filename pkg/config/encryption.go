@@ -88,8 +88,9 @@ func (c *Config) validateDiskEncryption() []string {
 		errs = append(errs, "provision.diskEncryption.recoveryKeyURL: "+err.Error())
 	}
 	errs = append(errs, c.validateDiskEncryptionTransport()...)
-	// The root is encrypted in place after the image is written; layouts
-	// that put the root on md, LVM or a declared layout are not supported.
+	// The image is written into the LUKS2 volume as it streams: md and
+	// declared layouts are not supported. An LVM root of the image is (the
+	// physical volume of VG tcaas is encrypted).
 	mirror := strings.ToLower(strings.TrimSpace(c.Provision.Disk.MirroringMode))
 	mode := strings.ToLower(strings.TrimSpace(c.Provision.Image.Mode))
 	if (mirror != "" && mirror != "none") || len(c.Provision.Disk.RAID) > 0 || c.Provision.Disk.PartitionLayoutRequested() ||
