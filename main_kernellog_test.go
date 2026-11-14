@@ -92,7 +92,7 @@ func TestShipKernelLogOnlyToDebugURL(t *testing.T) {
 		if withDebug {
 			cfg.Transport.DebugURL = srv.URL + "/debug"
 		}
-		client := caprf.NewFromConfig(cfg)
+		client := mustClient(caprf.NewFromConfig(cfg))
 		remote := caprf.NewRemoteHandler(client, slog.NewTextHandler(io.Discard, nil), slog.LevelInfo, 100)
 		origLogger := slog.Default()
 		slog.SetDefault(slog.New(remote))

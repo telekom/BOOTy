@@ -98,7 +98,7 @@ func TestCAPRFClientStatusLifecycle(t *testing.T) {
 	ip := containerMgmtIP(t, "clab-booty-lab-caprf-mock")
 	base := fmt.Sprintf("http://%s", ip)
 
-	client := caprf.NewFromConfig(&config.MachineConfig{
+	client := mustClient(caprf.NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{
 			Token:      "e2e-fabric-token",
 			InitURL:    base + "/status/init",
@@ -106,7 +106,7 @@ func TestCAPRFClientStatusLifecycle(t *testing.T) {
 			ErrorURL:   base + "/status/error",
 			LogURL:     base + "/log",
 		},
-	})
+	}))
 	ctx := context.Background()
 
 	for _, tc := range []struct {
@@ -130,13 +130,13 @@ func TestCAPRFClientLogAndDebugShipping(t *testing.T) {
 	ip := containerMgmtIP(t, "clab-booty-lab-caprf-mock")
 	base := fmt.Sprintf("http://%s", ip)
 
-	client := caprf.NewFromConfig(&config.MachineConfig{
+	client := mustClient(caprf.NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{
 			Token:    "e2e-token",
 			LogURL:   base + "/log",
 			DebugURL: base + "/debug",
 		},
-	})
+	}))
 	ctx := context.Background()
 
 	assertInsecureTransportBehavior(t, "ShipLog", client.ShipLog(ctx, "provisioning step 1 complete"))
@@ -149,10 +149,10 @@ func TestCAPRFClientFetchCommandsEmpty(t *testing.T) {
 	requireNetworkLab(t)
 
 	ip := containerMgmtIP(t, "clab-booty-lab-caprf-mock")
-	client := caprf.NewFromConfig(&config.MachineConfig{
+	client := mustClient(caprf.NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{Token: "e2e-token"},
 		Agent:     config.AgentConfig{CommandsURL: fmt.Sprintf("http://%s/commands", ip)},
-	})
+	}))
 
 	cmds, err := client.FetchCommands(context.Background())
 	if err != nil {
@@ -170,10 +170,10 @@ func TestCAPRFClientFetchCommandsWithData(t *testing.T) {
 	requireNetworkLab(t)
 
 	ip := containerMgmtIP(t, "clab-booty-lab-caprf-mock")
-	client := caprf.NewFromConfig(&config.MachineConfig{
+	client := mustClient(caprf.NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{Token: "e2e-token"},
 		Agent:     config.AgentConfig{CommandsURL: fmt.Sprintf("http://%s/commands-data", ip)},
-	})
+	}))
 
 	cmds, err := client.FetchCommands(context.Background())
 	if err != nil {
@@ -194,10 +194,10 @@ func TestCAPRFClientHeartbeatThroughGoClient(t *testing.T) {
 	requireNetworkLab(t)
 
 	ip := containerMgmtIP(t, "clab-booty-lab-caprf-mock")
-	client := caprf.NewFromConfig(&config.MachineConfig{
+	client := mustClient(caprf.NewFromConfig(&config.MachineConfig{
 		Transport: config.TransportConfig{Token: "e2e-token"},
 		Agent:     config.AgentConfig{HeartbeatURL: fmt.Sprintf("http://%s/status/heartbeat", ip)},
-	})
+	}))
 
 	assertInsecureTransportBehavior(t, "Heartbeat", client.Heartbeat(context.Background()))
 	t.Log("Heartbeat works with secure transport policy")
@@ -496,7 +496,7 @@ func TestFullProvisioningFlow(t *testing.T) {
 	mcfg.Transport.LogURL = fmt.Sprintf("http://%s/log", capIP)
 	mcfg.Transport.DebugURL = fmt.Sprintf("http://%s/debug", capIP)
 
-	client := caprf.NewFromConfig(mcfg)
+	client := mustClient(caprf.NewFromConfig(mcfg))
 	ctx := context.Background()
 
 	assertInsecureTransportBehavior(t, "init", client.ReportStatus(ctx, config.StatusInit, "starting"))
@@ -548,4 +548,12 @@ func assertInsecureTransportBehavior(t *testing.T, label string, err error) {
 	if !strings.Contains(strings.ToLower(err.Error()), "insecure transport") {
 		t.Fatalf("%s: expected insecure transport error, got: %v", label, err)
 	}
+}
+
+// mustClient returns the client of a NewFromConfig call that must succeed.
+func mustClient(c *caprf.Client, err error) *caprf.Client {
+	if err != nil {
+		panic(err)
+	}
+	return c
 }

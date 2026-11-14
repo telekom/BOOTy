@@ -77,19 +77,11 @@ func New(varsPath string) (*Client, error) {
 		}
 	}
 
-	// Before the first HTTPS client: the CAPRF callbacks need the roots.
-	if err := trust.LoadFile(cfg.Transport.CABundleFile); err != nil {
-		return nil, fmt.Errorf("CA_BUNDLE_FILE: %w", err)
+	c, err := NewFromConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
-
-	c := &Client{
-		httpClient: newHTTPClient(30*time.Second, config.BoolOr(cfg.Transport.SkipTLSVerify, false)),
-		cfg:        cfg,
-		vars:       vars,
-		log:        slog.Default().With("component", "caprf"),
-		started:    time.Now(),
-	}
-	c.warnTransport()
+	c.vars = vars
 	return c, nil
 }
 
@@ -209,8 +201,14 @@ func FailureConfig(varsPath string) *config.MachineConfig {
 	return cfg
 }
 
-// NewFromConfig creates a CAPRF client from an already-parsed config.
-func NewFromConfig(cfg *config.MachineConfig) *Client {
+// NewFromConfig creates a CAPRF client from an already-parsed config. It
+// loads cfg.Transport.CABundleFile into the trusted roots first and fails if
+// the bundle cannot be read or parsed.
+func NewFromConfig(cfg *config.MachineConfig) (*Client, error) {
+	// Before the first HTTPS client: the CAPRF callbacks need the roots.
+	if err := trust.LoadFile(cfg.Transport.CABundleFile); err != nil {
+		return nil, fmt.Errorf("CA_BUNDLE_FILE: %w", err)
+	}
 	c := &Client{
 		httpClient: newHTTPClient(30*time.Second, config.BoolOr(cfg.Transport.SkipTLSVerify, false)),
 		cfg:        cfg,
@@ -218,7 +216,7 @@ func NewFromConfig(cfg *config.MachineConfig) *Client {
 		started:    time.Now(),
 	}
 	c.warnTransport()
-	return c
+	return c, nil
 }
 
 // AcquireToken exchanges the bootstrap token for a JWT if a token URL
