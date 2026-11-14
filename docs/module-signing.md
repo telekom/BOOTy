@@ -60,9 +60,44 @@ After the image is written and the target root is mounted:
 Any signing or enrollment error fails provisioning (`BOOTY-EFI-010`,
 `BOOTY-EFI-011`) unless `MODULE_SIGNING_ALLOW_FAILURE=true`.
 
-`mok-enroll.efi` is built from [hack/mok-enroll](../hack/mok-enroll) with
-gnu-efi. It is not in the production initramfs yet; the KVM scenario adds it
-to the test ramdisk.
+### The helper in the ramdisk
+
+`mok-enroll.efi` (about 55 KB) is built from
+[hack/mok-enroll](../hack/mok-enroll) with gnu-efi in the `mok-enroll` stage
+of `initrd.Dockerfile`, for amd64 (`pei-x86-64`) and arm64
+(`efi-app-aarch64`), and installed as `/usr/lib/booty/mok-enroll.efi` in the
+default, gobgp and slim ramdisks and the base of the split ramdisk. micro
+creates no boot entries and has none, so `efi-helper` fails there; use
+`external` with micro.
+
+- The build uses general registers only. On amd64, `build.sh` rejects AVX
+  instructions: they fault (#UD) in firmware, and some gcc builds default to
+  `-march=x86-64-v3`.
+- The PE header carries no build time, so the release build and
+  `hack/check-reproducible.sh` give the same bytes.
+- The ramdisk SBOMs list it as the Debian `gnu-efi` package that it links
+  statically. The SBOM attestations of the release cover it with the rest of
+  the ramdisk. `docker buildx build --target mok-enroll-efi` exports the
+  shipped binary, as the KVM scenarios do.
+
+**Unsigned on purpose.** No key signs the helper. That has these effects:
+
+- The firmware starts it only while Secure Boot is off. With Secure Boot on,
+  `BootNext` to it fails and nothing changes. The helper also refuses to
+  run when `SecureBoot` reads 1. Enrollment therefore needs Secure Boot off
+  from provisioning until the enrollment boot, and the provisioner turns it
+  on afterwards (not with `SECUREBOOT_REENABLE`).
+- An unsigned helper cannot become a Secure Boot bypass. A signed helper
+  would let OS root add any certificate to `MokList` with Secure Boot on,
+  through a boot entry and `BootNext`. Never sign it, and do not put it on
+  ESPs of hosts that boot with Secure Boot on, except for the enrollment
+  boot.
+- Anyone with pre-boot code execution while Secure Boot is off can write
+  `MokList` with or without this helper. It adds no capability an attacker
+  in that window lacks; see [Security analysis](#security-analysis).
+- The helper stays on the ESP as `\EFI\BOOTy\mok-enroll.efi` after the
+  enrollment, without a boot entry. It does nothing with Secure Boot on. The
+  next provisioning overwrites it.
 
 ## Key handling
 
@@ -240,10 +275,18 @@ Modules needed in the initramfs need a per-host initrd addon in both cases.
 
 ## Evidence
 
-- `hack/mok-enroll/mok-enroll.c` under QEMU with upstream OVMF: payload
-  accepted, existing MOK entry of another owner kept, earlier BOOTy entry
-  replaced, own boot entry deleted, `MokList` attributes `NV|BS`,
-  `BOOTyMokEnroll=ok`.
+- `mok-enroll.efi` for amd64 and arm64 under QEMU (TCG) with Debian OVMF and
+  AAVMF, from a boot entry with the payload as optional data and `BootNext`.
+  These cases pass on both architectures:
+  - payload accepted;
+  - an existing MOK entry of another owner kept;
+  - an earlier BOOTy entry replaced;
+  - a `MokList` with the runtime attribute discarded;
+  - its own boot entry deleted;
+  - `MokList` attributes `NV|BS`;
+  - `BOOTyMokEnroll=ok`.
+
+  No arm64 host runs the KVM scenario yet.
 - KVM scenario `module-signing-ubuntu-24.04` and `module-signing-ubuntu-26.04`
   (`TestModuleSigningSecureBootVM`): Ubuntu cloud image with distro shim and
   kernel, `OVMF_CODE_4M.secboot.fd` with `OVMF_VARS_4M.ms.fd`, swtpm.
@@ -256,17 +299,16 @@ Modules needed in the initramfs need a per-host initrd addon in both cases.
      PCR 7 differs from step 3.
   5. Reprovision: the helper replaces the certificate; one new one remains.
   6. `db` only (certificate moved from `MokList` to `db`): see option (b).
-- The helper must be built without AVX: the runner gcc defaults to
-  `-march=x86-64-v3`, and VEX instructions fault (#UD) in firmware.
-  `build.sh` checks the result.
+- The KVM scenarios use the helper from the `mok-enroll-efi` target of
+  `initrd.Dockerfile`, the binary the ramdisks ship.
 
 Run it locally on an x86-64 Linux host with KVM, as root:
 
 ```sh
-sudo apt-get install -y qemu-system-x86 ovmf swtpm gnu-efi gcc python3-virt-firmware zstd efibootmgr
-sh hack/mok-enroll/build.sh /tmp/mok-enroll.efi
+sudo apt-get install -y qemu-system-x86 ovmf swtpm python3-virt-firmware zstd efibootmgr
+docker buildx build --platform linux/amd64 -f initrd.Dockerfile --target mok-enroll-efi --output type=local,dest=/tmp/mok .
 curl -LO https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img
-sudo env BOOTY_MOK_ENROLL_EFI=/tmp/mok-enroll.efi \
+sudo env BOOTY_MOK_ENROLL_EFI=/tmp/mok/mok-enroll.efi \
   MIRROR_OS_IMAGE=$PWD/ubuntu-24.04-server-cloudimg-amd64.img \
   go test -tags e2e -run '^TestModuleSigningSecureBootVM$' -v -timeout 50m ./test/e2e/kvm/
 ```
