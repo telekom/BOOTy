@@ -333,6 +333,11 @@ func recoveryKeyBody(hostname string, st *encryptionState, recovery []byte) ([]b
 	if err != nil {
 		return nil, fmt.Errorf("encode recovery key metadata: %w", err)
 	}
+	// One allocation that fits the key, so append never leaves a copy of it
+	// in a discarded buffer.
+	if len(head) > 4096 || len(recovery) > 256 {
+		return nil, errors.New("recovery key metadata too large")
+	}
 	body := make([]byte, 0, len(head)+len(recovery)+20)
 	body = append(body, head[:len(head)-1]...)
 	body = append(body, `,"recoveryKey":"`...)
