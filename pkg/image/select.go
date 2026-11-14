@@ -84,7 +84,7 @@ func probeURL(ctx context.Context, rawURL string) (time.Duration, error) {
 	start := time.Now()
 	resp, err := gpgHTTPClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return 0, fmt.Errorf("probe request: %w", err)
+		return 0, fmt.Errorf("probe request: %w", withoutRedirectURL(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 

@@ -370,6 +370,8 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 		"resizepart", "efibootmgr",
 		// SECURE_ERASE: NVMe Format and ATA Security Erase.
 		"nvme", "hdparm",
+		// DISK_ENCRYPTION: cryptsetup reencrypt.
+		"cryptsetup",
 	}
 	for _, tool := range essentialTools {
 		toolPath, err := exec.LookPath(tool)
@@ -413,7 +415,7 @@ func buildProvisionInitramfsWithFiles(t *testing.T, vars, files map[string]strin
 	// Write /init script.
 	initScript := `#!/bin/sh
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
-for mod in virtio_pci virtio_net virtio_blk e1000 e1000e virtio_scsi sd_mod fat vfat nls_cp437 nls_iso8859-1 nls_ascii nls_utf8 efivarfs md_mod raid1; do
+for mod in virtio_pci virtio_net virtio_blk e1000 e1000e virtio_scsi sd_mod fat vfat nls_cp437 nls_iso8859-1 nls_ascii nls_utf8 efivarfs md_mod raid1 dm_mod dm_crypt tpm_tis; do
 	modprobe "$mod" 2>/dev/null || true
 done
 exec /booty
@@ -800,6 +802,8 @@ func copyFilesystemModulesForRelease(t *testing.T, rootDir, release string) {
 		"virtio_pci", "virtio_net", "e1000", "e1000e",
 		"virtio_scsi", "sd_mod",
 		"virtio_blk", "md_mod", "raid1", "efivarfs",
+		// DISK_ENCRYPTION: dm-crypt and the TPM that the preflight checks.
+		"dm_mod", "dm_crypt", "tpm_tis",
 	} {
 		copyKernelModuleWithDependencies(t, rootDir, release, module, copied, map[string]bool{})
 	}

@@ -131,6 +131,10 @@ type Orchestrator struct {
 	separateBootMounted bool
 	// disksSettled is true after waitForDisks ran.
 	disksSettled bool
+	// encryption is set by stream-image when it encrypted a partition.
+	encryption *encryptionState
+	// encryptionSkipped: DISK_ENCRYPTION_ALLOW_FAILURE provisioned without it.
+	encryptionSkipped bool
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -157,7 +161,7 @@ func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMg
 
 // provisionSteps returns the ordered list of provisioning steps.
 func (o *Orchestrator) provisionSteps() []Step {
-	return []Step{
+	steps := []Step{
 		{"report-init", o.reportInit},
 		{"release-stale-mounts", o.releaseStaleTargetMounts},
 		{"collect-inventory", o.collectInventory},
@@ -225,6 +229,10 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"teardown-chroot", o.teardownChroot},
 		{"report-success", o.reportSuccess},
 	}
+	if o.encryptionEnabled() {
+		steps = o.withEncryptionSteps(steps)
+	}
+	return steps
 }
 
 // Provision runs all provisioning steps sequentially.
@@ -1900,6 +1908,9 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	}
 	defer startMemoryPeak(o.log)()
 
+	if o.encryptionEnabled() {
+		return o.streamEncryptedImage(ctx, bestURL, opts)
+	}
 	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
 		return o.streamPartitionLayoutRootImage(ctx, bestURL, opts)
 	}
@@ -1955,7 +1966,7 @@ func classifyImageStreamError(imageURL string, err error) error {
 		msg: fmt.Sprintf("streaming %s: %s", image.RedactURL(imageURL), image.RedactSourceError(err, imageURL)),
 		err: err,
 	}
-	if errors.Is(err, image.ErrStagingForbidden) || errors.Is(err, image.ErrStagingFull) || strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
+	if errors.Is(err, image.ErrStagingForbidden) || errors.Is(err, image.ErrStagingFull) || errors.Is(err, image.ErrRedirectRefused) || strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
 		return &PermanentError{Err: wrapped}
 	}
 	return wrapped
@@ -2497,7 +2508,7 @@ func (o *Orchestrator) parsePartitions(ctx context.Context) error {
 		return err
 	}
 	o.rootPartition = root.Node
-	return nil
+	return o.useEncryptedRoot()
 }
 
 func (o *Orchestrator) findRootPartition(ctx context.Context, parts []disk.Partition) (*disk.Partition, error) {
@@ -3345,10 +3356,18 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 		o.log.Info("skipping grow-partition, mirror-root grew the root partition before creating the array")
 		return nil
 	}
+	if o.encryptionActive() && o.encryption.isRoot {
+		o.log.Info("skipping grow-partition, stream-image grew the encrypted root partition")
+		return nil
+	}
 
 	target, err := o.growTarget(ctx)
 	if err != nil {
 		return err
+	}
+	if o.encryptionActive() && target == o.encryption.device {
+		o.log.Info("skipping grow-partition, stream-image grew the encrypted partition; close-encrypted-disk grows its file system")
+		return nil
 	}
 	partNum, err := disk.PartitionNumberChecked(target, o.targetDisk)
 	if err != nil {
@@ -3413,9 +3432,15 @@ func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
 	if o.mirrorDisk != "" {
 		return o.disk.ResizeFilesystem(ctx, disk.MirrorRootArray, newroot)
 	}
+	if o.encryptionActive() && o.encryption.isRoot {
+		return o.disk.ResizeFilesystem(ctx, o.rootPartition, newroot)
+	}
 	target, err := o.growTarget(ctx)
 	if err != nil {
 		return err
+	}
+	if o.encryptionActive() && target == o.encryption.device {
+		return nil // close-encrypted-disk resizes it through the mapping
 	}
 	if target != o.rootPartition {
 		// The grown partition is not mounted. grow-partition checked it

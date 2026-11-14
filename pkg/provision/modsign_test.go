@@ -5,8 +5,13 @@ package provision
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
+	"math/big"
 	"os"
 	"path/filepath"
 	"slices"
@@ -153,6 +158,21 @@ func TestSignKernelModulesCI(t *testing.T) {
 	}
 	if err := os.Remove(fifo); err != nil {
 		t.Fatal(err)
+	}
+
+	// Without the module-signing-only EKU shim would trust the CI key for
+	// boot images too.
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "CI boot key"}}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "usr/share/ci/mok.der"), der, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.signKernelModules(context.Background()); err == nil || o.moduleSigning != nil {
+		t.Fatalf("a CI certificate without the module-signing-only EKU was accepted: %v", err)
 	}
 
 	// Not a certificate: fails closed.
