@@ -907,7 +907,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `progress resumed, petting the watchdog again`
 - `watchdog keepalive failed`
 
-### INFO (484 messages)
+### INFO (486 messages)
 
 #### INFO `.`
 
