@@ -275,11 +275,23 @@ func pushUKIImage(t *testing.T, img ukiImage, dir string) (ref, keyPEM string) {
 	t.Helper()
 	key := newCosignTestKey(t)
 	pushHost, guestHost := startUKIRegistry(t, dir)
-	// The image is about 1 GiB gzipped: stream it from the file into a
-	// registry that keeps blobs on disk.
+	// The image is about 1 GiB gzipped. The registry buffers uploads in
+	// memory, which kills the runner: link the layer into its blob store, so
+	// the push finds it and uploads only the manifest and the config.
 	layer, err := tarball.LayerFromFile(img.gz, tarball.WithMediaType(types.OCILayer))
 	if err != nil {
 		t.Fatal(err)
+	}
+	layerDigest, err := layer.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob := filepath.Join(dir, "registry", layerDigest.Algorithm, layerDigest.Hex)
+	if err := os.MkdirAll(filepath.Dir(blob), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(img.gz, blob); err != nil {
+		t.Fatalf("link the layer into the registry: %v", err)
 	}
 	base, err := mutate.AppendLayers(empty.Image, layer)
 	if err != nil {
