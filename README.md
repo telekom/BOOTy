@@ -1245,10 +1245,12 @@ Debian 6.12 kernel:
 
 ### LUKS2 + TPM2 Disk Encryption
 
-`DISK_ENCRYPTION=luks2-tpm2` encrypts the root (or another ext4 partition) in
-place after the image is written. The recovery key goes to
-`DISK_ENCRYPTION_RECOVERY_KEY_URL`; the installed system binds the volume to
-the TPM2 (PCR 7+14) on its first boot with Secure Boot on. See
+`DISK_ENCRYPTION=luks2-tpm2` formats the root (or the last ext4 partition)
+with LUKS2 while the image is written and writes the partition into the
+opened volume. The recovery key goes to `DISK_ENCRYPTION_RECOVERY_KEY_URL`
+first; the installed system binds the volume to the TPM2 (PCR 7+14) on its
+first boot with Secure Boot on. It protects disks at rest, not against
+someone with the server or its console. See
 [docs/disk-encryption.md](docs/disk-encryption.md). The vars parser still
 rejects every key that starts with `LUKS_`.
 

@@ -130,12 +130,12 @@ type Orchestrator struct {
 	separateBootMounted bool
 	// disksSettled is true after waitForDisks ran.
 	disksSettled bool
-	// encryption is set by prepare-disk-encryption for encrypt-disk.
+	// encryption is set by stream-image when it encrypted a partition.
 	encryption *encryptionState
-	// ukiDigest is the UKI SHA-256 from the verified image manifest;
-	// ukiTouched is set once per-host signing changed the ESP.
-	ukiDigest  string
-	ukiTouched bool
+	// encryptionSkipped: DISK_ENCRYPTION_ALLOW_FAILURE provisioned without it.
+	encryptionSkipped bool
+	// ukiDigest is the UKI SHA-256 from the verified image manifest.
+	ukiDigest string
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -162,7 +162,7 @@ func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMg
 
 // provisionSteps returns the ordered list of provisioning steps.
 func (o *Orchestrator) provisionSteps() []Step {
-	return []Step{
+	steps := []Step{
 		{"report-init", o.reportInit},
 		{"release-stale-mounts", o.releaseStaleTargetMounts},
 		{"collect-inventory", o.collectInventory},
@@ -206,8 +206,6 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"configure-kubelet", o.configureKubelet},
 		{"prepare-oci-prepulls", o.prepareOCIPrePulls},
 		{"configure-serial-console", o.configureSerialConsole},
-		// Before configure-grub, which picks up its GRUB override.
-		{"prepare-disk-encryption", o.prepareDiskEncryption},
 		{"configure-grub", o.configureGRUB},
 		{"install-efi-fallback", o.installEFIFallbackLoader},
 		// Validate the final installed boot artifacts after BOOTy has applied
@@ -222,13 +220,13 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"run-post-provision-cmds", o.runPostProvisionCmds},
 		{"create-efi-boot-entry", o.createEFIBootEntry},
 		{"create-mirror-efi-boot-entry", o.createMirrorEFIBootEntry},
-		// After the GRUB entry, so the UKI comes first in BootOrder.
-		{"create-uki-boot-entry", o.createUKIBootEntry},
 		{"teardown-chroot", o.teardownChroot},
-		// Needs the target unmounted, so after teardown-chroot.
-		{"encrypt-disk", o.encryptDisk},
 		{"report-success", o.reportSuccess},
 	}
+	if o.encryptionEnabled() {
+		steps = o.withEncryptionSteps(steps)
+	}
+	return steps
 }
 
 // Provision runs all provisioning steps sequentially.
@@ -299,8 +297,6 @@ func resumeStateSteps() map[string]struct{} {
 		// file is not written again (see reportWritten).
 		"write-provision-report": {},
 		"teardown-chroot":        {},
-		// The enrollment key lives in memory until encrypt-disk.
-		"prepare-disk-encryption": {},
 	}
 }
 
@@ -1921,6 +1917,10 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 		return o.streamABImage(ctx, bestURL, opts)
 	}
 
+	if o.encryptionEnabled() {
+		return o.streamEncryptedImage(ctx, bestURL, opts)
+	}
+
 	// Default whole-disk mode.
 	o.log.Info("Streaming image", "url", image.RedactURL(bestURL), "disk", o.targetDisk)
 	if err := image.Stream(ctx, bestURL, o.targetDisk, opts...); err != nil {
@@ -2501,7 +2501,7 @@ func (o *Orchestrator) parsePartitions(ctx context.Context) error {
 		return err
 	}
 	o.rootPartition = root.Node
-	return nil
+	return o.useEncryptedRoot()
 }
 
 func (o *Orchestrator) findRootPartition(ctx context.Context, parts []disk.Partition) (*disk.Partition, error) {
@@ -3349,6 +3349,10 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 		o.log.Info("skipping grow-partition, mirror-root grew the root partition before creating the array")
 		return nil
 	}
+	if o.encryptionActive() && o.encryption.isRoot {
+		o.log.Info("skipping grow-partition, stream-image grew the encrypted root partition")
+		return nil
+	}
 
 	target, err := o.growTarget(ctx)
 	if err != nil {
@@ -3416,6 +3420,9 @@ func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
 	// the mounted array is the only safe target after mirroring.
 	if o.mirrorDisk != "" {
 		return o.disk.ResizeFilesystem(ctx, disk.MirrorRootArray, newroot)
+	}
+	if o.encryptionActive() && o.encryption.isRoot {
+		return o.disk.ResizeFilesystem(ctx, o.rootPartition, newroot)
 	}
 	target, err := o.growTarget(ctx)
 	if err != nil {

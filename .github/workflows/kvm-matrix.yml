@@ -518,10 +518,11 @@ jobs:
               cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
               sudo apt-get install -y --no-install-recommends cloud-guest-utils efibootmgr
           # LUKS2 + TPM2 disk encryption (docs/disk-encryption.md): BOOTy
-          # encrypts the root in place under OVMF with the Microsoft keys and
-          # Secure Boot off and posts the recovery key; the installed system
-          # binds to PCR 7+14 on its first Secure Boot boot, unlocks with the
-          # TPM2, and after a PCR 7 change with the recovery key.
+          # formats the root and writes it into the LUKS2 volume under OVMF
+          # with the Microsoft keys and Secure Boot off and posts the recovery
+          # key; the installed system binds to PCR 7+14 on its first Secure
+          # Boot boot, drops the enrollment key after a TPM2 unlock, and after
+          # a PCR 7 change unlocks with the recovery key.
           - scenario: disk-encryption-ubuntu-26.04
             qemu_extra: ""
             test_tag: e2e
@@ -540,6 +541,22 @@ jobs:
               curl -fsSL --retry 3 -o libtss2-rc0t64.deb https://launchpad.net/ubuntu/+archive/primary/+files/libtss2-rc0t64_4.1.3-6_amd64.deb
               echo "8bfb7d88fa9c83f37fe77a06d9745fc0176c28df079486ccacd2b8b6a927a652  libtss2-rc0t64.deb" | sha256sum -c -
               echo "DISK_ENCRYPTION_DEBS=${PWD}/libtss2-rc0t64.deb" >> "${GITHUB_ENV}"
+          # The same image without DISK_ENCRYPTION: no encryption step, the
+          # partition table, plain root and boot entry as before.
+          - scenario: disk-encryption-off-ubuntu-26.04
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestDiskEncryptionOffVM$"
+            go_timeout: 30m
+            timeout_minutes: 45
+            privileged: true
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+            mirror_os_image: ubuntu-26.04-server-cloudimg-amd64.img
+            mirror_os_image_url: https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img
+            mirror_os_image_sha256: 8800651811af9a85465ad1d552add729947bb16488dddb4a9b5305a3d97332b2
+            setup: |
+              sudo apt-get install -y --no-install-recommends cryptsetup-bin
+              sudo apt-get install -y --no-install-recommends python3-virt-firmware || sudo pip3 install --break-system-packages virt-firmware
           # Signed UKI + signed PCR 11 policy (DISK_ENCRYPTION=luks2-tpm2-uki,
           # docs/disk-encryption.md#signed-uki-and-pcr-11). The test builds the
           # UKI image flavour, pushes it signed with the UKI digest annotation,

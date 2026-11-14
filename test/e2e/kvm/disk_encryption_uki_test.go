@@ -177,14 +177,14 @@ func prepareUKIImage(t *testing.T, osImage, dir string, debs []string, ci *ukiKe
 	if err != nil {
 		t.Fatal(err)
 	}
-	luksWriteImageFile(t, mnt, "run/systemd/resolve/stub-resolv.conf", resolv)
+	luksWriteImageFile(t, mnt, "run/systemd/resolve/stub-resolv.conf", resolv, 0o644)
 	chroot := func(desc, script string) {
 		run(t, desc, "chroot", mnt, "/bin/sh", "-ec", script)
 	}
 	chroot("install the UKI tools", "export DEBIAN_FRONTEND=noninteractive; apt-get update -q; "+
 		"apt-get install -y -q --no-install-recommends systemd-ukify systemd-boot-efi sbsigntool python3-pefile")
 	for _, deb := range debs {
-		luksWriteImageFile(t, mnt, "tmp/"+filepath.Base(deb), readFile(t, deb))
+		luksWriteImageFile(t, mnt, "tmp/"+filepath.Base(deb), readFile(t, deb), 0o644)
 		chroot("install "+filepath.Base(deb), "dpkg -i /tmp/"+filepath.Base(deb)+"; rm /tmp/"+filepath.Base(deb))
 	}
 
@@ -192,7 +192,7 @@ func prepareUKIImage(t *testing.T, osImage, dir string, debs []string, ci *ukiKe
 	// BOOTy keeps. try-empty-password opens the volume until the first
 	// Secure Boot boot binds it to the TPM2.
 	luksWriteImageFile(t, mnt, "etc/crypttab", []byte(fmt.Sprintf(
-		"booty_crypt PARTUUID=%s none luks,x-initrd.attach,tpm2-device=auto,try-empty-password=yes\n", rootPartUUID)))
+		"booty_crypt PARTUUID=%s none luks,x-initrd.attach,tpm2-device=auto,try-empty-password=yes\n", rootPartUUID)), 0o644)
 	kvers, err := os.ReadDir(filepath.Join(mnt, "lib/modules"))
 	if err != nil || len(kvers) != 1 {
 		t.Fatalf("want one kernel in the image: %v %v", kvers, err)
@@ -204,8 +204,8 @@ for l in libtss2-esys.so.0 libtss2-rc.so.0 libtss2-mu.so.0 libtss2-tcti-device.s
 done
 dracut --force --no-hostonly --add "crypt systemd-cryptsetup systemd-pcrextend" --omit "tpm2-tss plymouth" \
 	--install "/etc/crypttab $libs" /tmp/uki-initrd.img `+kver)
-	luksWriteImageFile(t, mnt, "usr/local/lib/booty-luks-check.sh", []byte(ukiCheckScript))
-	luksWriteImageFile(t, mnt, "etc/systemd/system/booty-luks-check.service", []byte(luksCheckUnit))
+	luksWriteImageFile(t, mnt, "usr/local/lib/booty-luks-check.sh", []byte(ukiCheckScript), 0o755)
+	luksWriteImageFile(t, mnt, "etc/systemd/system/booty-luks-check.service", []byte(luksCheckUnit), 0o644)
 	if err := os.Symlink("/etc/systemd/system/booty-luks-check.service",
 		filepath.Join(mnt, "etc/systemd/system/multi-user.target.wants/booty-luks-check.service")); err != nil {
 		t.Fatal(err)
@@ -413,7 +413,10 @@ func ukiAssets(t *testing.T) (osImage string, debs []string) {
 }
 
 func ukiProvisionVars(imageRef, escrowURL, signing string) map[string]string {
+	// The escrow server is HTTPS with a test CA and wants the bearer token.
 	return map[string]string{
+		"TOKEN":                            "e2e-token",
+		"CA_BUNDLE_FILE":                   "/" + luksCAPath,
 		"HOSTNAME":                         "luks-e2e",
 		"MODE":                             "provision",
 		"MIN_DISK_SIZE_GB":                 "1",
@@ -421,8 +424,7 @@ func ukiProvisionVars(imageRef, escrowURL, signing string) map[string]string {
 		"IMAGE_COSIGN_PUBKEYS":             "/" + cosignTestKeyPath,
 		"DISK_ENCRYPTION":                  "luks2-tpm2-uki",
 		"SECUREBOOT_SIGNING":               signing,
-		"DISK_ENCRYPTION_RECOVERY_KEY_URL": escrowURL,
-		"INSECURE_TRANSPORT":               "true",
+		"DISK_ENCRYPTION_RECOVERY_KEY_URL": escrowURL + "/recovery-key",
 	}
 }
 
@@ -452,7 +454,7 @@ func TestDiskEncryptionUKIPerHostVM(t *testing.T) {
 	escrow := startEscrowServer(t)
 	vm := newUKIVM(t, dir)
 
-	out := vm.provision(ukiProvisionVars(ref, escrow.url, "per-host"), map[string]string{cosignTestKeyPath: cosignPEM})
+	out := vm.provision(ukiProvisionVars(ref, escrow.url, "per-host"), map[string]string{cosignTestKeyPath: cosignPEM, luksCAPath: escrow.caPEM})
 	for _, want := range []string{"image cosign signature verified", "UKI signed with per-host keys; the private keys are wiped", "UKI boot entry created"} {
 		if !strings.Contains(string(out), want) {
 			t.Fatalf("provisioning log lacks %q", want)
@@ -517,7 +519,7 @@ func TestDiskEncryptionUKICIVM(t *testing.T) {
 
 	vars := ukiProvisionVars(ref, escrow.url, "ci")
 	vars["DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE"] = "/deploy/pcr.pub"
-	out := vm.provision(vars, map[string]string{cosignTestKeyPath: cosignPEM, "deploy/pcr.pub": string(readFile(t, ci.pcrPub))})
+	out := vm.provision(vars, map[string]string{cosignTestKeyPath: cosignPEM, luksCAPath: escrow.caPEM, "deploy/pcr.pub": string(readFile(t, ci.pcrPub))})
 	if strings.Contains(string(out), "UKI signed with per-host keys") || !strings.Contains(string(out), "UKI prepared") {
 		t.Fatal("ci mode signed the UKI or did not prepare it")
 	}

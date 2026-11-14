@@ -109,7 +109,8 @@ var (
 )
 
 // loadUKIDigest reads the UKI digest from the manifest of the verified
-// image. A missing annotation fails prepare-disk-encryption, where
+// image. A missing annotation fails the encryption preflight in
+// stream-image, before the first disk write, where
 // DISK_ENCRYPTION_ALLOW_FAILURE applies.
 func (o *Orchestrator) loadUKIDigest(ctx context.Context, imageURL string) error {
 	if !o.cfg.Provision.DiskEncryption.UKI() {
@@ -210,7 +211,6 @@ func (o *Orchestrator) installPerHostUKI(ctx context.Context, root, esp string, 
 		return nil, nil, fmt.Errorf("open the ESP: %w", err)
 	}
 	defer espRoot.Close() //nolint:errcheck // closed after the write returned
-	o.ukiTouched = true   // DISK_ENCRYPTION_ALLOW_FAILURE no longer applies
 	if err := espRoot.WriteFile(u.rel, signed, 0o644); err != nil {
 		return nil, nil, fmt.Errorf("install the signed UKI: %w", err)
 	}

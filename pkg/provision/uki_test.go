@@ -15,6 +15,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -239,7 +240,7 @@ func TestPrepareUKIPerHost(t *testing.T) {
 	if _, err := os.Stat(ukiWorkDir); !os.IsNotExist(err) {
 		t.Fatalf("work dir left: %v", err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(esp, "EFI/Linux/ubuntu-6.8.efi")); !bytes.Equal(got, uki) || o.ukiTouched {
+	if got, _ := os.ReadFile(filepath.Join(esp, "EFI/Linux/ubuntu-6.8.efi")); !bytes.Equal(got, uki) {
 		t.Fatal("a failed signing changed the ESP")
 	}
 
@@ -294,7 +295,7 @@ func TestUKIEnrollScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	env, _ := os.ReadFile(filepath.Join(root, luksEnvPath))
-	for _, want := range []string{"TPM2_PCRS=7\n", "TPM2_PUBLIC_KEY=" + ukiPCRPublicKeyPath, "TPM2_SIGNATURE=" + ukiPCRSignaturePath} {
+	for _, want := range []string{"TPM2_PCRS='7'\n", "TPM2_PUBLIC_KEY='" + ukiPCRPublicKeyPath, "TPM2_SIGNATURE='" + ukiPCRSignaturePath} {
 		if !strings.Contains(string(env), want) {
 			t.Errorf("env lacks %q", want)
 		}
@@ -338,6 +339,27 @@ func TestUKIStepsOffByDefault(t *testing.T) {
 	}
 	if err := o.createUKIBootEntry(context.Background()); err != nil || len(cmd.calls) != 0 || o.reportUKI() != nil {
 		t.Fatalf("err=%v calls=%v", err, cmd.calls)
+	}
+}
+
+func TestUKIBootEntryStep(t *testing.T) {
+	names := func(mode string) []string {
+		cfg := &config.MachineConfig{}
+		cfg.Provision.DiskEncryption.Mode = mode
+		var n []string
+		for _, s := range newTestOrchestrator(t, cfg, &mockProvider{}).provisionSteps() {
+			n = append(n, s.Name)
+		}
+		return n
+	}
+	uki := strings.Join(names(config.DiskEncryptionLUKS2TPM2UKI), " ")
+	if !strings.Contains(uki, "create-mirror-efi-boot-entry create-uki-boot-entry teardown-chroot") {
+		t.Fatalf("steps: %s", uki)
+	}
+	for _, mode := range []string{"", config.DiskEncryptionLUKS2TPM2} {
+		if slices.Contains(names(mode), "create-uki-boot-entry") {
+			t.Fatalf("mode %q has the UKI boot entry step", mode)
+		}
 	}
 }
 

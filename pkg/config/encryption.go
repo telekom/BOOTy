@@ -3,6 +3,8 @@ package config
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -33,9 +35,22 @@ type DiskEncryptionConfig struct {
 	Target string `yaml:"target" json:"target"`
 
 	// RecoveryKeyURL receives the recovery key (POST, JSON) before the
-	// partition is encrypted. Required with Mode.
+	// partition is encrypted. HTTPS, or HTTP on loopback only. Required
+	// with Mode.
 	// Default: ""
 	RecoveryKeyURL string `yaml:"recoveryKeyURL" json:"recoveryKeyURL"`
+
+	// StatusURL receives the result of the TPM2 enrollment from the
+	// installed system (POST, JSON, the bearer token of this run, no key).
+	// HTTPS only.
+	// Default: "" (no status)
+	StatusURL string `yaml:"statusURL" json:"statusURL"`
+
+	// SkipSecureBootCheck encrypts although the firmware is in setup mode
+	// or has no Secure Boot. The installed system binds the volume only
+	// once Secure Boot is on in user mode.
+	// Default: false
+	SkipSecureBootCheck bool `yaml:"skipSecureBootCheck" json:"skipSecureBootCheck"`
 
 	// AllowFailure provisions without encryption when the checks before
 	// the first disk change fail (no TPM, image without the tools,
@@ -50,14 +65,14 @@ type DiskEncryptionConfig struct {
 	PCRPublicKeyFile string `yaml:"pcrPublicKeyFile" json:"pcrPublicKeyFile"`
 }
 
-// Enabled reports whether disk encryption is requested.
-func (d *DiskEncryptionConfig) Enabled() bool {
-	return d.Mode != ""
-}
-
 // UKI reports whether the installed system boots a signed UKI.
 func (d *DiskEncryptionConfig) UKI() bool {
 	return d.Mode == DiskEncryptionLUKS2TPM2UKI
+}
+
+// Enabled reports whether disk encryption is requested.
+func (d *DiskEncryptionConfig) Enabled() bool {
+	return d.Mode != ""
 }
 
 // TargetPartition returns 0 for the root partition or the partition number.
@@ -88,7 +103,10 @@ func (c *Config) validateDiskEncryption() []string {
 	}
 	if strings.TrimSpace(d.RecoveryKeyURL) == "" {
 		errs = append(errs, "provision.diskEncryption.recoveryKeyURL is required with provision.diskEncryption.mode")
+	} else if err := ValidateEscrowURL(d.RecoveryKeyURL); err != nil {
+		errs = append(errs, "provision.diskEncryption.recoveryKeyURL: "+err.Error())
 	}
+	errs = append(errs, c.validateDiskEncryptionTransport()...)
 	// The root is encrypted in place after the image is written; layouts
 	// that put the root on md, LVM or a declared layout are not supported.
 	mirror := strings.ToLower(strings.TrimSpace(c.Provision.Disk.MirroringMode))
@@ -100,6 +118,9 @@ func (c *Config) validateDiskEncryption() []string {
 	return errs
 }
 
+// validateDiskEncryptionTransport checks the values that reach the
+// installed system (sourced from a shell file, posted with curl
+// --proto =https) and the TLS verification of the key hand-off.
 // validateUKISigning checks SECUREBOOT_SIGNING against the disk encryption
 // mode: the UKI mode needs a signer, and the signer is used only by it.
 // The UKI digest comes from the signed image manifest, so the image must
@@ -107,13 +128,13 @@ func (c *Config) validateDiskEncryption() []string {
 func (c *Config) validateUKISigning() []string {
 	d := &c.Provision.DiskEncryption
 	signing := c.Provision.SecureBoot.SigningMode()
-	var errs []string
 	switch signing {
 	case SecureBootSigningOff, SecureBootSigningPerHost, SecureBootSigningCI:
 	default:
 		return []string{fmt.Sprintf("provision.secureBoot.signing %q: want %q, %q or %q",
 			c.Provision.SecureBoot.Signing, SecureBootSigningOff, SecureBootSigningPerHost, SecureBootSigningCI)}
 	}
+	var errs []string
 	if !d.UKI() {
 		if signing != SecureBootSigningOff {
 			errs = append(errs, fmt.Sprintf("provision.secureBoot.signing %q needs provision.diskEncryption.mode %q", signing, DiskEncryptionLUKS2TPM2UKI))
@@ -133,7 +154,45 @@ func (c *Config) validateUKISigning() []string {
 	if len(c.Provision.Image.CosignPublicKeys) == 0 {
 		errs = append(errs, fmt.Sprintf("provision.diskEncryption.mode %q needs provision.image.cosignPublicKeys: the UKI digest comes from the signed image manifest", DiskEncryptionLUKS2TPM2UKI))
 	}
+	if d.StatusURL != "" {
+		errs = append(errs, fmt.Sprintf("provision.diskEncryption.statusURL is not supported with provision.diskEncryption.mode %q yet", DiskEncryptionLUKS2TPM2UKI))
+	}
 	return errs
+}
+
+func (c *Config) validateDiskEncryptionTransport() []string {
+	var errs []string
+	const unsafe = "'\"\\ \t\n$`"
+	d := &c.Provision.DiskEncryption
+	if d.StatusURL != "" {
+		if u, err := url.Parse(d.StatusURL); err != nil || u.Scheme != "https" || u.Host == "" || strings.ContainsAny(d.StatusURL, unsafe) {
+			errs = append(errs, "provision.diskEncryption.statusURL must be an https URL without quotes, spaces, $ or backquotes")
+		}
+	}
+	if strings.ContainsAny(c.Hostname, unsafe) {
+		errs = append(errs, "hostname must not contain quotes, spaces, $ or backquotes with provision.diskEncryption")
+	}
+	if BoolOr(c.Transport.SkipTLSVerify, false) {
+		errs = append(errs, "provision.diskEncryption needs TLS verification: the recovery key must not go to an unverified server (unset SKIP_TLS_VERIFY, use CA_BUNDLE_FILE)")
+	}
+	return errs
+}
+
+// ValidateEscrowURL accepts https URLs and http on a loopback host only:
+// INSECURE_TRANSPORT does not apply to the recovery key.
+func ValidateEscrowURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("not an absolute URL")
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	host := u.Hostname()
+	if ip := net.ParseIP(host); u.Scheme == "http" && (host == "localhost" || (ip != nil && ip.IsLoopback())) {
+		return nil
+	}
+	return fmt.Errorf("needs https (http only on loopback; INSECURE_TRANSPORT does not apply)")
 }
 
 // RecoveryKeyEscrow is an optional provider capability: it hands the LUKS
@@ -141,4 +200,7 @@ func (c *Config) validateUKISigning() []string {
 // store the body, which holds the key; the caller zeroes it after the call.
 type RecoveryKeyEscrow interface {
 	EscrowRecoveryKey(ctx context.Context, body []byte) error
+	// CurrentToken is the bearer token that the installed system uses for
+	// the status callback (StatusURL).
+	CurrentToken() string
 }
