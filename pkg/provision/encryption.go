@@ -199,7 +199,7 @@ func (o *Orchestrator) streamEncryptedImage(ctx context.Context, url string, opt
 func (o *Orchestrator) abortEncryptedStream(st *encryptionState) {
 	clear(st.enrollKey)
 	if st.lvm {
-		_, _ = o.disk.Run(context.Background(), "lvm", "vgchange", "-an", "--devices", luks.MappedPath(luksMapperName), luksLVMVolumeGroup)
+		_, _ = runLVM(context.Background(), "vgchange", "--devices", luks.MappedPath(luksMapperName), "-an", luksLVMVolumeGroup)
 	}
 	_ = runCryptsetup(context.Background(), nil, nil, "close", luksMapperName)
 }
@@ -210,13 +210,15 @@ func (o *Orchestrator) abortEncryptedStream(st *encryptionState) {
 // the mapping, so a VG tcaas on another disk (an old installation) is not
 // touched or confused with this one.
 func (o *Orchestrator) openEncryptedVG(ctx context.Context, st *encryptionState) error {
+	// The root is on LVM only with DISK_ENCRYPTION_TARGET=root and no root
+	// selector; a numbered target is a data VG, so a backup OS in it never
+	// replaces the selected root.
+	if st.isRoot && (strings.TrimSpace(o.cfg.Provision.Disk.RootPartitionLabel) != "" || o.cfg.Provision.Disk.RootPartitionNumber != 0) {
+		return errors.New("ROOT_PARTITION_LABEL and ROOT_PARTITION_NUMBER select a root partition, but the root is on LVM; set DISK_ENCRYPTION_TARGET to the partition number for a data VG")
+	}
 	mapped := luks.MappedPath(luksMapperName)
 	lvm := func(cmd string, args ...string) (string, error) {
-		out, err := o.disk.Run(ctx, "lvm", append([]string{cmd, "--devices", mapped}, args...)...)
-		if err != nil {
-			return "", fmt.Errorf("lvm %s: %s: %w", cmd, strings.TrimSpace(string(out)), err)
-		}
-		return strings.TrimSpace(string(out)), nil
+		return runLVM(ctx, append([]string{cmd, "--devices", mapped}, args...)...)
 	}
 	vg, err := lvm("pvs", "--noheadings", "-o", "vg_name", mapped)
 	if err != nil {
@@ -231,25 +233,31 @@ func (o *Orchestrator) openEncryptedVG(ctx context.Context, st *encryptionState)
 	if _, err := lvm("vgchange", "-ay", luksLVMVolumeGroup); err != nil {
 		return err
 	}
-	lvs, err := lvm("lvs", "--noheadings", "-o", "lv_dm_path", luksLVMVolumeGroup)
-	if err != nil {
-		return err
-	}
-	for _, lv := range strings.Fields(lvs) {
-		isRoot, err := isRootFilesystem(ctx, o, lv)
+	if st.isRoot {
+		lvs, err := lvm("lvs", "--noheadings", "-o", "lv_dm_path", luksLVMVolumeGroup)
 		if err != nil {
 			return err
 		}
-		if isRoot {
-			st.rootLV, st.isRoot = lv, true
-			break
+		if st.rootLV, err = o.findRootLV(ctx, strings.Fields(lvs)); err != nil {
+			return err
 		}
-	}
-	if st.isRoot && st.rootLV == "" {
-		return fmt.Errorf("no logical volume of VG %s holds a root file system", luksLVMVolumeGroup)
 	}
 	o.log.Info("LVM physical volume opened in the LUKS2 mapping", "device", st.device, "vg", luksLVMVolumeGroup, "rootLV", st.rootLV)
 	return nil
+}
+
+// findRootLV returns the first logical volume that holds a root file system.
+func (o *Orchestrator) findRootLV(ctx context.Context, lvs []string) (string, error) {
+	for _, lv := range lvs {
+		isRoot, err := isRootFilesystem(ctx, o, lv)
+		if err != nil {
+			return "", err
+		}
+		if isRoot {
+			return lv, nil
+		}
+	}
+	return "", fmt.Errorf("no logical volume of VG %s holds a root file system", luksLVMVolumeGroup)
 }
 
 // isRootFilesystem mounts device read-only without journal replay and
@@ -262,6 +270,9 @@ var isRootFilesystem = func(ctx context.Context, o *Orchestrator, device string)
 	}
 	defer func() { _ = os.Remove(dir) }()
 	if err := o.disk.MountPartitionInspect(ctx, device, dir); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, fmt.Errorf("root probe: %w", ctxErr)
+		}
 		return false, nil //nolint:nilerr // not a mountable file system
 	}
 	isRoot := looksLikeRootFilesystem(dir)
@@ -435,8 +446,8 @@ func (o *Orchestrator) closeEncryptedDisk(ctx context.Context) error {
 	if st.lvm {
 		// stream-image grew the physical volume; the logical volumes keep
 		// the sizes of the image.
-		if out, err := o.disk.Run(ctx, "lvm", "vgchange", "-an", "--devices", mapped, luksLVMVolumeGroup); err != nil {
-			return fmt.Errorf("deactivate VG %s: %s: %w", luksLVMVolumeGroup, strings.TrimSpace(string(out)), err)
+		if _, err := runLVM(ctx, "vgchange", "--devices", mapped, "-an", luksLVMVolumeGroup); err != nil {
+			return fmt.Errorf("deactivate VG %s: %w", luksLVMVolumeGroup, err)
 		}
 	} else if !st.isRoot {
 		if err := o.disk.CheckExtFilesystemPreen(ctx, mapped); err != nil {
@@ -796,6 +807,21 @@ func addEnrollKey(ctx context.Context, st *encryptionState, recovery []byte, kdf
 	// at offset 0. The ramdisk has no /dev/fd.
 	args := append([]string{"luksAddKey", "--key-file", "-", "--key-slot", strconv.Itoa(luksEnrollSlot), "--batch-mode"}, kdf...)
 	return runCryptsetup(ctx, recovery, f, append(args, st.device, "/proc/self/fd/3")...)
+}
+
+// runLVM runs lvm and returns its standard output, trimmed. Warnings go to
+// standard error and stay out of the parsed output; lvm warns about every
+// descriptor that BOOTy (PID 1) holds open, which the environment turns off.
+// A variable for tests.
+var runLVM = func(ctx context.Context, args ...string) (string, error) {
+	cmd := executil.CommandContext(ctx, "lvm", args...)
+	cmd.Env = append(os.Environ(), "LVM_SUPPRESS_FD_WARNINGS=1")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("lvm %s: %s: %w", args[0], strings.TrimSpace(stderr.String()), err)
+	}
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 // runCryptsetup runs cryptsetup with key material on stdin only, never in

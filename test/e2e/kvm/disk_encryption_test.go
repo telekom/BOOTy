@@ -479,15 +479,20 @@ func convertRootToLVM(t *testing.T, raw, dir string) {
 	run(t, "LVM partition name", "sfdisk", "--part-label", raw, "1", "tcaas-pv")
 	loop = strings.TrimSpace(string(runOutput(t, "attach image", "losetup", "-P", "--show", "-f", raw)))
 	defer func() { _ = exec.CommandContext(context.Background(), "losetup", "-d", loop).Run() }()
-	defer func() { _ = exec.CommandContext(context.Background(), "lvm", "vgchange", "-an", "tcaas").Run() }()
-	run(t, "create PV", "lvm", "pvcreate", "-ff", "-y", loop+"p1")
-	run(t, "create VG tcaas", "lvm", "vgcreate", "tcaas", loop+"p1")
-	run(t, "create LV root", "lvm", "lvcreate", "-y", "-l", "100%FREE", "-n", "root", "tcaas")
+	// Only the PV of the fixture: a VG tcaas of the host is never touched.
+	pv := loop + "p1"
+	if _, err := os.Stat("/dev/mapper/tcaas-root"); err == nil {
+		t.Fatal("the host has /dev/mapper/tcaas-root; the fixture LV would conflict")
+	}
+	run(t, "create PV", "lvm", "pvcreate", "--devices", pv, "-ff", "-y", pv)
+	defer func() { _ = exec.CommandContext(context.Background(), "lvm", "vgchange", "--devices", pv, "-an", "tcaas").Run() }()
+	run(t, "create VG tcaas", "lvm", "vgcreate", "--devices", pv, "tcaas", pv)
+	run(t, "create LV root", "lvm", "lvcreate", "--devices", pv, "-y", "-l", "100%FREE", "-n", "root", "tcaas")
 	// Not sparse: the physical volume holds the old root file system.
 	run(t, "copy root into LV", "dd", "if="+rootFS, "of=/dev/mapper/tcaas-root", "bs=4M", "conv=fsync", "status=none")
 	run(t, "check LV root", "e2fsck", "-f", "-p", "/dev/mapper/tcaas-root")
 	run(t, "grow LV root", "resize2fs", "/dev/mapper/tcaas-root")
-	run(t, "deactivate VG tcaas", "lvm", "vgchange", "-an", "tcaas")
+	run(t, "deactivate VG tcaas", "lvm", "vgchange", "--devices", pv, "-an", "tcaas")
 	run(t, "detach image", "losetup", "-d", loop)
 	if err := os.Remove(rootFS); err != nil {
 		t.Fatal(err)
@@ -606,10 +611,10 @@ func prepareLUKSImage(t *testing.T, osImage, dir string, debs []string, layout l
 	}
 	rootDev := loop + "p1"
 	if layout == luksLVM {
-		run(t, "activate VG tcaas", "lvm", "vgchange", "-ay", "tcaas")
+		run(t, "activate VG tcaas", "lvm", "vgchange", "--devices", loop+"p1", "-ay", "tcaas")
 		defer func() {
 			_ = exec.CommandContext(context.Background(), "umount", mnt).Run()
-			_ = exec.CommandContext(context.Background(), "lvm", "vgchange", "-an", "tcaas").Run()
+			_ = exec.CommandContext(context.Background(), "lvm", "vgchange", "--devices", loop+"p1", "-an", "tcaas").Run()
 		}()
 		rootDev = "/dev/mapper/tcaas-root"
 	}
@@ -648,7 +653,7 @@ func prepareLUKSImage(t *testing.T, osImage, dir string, debs []string, layout l
 	}
 	run(t, "unmount image root", "umount", mnt)
 	if layout == luksLVM {
-		run(t, "deactivate VG tcaas", "lvm", "vgchange", "-an", "tcaas")
+		run(t, "deactivate VG tcaas", "lvm", "vgchange", "--devices", loop+"p1", "-an", "tcaas")
 	}
 	run(t, "detach image", "losetup", "-d", loop)
 	gz := compressGzip(t, raw)

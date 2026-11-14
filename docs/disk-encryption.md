@@ -109,9 +109,11 @@ and locked configuration keys apply.
 - The encrypted partition is an LVM physical volume when its GPT type is
   Linux LVM (`E6D6D379-F507-44C2-A23C-238F2A3DF928`). With
   `DISK_ENCRYPTION_TARGET=root` BOOTy takes it when the image has no Linux
-  filesystem partition and exactly one LVM partition; a partition number
-  selects it directly. It must be the last partition, like a root
-  partition.
+  filesystem partition and exactly one LVM partition; the root is then on
+  LVM (`ROOT_PARTITION_LABEL` and `ROOT_PARTITION_NUMBER` must be unset).
+  A partition number selects an LVM partition as a data VG: the root stays
+  the selected root partition, even if an LV looks like a root. It must be
+  the last partition, like a root partition.
 - `stream-image` writes the physical volume as it is in the image (LVM
   label, metadata, all logical volumes) into the opened mapping, so no
   byte of it reaches the disk in plain text. Then, with LVM limited to the
@@ -123,11 +125,12 @@ and locked configuration keys apply.
      sizes of the image; the space of the grown disk stays free in the VG;
   3. `lvm vgchange -ay tcaas` activates it, and BOOTy mounts each logical
      volume read-only to find the root (`/etc/os-release`, or `/etc` and
-     `/usr`). With `DISK_ENCRYPTION_TARGET=root` a VG without a root fails
-     the run; with a partition number the VG may hold data only.
+     `/usr`; only with `DISK_ENCRYPTION_TARGET=root`). A VG without a root
+     fails the run.
 - The root is that logical volume (`/dev/mapper/tcaas-<lv>`) for the
   later steps; `grow-partition` is skipped and `resize-filesystem` finds
-  nothing to grow.
+  nothing to grow. `enable-lvm` is skipped: its unscoped `vgchange -ay`
+  would also activate a VG `tcaas` of another disk.
 - `prepare-disk-encryption` also needs `/usr/sbin/lvm` in the image
   (Ubuntu: `lvm2`), adds the dracut `lvm` module to
   `90-booty-luks.conf`, and appends to the kernel command line in

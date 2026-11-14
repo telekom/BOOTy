@@ -27,12 +27,38 @@ func stubRootFilesystem(t *testing.T, roots ...string) {
 	t.Cleanup(func() { isRootFilesystem = old })
 }
 
-func lvmTestOrchestrator(t *testing.T, vg string) (*Orchestrator, *mockCommander) {
+// lvmCalls records the lvm commands of a test; fail makes that subcommand
+// fail.
+type lvmCalls struct {
+	lines []string
+	fail  string
+}
+
+func stubLVM(t *testing.T, vg string) *lvmCalls {
 	t.Helper()
-	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
-	cmd.setResult("lvm pvs", []byte("  "+vg+"\n"), nil)
-	cmd.setResult("lvm lvs", []byte("  /dev/mapper/tcaas-swap\n  /dev/mapper/tcaas-root\n"), nil)
-	return o, cmd
+	calls := &lvmCalls{}
+	old := runLVM
+	runLVM = func(_ context.Context, args ...string) (string, error) {
+		calls.lines = append(calls.lines, "lvm "+strings.Join(args, " "))
+		switch args[0] {
+		case calls.fail:
+			return "", errors.New("lvm " + args[0] + ": in use: exit status 5")
+		case "pvs":
+			return vg, nil
+		case "lvs":
+			return "/dev/mapper/tcaas-swap\n  /dev/mapper/tcaas-root", nil
+		}
+		return "", nil
+	}
+	t.Cleanup(func() { runLVM = old })
+	return calls
+}
+
+func lvmTestOrchestrator(t *testing.T, vg string) (*Orchestrator, *lvmCalls) {
+	t.Helper()
+	calls := stubLVM(t, vg)
+	o, _ := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
+	return o, calls
 }
 
 func commandLines(cmd *mockCommander) []string {
@@ -59,7 +85,7 @@ func TestOpenEncryptedVG(t *testing.T) {
 		"lvm vgchange --devices /dev/mapper/booty_crypt -ay tcaas",
 		"lvm lvs --devices /dev/mapper/booty_crypt --noheadings -o lv_dm_path tcaas",
 	}
-	if got := commandLines(cmd); strings.Join(got, "|") != strings.Join(want, "|") {
+	if got := cmd.lines; strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("commands:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
@@ -71,8 +97,8 @@ func TestOpenEncryptedVGRefusesOtherVG(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `VG "other"`) {
 		t.Fatalf("err = %v", err)
 	}
-	if len(cmd.calls) != 1 {
-		t.Fatalf("LVM changed after the VG check failed: %v", commandLines(cmd))
+	if len(cmd.lines) != 1 {
+		t.Fatalf("LVM changed after the VG check failed: %v", cmd.lines)
 	}
 }
 
@@ -82,10 +108,48 @@ func TestOpenEncryptedVGWithoutRoot(t *testing.T) {
 	if err := o.openEncryptedVG(context.Background(), &encryptionState{device: "/dev/vda1", lvm: true, isRoot: true}); err == nil {
 		t.Fatal("DISK_ENCRYPTION_TARGET=root accepted a VG without a root")
 	}
-	// Selected by number: a data VG.
+}
+
+// A numbered target is a data VG even when an LV looks like a root (a
+// backup OS): the selected plain root stays the root.
+func TestOpenEncryptedVGNumberedIsData(t *testing.T) {
+	stubRootFilesystem(t, "/dev/mapper/tcaas-root")
+	o, _ := lvmTestOrchestrator(t, "tcaas")
 	st := &encryptionState{device: "/dev/vda3", lvm: true}
 	if err := o.openEncryptedVG(context.Background(), st); err != nil || st.isRoot || st.rootLV != "" {
 		t.Fatalf("data VG: isRoot %v rootLV %q err %v", st.isRoot, st.rootLV, err)
+	}
+}
+
+func TestOpenEncryptedVGRootSelectorConflicts(t *testing.T) {
+	stubRootFilesystem(t, "/dev/mapper/tcaas-root")
+	o, _ := lvmTestOrchestrator(t, "tcaas")
+	o.cfg.Provision.Disk.RootPartitionNumber = 2
+	st := &encryptionState{device: "/dev/vda1", lvm: true, isRoot: true}
+	if err := o.openEncryptedVG(context.Background(), st); err == nil || st.rootLV != "" {
+		t.Fatalf("root selector ignored: rootLV %q err %v", st.rootLV, err)
+	}
+}
+
+func TestOpenEncryptedVGProbeCanceled(t *testing.T) {
+	o, _ := lvmTestOrchestrator(t, "tcaas")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := o.openEncryptedVG(ctx, &encryptionState{device: "/dev/vda1", lvm: true, isRoot: true}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the cancellation", err)
+	}
+}
+
+// Two disks with a VG tcaas: enable-lvm must not activate the other one.
+func TestEnableLVMSkippedForEncryptedVG(t *testing.T) {
+	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
+	o.encryption = &encryptionState{device: "/dev/vda1", lvm: true}
+	if err := o.enableLVM(context.Background()); err != nil || len(cmd.calls) != 0 {
+		t.Fatalf("enable-lvm with an encrypted VG: err %v commands %v", err, commandLines(cmd))
+	}
+	o.encryption = &encryptionState{device: "/dev/vda1"}
+	if err := o.enableLVM(context.Background()); err != nil || len(cmd.calls) != 1 {
+		t.Fatalf("enable-lvm without LVM encryption: err %v commands %v", err, commandLines(cmd))
 	}
 }
 
@@ -153,21 +217,22 @@ func TestEncryptionFilesLVM(t *testing.T) {
 // the mapping, and never runs a file system tool on the physical volume.
 func TestCloseEncryptedDiskLVM(t *testing.T) {
 	calls := stubCryptsetup(t, "")
+	lvm := stubLVM(t, "tcaas")
 	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
 	o.encryption = &encryptionState{device: "/dev/vda1", lvm: true, isRoot: true, rootLV: "/dev/mapper/tcaas-root"}
 	if err := o.closeEncryptedDisk(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := commandLines(cmd); len(got) != 1 || got[0] != "lvm vgchange -an --devices /dev/mapper/booty_crypt tcaas" {
-		t.Fatalf("commands %v", got)
+	if len(lvm.lines) != 1 || lvm.lines[0] != "lvm vgchange --devices /dev/mapper/booty_crypt -an tcaas" || len(cmd.calls) != 0 {
+		t.Fatalf("commands %v %v", lvm.lines, commandLines(cmd))
 	}
 	if len(*calls) != 1 || strings.Join((*calls)[0].args, " ") != "close booty_crypt" {
 		t.Fatalf("cryptsetup calls %v", *calls)
 	}
 
 	calls = stubCryptsetup(t, "")
-	o, cmd = newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
-	cmd.setResult("lvm vgchange", []byte("in use"), errors.New("exit status 5"))
+	lvm.fail = "vgchange"
+	o, _ = newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
 	o.encryption = &encryptionState{device: "/dev/vda1", lvm: true}
 	if err := o.closeEncryptedDisk(context.Background()); err == nil || len(*calls) != 0 {
 		t.Fatalf("failed deactivation: err=%v cryptsetup=%v", err, *calls)
