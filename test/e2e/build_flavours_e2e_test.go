@@ -823,6 +823,32 @@ func TestFullFlavorsContainEFIFallbackLoaderE2E(t *testing.T) {
 	}
 }
 
+// The flavours with efibootmgr carry mok-enroll.efi for
+// MODULE_SIGNING_ENROLLMENT=efi-helper (docs/module-signing.md); micro
+// creates no boot entries and leaves it out.
+func TestFlavorsContainMOKEnrollHelperE2E(t *testing.T) {
+	dockerAvailable(t)
+	for _, tc := range []struct {
+		name   string
+		target string
+		want   bool
+	}{
+		{name: "default", want: true},
+		{name: "gobgp", target: "gobgp", want: true},
+		{name: "slim", target: "slim", want: true},
+		{name: "micro", target: "micro"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			files := listCPIOContents(t, buildTarget(t, tc.target, t.TempDir()))
+			if tc.want {
+				assertContains(t, files, "usr/lib/booty/mok-enroll.efi", "MOK enrollment helper")
+			} else {
+				assertNotContains(t, files, "usr/lib/booty/mok-enroll.efi", "MOK enrollment helper")
+			}
+		})
+	}
+}
+
 func TestDefaultContainsNetworkAndSSHE2E(t *testing.T) {
 	dockerAvailable(t)
 	dest := t.TempDir()

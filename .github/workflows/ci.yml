@@ -348,6 +348,11 @@ jobs:
           has default-amd64-initramfs '.purl | startswith("pkg:generic/lvm2@")'
           has default-amd64-initramfs '.purl | startswith("pkg:github/util-linux/util-linux@")'
           has default-amd64-initramfs '.purl | test("^pkg:deb/debian/grub-efi-amd64-bin@")'
+          # mok-enroll.efi (MODULE_SIGNING_ENROLLMENT=efi-helper), built with gnu-efi.
+          for f in default slim gobgp; do
+            has "${f}-amd64-initramfs" '(.purl | startswith("pkg:deb/debian/gnu-efi@"))
+              and any(.properties[]?; .value == "/usr/lib/booty/mok-enroll.efi")'
+          done
           # growpart, a script that the busybox and slim-builder stages copy.
           has default-amd64-initramfs '.name == "cloud-guest-utils"'
           has slim-amd64-initramfs '.name == "cloud-guest-utils"'
