@@ -3,6 +3,8 @@ package config
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -26,9 +28,22 @@ type DiskEncryptionConfig struct {
 	Target string `yaml:"target" json:"target"`
 
 	// RecoveryKeyURL receives the recovery key (POST, JSON) before the
-	// partition is encrypted. Required with Mode.
+	// partition is encrypted. HTTPS, or HTTP on loopback only. Required
+	// with Mode.
 	// Default: ""
 	RecoveryKeyURL string `yaml:"recoveryKeyURL" json:"recoveryKeyURL"`
+
+	// StatusURL receives the result of the TPM2 enrollment from the
+	// installed system (POST, JSON, the bearer token of this run, no key).
+	// HTTPS only.
+	// Default: "" (no status)
+	StatusURL string `yaml:"statusURL" json:"statusURL"`
+
+	// SkipSecureBootCheck encrypts although the firmware is in setup mode
+	// or has no Secure Boot. The installed system binds the volume only
+	// once Secure Boot is on in user mode.
+	// Default: false
+	SkipSecureBootCheck bool `yaml:"skipSecureBootCheck" json:"skipSecureBootCheck"`
 
 	// AllowFailure provisions without encryption when the checks before
 	// the first disk change fail (no TPM, image without the tools,
@@ -69,7 +84,10 @@ func (c *Config) validateDiskEncryption() []string {
 	}
 	if strings.TrimSpace(d.RecoveryKeyURL) == "" {
 		errs = append(errs, "provision.diskEncryption.recoveryKeyURL is required with provision.diskEncryption.mode")
+	} else if err := ValidateEscrowURL(d.RecoveryKeyURL); err != nil {
+		errs = append(errs, "provision.diskEncryption.recoveryKeyURL: "+err.Error())
 	}
+	errs = append(errs, c.validateDiskEncryptionTransport()...)
 	// The root is encrypted in place after the image is written; layouts
 	// that put the root on md, LVM or a declared layout are not supported.
 	mirror := strings.ToLower(strings.TrimSpace(c.Provision.Disk.MirroringMode))
@@ -81,9 +99,50 @@ func (c *Config) validateDiskEncryption() []string {
 	return errs
 }
 
+// validateDiskEncryptionTransport checks the values that reach the
+// installed system (sourced from a shell file, posted with curl
+// --proto =https) and the TLS verification of the key hand-off.
+func (c *Config) validateDiskEncryptionTransport() []string {
+	var errs []string
+	const unsafe = "'\"\\ \t\n$`"
+	d := &c.Provision.DiskEncryption
+	if d.StatusURL != "" {
+		if u, err := url.Parse(d.StatusURL); err != nil || u.Scheme != "https" || u.Host == "" || strings.ContainsAny(d.StatusURL, unsafe) {
+			errs = append(errs, "provision.diskEncryption.statusURL must be an https URL without quotes, spaces, $ or backquotes")
+		}
+	}
+	if strings.ContainsAny(c.Hostname, unsafe) {
+		errs = append(errs, "hostname must not contain quotes, spaces, $ or backquotes with provision.diskEncryption")
+	}
+	if BoolOr(c.Transport.SkipTLSVerify, false) {
+		errs = append(errs, "provision.diskEncryption needs TLS verification: the recovery key must not go to an unverified server (unset SKIP_TLS_VERIFY, use CA_BUNDLE_FILE)")
+	}
+	return errs
+}
+
+// ValidateEscrowURL accepts https URLs and http on a loopback host only:
+// INSECURE_TRANSPORT does not apply to the recovery key.
+func ValidateEscrowURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("not an absolute URL")
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	host := u.Hostname()
+	if ip := net.ParseIP(host); u.Scheme == "http" && (host == "localhost" || (ip != nil && ip.IsLoopback())) {
+		return nil
+	}
+	return fmt.Errorf("needs https (http only on loopback; INSECURE_TRANSPORT does not apply)")
+}
+
 // RecoveryKeyEscrow is an optional provider capability: it hands the LUKS
 // recovery key to the provisioning server. The provider must not log or
 // store the body, which holds the key; the caller zeroes it after the call.
 type RecoveryKeyEscrow interface {
 	EscrowRecoveryKey(ctx context.Context, body []byte) error
+	// CurrentToken is the bearer token that the installed system uses for
+	// the status callback (StatusURL).
+	CurrentToken() string
 }

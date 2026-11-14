@@ -68,7 +68,7 @@ func encryptionTargetRoot(t *testing.T) string {
 
 func TestCheckEncryptionTarget(t *testing.T) {
 	root := encryptionTargetRoot(t)
-	if err := checkEncryptionTarget(root); err != nil {
+	if err := checkEncryptionTarget(root, false); err != nil {
 		t.Fatalf("complete image: %v", err)
 	}
 	if err := os.Remove(filepath.Join(root, "usr/lib/x86_64-linux-gnu/libtss2-rc.so.0")); err != nil {
@@ -77,7 +77,7 @@ func TestCheckEncryptionTarget(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "usr/bin/dracut")); err != nil {
 		t.Fatal(err)
 	}
-	err := checkEncryptionTarget(root)
+	err := checkEncryptionTarget(root, false)
 	if err == nil || !strings.Contains(err.Error(), "libtss2-rc.so.0") || !strings.Contains(err.Error(), "/usr/bin/dracut") {
 		t.Fatalf("missing libtss2-rc and dracut: %v", err)
 	}
@@ -92,7 +92,8 @@ func TestWriteEncryptionFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := &encryptionState{luksUUID: "11111111-2222-4333-8444-555555555555", enrollKey: []byte("enroll-key")}
-	if err := writeEncryptionFiles(root, st, luksTargetLibs(root)); err != nil {
+	extras := &encryptionExtras{libs: luksTargetLibs(root), hostname: "h1", statusURL: "https://p/status", token: "tok", ca: []byte("CA"), grubHash: "grub.pbkdf2.sha512.10000.AA.BB"}
+	if err := writeEncryptionFiles(root, st, extras); err != nil {
 		t.Fatal(err)
 	}
 	read := func(rel string) string {
@@ -124,10 +125,26 @@ func TestWriteEncryptionFiles(t *testing.T) {
 	if !strings.Contains(read(luksDracutKeyConf), luksEnrollKeyPath) {
 		t.Error("enrollment key dracut conf does not include the key")
 	}
-	if !strings.Contains(read(luksGrubConf), "GRUB_FORCE_PARTUUID=\n") {
-		t.Error("GRUB override does not clear GRUB_FORCE_PARTUUID")
+	if g := read(luksGrubConf); !strings.Contains(g, "GRUB_FORCE_PARTUUID=\n") || !strings.Contains(g, "GRUB_DISABLE_RECOVERY=true\n") {
+		t.Errorf("GRUB defaults:\n%s", g)
 	}
-	if env := read(luksEnvPath); !strings.Contains(env, "TPM2_PCRS=7+14\n") || !strings.Contains(env, "LUKS_ENROLL_SLOT=1\n") {
+	if fi, err := os.Stat(filepath.Join(root, luksGrubLock)); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Fatalf("GRUB lock script mode: %v %v", fi, err)
+	}
+	if auth := read(luksStatusAuth); auth != "Authorization: Bearer tok\n" {
+		t.Errorf("status auth %q", auth)
+	}
+	if fi, _ := os.Stat(filepath.Join(root, luksStatusAuth)); fi.Mode().Perm() != 0o600 {
+		t.Errorf("status auth mode %v", fi.Mode())
+	}
+	if read(luksStatusCA) != "CA" {
+		t.Error("status CA not written")
+	}
+	if !strings.Contains(read("/etc/systemd/system/"+luksUnitName), "Wants=network-online.target") {
+		t.Error("unit with a status URL does not wait for the network")
+	}
+	if env := read(luksEnvPath); !strings.Contains(env, "TPM2_PCRS='7+14'\n") || !strings.Contains(env, "LUKS_ENROLL_SLOT='1'\n") ||
+		!strings.Contains(env, "STATUS_URL='https://p/status'\n") || !strings.Contains(env, "STATUS_CA='"+luksStatusCA+"'\n") {
 		t.Errorf("env:\n%s", env)
 	}
 	if fi, err := os.Stat(filepath.Join(root, luksScriptPath)); err != nil || fi.Mode().Perm() != 0o755 {
@@ -138,7 +155,7 @@ func TestWriteEncryptionFiles(t *testing.T) {
 		t.Fatalf("unit not enabled: %q %v", link, err)
 	}
 	// A second run replaces the entry instead of adding one.
-	if err := writeEncryptionFiles(root, st, nil); err != nil {
+	if err := writeEncryptionFiles(root, st, &encryptionExtras{}); err != nil {
 		t.Fatal(err)
 	}
 	if n := strings.Count(read("etc/crypttab"), "booty_crypt"); n != 1 {
@@ -146,22 +163,114 @@ func TestWriteEncryptionFiles(t *testing.T) {
 	}
 }
 
+func TestGrubLockScript(t *testing.T) {
+	h1, err := unusableGrubHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2, _ := unusableGrubHash()
+	if h1 == h2 || !regexp.MustCompile(`^grub\.pbkdf2\.sha512\.10000\.[0-9A-F]{128}\.[0-9A-F]{128}$`).MatchString(h1) {
+		t.Fatalf("GRUB hash %q", h1)
+	}
+	got := luksGrubLockScript(h1)
+	for _, want := range []string{
+		"#!/bin/sh\n", "cat <<'EOF'\n", "set superusers=\"booty-locked\"\n",
+		"password_pbkdf2 booty-locked " + h1 + "\n",
+		// Every grub-mkconfig entry carries $menuentry_id_option: they stay bootable.
+		"set menuentry_id_option=\"--unrestricted $menuentry_id_option\"\n", "EOF\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("GRUB lock lacks %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestEnrollUnitAndScript(t *testing.T) {
+	unit := luksEnrollUnitText(false)
 	for _, want := range []string{"ConditionSecurity=uefi-secureboot", "ConditionPathExists=" + luksEnrollKeyPath} {
-		if !strings.Contains(luksEnrollUnit, want) {
+		if !strings.Contains(unit, want) {
 			t.Errorf("unit lacks %q", want)
 		}
 	}
-	// The key slot is wiped only after the TPM2 test, the initramfs checks
-	// and the switch to the new initramfs.
-	order := []string{"--tpm2-pcrs=", "--token-only", "none luks,x-initrd.attach,tpm2-device=auto", "lsinitrd", "mv \"$img.booty-new\"", "luksKillSlot", "shred -u", "systemctl disable"}
+	if strings.Contains(unit, "network-online") {
+		t.Error("unit without a status URL waits for the network")
+	}
+	// Phase 2 (bound) wipes slot 1 only after checking the booted initramfs
+	// and the TPM2; phase 1 never wipes it.
+	p2 := luksEnrollScript[strings.Index(luksEnrollScript, `if [ -e "$bound" ]`):strings.Index(luksEnrollScript, "step=start")]
+	p1 := luksEnrollScript[strings.Index(luksEnrollScript, "step=start"):]
+	inOrder(t, p2, `lsinitrd "/boot/initrd.img-$(uname -r)"`, "*luks-enroll.key*", "--token-only", "luksKillSlot", "shred -u", "systemctl disable", "status slot1-removed")
+	inOrder(t, p1, "trap restore EXIT", "--tpm2-pcrs=", "--token-only", "none luks,x-initrd.attach,tpm2-device=auto", "lsinitrd", `mv "$img.booty-new"`, `: >"$bound"`, "trap - EXIT", "status tpm2-bound")
+	if strings.Contains(p1, "luksKillSlot") || strings.Contains(p1, "shred") {
+		t.Error("phase 1 destroys the enrollment key")
+	}
+	if !strings.Contains(luksEnrollScript, `[ "$(efivar SetupMode)" != 0 ]`) {
+		t.Error("the script does not check SetupMode")
+	}
+	if strings.Contains(luksEnrollScript, "crypttab.enroll") {
+		t.Error("the script copies crypttab instead of rebuilding the line")
+	}
+}
+
+func inOrder(t *testing.T, s string, parts ...string) {
+	t.Helper()
 	last := -1
-	for _, s := range order {
-		i := strings.Index(luksEnrollScript, s)
+	for _, p := range parts {
+		i := strings.Index(s, p)
 		if i < 0 || i < last {
-			t.Fatalf("%q missing or out of order in the enrollment script", s)
+			t.Fatalf("%q missing or out of order", p)
 		}
 		last = i
+	}
+}
+
+func TestSecureBootUserMode(t *testing.T) {
+	dir := t.TempDir()
+	if err := secureBootUserMode(dir); err == nil {
+		t.Fatal("no SecureBoot variable accepted")
+	}
+	write := func(name string, v byte) {
+		if err := os.WriteFile(filepath.Join(dir, name+"-"+efiGlobalGUID), []byte{7, 0, 0, 0, v}, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("SecureBoot", 0)
+	write("SetupMode", 1)
+	if err := secureBootUserMode(dir); err == nil || !strings.Contains(err.Error(), "setup mode") {
+		t.Fatalf("setup mode: %v", err)
+	}
+	write("SetupMode", 0)
+	if err := secureBootUserMode(dir); err != nil {
+		t.Fatalf("user mode with Secure Boot off: %v", err)
+	}
+}
+
+func TestEncryptionStepsOnlyWhenEnabled(t *testing.T) {
+	names := func(cfg *config.MachineConfig) []string {
+		steps := newTestOrchestrator(t, cfg, &mockProvider{}).provisionSteps()
+		n := make([]string, 0, len(steps))
+		for _, s := range steps {
+			n = append(n, s.Name)
+		}
+		return n
+	}
+	off := names(&config.MachineConfig{})
+	for _, n := range off {
+		if strings.Contains(n, "encrypt") {
+			t.Fatalf("step %s without DISK_ENCRYPTION", n)
+		}
+	}
+	cfg := &config.MachineConfig{}
+	cfg.Provision.DiskEncryption.Mode = config.DiskEncryptionLUKS2TPM2
+	on := names(cfg)
+	if len(on) != len(off)+2 {
+		t.Fatalf("%d steps with encryption, %d without", len(on), len(off))
+	}
+	joined := strings.Join(on, ",")
+	for _, pair := range []string{"prepare-disk-encryption,configure-grub", "teardown-chroot,close-encrypted-disk,report-success"} {
+		if !strings.Contains(joined, pair) {
+			t.Errorf("steps lack %s", pair)
+		}
 	}
 }
 
@@ -176,6 +285,8 @@ func (p *escrowProvider) EscrowRecoveryKey(_ context.Context, body []byte) error
 	return p.err
 }
 
+func (p *escrowProvider) CurrentToken() string { return "tok" }
+
 type cryptsetupCall struct {
 	args  []string
 	stdin []byte
@@ -184,7 +295,7 @@ type cryptsetupCall struct {
 func stubCryptsetup(t *testing.T, fail string) *[]cryptsetupCall {
 	t.Helper()
 	var calls []cryptsetupCall
-	old := runCryptsetup
+	old, oldWait, oldSize := runCryptsetup, waitForBlockDevice, blockDeviceSize
 	runCryptsetup = func(_ context.Context, stdin []byte, _ *os.File, args ...string) error {
 		calls = append(calls, cryptsetupCall{args: args, stdin: append([]byte(nil), stdin...)})
 		if args[0] == "isLuks" || args[0] == fail {
@@ -192,35 +303,33 @@ func stubCryptsetup(t *testing.T, fail string) *[]cryptsetupCall {
 		}
 		return nil
 	}
-	t.Cleanup(func() { runCryptsetup = old })
+	waitForBlockDevice = func(context.Context, string) error { return nil }
+	blockDeviceSize = func(string) (int64, error) { return 1 << 30, nil }
+	t.Cleanup(func() { runCryptsetup, waitForBlockDevice, blockDeviceSize = old, oldWait, oldSize })
 	return &calls
 }
 
-func encryptTestOrchestrator(t *testing.T, provider config.Provider) (*Orchestrator, *mockCommander) {
+func formatTestOrchestrator(t *testing.T, provider config.Provider) (*Orchestrator, *mockCommander, *encryptionState) {
 	t.Helper()
 	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{Hostname: "h1"}, &mockProvider{})
 	o.provider = provider
-	sys := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(sys, "vda1"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sys, "vda1", "size"), []byte("2097152\n"), 0o644); err != nil { // 1 GiB
-		t.Fatal(err)
-	}
-	old := sysBlockRoot
-	sysBlockRoot = sys
-	t.Cleanup(func() { sysBlockRoot = old })
-	o.encryption = &encryptionState{device: "/dev/vda1", luksUUID: "u-1", enrollKey: []byte("enroll")}
-	return o, cmd
+	o.targetDisk = "/dev/vda"
+	return o, cmd, &encryptionState{luksUUID: "u-1", enrollKey: []byte("enroll"), isRoot: true}
 }
 
-func TestEncryptDisk(t *testing.T) {
+func TestFormatEncryptedPartition(t *testing.T) {
 	calls := stubCryptsetup(t, "")
 	p := &escrowProvider{}
-	o, cmd := encryptTestOrchestrator(t, p)
-	enrollKey := o.encryption.enrollKey
-	if err := o.encryptDisk(context.Background()); err != nil {
+	o, cmd, st := formatTestOrchestrator(t, p)
+	mapped, err := o.formatEncryptedPartition(context.Background(), st, 1, 1<<29)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if mapped != "/dev/mapper/booty_crypt" || st.device != "/dev/vda1" {
+		t.Fatalf("mapped %q device %q", mapped, st.device)
+	}
+	if len(cmd.calls) < 2 || cmd.calls[0].name != "partprobe" || cmd.calls[1].name != "growpart" {
+		t.Fatalf("no partprobe and growpart before the format: %+v", cmd.calls)
 	}
 	if len(p.bodies) != 1 {
 		t.Fatalf("escrow calls = %d", len(p.bodies))
@@ -239,79 +348,75 @@ func TestEncryptDisk(t *testing.T) {
 			t.Errorf("cryptsetup %s stdin is not the escrowed recovery key", c.args[0])
 		}
 	}
-	if strings.Join(ops, ",") != "isLuks,reencrypt,luksAddKey,open" {
+	if strings.Join(ops, ",") != "isLuks,luksFormat,luksAddKey,open" {
 		t.Fatalf("cryptsetup calls %v", ops)
 	}
-	reencrypt := strings.Join((*calls)[1].args, " ")
-	for _, want := range []string{"--encrypt", "--type luks2", "--reduce-device-size 32M", "--uuid u-1", "--key-slot 0", "/dev/vda1"} {
-		if !strings.Contains(reencrypt, want) {
-			t.Errorf("reencrypt %q lacks %q", reencrypt, want)
+	format := strings.Join((*calls)[1].args, " ")
+	for _, want := range []string{"--type luks2", "--uuid u-1", "--key-slot 0", "--key-file -", "/dev/vda1"} {
+		if !strings.Contains(format, want) {
+			t.Errorf("luksFormat %q lacks %q", format, want)
 		}
 	}
 	if add := strings.Join((*calls)[2].args, " "); !strings.Contains(add, "--key-slot 1") || !strings.HasSuffix(add, "/dev/vda1 /proc/self/fd/3") {
 		t.Errorf("luksAddKey %q", add)
 	}
-	// 1 GiB - 32 MiB = 1015808 KiB, after e2fsck -p -f.
-	var fsck, resize bool
-	for _, c := range cmd.calls {
-		fsck = fsck || c.name == "e2fsck"
-		if c.name == "resize2fs" {
-			resize = fsck && strings.Join(c.args, " ") == "/dev/vda1 1015808K"
-		}
-	}
-	if !resize {
-		t.Fatalf("no e2fsck then resize2fs to 1015808K: %+v", cmd.calls)
-	}
-	if !bytes.Equal(enrollKey, make([]byte, len(enrollKey))) {
-		t.Fatal("enrollment key not zeroed")
+	if open := strings.Join((*calls)[3].args, " "); !strings.HasSuffix(open, "/dev/vda1 booty_crypt") {
+		t.Errorf("open %q", open)
 	}
 }
 
-func TestEncryptDiskEscrowFailureChangesNothing(t *testing.T) {
+func TestFormatEncryptedPartitionEscrowFailureFormatsNothing(t *testing.T) {
 	calls := stubCryptsetup(t, "")
-	o, cmd := encryptTestOrchestrator(t, &escrowProvider{err: errors.New("503")})
-	if err := o.encryptDisk(context.Background()); err == nil || !strings.Contains(err.Error(), "recovery key") {
+	o, _, st := formatTestOrchestrator(t, &escrowProvider{err: errors.New("503")})
+	if _, err := o.formatEncryptedPartition(context.Background(), st, 1, 1<<29); err == nil || !strings.Contains(err.Error(), "recovery key") {
 		t.Fatalf("err = %v", err)
 	}
-	if len(*calls) != 1 || len(cmd.calls) != 0 {
-		t.Fatalf("disk changed after a failed escrow: %v %+v", *calls, cmd.calls)
+	if len(*calls) != 1 {
+		t.Fatalf("cryptsetup ran after a failed escrow: %v", *calls)
 	}
 }
 
-func TestEncryptDiskWithoutEscrowProvider(t *testing.T) {
+func TestFormatEncryptedPartitionTooSmall(t *testing.T) {
 	stubCryptsetup(t, "")
-	o, _ := encryptTestOrchestrator(t, &mockProvider{})
-	if err := o.encryptDisk(context.Background()); err == nil {
-		t.Fatal("encrypted without a way to hand over the recovery key")
+	blockDeviceSize = func(string) (int64, error) { return 100, nil }
+	o, _, st := formatTestOrchestrator(t, &escrowProvider{})
+	if _, err := o.formatEncryptedPartition(context.Background(), st, 1, 1<<29); err == nil || !strings.Contains(err.Error(), "too small") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestEncryptDiskFailsOnReencryptError(t *testing.T) {
-	stubCryptsetup(t, "reencrypt")
-	o, _ := encryptTestOrchestrator(t, &escrowProvider{})
-	if err := o.encryptDisk(context.Background()); err == nil {
-		t.Fatal("reencrypt error ignored")
-	}
-}
-
-func TestEncryptDiskSkippedWithoutPreparation(t *testing.T) {
-	calls := stubCryptsetup(t, "")
-	o, _ := encryptTestOrchestrator(t, &escrowProvider{})
-	o.encryption = nil
-	if err := o.encryptDisk(context.Background()); err != nil || len(*calls) != 0 {
-		t.Fatalf("err=%v calls=%v", err, *calls)
-	}
-}
-
-func TestPrepareDiskEncryptionAllowFailure(t *testing.T) {
+func TestUseEncryptedRoot(t *testing.T) {
 	cfg := &config.MachineConfig{}
-	cfg.Provision.DiskEncryption = config.DiskEncryptionConfig{Mode: config.DiskEncryptionLUKS2TPM2, RecoveryKeyURL: "https://x", Target: "x"}
+	cfg.Provision.DiskEncryption.Mode = config.DiskEncryptionLUKS2TPM2
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
-	if err := o.prepareDiskEncryption(context.Background()); err == nil {
-		t.Fatal("failed preflight did not fail the step")
+	if err := o.useEncryptedRoot(); err == nil || !strings.Contains(err.Error(), "resume") {
+		t.Fatalf("resume without keys: %v", err)
 	}
-	cfg.Provision.DiskEncryption.AllowFailure = true
-	if err := o.prepareDiskEncryption(context.Background()); err != nil || o.encryption != nil {
-		t.Fatalf("allow failure: err=%v state=%v", err, o.encryption)
+	o.encryptionSkipped = true
+	if err := o.useEncryptedRoot(); err != nil {
+		t.Fatalf("allow-failure run: %v", err)
+	}
+	o.encryption = &encryptionState{device: "/dev/vda1", isRoot: true}
+	o.rootPartition = "/dev/vda2"
+	if err := o.useEncryptedRoot(); err == nil {
+		t.Fatal("root on another partition accepted")
+	}
+	o.rootPartition = "/dev/vda1"
+	if err := o.useEncryptedRoot(); err != nil || o.rootPartition != "/dev/mapper/booty_crypt" {
+		t.Fatalf("root %q, %v", o.rootPartition, err)
+	}
+	off := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	off.rootPartition = "/dev/vda1"
+	if err := off.useEncryptedRoot(); err != nil || off.rootPartition != "/dev/vda1" {
+		t.Fatalf("encryption off changed the root: %q %v", off.rootPartition, err)
+	}
+}
+
+func TestEncryptionPreflightFailsWithoutEscrow(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.DiskEncryption = config.DiskEncryptionConfig{Mode: config.DiskEncryptionLUKS2TPM2, Target: "x"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	if _, err := o.encryptionPreflight(); err == nil {
+		t.Fatal("bad target accepted")
 	}
 }

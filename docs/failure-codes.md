@@ -68,8 +68,9 @@ and, with `OOB_EFI_VAR`, in the `BootyLastResult` UEFI variable.
 | `BOOTY-DSK-023` | hardware | `decommission-wipe` | Decommission disk wipe failed. |
 | `BOOTY-DSK-024` | transient | `fetch-partition-layout` | Fetching the partition layout from PARTITION_LAYOUT_URL failed. |
 | `BOOTY-DSK-025` | permanent | `load-image-partition-layout` | Reading or applying the partition layout from the image failed. |
-| `BOOTY-DSK-026` | config | `prepare-disk-encryption` | Disk encryption cannot be set up: no TPM, the image lacks the tools, an unsupported layout, or writing the unlock configuration failed. |
-| `BOOTY-DSK-027` | permanent | `encrypt-disk` | Handing over the recovery key or encrypting the partition failed. |
+| `BOOTY-DSK-026` | config | `prepare-disk-encryption` | The image cannot unlock the encrypted disk (no separate /boot, missing tools) or writing the unlock configuration failed. |
+| `BOOTY-DSK-028` | permanent | `*` | Disk encryption in stream-image failed: preflight (TPM, Secure Boot, tools), recovery key hand-off, image layout or LUKS2 format. Not retried: reprovision. |
+| `BOOTY-DSK-027` | permanent | `close-encrypted-disk` | Closing the LUKS2 mapping or growing the encrypted data partition failed. |
 | `BOOTY-EFI-001` | environment | `mount-efivarfs` | Mounting efivarfs failed. |
 | `BOOTY-EFI-002` | environment | `*` | EFI variables unavailable. |
 | `BOOTY-EFI-003` | hardware | `remove-efi-entries` | Removing EFI boot entries failed. |

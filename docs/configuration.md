@@ -514,16 +514,21 @@ These keys apply to the provision and deprovision modes.
 
 ## Disk encryption
 
-See [Disk encryption](disk-encryption.md). Requires a TPM2, Secure Boot, a
-whole-disk image and an image with dracut, `systemd-cryptsetup` and the TPM2
-libraries. Turns kexec off.
+See [Disk encryption](disk-encryption.md), including its threat model.
+Requires a TPM2, Secure Boot in user mode, a whole-disk raw GPT image whose
+encrypted partition is the last one, and an image with dracut,
+`systemd-cryptsetup` and the TPM2 libraries. Turns kexec off. Without
+`DISK_ENCRYPTION` none of this changes anything. A standby command payload
+or deploy archive can change only `DISK_ENCRYPTION_TARGET`.
 
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
-| `DISK_ENCRYPTION` | (unset) | `luks2-tpm2` | Encrypt `DISK_ENCRYPTION_TARGET` in place with LUKS2 after the image is written. The installed system binds it to the TPM2 (PCR 7+14) on its first boot with Secure Boot on. Not with disk mirroring, RAID, `PARTITION_LAYOUT` or an image mode other than `whole-disk`. YAML `provision.diskEncryption.mode`. |
-| `DISK_ENCRYPTION_TARGET` | `root` | `root`, partition number | Partition of the target disk to encrypt. ext4 only; not `/boot` or the ESP. The root needs a separate `/boot` partition. YAML `provision.diskEncryption.target`. |
-| `DISK_ENCRYPTION_RECOVERY_KEY_URL` | (unset) | URL | Required with `DISK_ENCRYPTION`. BOOTy posts the recovery key here (JSON, bearer token, HTTPS unless `INSECURE_TRANSPORT`) before the disk changes; any answer other than 2xx fails the run. BOOTy never logs or stores the key. YAML `provision.diskEncryption.recoveryKeyURL`. |
-| `DISK_ENCRYPTION_ALLOW_FAILURE` | `false` | `true`, `false`, `1`, `0`, `yes`, `no` | Provision without encryption when the checks before the first disk change fail (no TPM, image without the tools, unsupported layout). Errors after that always fail the run. Any other value stops the parse. YAML `provision.diskEncryption.allowFailure`. |
+| `DISK_ENCRYPTION` | (unset) | `luks2-tpm2` | Format `DISK_ENCRYPTION_TARGET` with LUKS2 while the image is written and write that partition into the opened volume. The installed system binds it to the TPM2 (PCR 7+14) on its first boot with Secure Boot on. Not with disk mirroring, RAID, `PARTITION_LAYOUT`, an image mode other than `whole-disk`, or `SKIP_TLS_VERIFY` (also not its `CAPRF_LEGACY_COMPAT` preset). YAML `provision.diskEncryption.mode`. |
+| `DISK_ENCRYPTION_TARGET` | `root` | `root`, partition number | Partition of the image to encrypt. Must be the last partition, ext4 for a data partition; not the ESP. The root needs a separate `/boot` partition. YAML `provision.diskEncryption.target`. |
+| `DISK_ENCRYPTION_RECOVERY_KEY_URL` | (unset) | URL | Required with `DISK_ENCRYPTION`. BOOTy posts the recovery key here (JSON, bearer token) before it formats the partition; any answer other than 2xx, a redirect included, fails the run. HTTPS with TLS verification (`CA_BUNDLE_FILE` roots apply); plain HTTP only on loopback, `INSECURE_TRANSPORT` does not apply. BOOTy never logs or stores the key. YAML `provision.diskEncryption.recoveryKeyURL`. |
+| `DISK_ENCRYPTION_STATUS_URL` | (unset) | https URL | The installed system posts the enrollment result here (`tpm2-bound`, `slot1-removed` or `failed`; JSON, the bearer token of the provisioning run, no key). Best effort. The token is stored in the target until the enrollment ends. YAML `provision.diskEncryption.statusURL`. |
+| `DISK_ENCRYPTION_ALLOW_FAILURE` | `false` | `true`, `false`, `1`, `0`, `yes`, `no` | Provision without encryption when a check before the first disk write fails (no TPM, Secure Boot check, ramdisk tools, unsupported image layout). Errors after the first write always fail the run. Any other value stops the parse. YAML `provision.diskEncryption.allowFailure`. |
+| `DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK` | `false` | same as above | Encrypt although the firmware has no Secure Boot or is in setup mode (no PK). The installed system still binds only with Secure Boot on in user mode; until then the enrollment key unlocks. YAML `provision.diskEncryption.skipSecureBootCheck`. |
 
 ## Sysext
 
@@ -647,7 +652,7 @@ of waiting for the CAPRF provision timeout.
   | `stream-image` | 1 h | Image modes that write with `dd`; the HTTP download reports every written byte |
   | `mirror-root`, `check-filesystem`, `resize-filesystem` | 1 h | Copies and file system checks of large file systems |
   | `run-machine-commands`, `run-post-provision-cmds` | 1 h | Operator commands |
-  | `encrypt-disk` | 24 h | `cryptsetup reencrypt` rewrites the whole partition without progress output |
+  | `close-encrypted-disk` | 1 h | Grows the file system of an encrypted data partition offline |
   | every other step | `WATCHDOG_TIMEOUT_SEC` (300 s) | |
 
 - Handoff: before kexec and reboot BOOTy disarms the watchdog with the magic

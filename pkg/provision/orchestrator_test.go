@@ -246,8 +246,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 57 {
-		t.Fatalf("expected 57 provisioning steps, got %d", len(steps))
+	if len(steps) != 55 {
+		t.Fatalf("expected 55 provisioning steps, got %d", len(steps))
 	}
 }
 
@@ -5190,8 +5190,6 @@ func TestResizeFilesystemMirroringUsesRootArray(t *testing.T) {
 // into the target root from the host. Steps that only run commands in the
 // chroot or touch firmware are fine.
 func TestNoHostWriterRunsAfterCopyMachineFiles(t *testing.T) {
-	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
-	steps := o.provisionSteps()
 	allowed := map[string]bool{
 		"run-machine-commands":    true,
 		"run-post-provision-cmds": true,
@@ -5201,10 +5199,14 @@ func TestNoHostWriterRunsAfterCopyMachineFiles(t *testing.T) {
 		// resolves outside the target root.
 		"create-mirror-efi-boot-entry": true,
 		"teardown-chroot":              true,
-		// Encrypts the unmounted partition; writes nothing into the root.
-		"encrypt-disk":   true,
-		"report-success": true,
+		// Closes the unmounted LUKS2 mapping; writes nothing into the root.
+		"close-encrypted-disk": true,
+		"report-success":       true,
 	}
+	// With disk encryption, the longer step list.
+	cfg := &config.MachineConfig{}
+	cfg.Provision.DiskEncryption.Mode = config.DiskEncryptionLUKS2TPM2
+	steps := newTestOrchestrator(t, cfg, &mockProvider{}).provisionSteps()
 	for _, step := range steps[requireStepIndex(t, steps, "copy-machine-files")+1:] {
 		if !allowed[step.Name] {
 			t.Errorf("step %s runs after copy-machine-files; check that it does not write into the target root from the host", step.Name)
