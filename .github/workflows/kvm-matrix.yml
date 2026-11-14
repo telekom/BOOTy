@@ -593,6 +593,26 @@ jobs:
               # The helper that the release ramdisks ship.
               docker buildx build --platform linux/amd64 -f initrd.Dockerfile --target mok-enroll-efi --output type=local,dest=mok-enroll-out .
               echo "BOOTY_MOK_ENROLL_EFI=${PWD}/mok-enroll-out/mok-enroll.efi" >> "${GITHUB_ENV}"
+          # MODULE_SIGNING_ENROLLMENT=mokutil: BOOTy queues MokNew and MokAuth,
+          # the test confirms the request in MokManager at the serial console
+          # with MOK_PASSWORD, and the signed module loads with Secure Boot on.
+          - scenario: module-signing-mokutil-ubuntu-24.04
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestModuleSigningMokutilVM$"
+            go_timeout: 50m
+            timeout_minutes: 70
+            privileged: true
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+            mirror_os_image: ubuntu-24.04-server-cloudimg-amd64.img
+            mirror_os_image_url: https://cloud-images.ubuntu.com/releases/noble/release-20260911/ubuntu-24.04-server-cloudimg-amd64.img
+            mirror_os_image_sha256: 612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354
+            setup: |
+              sudo apt-get install -y --no-install-recommends efibootmgr zstd
+              sudo apt-get install -y --no-install-recommends python3-virt-firmware || sudo pip3 install --break-system-packages virt-firmware
+              # The helper that the release ramdisks ship.
+              docker buildx build --platform linux/amd64 -f initrd.Dockerfile --target mok-enroll-efi --output type=local,dest=mok-enroll-out .
+              echo "BOOTY_MOK_ENROLL_EFI=${PWD}/mok-enroll-out/mok-enroll.efi" >> "${GITHUB_ENV}"
           # Default (SECUREBOOT_SIGNING unset): with mok-enroll.efi in the
           # ramdisk, provisioning leaves the module, the ESP and the EFI
           # variables alone.

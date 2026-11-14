@@ -278,9 +278,11 @@ func readModule(root *os.Root, name string, flag int) (*os.File, []byte, error) 
 }
 
 // checkModule reports whether signFile would accept the module, without
-// changing it.
+// changing it. It opens the module for writing like signFile, so a module
+// that cannot be rewritten (immutable, read-only) fails before the first
+// module is re-signed.
 func checkModule(root *os.Root, name string) error {
-	f, _, err := readModule(root, name, os.O_RDONLY)
+	f, _, err := readModule(root, name, os.O_RDWR)
 	if err == nil {
 		_ = f.Close()
 	}
