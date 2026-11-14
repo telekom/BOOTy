@@ -74,7 +74,7 @@ func TestReportStatusSkipTLSVerify(t *testing.T) {
 			cfg.Transport.Token = "token"
 			cfg.Transport.InitURL = srv.URL + "/status/init"
 			cfg.Transport.SkipTLSVerify = new(tt.skip)
-			err := NewFromConfig(cfg).ReportStatus(context.Background(), config.StatusInit, "")
+			err := mustClient(NewFromConfig(cfg)).ReportStatus(context.Background(), config.StatusInit, "")
 			if (err == nil) != tt.wantOK {
 				t.Fatalf("ReportStatus() = %v, want ok %v", err, tt.wantOK)
 			}

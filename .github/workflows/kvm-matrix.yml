@@ -32,6 +32,7 @@ on:
       - "pkg/oob/**"
       - "oob_status.go"
       - "pkg/timesync/**"
+      - "pkg/trust/**"
       - "go.mod"
       - "go.sum"
       - "main.go"
@@ -72,6 +73,7 @@ on:
       - "pkg/oob/**"
       - "oob_status.go"
       - "pkg/timesync/**"
+      - "pkg/trust/**"
       - "go.mod"
       - "go.sum"
       - "main.go"
@@ -247,6 +249,16 @@ jobs:
             setup: ""
             # More than ten QEMU runs, some of them wait for minutes.
             go_timeout: 40m
+          # CA_BUNDLE_FILE: callbacks, logs and the image over HTTPS with a
+          # private CA, verification on; a truncated bundle fails closed.
+          # test/e2e/kvm/ca_bundle_test.go
+          - scenario: ca-bundle
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestCABundle.*QEMU$"
+            privileged: true
+            setup: ""
+            go_timeout: 20m
           - scenario: time-sync
             qemu_extra: ""
             test_tag: e2e

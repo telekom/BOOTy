@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -94,7 +93,7 @@ func VerifyCosignKeyless(ctx context.Context, reference string, policy *CosignKe
 	if hexDigest, ok := strings.CutPrefix(digest, "sha256:"); !ok || len(hexDigest) != sha256.Size*2 {
 		return fmt.Errorf("%w: %s: keyless verification needs a sha256 digest", ErrCosignVerification, redacted)
 	}
-	opts := []remote.Option{remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx)}
+	opts := RemoteOptions(ctx)
 	checked, errReferrers := policy.verifyReferrers(digestRef, opts)
 	if errReferrers == nil {
 		return nil

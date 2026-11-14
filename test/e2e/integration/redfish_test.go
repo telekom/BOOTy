@@ -78,7 +78,7 @@ func TestCAPRFClientStatusReporting(t *testing.T) {
 			LogURL:     srvURL + "/log",
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	ctx := context.Background()
 
 	if err := client.ReportStatus(ctx, config.StatusInit, "starting"); err != nil {
