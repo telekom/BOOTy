@@ -101,7 +101,12 @@ func redactComposite(v slog.Value) (any, bool) {
 		rv = rv.Elem()
 	}
 	switch rv.Kind() {
-	case reflect.Map, reflect.Struct, reflect.Slice, reflect.Array:
+	case reflect.Map, reflect.Slice:
+		if rv.IsNil() {
+			// Nothing to hide; the JSON null would print as <nil>, not [].
+			return nil, false
+		}
+	case reflect.Struct, reflect.Array:
 	default:
 		return nil, false
 	}

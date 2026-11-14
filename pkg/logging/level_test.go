@@ -112,3 +112,14 @@ func TestNewHandlerRedactsComposites(t *testing.T) {
 		}
 	}
 }
+
+// A nil slice or map keeps its text form: [] and map[], not <nil>.
+func TestNewHandlerKeepsNilComposites(t *testing.T) {
+	var buf bytes.Buffer
+	var none []string
+	var empty map[string]string
+	slog.New(NewHandler(&buf, FormatText, slog.LevelInfo)).Info("nil", "list", none, "map", empty, "set", []string{})
+	if out := buf.String(); !strings.Contains(out, "list=[]") || !strings.Contains(out, "map=map[]") || !strings.Contains(out, "set=[]") {
+		t.Fatalf("text output = %q", out)
+	}
+}
