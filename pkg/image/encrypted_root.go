@@ -30,7 +30,8 @@ type EncryptedRoot struct {
 	// when the partition has the Linux LVM type (an LVM physical volume).
 	Open func(ctx context.Context, number int, size int64, lvm bool) (string, error)
 	// Check, when set, is called with the selected partition before the
-	// first disk write; an error stops the stream with nothing written.
+	// stream writes to the disk; an error stops it with no image byte
+	// written (earlier steps, such as a wipe, have run already).
 	Check func(lvm bool) error
 }
 
@@ -69,10 +70,8 @@ func StreamEncryptedRoot(ctx context.Context, url, disk string, target Encrypted
 	if err != nil {
 		return err
 	}
-	if target.Check != nil {
-		if err := target.Check(isLinuxLVMPartition(root)); err != nil {
-			return err
-		}
+	if err := target.check(root); err != nil {
+		return err
 	}
 	stream, checksum, err := wrapChecksum(io.MultiReader(bytes.NewReader(prefix), src), opt)
 	if err != nil {
@@ -106,6 +105,13 @@ func StreamEncryptedRoot(ctx context.Context, url, disk string, target Encrypted
 		return err
 	}
 	return nil
+}
+
+func (t EncryptedRoot) check(root sfdiskPartition) error {
+	if t.Check == nil {
+		return nil
+	}
+	return t.Check(isLinuxLVMPartition(root))
 }
 
 // selectEncryptedRoot picks the partition and checks that it is the last.

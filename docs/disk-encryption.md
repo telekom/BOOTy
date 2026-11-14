@@ -142,9 +142,10 @@ and locked configuration keys apply.
   the binding is the same.
 - `close-encrypted-disk` deactivates VG `tcaas` before it closes the
   mapping.
-- The ramdisk needs `lvm`. It is checked after the partition table of the
-  image is read, before the first disk write;
-  `DISK_ENCRYPTION_ALLOW_FAILURE` does not cover it.
+- The ramdisk needs `lvm`. `stream-image` checks it after it reads the
+  partition table of the image, before it writes any of the image; this is
+  not a non-destructive preflight, since `wipe-disks` has already cleared
+  the target. `DISK_ENCRYPTION_ALLOW_FAILURE` does not cover it.
 
 Without `DISK_ENCRYPTION`, or with a partition that is not an LVM physical
 volume, BOOTy writes the same files and runs the same commands as before.

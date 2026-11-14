@@ -288,8 +288,9 @@ var isRootFilesystem = func(ctx context.Context, o *Orchestrator, device string)
 	return isRoot, nil
 }
 
-// checkLVMRamdisk runs before the first disk write: an LVM physical volume
-// needs lvm in the ramdisk.
+// checkLVMRamdisk runs before stream-image writes any image byte (wipe-disks
+// has cleared the target already): an LVM physical volume needs lvm in the
+// ramdisk.
 func checkLVMRamdisk(lvm bool) error {
 	if !lvm {
 		return nil
