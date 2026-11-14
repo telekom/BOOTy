@@ -185,8 +185,10 @@ func (v *luksVM) args(extra ...string) []string {
 
 func (v *luksVM) provision(vars, files map[string]string) []byte {
 	initramfs := buildProvisionInitramfsWithFiles(v.t, vars, files)
+	// loglevel=4: kernel info lines (EXT4 mounts) on the serial console can
+	// split a BOOTy line that the tests look for.
 	out := runMirrorQEMU(v.t, "provision", v.args("-kernel", v.kernel, "-initrd", initramfs,
-		"-append", runnerKernelCmdline+" net.ifnames=0"), 15*time.Minute)
+		"-append", runnerKernelCmdline+" net.ifnames=0 loglevel=4"), 15*time.Minute)
 	if !strings.Contains(string(out), "step=report-success") || strings.Contains(string(out), "provisioning step failed") {
 		v.t.Fatal("provisioning did not succeed")
 	}
