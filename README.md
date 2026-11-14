@@ -1036,7 +1036,10 @@ policy of the vars file it can not add an image or sysext source that is not
 cosign keys and trusted roots once at start; verification uses only these
 copies, and a deploy archive that would write one of these paths (under
 `/deploy`, or through `deploy/file-system` copied over the ramdisk) is
-refused. The verifier uses
+refused. Under a cosign policy, the ramdisk copy of an archive's
+`deploy/file-system` may only hold `etc/hosts`, `etc/resolv.conf`,
+`CA_BUNDLE_FILE` and the `etc/ssl` and `etc/pki` trees
+([command payload](docs/caprf-integration.md#command-payload)). The verifier uses
 the Go standard library; `sigstore-go` would add about 5.6 MB to the binary
 (see [library adoption](docs/library-adoption.md#sigstore-go)).
 

@@ -361,6 +361,14 @@ func TestPinCosignFiles(t *testing.T) {
 	if _, err := LoadCosignPublicKeys([]string{missing}); err == nil {
 		t.Fatal("a key file missing at pin time was loaded")
 	}
+	// Once pinned, a path that was not pinned is not read from disk.
+	other := filepath.Join(dir, "other.pub")
+	if err := os.WriteFile(other, pemPublicKey(t), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadCosignPublicKeys([]string{other}); err == nil || !strings.Contains(err.Error(), "not pinned") {
+		t.Fatalf("LoadCosignPublicKeys(unpinned) = %v, want a refusal", err)
+	}
 }
 
 func pemPublicKey(t *testing.T) []byte {

@@ -28,4 +28,14 @@ section: Upgrade notes for CAPRF
   able to clear the policy), and an archive that writes a configured cosign
   key or trusted root path is refused. Standby reads the cosign keys and
   trusted roots once at start and verifies only against these copies, so a
-  command can not swap the trust material.
+  command can not swap the trust material; a key or root path that was not
+  configured at start fails. Trust paths are compared with their symlinks
+  resolved.
+- Under a cosign policy, with `PROVISIONER_FILES_TARGET=ramdisk`, the copy of
+  an archive's `deploy/file-system` over the ramdisk is limited to
+  `etc/hosts`, `etc/resolv.conf`, `CA_BUNDLE_FILE` and `etc/ssl`/`etc/pki`;
+  an archive with other files there is refused (they could replace a tool
+  or BOOTy itself, or a docker credential helper, and so run code in the
+  verifying process). Without a policy the copy is unrestricted as before.
+  With `INSECURE_TRANSPORT` or `SKIP_TLS_VERIFY`, an archive `etc/hosts` can
+  redirect the bearer token; do not combine them.

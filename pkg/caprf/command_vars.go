@@ -106,6 +106,20 @@ func cosignLockViolations(ref, cfg *config.MachineConfig) []string {
 	return out
 }
 
+// cosignPolicySet reports whether cfg has a cosign policy, keys or keyless,
+// for the image or the sysexts.
+func cosignPolicySet(cfg *config.MachineConfig) bool {
+	return slices.ContainsFunc(cosignVars(cfg), func(v any) bool {
+		switch v := v.(type) {
+		case string:
+			return v != ""
+		case []string:
+			return len(v) > 0
+		}
+		return false
+	})
+}
+
 // uncoveredSources returns, for the image and the sysexts under a cosign
 // policy in cfg, each source that the policy does not cover (not oci://)
 // with the checksum that stands in for its signature. A payload adding one

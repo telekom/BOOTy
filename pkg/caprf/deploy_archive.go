@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/image"
 )
 
 // A deploy archive is a command payload that carries the whole per-job
@@ -92,8 +93,22 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 		return nil, nil, fmt.Errorf("deploy archive changes %s settings, which can not change in a running ramdisk",
 			strings.Join(fixed, ", "))
 	}
-	if p := archiveReplacesTrustFile(tree, ref.CosignTrustFiles()); p != "" {
+	p, err := archiveReplacesTrustFile(tree, ref.CosignTrustFiles())
+	if err != nil {
+		return nil, nil, err
+	}
+	if p != "" {
 		return nil, nil, fmt.Errorf("deploy archive replaces the cosign trust material %s", p)
+	}
+	if cosignPolicySet(ref) && (ref.ProvisionerFilesInRamdisk() || cfg.ProvisionerFilesInRamdisk()) {
+		bad, err := ramdiskCopyViolation(tree, ref.Transport.CABundleFile)
+		if err != nil {
+			return nil, nil, err
+		}
+		if bad != "" {
+			return nil, nil, fmt.Errorf("deploy archive file-system/%s would be copied over the ramdisk; under a cosign policy only %s and the %s trees are allowed",
+				bad, strings.Join(append(slices.Clone(ramdiskCopyFiles), "CA_BUNDLE_FILE"), ", "), strings.Join(ramdiskCopyTrees, " and "))
+		}
 	}
 	if len(keys) == 0 {
 		// Standby would run such a command with the base config, and the
@@ -112,28 +127,116 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 	return cfg, keys, nil
 }
 
+// ramdiskRoot is where PROVISIONER_FILES_TARGET=ramdisk copies
+// deploy/file-system; tests change it.
+var ramdiskRoot = "/"
+
+// archiveDestinations returns, for each regular file of the staged tree,
+// where it ends up: under /deploy, and for deploy/file-system also over the
+// ramdisk root.
+func archiveDestinations(tree string) ([]string, error) {
+	var out []string
+	err := filepath.WalkDir(tree, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(tree, p)
+		if err != nil {
+			return fmt.Errorf("deploy archive: %w", err)
+		}
+		out = append(out, filepath.Join(deployRoot, rel))
+		if fs, ok := strings.CutPrefix(rel, "file-system"+string(filepath.Separator)); ok {
+			out = append(out, filepath.Join(ramdiskRoot, fs))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("deploy archive: %w", err)
+	}
+	return out, nil
+}
+
 // archiveReplacesTrustFile returns the first of the cosign trust files
 // that the staged tree would write: under /deploy itself, or through the
 // copy of deploy/file-system over the ramdisk root (provisioner files with
-// PROVISIONER_FILES_TARGET=ramdisk). Verification uses the copies pinned at
-// start either way; this refuses such an archive outright.
-func archiveReplacesTrustFile(tree string, files []string) string {
-	for _, p := range files {
-		p = filepath.Clean(p)
-		var candidates []string
-		if rel, err := filepath.Rel(deployRoot, p); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-			candidates = append(candidates, filepath.Join(tree, rel))
-		}
-		if filepath.IsAbs(p) {
-			candidates = append(candidates, filepath.Join(tree, "file-system", p))
-		}
-		for _, c := range candidates {
-			if _, err := os.Lstat(c); err == nil {
-				return p
-			}
+// PROVISIONER_FILES_TARGET=ramdisk). Both sides are compared with their
+// symlinks resolved, the trust files as pinned at start, so an alias such
+// as /lib -> usr/lib does not reach one. Verification uses the pinned
+// copies either way; this refuses such an archive outright.
+func archiveReplacesTrustFile(tree string, files []string) (string, error) {
+	trust := image.PinnedCosignPaths()
+	for _, f := range files {
+		trust = append(trust, filepath.Clean(f), image.ResolvePath(f))
+	}
+	if len(trust) == 0 {
+		return "", nil
+	}
+	dests, err := archiveDestinations(tree)
+	if err != nil {
+		return "", err
+	}
+	for _, d := range dests {
+		if slices.Contains(trust, d) || slices.Contains(trust, image.ResolvePath(d)) {
+			return d, nil
 		}
 	}
-	return ""
+	return "", nil
+}
+
+// Under a cosign policy, the copy of deploy/file-system over the ramdisk
+// root (PROVISIONER_FILES_TARGET=ramdisk) may only write name resolution
+// and CA certificates: anything else (a library preload, a tool BOOTy runs,
+// BOOTy itself, a docker credential helper) would run code in the process
+// that verifies the signatures (#933 review).
+var (
+	ramdiskCopyFiles = []string{"etc/hosts", "etc/resolv.conf"}
+	ramdiskCopyTrees = []string{"etc/ssl", "etc/pki"}
+)
+
+// ramdiskCopyAllowed reports whether rel, a slash path below
+// deploy/file-system, is in the allowlist: one of files, in one of the
+// trees, or a directory on the way to one.
+func ramdiskCopyAllowed(rel string, dir bool, files []string) bool {
+	for _, t := range ramdiskCopyTrees {
+		if rel == t || strings.HasPrefix(rel, t+"/") || dir && strings.HasPrefix(t, rel+"/") {
+			return true
+		}
+	}
+	return slices.ContainsFunc(files, func(f string) bool { return rel == f || dir && strings.HasPrefix(f, rel+"/") })
+}
+
+// ramdiskCopyViolation returns the first entry of the staged
+// deploy/file-system outside the allowlist, or "". caBundle, the
+// CA_BUNDLE_FILE of the base config, is allowed too.
+func ramdiskCopyViolation(tree, caBundle string) (string, error) {
+	files := slices.Clone(ramdiskCopyFiles)
+	if rel, ok := strings.CutPrefix(filepath.Clean(caBundle), string(filepath.Separator)); ok && caBundle != "" {
+		files = append(files, filepath.ToSlash(rel))
+	}
+	root := filepath.Join(tree, "file-system")
+	var bad string
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if errors.Is(err, os.ErrNotExist) && p == root {
+			return filepath.SkipAll
+		}
+		if err != nil || p == root {
+			return err
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return fmt.Errorf("deploy archive: %w", err)
+		}
+		rel = filepath.ToSlash(rel)
+		if !d.IsDir() && !d.Type().IsRegular() || !ramdiskCopyAllowed(rel, d.IsDir(), files) {
+			bad = rel
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("deploy archive: %w", err)
+	}
+	return bad, nil
 }
 
 // ApplyCommandFiles swaps the staged per-job directories of the deploy

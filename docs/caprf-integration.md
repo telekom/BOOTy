@@ -223,9 +223,25 @@ EXTRA_KERNEL_PARAMS=intel_iommu=on
   `sha256`); it can drop one or switch to another `oci://` source. A deploy
   archive is held to the same rules: its `deploy/vars` must keep the cosign
   options of `/deploy/vars`, and it can not write a cosign key or trusted
-  root path (under `/deploy` or through `deploy/file-system`). BOOTy reads
-  the keys and trusted roots once when standby starts and verifies only
-  against these copies.
+  root path (under `/deploy` or through `deploy/file-system`; paths are
+  compared with their symlinks resolved). BOOTy reads the keys and trusted
+  roots once when standby starts and verifies only against these copies;
+  any other key or root path fails.
+- With `PROVISIONER_FILES_TARGET=ramdisk` (in `/deploy/vars` or the archive
+  vars), standby copies the archive's `deploy/file-system` over the ramdisk
+  root before the run. Under a cosign policy that copy may only contain
+  `etc/hosts`, `etc/resolv.conf`, the `CA_BUNDLE_FILE` path and files under
+  `etc/ssl` and `etc/pki`; an archive with anything else (a binary, a
+  library preload, `root/.docker/config.json` with a credential helper) is
+  refused, because it would run code in the process that verifies the
+  signatures. There is no option to widen the list. Without a cosign policy
+  the copy is not restricted, so whoever can send commands can replace any
+  ramdisk file, BOOTy included: use a cosign policy where that matters.
+- An `/etc/hosts` in that copy can point the CAPRF and registry host names
+  elsewhere. With `INSECURE_TRANSPORT` or `SKIP_TLS_VERIFY` nothing then
+  checks the server, so the bearer token can go to whoever the archive
+  names: do not combine these with `PROVISIONER_FILES_TARGET=ramdisk`
+  command archives.
 - A payload can not redirect a request that carries the bearer token:
   `INVENTORY_URL`, `FIRMWARE_URL`, `HEALTH_CHECK_URL`, `TELEMETRY_URL`,
   `METRICS_URL`, `EVENT_URL`, `CRASH_ARTIFACTS_PREPARE_URL` and

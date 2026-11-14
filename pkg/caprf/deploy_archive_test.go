@@ -441,3 +441,75 @@ func TestDeployArchiveKeepsCosignLockDown(t *testing.T) {
 		})
 	}
 }
+
+// Under a cosign policy the copy of deploy/file-system over the ramdisk
+// (PROVISIONER_FILES_TARGET=ramdisk, in the base or the archive vars) may
+// only write name resolution and CA certificates; anything else would run
+// code in the verifying process (#933 review). Without a policy the copy
+// is unrestricted, as before.
+func TestDeployArchiveRamdiskCopyAllowlist(t *testing.T) {
+	useDeployRoot(t)
+	policy := "IMAGE_COSIGN_PUBKEYS=/etc/booty/image.pub\n"
+	ramdisk := "PROVISIONER_FILES_TARGET=ramdisk\n"
+	for _, tc := range []struct {
+		name, base, vars, file, wantErr string
+	}{
+		{name: "etc/hosts", base: policy + ramdisk, file: "etc/hosts"},
+		{name: "resolv.conf and certificates", base: policy + ramdisk, file: "etc/ssl/certs/extra.pem"},
+		{name: "pki tree", base: policy + ramdisk, file: "etc/pki/ca-trust/source/anchors/ca.pem"},
+		{name: "CA bundle file", base: policy + ramdisk + "CA_BUNDLE_FILE=/usr/local/share/ca.pem\n", file: "usr/local/share/ca.pem"},
+		{name: "a binary", base: policy + ramdisk, file: "usr/bin/x", wantErr: "file-system/usr"},
+		{name: "docker credential helpers", base: policy + ramdisk, file: "root/.docker/config.json", wantErr: "file-system/root"},
+		{name: "ld.so.preload", base: policy + ramdisk, file: "etc/ld.so.preload", wantErr: "file-system/etc/ld.so.preload"},
+		{name: "ramdisk target from the archive", base: policy, vars: ramdisk, file: "usr/bin/x", wantErr: "file-system/usr"},
+		{name: "no ramdisk copy", base: policy, file: "usr/bin/x"},
+		{name: "no cosign policy", base: ramdisk, file: "usr/bin/x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vars := strings.Join([]string{"HOSTNAME=worker-7", strings.TrimSpace(tc.base), strings.TrimSpace(tc.vars)}, "\n") + "\n"
+			payload := deployArchive(t, archiveEntry{name: "deploy/vars", body: vars},
+				archiveEntry{name: "deploy/file-system/" + tc.file, body: "x"})
+			c := &Client{vars: []byte(baseAgentVars + tc.base)}
+			_, _, err := c.CommandConfig(payload)
+			defer c.DiscardCommandFiles()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CommandConfig() = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) || !strings.Contains(err.Error(), "copied over the ramdisk") {
+				t.Fatalf("CommandConfig() = %v, want a refusal naming %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// A trust file is matched with its symlinks resolved: an archive path
+// through an alias (lib -> usr/lib) can not reach it (#933 review).
+func TestDeployArchiveTrustFileThroughSymlink(t *testing.T) {
+	useDeployRoot(t)
+	ramdisk := t.TempDir()
+	prev := ramdiskRoot
+	t.Cleanup(func() { ramdiskRoot = prev })
+	ramdiskRoot = ramdisk
+	if err := os.MkdirAll(filepath.Join(ramdisk, "usr", "lib", "booty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("usr/lib", filepath.Join(ramdisk, "lib")); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(ramdisk, "usr", "lib", "booty", "image.pub")
+	if err := os.WriteFile(key, []byte("key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	policy := "IMAGE_COSIGN_PUBKEYS=" + key + "\n"
+	payload := deployArchive(t, archiveEntry{name: "deploy/vars", body: "HOSTNAME=worker-7\n" + policy},
+		archiveEntry{name: "deploy/file-system/lib/booty/image.pub", body: "evil"})
+	c := &Client{vars: []byte(baseAgentVars + policy)}
+	_, _, err := c.CommandConfig(payload)
+	defer c.DiscardCommandFiles()
+	if err == nil || !strings.Contains(err.Error(), "replaces the cosign trust material") {
+		t.Fatalf("CommandConfig() = %v, want the trust file refused", err)
+	}
+}
