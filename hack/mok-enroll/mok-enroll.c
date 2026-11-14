@@ -85,7 +85,12 @@ static EFI_STATUS merge(UINT8 *old, UINTN old_size, UINT8 *payload, UINT32 n, UI
 		return EFI_OUT_OF_RESOURCES;
 	for (UINTN off = 0; off < old_size;) {
 		const esl_t *l = (const esl_t *)(old + off);
-		if (old_size - off < ESL_HDR || l->list_size < ESL_HDR || l->list_size > old_size - off) {
+		// Every list kept must be well formed too: one malformed list stops
+		// shim from reading the certificates after it.
+		if (old_size - off < ESL_HDR || l->list_size < ESL_HDR || l->list_size > old_size - off ||
+		    l->header_size > l->list_size - ESL_HDR || l->sig_size < sizeof(EFI_GUID) ||
+		    l->list_size - ESL_HDR - l->header_size == 0 ||
+		    (l->list_size - ESL_HDR - l->header_size) % l->sig_size != 0) {
 			FreePool(buf);
 			return EFI_VOLUME_CORRUPTED;
 		}
