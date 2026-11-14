@@ -52,6 +52,11 @@ echo "GRUB_UNRESTRICTED=$(grep -c 'menuentry_id_option="--unrestricted' /boot/gr
 echo "GRUB_RECOVERY=$(grep -c 'recovery mode' /boot/grub/grub.cfg)"
 echo "BOOTY_FILES=$(ls /etc/booty/luks-tpm2.env /etc/grub.d/01_booty_luks_lock /etc/dracut.conf.d/90-booty-luks.conf 2>/dev/null | wc -l)"
 echo "BOOTORDER=$(efibootmgr 2>/dev/null | sed -n 's/^BootOrder: //p')"
+if [ -d /data ]; then
+	echo "DATA_TYPE=$(lsblk -no TYPE "$(findmnt -no SOURCE /data)")"
+	echo "DATA_BYTES=$(df -B1 --output=size /data | tail -n 1 | tr -d ' ')"
+	echo "DATA_MARKER=$(cat /data/marker 2>/dev/null)"
+fi
 if [ -f /etc/booty/luks-tpm2.env ]; then
 	. /etc/booty/luks-tpm2.env
 	dev=/dev/disk/by-uuid/$LUKS_UUID
@@ -103,6 +108,12 @@ type luksVM struct {
 }
 
 func newLUKSVM(t *testing.T) *luksVM {
+	return newLUKSVMWith(t, false)
+}
+
+// newLUKSVMWith prepares the image; dataPartition appends an ext4 partition
+// 2 (the last one) mounted at /data by PARTUUID.
+func newLUKSVMWith(t *testing.T, dataPartition bool) *luksVM {
 	t.Helper()
 	requireRoot(t)
 	qemuAvailable(t)
@@ -121,7 +132,7 @@ func newLUKSVM(t *testing.T) *luksVM {
 		}
 	}
 	v := &luksVM{t: t, dir: t.TempDir(), code: code, kernel: findKernel(t)}
-	gz := prepareLUKSImage(t, osImage, v.dir, strings.Fields(os.Getenv("DISK_ENCRYPTION_DEBS")))
+	gz := prepareLUKSImage(t, osImage, v.dir, strings.Fields(os.Getenv("DISK_ENCRYPTION_DEBS")), dataPartition)
 	v.osRaw = filepath.Join(v.dir, "os.part.json")
 	v.baseURL = startImageServer(t, gz)
 	v.vars = filepath.Join(v.dir, "OVMF_VARS.fd")
@@ -315,14 +326,51 @@ func TestDiskEncryptionOffVM(t *testing.T) {
 	comparePartitionTables(t, v.osRaw, v.disk)
 }
 
+// TestDiskEncryptionDataPartitionVM encrypts a data partition by number
+// (the last partition, mounted by PARTUUID) and leaves the root plain: the
+// file system grows inside the mapping, fstab mounts it through the
+// mapping, the enrollment key unlocks it until the binding.
+func TestDiskEncryptionDataPartitionVM(t *testing.T) {
+	v := newLUKSVMWith(t, true)
+	escrow := startEscrowServer(t)
+	v.provision(map[string]string{
+		"HOSTNAME":                         "luks-e2e",
+		"IMAGE_ALLOW_INSECURE_HTTP":        "true",
+		"IMAGE":                            v.baseURL + "/image.gz",
+		"MODE":                             "provision",
+		"MIN_DISK_SIZE_GB":                 "1",
+		"TOKEN":                            "e2e-token",
+		"CA_BUNDLE_FILE":                   "/" + luksCAPath,
+		"DISK_ENCRYPTION":                  "luks2-tpm2",
+		"DISK_ENCRYPTION_TARGET":           "2",
+		"DISK_ENCRYPTION_RECOVERY_KEY_URL": escrow.url + "/recovery-key",
+	}, map[string]string{luksCAPath: escrow.caPEM})
+	escrow.recoveryKey(t)
+	out := runMirrorQEMU(t, "data partition", v.args(), 8*time.Minute)
+	report := luksCheckReport(t, "data partition", out)
+	for _, l := range []string{"ROOT_TYPE=part", "DATA_TYPE=crypt", "DATA_MARKER=booty-data", "TPM2_TOKENS=0", "ENROLL_KEY=present", "KEYSLOTS=0,1,"} {
+		luksRequireLine(t, report, l)
+	}
+	// 512 MiB in the image; grown to the disk end inside the mapping.
+	var size int64
+	if _, err := fmt.Sscan(luksField(report, "DATA_BYTES"), &size); err != nil || size < 1<<30 {
+		t.Fatalf("data file system %d bytes, want it grown past 1 GiB (%v)", size, err)
+	}
+}
+
 // prepareLUKSImage installs debs (DISK_ENCRYPTION_DEBS, for example
 // libtss2-rc0t64 on Ubuntu 26.04), the check service and a DHCP netplan
 // into the root file system of the cloud image, saves the partition table
 // of the image as os.part.json and returns the gzipped raw image.
-func prepareLUKSImage(t *testing.T, osImage, dir string, debs []string) string {
+func prepareLUKSImage(t *testing.T, osImage, dir string, debs []string, dataPartition bool) string {
 	t.Helper()
 	raw := filepath.Join(dir, "os.raw")
 	run(t, "convert OS image to raw", "qemu-img", "convert", "-O", "raw", osImage, raw)
+	if dataPartition {
+		run(t, "extend image", "truncate", "-s", "+512M", raw)
+		run(t, "move backup GPT", "sgdisk", "-e", raw)
+		run(t, "add data partition", "sgdisk", "-n", "2:0:0", "-t", "2:8300", "-c", "2:booty-data", raw)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "os.part.json"), runOutput(t, "image partition table", "sfdisk", "-J", raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +382,30 @@ func prepareLUKSImage(t *testing.T, osImage, dir string, debs []string) string {
 	if err := os.Mkdir(mnt, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if dataPartition {
+		run(t, "format data partition", "mkfs.ext4", "-q", "-L", "bootydata", loop+"p2")
+		data := filepath.Join(dir, "data")
+		if err := os.Mkdir(data, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		run(t, "mount data partition", "mount", loop+"p2", data)
+		luksWriteImageFile(t, data, "marker", []byte("booty-data\n"), 0o644)
+		run(t, "unmount data partition", "umount", data)
+	}
 	run(t, "mount image root", "mount", loop+"p1", mnt)
+	if dataPartition {
+		partUUID := strings.TrimSpace(string(runOutput(t, "data PARTUUID", "blkid", "-o", "value", "-s", "PARTUUID", loop+"p2")))
+		fstab, err := os.ReadFile(filepath.Join(mnt, "etc/fstab"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// By PARTUUID: BOOTy must point it at the mapping.
+		fstab = append(fstab, []byte("PARTUUID="+partUUID+" /data ext4 defaults 0 2\n")...)
+		luksWriteImageFile(t, mnt, "etc/fstab", fstab, 0o644)
+		if err := os.MkdirAll(filepath.Join(mnt, "data"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, deb := range debs {
 		data, err := os.ReadFile(deb)
 		if err != nil {

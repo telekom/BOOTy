@@ -852,7 +852,9 @@ done
 step="no initramfs"
 [ -n "$built" ]
 step="initramfs swap"
-for img in $built; do cp -p "$img" "$img.booty-old"; done
+# A hard link keeps the original image without copying it: never partial,
+# needs no space on /boot.
+for img in $built; do ln -f "$img" "$img.booty-old"; done
 sync
 for img in $built; do mv "$img.booty-new" "$img"; done
 sync

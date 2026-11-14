@@ -526,9 +526,9 @@ jobs:
           - scenario: disk-encryption-ubuntu-26.04
             qemu_extra: ""
             test_tag: e2e
-            test_regex: "^TestDiskEncryptionTPM2VM$"
-            go_timeout: 50m
-            timeout_minutes: 70
+            test_regex: "^TestDiskEncryption(TPM2|DataPartition)VM$"
+            go_timeout: 60m
+            timeout_minutes: 80
             privileged: true
             ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
             mirror_os_image: ubuntu-26.04-server-cloudimg-amd64.img
