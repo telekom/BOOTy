@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/telekom/t-caas-go-library/pkg/redact"
+
+	"github.com/telekom/BOOTy/pkg/trust"
 )
 
 // TokenResponse represents the server's token endpoint response.
@@ -77,7 +79,7 @@ func NewTokenManager(tokenURL, bootstrapToken string, log *slog.Logger) (*TokenM
 		client: &http.Client{
 			Timeout: 15 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: trust.Roots()},
 			},
 		},
 		log:     log.WithGroup("auth"),

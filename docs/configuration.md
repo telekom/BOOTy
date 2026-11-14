@@ -135,12 +135,15 @@ values are false.
 | `TOKEN_RENEW_BACKOFF_SECONDS` | `0` (1) | integer, seconds | Wait after the first failed renewal attempt; it doubles after each failure up to 60 seconds and never goes past the expiry. YAML `transport.tokenRenewBackoffSeconds`. |
 | `INSECURE_TRANSPORT` | `false` | boolean | Send the bearer token over plain HTTP. Without it, BOOTy refuses to send the token to an `http://` URL that is not a loopback address. YAML `transport.insecure`. Preset: `true`. |
 | `SKIP_TLS_VERIFY` | `false` | boolean | Do not verify TLS certificates for the CAPRF callbacks, the connectivity check and image downloads, like `curl --insecure`. BOOTy logs a warning. `TOKEN_URL` and the crash artifact upload always verify. YAML `transport.skipTLSVerify`. Preset: `true`. |
+| `CA_BUNDLE_FILE` | (unset) | file path in the ramdisk | PEM file with root certificates that BOOTy trusts in addition to the system roots, for example `/deploy/ca-bundle.pem` that CAPRF writes next to `vars`. It applies to every HTTPS client: the CAPRF callbacks, the connectivity check, `TOKEN_URL`, the [time sync](#time-sync) Date probe, `http(s)://` and `oci://` image downloads (with the cosign signatures), `IMAGE_SIGNATURE_URL`, sysexts, `PARTITION_LAYOUT_URL` and the crash artifact upload. Verification stays on; `SKIP_TLS_VERIFY=true` still skips it where it applies, so set `SKIP_TLS_VERIFY=false` with `CAPRF_LEGACY_COMPAT`. The file must hold only `CERTIFICATE` PEM blocks (text before a block is ignored). A missing file, a file without a certificate, another block type, a broken certificate or a truncated block fails the start before the first request (`CA_BUNDLE_FILE: ...` on the console, no callback). YAML `transport.caBundleFile`. |
 | `EXPORT_VARS` | `false` | boolean | Export every vars file entry whose key is a valid shell identifier to the process environment, like `source vars`. Proxy entries (`https_proxy`, `no_proxy`) and the [process environment](#process-environment) variables then apply. YAML `transport.exportVars`. Preset: `true`. |
 
 The CAPRF callback, connectivity check and image HTTP clients use the
 standard proxy variables (`https_proxy`, `http_proxy`, `no_proxy`) from the
 process environment. The `TOKEN_URL` client uses no proxy and always verifies
-TLS, also with `SKIP_TLS_VERIFY=true` or `EXPORT_VARS=true`.
+TLS, also with `SKIP_TLS_VERIFY=true` or `EXPORT_VARS=true`. All clients
+verify against the system roots of the ramdisk plus the `CA_BUNDLE_FILE`
+roots.
 
 ## Time sync
 

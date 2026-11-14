@@ -366,7 +366,7 @@ to the legacy value; an explicit option wins.
 |------|---------|--------------|-----------------------|
 | Bearer token over plain HTTP | Refused, the request fails. Allowed only for `https://` or loopback URLs. | Allowed | `INSECURE_TRANSPORT=true` |
 | `COMMANDS_URL` and crash artifact URLs over plain HTTP | Refused, except for loopback | Allowed | `INSECURE_TRANSPORT=true` |
-| TLS certificate check for callbacks, the connectivity check and image downloads | Verified against the system roots | Not verified, like `curl --insecure`. BOOTy logs a warning. | `SKIP_TLS_VERIFY=true` |
+| TLS certificate check for callbacks, the connectivity check and image downloads | Verified against the system roots plus `CA_BUNDLE_FILE` | Not verified, like `curl --insecure`. BOOTy logs a warning. | `SKIP_TLS_VERIFY=true` |
 | TLS certificate check for the crash artifact upload | Verified | Verified | None, always verified |
 | `http://` image URLs | Refused | Allowed | `IMAGE_ALLOW_INSECURE_HTTP=true` |
 | Redirects of the HTTP image requests (probe, download, signature) | Followed | Not followed (`curl` without `--location`): the request fails | `IMAGE_FOLLOW_REDIRECTS=false` |
