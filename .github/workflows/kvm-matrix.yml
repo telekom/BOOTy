@@ -555,9 +555,9 @@ jobs:
             setup: |
               sudo apt-get install -y --no-install-recommends efibootmgr zstd
               sudo apt-get install -y --no-install-recommends python3-virt-firmware || sudo pip3 install --break-system-packages virt-firmware
-              gcc -Q --help=target | grep -E "^ +-march="
-              sh hack/mok-enroll/build.sh mok-enroll.efi
-              echo "BOOTY_MOK_ENROLL_EFI=${PWD}/mok-enroll.efi" >> "${GITHUB_ENV}"
+              # The helper that the release ramdisks ship.
+              docker buildx build --platform linux/amd64 -f initrd.Dockerfile --target mok-enroll-efi --output type=local,dest=mok-enroll-out .
+              echo "BOOTY_MOK_ENROLL_EFI=${PWD}/mok-enroll-out/mok-enroll.efi" >> "${GITHUB_ENV}"
           # SECUREBOOT_SIGNING=ci: the image arrives with a CI-signed module and
           # the CI certificate; BOOTy holds no key and only enrolls it.
           - scenario: module-signing-ci-ubuntu-26.04
