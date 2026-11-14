@@ -75,12 +75,43 @@ func TestMergeCommandVarsRejectsRuntimeSettings(t *testing.T) {
 		"LOG_URL=https://x.example.com/log":          "transport",
 		"SUCCESS_ACTION=later":                       "payload keys SUCCESS_ACTION do not parse or validate",
 		"LUKS_DEVICE=/dev/sda":                       "LUKS_DEVICE",
+		"SYSEXT_COSIGN_PUBKEYS=/deploy/other.pub":    "cosign",
+		"IMAGE_COSIGN_IDENTITY_REGEXP=.*":            "cosign",
+		"IMAGE_COSIGN_OIDC_ISSUER=https://x.example": "cosign",
+		"SYSEXT_COSIGN_TRUSTED_ROOT=/deploy/tr.json": "cosign",
+		"SYSEXT_COSIGN_IDENTITY_REGEXP=.*":           "cosign",
+		"SYSEXT_COSIGN_OIDC_ISSUER=https://x":        "cosign",
 		"IMAGE_FOLLOW_REDIRECTS=false":               "IMAGE_FOLLOW_REDIRECTS",
 	} {
 		_, _, err := MergeCommandVars([]byte(commandBaseVars), []byte(payload))
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("payload %q: error = %v, want it to name %q", payload, err, want)
 		}
+	}
+}
+
+// A payload can not clear or change a cosign policy of the base vars; it
+// may repeat it.
+func TestMergeCommandVarsKeepsCosignPolicy(t *testing.T) {
+	base := commandBaseVars + `IMAGE_COSIGN_PUBKEYS=/deploy/c.pub
+IMAGE_COSIGN_TRUSTED_ROOT=/deploy/trusted_root.json
+IMAGE_COSIGN_IDENTITY_REGEXP=https://ci\.example/.*
+IMAGE_COSIGN_OIDC_ISSUER=https://ci.example
+SYSEXT_COSIGN_TRUSTED_ROOT=/deploy/trusted_root.json
+`
+	for _, payload := range []string{
+		"IMAGE_COSIGN_PUBKEYS=",
+		"IMAGE_COSIGN_TRUSTED_ROOT=",
+		"IMAGE_COSIGN_IDENTITY_REGEXP=.*",
+		"IMAGE_COSIGN_OIDC_ISSUER=https://other.example",
+		"SYSEXT_COSIGN_TRUSTED_ROOT=",
+	} {
+		if _, _, err := MergeCommandVars([]byte(base), []byte(payload)); err == nil || !strings.Contains(err.Error(), "cosign") {
+			t.Errorf("payload %q: error = %v, want a cosign rejection", payload, err)
+		}
+	}
+	if _, _, err := MergeCommandVars([]byte(base), []byte("IMAGE_COSIGN_OIDC_ISSUER=https://ci.example\nHOSTNAME=x")); err != nil {
+		t.Errorf("repeating the policy: %v", err)
 	}
 }
 
@@ -122,5 +153,43 @@ func TestMergeCommandVarsNamesOnlyTheBadKey(t *testing.T) {
 	_, _, err := MergeCommandVars([]byte(commandBaseVars), []byte("HOSTNAME=ok\nSUCCESS_ACTION=s3cr3t\n"))
 	if err == nil || err.Error() != "payload keys SUCCESS_ACTION do not parse or validate" {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+// Under a cosign policy a payload can not swap the signed oci:// image for
+// an HTTP one that only a payload checksum checks (#933 review), nor change
+// the checksum of a base HTTP source; it may switch to another oci://
+// image, which is verified.
+func TestMergeCommandVarsKeepsCosignCoverage(t *testing.T) {
+	digest := "@sha256:" + strings.Repeat("a", 64)
+	signed := commandBaseVars + "IMAGE=oci://registry.example/os" + digest + "\nIMAGE_COSIGN_PUBKEYS=/deploy/c.pub\n" +
+		"SYSEXT_COSIGN_TRUSTED_ROOT=/deploy/tr.json\nSYSEXT_COSIGN_IDENTITY_REGEXP=.*\nSYSEXT_COSIGN_OIDC_ISSUER=https://ci.example\n"
+	checksum := "IMAGE_CHECKSUM=" + strings.Repeat("b", 64)
+	for _, tc := range []struct {
+		name, base, payload string
+		ok                  bool
+	}{
+		{name: "http image with own checksum", base: signed, payload: "IMAGE=https://evil.example/os.img\n" + checksum},
+		{name: "http fallback url", base: signed, payload: "IMAGE=oci://registry.example/os" + digest + ",https://evil.example/os.img\n" + checksum},
+		{name: "http sysext", base: signed, payload: `SYSEXT_LAYERS=[{"name":"x","source":"https://evil.example/x.raw","sha256":"` + strings.Repeat("c", 64) + `"}]`},
+		{name: "other oci image", base: signed, payload: "IMAGE=oci://registry.example/os@sha256:" + strings.Repeat("d", 64), ok: true},
+		{name: "checksum of a base http source", base: signed + "IMAGE=https://ok.example/os.img\n" + checksum + "\n",
+			payload: "IMAGE_CHECKSUM=" + strings.Repeat("e", 64)},
+		{name: "drop the base http source", base: signed + "IMAGE=https://ok.example/os.img\n" + checksum + "\n",
+			payload: "IMAGE=oci://registry.example/os" + digest, ok: true},
+		{name: "no policy", base: commandBaseVars, payload: "IMAGE=https://ok.example/os.img\n" + checksum, ok: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := MergeCommandVars([]byte(tc.base), []byte(tc.payload))
+			if tc.ok {
+				if err != nil {
+					t.Fatalf("MergeCommandVars() = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "not oci://") {
+				t.Fatalf("MergeCommandVars() = %v, want a refusal of the uncovered source", err)
+			}
+		})
 	}
 }

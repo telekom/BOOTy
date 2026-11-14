@@ -1215,6 +1215,9 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 	if key == "LOG_FLUSH_TIMEOUT_SEC" {
 		return applyLogFlushTimeoutVar(cfg, value)
 	}
+	if key == "DEPROVISION_CRYPTO_ERASE" {
+		return applyCryptoEraseVar(cfg, value)
+	}
 	if handled, err := applySRIOVVar(cfg, key, value); handled {
 		return err
 	}
@@ -1233,6 +1236,22 @@ func applyLogFlushTimeoutVar(cfg *config.MachineConfig, value string) error {
 		return fmt.Errorf("invalid LOG_FLUSH_TIMEOUT_SEC: %w", err)
 	}
 	cfg.Transport.LogFlushTimeoutSec = &n
+	return nil
+}
+
+// applyCryptoEraseVar sets DEPROVISION_CRYPTO_ERASE strictly, like the
+// disk encryption booleans: a typo must not turn the crypto-erase off. An
+// empty value is unset (on).
+func applyCryptoEraseVar(cfg *config.MachineConfig, value string) error {
+	cfg.Deprovision.CryptoErase = nil
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	on, err := parseWatchdogBool(value)
+	if err != nil {
+		return fmt.Errorf("invalid DEPROVISION_CRYPTO_ERASE: %w", err)
+	}
+	cfg.Deprovision.CryptoErase = &on
 	return nil
 }
 
@@ -1352,6 +1371,18 @@ func applyImageWriteVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Provision.Image.CosignPublicKeys = splitVarList(value)
 	case "SYSEXT_COSIGN_PUBKEYS":
 		cfg.Provision.Sysext.CosignPublicKeys = splitVarList(value)
+	case "IMAGE_COSIGN_TRUSTED_ROOT":
+		cfg.Provision.Image.CosignTrustedRoot = strings.TrimSpace(value)
+	case "IMAGE_COSIGN_IDENTITY_REGEXP":
+		cfg.Provision.Image.CosignIdentityRegexp = value
+	case "IMAGE_COSIGN_OIDC_ISSUER":
+		cfg.Provision.Image.CosignOIDCIssuer = strings.TrimSpace(value)
+	case "SYSEXT_COSIGN_TRUSTED_ROOT":
+		cfg.Provision.Sysext.CosignTrustedRoot = strings.TrimSpace(value)
+	case "SYSEXT_COSIGN_IDENTITY_REGEXP":
+		cfg.Provision.Sysext.CosignIdentityRegexp = value
+	case "SYSEXT_COSIGN_OIDC_ISSUER":
+		cfg.Provision.Sysext.CosignOIDCIssuer = strings.TrimSpace(value)
 	default:
 		return false
 	}

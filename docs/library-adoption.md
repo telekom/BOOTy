@@ -67,6 +67,44 @@ remain a module-download/tooling cost, not linked agent code.
 | `pkg/executil` → direct `os/exec` | Already uses `os/exec`; the remaining PID registry prevents PID 1 from stealing managed child exit statuses. Output bounds and sanitized diagnostics are application policy. Removing the wrapper is not equivalent to upstream adoption. |
 | `pkg/buildinfo` → `runtime/debug` | Already calls `debug.ReadBuildInfo`; flavor/linker defaults, formatting and component estimates are BOOTy-specific. |
 
+## sigstore-go
+
+Keyless cosign verification (`IMAGE_COSIGN_TRUSTED_ROOT`) does not use
+[`github.com/sigstore/sigstore-go`](https://pkg.go.dev/github.com/sigstore/sigstore-go).
+Measured on Go 1.27.4, `CGO_ENABLED=0`, `-trimpath -tags grpcnotrace
+-ldflags '-s -w'`, on `main` 749ae043, with and without one file that calls
+`root.NewTrustedRootFromPath`, `bundle.Bundle.UnmarshalJSON` and
+`verify.NewVerifier(...).Verify` (SCT, transparency log and observer
+timestamp thresholds of 1):
+
+| Target | `main` | with sigstore-go v1.4.0 | Delta | Delta gzip -9 | Delta xz -9 |
+|---|---:|---:|---:|---:|---:|
+| linux/amd64 | 30,875,808 | 36,610,208 | +5,734,400 (+18.6%) | +1,864,186 | +1,286,768 |
+| linux/arm64 | 28,770,464 | 34,209,952 | +5,439,488 (+18.9%) | +1,693,124 | +1,105,900 |
+
+The standard-library verifier adds 200,704 bytes on amd64 (31,076,512;
++79,771 gzip -9) and 131,072 bytes on arm64 (28,901,536; +71,805 gzip -9),
+measured the same way. Of that, Rekor v2, RFC 3161 timestamps and the other
+bundle versions take 73,728 bytes on amd64 (+28,972 gzip -9) and nothing on
+arm64 (64 KiB segment alignment; +23,451 gzip -9).
+
+It links the Rekor types with go-openapi, in-toto, go-tuf and the
+timestamp-authority client. The compressed growth alone is more than the 5%
+headroom of the initramfs size budgets (`test/e2e/build_flavours_e2e_test.go`).
+BOOTy verifies what cosign and the Sigstore clients write for images
+(bundles v0.1 to v0.3 with DSSE envelopes, the cosign 2 `.sig`
+tag, Fulcio chain at every verified time, embedded SCT, Rekor v1 SET,
+inclusion proof and checkpoint, Rekor v2 `hashedrekord` 0.0.2 entries with
+signed-note checkpoints, RFC 3161 timestamps) with the standard library in
+`pkg/image/sigstore.go` and `pkg/image/rfc3161.go`. It passes the keyless
+cases of the sigstore-conformance `bundle-verify` suite and a bundle that the
+public-good instance signed (`pkg/image/testdata/sigstore`), and the bundles
+of the local Sigstore in `pkg/image/sigstoretest` get the same verdict from
+sigstore-go v1.4.0 (with one SCT, one tlog entry and one observer timestamp),
+except two cases where BOOTy is stricter: a Fulcio leaf without the
+digitalSignature key usage, and a P-384 key signing with SHA-256, which
+sigstore-go accepts through its compatibility verifier.
+
 ## Verification
 
 The coverage-first PR adds characterization tests on the original implementation.
