@@ -113,6 +113,8 @@ var failureCodes = []FailureCode{
 	{"BOOTY-EFI-007", ClassPermanent, "verify-secureboot-chain", "Secure Boot chain verification failed."},
 	{"BOOTY-EFI-008", ClassHardware, "create-efi-boot-entry", "Creating the EFI boot entry failed."},
 	{"BOOTY-EFI-009", ClassHardware, "create-mirror-efi-boot-entry", "Creating the mirror EFI boot entry failed."},
+	{"BOOTY-EFI-010", ClassPermanent, "sign-kernel-modules", "Signing the out-of-tree kernel modules failed."},
+	{"BOOTY-EFI-011", ClassPermanent, "enroll-module-signing-key", "Enrolling the module signing key failed."},
 
 	{"BOOTY-OS-001", ClassConfig, "configure-overlayfs", "Overlay file system configuration failed."},
 	{"BOOTY-OS-002", ClassConfig, "set-hostname", "Setting the host name failed."},

@@ -39,6 +39,7 @@ on:
       - "initrd.Dockerfile"
       - "hack/make-iso.sh"
       - "hack/make-efiboot.sh"
+      - "hack/mok-enroll/**"
       - "hack/split-initramfs.sh"
       - "test/e2e/assets/busybox/**"
       - "test/e2e/kvm/**"
@@ -80,6 +81,7 @@ on:
       - "initrd.Dockerfile"
       - "hack/make-iso.sh"
       - "hack/make-efiboot.sh"
+      - "hack/mok-enroll/**"
       - "hack/split-initramfs.sh"
       - "test/e2e/assets/busybox/**"
       - "test/e2e/kvm/**"
@@ -533,6 +535,104 @@ jobs:
             setup: |
               cp /usr/share/OVMF/OVMF_VARS_4M.fd OVMF_VARS.fd
               sudo apt-get install -y --no-install-recommends cloud-guest-utils efibootmgr
+          # Per-host module signing (docs/module-signing.md): BOOTy signs a
+          # module with a per-host key under OVMF with the Microsoft keys and
+          # Secure Boot off, mok-enroll.efi writes MokList on the BootNext
+          # boot, then shim and the distribution kernel boot with Secure Boot
+          # on and off, and a reprovisioning replaces the certificate.
+          - scenario: module-signing-ubuntu-24.04
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestModuleSigningSecureBootVM$"
+            go_timeout: 50m
+            timeout_minutes: 70
+            privileged: true
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+            mirror_os_image: ubuntu-24.04-server-cloudimg-amd64.img
+            mirror_os_image_url: https://cloud-images.ubuntu.com/releases/noble/release-20260911/ubuntu-24.04-server-cloudimg-amd64.img
+            mirror_os_image_sha256: 612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354
+            setup: |
+              sudo apt-get install -y --no-install-recommends gcc binutils gnu-efi efibootmgr zstd
+              sudo apt-get install -y --no-install-recommends python3-virt-firmware || sudo pip3 install --break-system-packages virt-firmware
+              gcc -Q --help=target | grep -E "^ +-march="
+              sh hack/mok-enroll/build.sh mok-enroll.efi
+              echo "BOOTY_MOK_ENROLL_EFI=${PWD}/mok-enroll.efi" >> "${GITHUB_ENV}"
+          - scenario: module-signing-ubuntu-26.04
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestModuleSigningSecureBootVM$"
+            go_timeout: 50m
+            timeout_minutes: 70
+            privileged: true
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+            mirror_os_image: ubuntu-26.04-server-cloudimg-amd64.img
+            mirror_os_image_url: https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img
+            mirror_os_image_sha256: 8800651811af9a85465ad1d552add729947bb16488dddb4a9b5305a3d97332b2
+            setup: |
+              sudo apt-get install -y --no-install-recommends gcc binutils gnu-efi efibootmgr zstd
+              sudo apt-get install -y --no-install-recommends python3-virt-firmware || sudo pip3 install --break-system-packages virt-firmware
+              gcc -Q --help=target | grep -E "^ +-march="
+              sh hack/mok-enroll/build.sh mok-enroll.efi
+              echo "BOOTY_MOK_ENROLL_EFI=${PWD}/mok-enroll.efi" >> "${GITHUB_ENV}"
+          # SECUREBOOT_SIGNING=ci: the image arrives with a CI-signed module and
+          # the CI certificate; BOOTy holds no key and only enrolls it.
+          - scenario: module-signing-ci-ubuntu-26.04
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestModuleSigningCIVM$"
+            go_timeout: 50m
+            timeout_minutes: 70
+            privileged: true
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+            mirror_os_image: ubuntu-26.04-server-cloudimg-amd64.img
+            mirror_os_image_url: https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img
+            mirror_os_image_sha256: 8800651811af9a85465ad1d552add729947bb16488dddb4a9b5305a3d97332b2
+            setup: |
+              sudo apt-get install -y --no-install-recommends gcc binutils gnu-efi efibootmgr zstd
+              sudo apt-get install -y --no-install-recommends python3-virt-firmware || sudo pip3 install --break-system-packages virt-firmware
+              gcc -Q --help=target | grep -E "^ +-march="
+              sh hack/mok-enroll/build.sh mok-enroll.efi
+              echo "BOOTY_MOK_ENROLL_EFI=${PWD}/mok-enroll.efi" >> "${GITHUB_ENV}"
+          # MODULE_SIGNING_ENROLLMENT=mokutil: BOOTy queues MokNew and MokAuth,
+          # the test confirms the request in MokManager at the serial console
+          # with MOK_PASSWORD, and the signed module loads with Secure Boot on.
+          - scenario: module-signing-mokutil-ubuntu-24.04
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestModuleSigningMokutilVM$"
+            go_timeout: 50m
+            timeout_minutes: 70
+            privileged: true
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+            mirror_os_image: ubuntu-24.04-server-cloudimg-amd64.img
+            mirror_os_image_url: https://cloud-images.ubuntu.com/releases/noble/release-20260911/ubuntu-24.04-server-cloudimg-amd64.img
+            mirror_os_image_sha256: 612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354
+            setup: |
+              sudo apt-get install -y --no-install-recommends gcc binutils gnu-efi efibootmgr zstd
+              sudo apt-get install -y --no-install-recommends python3-virt-firmware || sudo pip3 install --break-system-packages virt-firmware
+              gcc -Q --help=target | grep -E "^ +-march="
+              sh hack/mok-enroll/build.sh mok-enroll.efi
+              echo "BOOTY_MOK_ENROLL_EFI=${PWD}/mok-enroll.efi" >> "${GITHUB_ENV}"
+          # Default (SECUREBOOT_SIGNING unset): with mok-enroll.efi in the
+          # ramdisk, provisioning leaves the module, the ESP and the EFI
+          # variables alone.
+          - scenario: module-signing-off-ubuntu-24.04
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestModuleSigningOffVM$"
+            go_timeout: 50m
+            timeout_minutes: 70
+            privileged: true
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+            mirror_os_image: ubuntu-24.04-server-cloudimg-amd64.img
+            mirror_os_image_url: https://cloud-images.ubuntu.com/releases/noble/release-20260911/ubuntu-24.04-server-cloudimg-amd64.img
+            mirror_os_image_sha256: 612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354
+            setup: |
+              sudo apt-get install -y --no-install-recommends gcc binutils gnu-efi efibootmgr zstd
+              sudo apt-get install -y --no-install-recommends python3-virt-firmware || sudo pip3 install --break-system-packages virt-firmware
+              gcc -Q --help=target | grep -E "^ +-march="
+              sh hack/mok-enroll/build.sh mok-enroll.efi
+              echo "BOOTY_MOK_ENROLL_EFI=${PWD}/mok-enroll.efi" >> "${GITHUB_ENV}"
           # LUKS2 + TPM2 disk encryption (docs/disk-encryption.md): BOOTy
           # formats the root and writes it into the LUKS2 volume under OVMF
           # with the Microsoft keys and Secure Boot off and posts the recovery

@@ -213,6 +213,56 @@ func TestEnrollUnitAndScript(t *testing.T) {
 	}
 }
 
+// With mokutil enrollment, a MOK change waiting for MokManager changes
+// PCR 14 on a later boot, so phase 1 must not bind before it is applied.
+func TestEnrollScriptWaitsForPendingMOKChange(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	dir := t.TempDir()
+	efivars := filepath.Join(dir, "efivars")
+	env := filepath.Join(dir, "env")
+	if err := os.MkdirAll(efivars, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeEnv := func(mokWait string) {
+		if err := os.WriteFile(env, []byte("LUKS_UUID=u\nSTATUS_URL=\nMOK_WAIT='"+mokWait+"'\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeEnv("1")
+	for name, v := range map[string]byte{"SecureBoot": 1, "SetupMode": 0} {
+		if err := os.WriteFile(filepath.Join(efivars, name+"-"+efiGlobalGUID), []byte{6, 0, 0, 0, v}, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	head := luksEnrollScript[:strings.Index(luksEnrollScript, "step=start")] + "echo phase1\n"
+	head = strings.ReplaceAll(head, "/sys/firmware/efi/efivars", efivars)
+	head = strings.ReplaceAll(head, luksEnvPath, env)
+	head = strings.ReplaceAll(head, "/etc/booty/luks-tpm2.bound", filepath.Join(dir, "bound"))
+	run := func() string {
+		out, err := exec.CommandContext(t.Context(), "sh", "-c", head).CombinedOutput()
+		if err != nil {
+			t.Fatalf("script: %v: %s", err, out)
+		}
+		return string(out)
+	}
+	if out := run(); !strings.Contains(out, "phase1") {
+		t.Fatalf("no pending MOK change: phase 1 does not run: %s", out)
+	}
+	if err := os.WriteFile(filepath.Join(efivars, "MokNew-"+shimLockGUID), []byte{7, 0, 0, 0, 1}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out := run(); strings.Contains(out, "phase1") || !strings.Contains(out, "MokNew") {
+		t.Fatalf("pending MokNew: phase 1 runs: %s", out)
+	}
+	// Without mokutil enrollment (signing off) the script binds as before.
+	writeEnv("")
+	if out := run(); !strings.Contains(out, "phase1") {
+		t.Fatalf("MOK_WAIT unset: phase 1 waits: %s", out)
+	}
+}
+
 func inOrder(t *testing.T, s string, parts ...string) {
 	t.Helper()
 	last := -1

@@ -450,10 +450,22 @@ follow-up.
 ## Module signing
 
 With [per-host module signing](https://github.com/telekom/BOOTy/pull/935)
-the MOK is staged during provisioning and enrolled by `mok-enroll.efi` on
-the next firmware boot. If the system boots before Secure Boot is on, the
-unit waits. The first Secure Boot boot sees the final `MokList` in PCR 14
-and binds. No ordering code is needed.
+and `MODULE_SIGNING_ENROLLMENT=efi-helper` the MOK is staged during
+provisioning and enrolled by `mok-enroll.efi` on the next firmware boot,
+with Secure Boot still off, so the unit waits. The first Secure Boot boot
+sees the final `MokList` in PCR 14 and binds.
+
+With `MODULE_SIGNING_ENROLLMENT=mokutil` the certificate waits in `MokNew`
+for a confirmation in MokManager, possibly on a boot with Secure Boot on.
+Phase 1 does not bind while a MOK request (`MokNew`, `MokDel`, `MokXNew`,
+`MokXDel`, `MokSB`, `MokDB`) is pending: shim would change PCR 14 on a
+later boot, and the initramfs without the enrollment key would ask for the
+recovery key. Without this enrollment method the unit does not look at MOK
+requests. A host whose request nobody confirms stays in the
+[enrollment-key window](#the-enrollment-key-window). With
+`MODULE_SIGNING_ENROLLMENT=external`, enroll the certificate (a `db` update
+changes PCR 7) before the first Secure Boot boot, or bind again as in
+[PCR changes](#pcr-changes).
 
 ## Test
 

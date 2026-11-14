@@ -210,7 +210,8 @@ debug dumps.
 - Boot and Secure Boot: EFI boot entry problems that do not stop the run
   (`EFI_BOOT_ENTRY_REQUIRED=false`, missing EFI variables), shim and
   PE/COFF candidates that fail validation, a Secure Boot state that can not
-  be read.
+  be read, and kernel module signing or MOK enrollment that failed with
+  `MODULE_SIGNING_ALLOW_FAILURE=true`.
 - Hardware: SR-IOV drift with `SRIOV_ON_DRIFT=warn`, health check warnings,
   inventory and firmware report failures, crash artifact collection and
   upload failures.
@@ -249,6 +250,9 @@ show one line per stage and per notable result:
   of the image step.
 - Boot handoff: EFI boot entries, GRUB and kernel command line, kexec load
   and execute, reboot and power off, the watchdog handoff.
+- Kernel module signing: the signed out-of-tree modules and the certificate
+  (path, SHA-256), and how it is enrolled (`mok-enroll.efi` staged,
+  MokManager queued, or left for the provisioner).
 - Time, firmware and reports: clock synchronization and skew, NIC firmware
   versions (`NIC_FIRMWARE_LOG`), SR-IOV settings and compliance, check
   results, the provisioning report, the previous run result
@@ -424,7 +428,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 - `step made no progress within its budget, stopping the watchdog keepalive; the hardware resets the host`
 
-### WARN (380 messages)
+### WARN (383 messages)
 
 #### WARN `.`
 
@@ -803,6 +807,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `disk encryption is not possible, provisioning without it (DISK_ENCRYPTION_ALLOW_FAILURE)`
 - `disk wipe failed, continuing`
 - `efibootmgr list failed (non-EFI system?)`
+- `enroll module signing key failed, continuing because MODULE_SIGNING_ALLOW_FAILURE=true`
 - `failed to remove EFI entry`
 - `failed to remove checkpoint`
 - `failed to remove shared data seed mountpoint`
@@ -824,12 +829,14 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `no serial console configured`
 - `provisioning report not written to the target`
 - `provisioning report: reporting the configured partition layout`
+- `read the CI module signing certificate failed, continuing because MODULE_SIGNING_ALLOW_FAILURE=true`
 - `remove EFI boot entries failed, continuing because EFI_BOOT_ENTRY_REQUIRED=false`
 - `reporting the reboot-required status failed, retrying`
 - `retrying step`
 - `root /etc/ not mounted, skipping DNS configuration`
 - `serial console override ignored with GRUB_CMDLINE_MODE=append`
 - `shared data seed was interrupted, cleaning and retrying`
+- `sign kernel modules failed, continuing because MODULE_SIGNING_ALLOW_FAILURE=true`
 - `skipping EFI boot entry creation`
 - `skipping boot partition mount; partition is not a usable ESP and EFI runtime is unavailable`
 - `skipping machine file below a chroot bind mount`
@@ -899,7 +906,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `progress resumed, petting the watchdog again`
 - `watchdog keepalive failed`
 
-### INFO (479 messages)
+### INFO (484 messages)
 
 #### INFO `.`
 
@@ -949,7 +956,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `provisioning succeeded, powering off for orchestrator to manage boot`
 - `ramdisk hostname set`
 - `released target filesystems before kexec`
-- `secure boot re-enable requested, hard reboot required; skipping kexec`
+- `secure boot re-enable or MOK enrollment requested, hard reboot required; skipping kexec`
 - `setting up LACP bond`
 - `setting up VLAN interfaces`
 - `starting BOOTy`
@@ -1270,6 +1277,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `A/B preserveExisting enabled, reusing existing partition layout`
 - `A/B preserveExisting enabled, skipping whole-disk wipe`
 - `A/B preserveExisting keeps the disks, skipping crypto-erase`
+- `CI module signing certificate to enroll`
 - `DISK_LINKS=false, not creating /dev/disk links`
 - `EFI boot entry created`
 - `Firmware reporting disabled, skipping`
@@ -1280,6 +1288,8 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `Health checks disabled, skipping`
 - `LUKS2 keyslots and header destroyed`
 - `LVM physical volume opened in the LUKS2 mapping`
+- `MOK enrollment queued: MokManager asks for MOK_PASSWORD at the next boot`
+- `MOK enrollment staged: the next firmware boot runs mok-enroll.efi`
 - `No SR-IOV profiles, skipping`
 - `SR-IOV profiles set the ConnectX VFs, skipping setup-mellanox (NUM_VFS)`
 - `Streaming image`
@@ -1329,6 +1339,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `mellanox: set NUM_OF_VFS`
 - `mirror already assembled`
 - `mirroring root disk`
+- `module signing certificate left for the provisioner to enroll`
 - `mounted efivarfs`
 - `mounted shared data partition`
 - `mounting separate /boot`
@@ -1384,6 +1395,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `setting hostname`
 - `shared data partition already has content, skipping seed`
 - `shared data partition already mounted`
+- `signed out-of-tree kernel modules`
 - `skipping EFI fallback loader installation; no boot partition detected`
 - `skipping boot partition mount; no boot partition detected`
 - `skipping completed step`

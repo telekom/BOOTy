@@ -134,6 +134,7 @@ type Orchestrator struct {
 	reportLogged     bool // logProvisionReport sent the report; a retried report-success does not send it again
 	nvmeTargetDevice string
 	firmwareChanged  bool // true if any step changed firmware values requiring hard reboot
+	moduleSigning    *ReportModuleSigning
 	// separateBootMounted is true while mount-boot owns a separate /boot mount.
 	separateBootMounted bool
 	// disksSettled is true after waitForDisks ran.
@@ -214,6 +215,8 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"configure-serial-console", o.configureSerialConsole},
 		{"configure-grub", o.configureGRUB},
 		{"install-efi-fallback", o.installEFIFallbackLoader},
+		// Signing rebuilds the initramfs, so it runs before the chain check.
+		{"sign-kernel-modules", o.signKernelModules},
 		// Validate the final installed boot artifacts after BOOTy has applied
 		// GRUB and EFI fallback mutations, before firmware boot entries point to them.
 		{"verify-secureboot-chain", o.verifySecureBootChain},
@@ -226,6 +229,11 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"run-post-provision-cmds", o.runPostProvisionCmds},
 		{"create-efi-boot-entry", o.createEFIBootEntry},
 		{"create-mirror-efi-boot-entry", o.createMirrorEFIBootEntry},
+		// After every step that changes the target, so a failed provisioning
+		// rarely leaves a staged enrollment. If teardown or the report fails
+		// later, the helper still enrolls the certificate of this run; its
+		// key is gone and a reprovisioning replaces it.
+		{"enroll-module-signing-key", o.enrollModuleSigningKey},
 		{"teardown-chroot", o.teardownChroot},
 		{"report-success", o.reportSuccess},
 	}
@@ -303,6 +311,12 @@ func resumeStateSteps() map[string]struct{} {
 		// file is not written again (see reportWritten).
 		"write-provision-report": {},
 		"teardown-chroot":        {},
+		// The per-host key and its certificate exist only in memory, and
+		// enroll-module-signing-key enrolls only the certificate of this run.
+		// Signing again replaces the earlier signatures and certificate, so
+		// the enrollment must run again too.
+		"sign-kernel-modules":       {},
+		"enroll-module-signing-key": {},
 	}
 }
 
@@ -3754,7 +3768,7 @@ func ShouldKeepTargetRootMountedForKexec(cfg *config.MachineConfig, firmwareChan
 		return false
 	}
 	return !cfg.KexecDisabled() &&
-		!cfg.Provision.SecureBoot.ReEnable &&
+		!cfg.Provision.SecureBoot.NeedsFirmwareReboot() &&
 		!firmwareChanged
 }
 

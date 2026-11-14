@@ -57,3 +57,63 @@ func TestValidateSecureBootPinnedDigestsRejectsInvalidConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateModuleSigning(t *testing.T) {
+	ab := &ABConfig{PreserveExisting: true}
+	type m = ModuleSigningConfig
+	for _, tc := range []struct {
+		sb      SecureBootConfig
+		mode    string
+		wantErr bool
+	}{
+		{SecureBootConfig{ModuleSigning: m{Enrollment: "bogus"}}, "", false}, // off: not checked
+		{SecureBootConfig{Signing: "off", ModuleSigning: m{Enrollment: "bogus"}}, "", false},
+		{SecureBootConfig{Signing: "bogus"}, "", true},
+		{SecureBootConfig{Signing: "per-host"}, "", false},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Enrollment: "external", CertDir: "/etc/keys"}}, "", false},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Enrollment: "bogus"}}, "", true},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{CertDir: "relative"}}, "", true},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{CertDir: "/a/../b"}}, "", true},
+		{SecureBootConfig{Signing: "per-host"}, ImageModeAB, true},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Enrollment: "external"}}, ImageModeAB, true},
+		// Secure Boot back on before the enrollment boot refuses the helper.
+		{SecureBootConfig{Signing: "per-host", ReEnable: true}, "", true},
+		{SecureBootConfig{Signing: "per-host", ReEnable: true, MOKPassword: "pw", ModuleSigning: m{Enrollment: "mokutil"}}, "", false},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Enrollment: "mokutil"}}, "", true},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{CertDir: "/run/keys"}}, "", true},
+		{SecureBootConfig{Signing: "per-host", ReEnable: true, ModuleSigning: m{Enrollment: "external"}}, "", false},
+		// ci enrolls the certificate of the image.
+		{SecureBootConfig{Signing: "ci", MOKCertPath: "/usr/share/ci/mok.der"}, "", false},
+		{SecureBootConfig{Signing: "ci"}, "", true},
+		{SecureBootConfig{Signing: "ci", MOKCertPath: "ci/mok.der"}, "", true},
+	} {
+		errs := validateModuleSigning(tc.mode, &tc.sb, ab)
+		if (len(errs) > 0) != tc.wantErr {
+			t.Errorf("%+v mode=%q: errs=%v", tc.sb, tc.mode, errs)
+		}
+	}
+}
+
+func TestValidateModuleSigningMirror(t *testing.T) {
+	for _, tc := range []struct {
+		signing, enrollment, mirror, device string
+		wantErr                             bool
+	}{
+		{"per-host", "", "raid-1", "", true},
+		{"ci", "efi-helper", "auto", "", true},
+		{"per-host", "mokutil", "raid-1", "", false},
+		{"per-host", "external", "auto", "", false},
+		{"per-host", "", "none", "", false},
+		{"per-host", "", "raid-1", "/dev/sda", false}, // the mirroring mode is ignored
+		{"", "", "raid-1", "", false},
+	} {
+		c := &Config{}
+		c.Provision.SecureBoot.Signing = tc.signing
+		c.Provision.SecureBoot.ModuleSigning.Enrollment = tc.enrollment
+		c.Provision.Disk.MirroringMode = tc.mirror
+		c.Provision.Disk.Device = tc.device
+		if errs := c.validateModuleSigningMirror(); (len(errs) > 0) != tc.wantErr {
+			t.Errorf("%+v: errs=%v", tc, errs)
+		}
+	}
+}

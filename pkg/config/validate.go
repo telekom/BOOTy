@@ -107,6 +107,7 @@ func (c *Config) Validate() error {
 	if err := validateSecureBootConfig(c.Provision.Image.Mode, &c.Provision.SecureBoot, &c.Provision.AB); err != nil {
 		errs = append(errs, err.Error())
 	}
+	errs = append(errs, c.validateModuleSigningMirror()...)
 	errs = append(errs, c.validateDiskEncryption()...)
 	errs = append(errs, validateTokenRenewal(&c.Transport)...)
 	errs = append(errs, validateTime(&c.Time)...)
@@ -772,6 +773,84 @@ func validateABConfig(imageMode string, disableKexec bool, cfg *ABConfig) error 
 	return nil
 }
 
+func validateSigningMode(sb *SecureBootConfig) []string {
+	switch sb.SigningMode() {
+	case SigningOff, SigningPerHost:
+	case SigningCI:
+		if p := sb.MOKCertPath; !path.IsAbs(p) || path.Clean(p) != p {
+			return []string{fmt.Sprintf("provision.secureBoot.mokCertPath %q: signing ci needs the clean absolute path of the CI certificate in the target", p)}
+		}
+	default:
+		return []string{fmt.Sprintf("provision.secureBoot.signing %q: want per-host, ci or off", sb.Signing)}
+	}
+	return nil
+}
+
+func validateModuleSigning(imageMode string, sb *SecureBootConfig, ab *ABConfig) []string {
+	errs := validateSigningMode(sb)
+	if mode := sb.SigningMode(); mode != SigningPerHost && mode != SigningCI {
+		return errs // off, or an unknown mode
+	}
+	m := &sb.ModuleSigning
+	switch m.EnrollmentMethod() {
+	case ModuleSigningEnrollEFIHelper:
+		// The provisioner re-enables Secure Boot when BOOTy reports success,
+		// before the enrollment boot; the firmware would then refuse the
+		// unsigned helper and the enrollment would be lost silently.
+		if sb.ReEnable {
+			errs = append(errs, "provision.secureBoot.moduleSigning.enrollment efi-helper needs Secure Boot off at the next boot, "+
+				"but provision.secureBoot.reEnable turns it on before; turn it on after the enrollment boot instead")
+		}
+	case ModuleSigningEnrollMokutil:
+		if sb.MOKPassword == "" {
+			errs = append(errs, "provision.secureBoot.moduleSigning.enrollment mokutil needs provision.secureBoot.mokPassword (MOK_PASSWORD)")
+		}
+	case ModuleSigningEnrollExternal:
+	default:
+		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.enrollment %q: want efi-helper, mokutil or external", m.Enrollment))
+	}
+	// Every enrollment takes effect at a firmware boot, db over Redfish too.
+	if ab != nil && strings.EqualFold(strings.TrimSpace(imageMode), ImageModeAB) && ab.PreserveExisting {
+		errs = append(errs, "provision.secureBoot.signing "+sb.SigningMode()+
+			" needs a firmware reboot, but provision.ab.preserveExisting uses kexec")
+	}
+	if dir := m.CertDirOrDefault(); !path.IsAbs(dir) || path.Clean(dir) != dir || underChrootBind(dir) {
+		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.certDir %q: must be a clean absolute path outside /run, /proc, /sys and /dev", m.CertDir))
+	}
+	return errs
+}
+
+// validateModuleSigningMirror rejects efi-helper enrollment with disk
+// mirroring: mok-enroll.efi and BootNext are on the primary disk only, so a
+// host that boots from the mirror after the primary failed never enrolls
+// the key of its signed modules.
+func (c *Config) validateModuleSigningMirror() []string {
+	sb := &c.Provision.SecureBoot
+	if mode := sb.SigningMode(); (mode != SigningPerHost && mode != SigningCI) ||
+		sb.ModuleSigning.EnrollmentMethod() != ModuleSigningEnrollEFIHelper {
+		return nil
+	}
+	d := &c.Provision.Disk
+	mirror := strings.ToLower(strings.TrimSpace(d.MirroringMode))
+	// detect-disk ignores the mirroring mode when Device or SerialNumber is set.
+	if mirror == "" || mirror == "none" || strings.TrimSpace(d.Device) != "" || strings.TrimSpace(d.SerialNumber) != "" {
+		return nil
+	}
+	return []string{"provision.secureBoot.moduleSigning.enrollment efi-helper stages mok-enroll.efi on the primary disk only; " +
+		"with provision.disk.mirroringMode " + mirror + " use mokutil or external"}
+}
+
+// underChrootBind reports whether dir is below a directory that the chroot
+// binds from the ramdisk.
+func underChrootBind(dir string) bool {
+	for _, d := range []string{"/run", "/proc", "/sys", "/dev"} {
+		if dir == d || strings.HasPrefix(dir, d+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 func validateSecureBootConfig(imageMode string, secureBoot *SecureBootConfig, ab *ABConfig) error {
 	if secureBoot == nil {
 		return nil
@@ -796,6 +875,7 @@ func validateSecureBootConfig(imageMode string, secureBoot *SecureBootConfig, ab
 		strings.EqualFold(strings.TrimSpace(imageMode), ImageModeAB) && ab.PreserveExisting {
 		errs = append(errs, "provision.secureBoot.reEnable requires a hard reboot, but provision.ab.preserveExisting uses kexec")
 	}
+	errs = append(errs, validateModuleSigning(imageMode, secureBoot, ab)...)
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}

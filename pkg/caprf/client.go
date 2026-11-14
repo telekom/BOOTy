@@ -1265,7 +1265,8 @@ func applyCryptoEraseVar(cfg *config.MachineConfig, value string) error {
 
 func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 	if applyNetworkStringVar(cfg, key, value) || applySecureBootDigestVar(cfg, key, value) || applyPartitionLayoutSourceVar(cfg, key, value) || applyImageWriteVar(cfg, key, value) ||
-		applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) || applyCheckStringVar(cfg, key, value) {
+		applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) || applyCheckStringVar(cfg, key, value) ||
+		applyMOKStringVar(cfg, key, value) {
 		return true
 	}
 
@@ -1322,8 +1323,6 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"EVENT_URL":                   &cfg.Telemetry.EventURL,
 		"CRASH_ARTIFACTS_PREPARE_URL": &cfg.Provision.CrashArtifacts.PrepareURL,
 		"CRASH_ARTIFACTS_UPLOAD_URL":  &cfg.Provision.CrashArtifacts.UploadURL,
-		"MOK_CERT_PATH":               &cfg.Provision.SecureBoot.MOKCertPath,
-		"MOK_PASSWORD":                &cfg.Provision.SecureBoot.MOKPassword,
 		"TOKEN_URL":                   &cfg.Transport.TokenURL,
 		"TOKEN_ALGORITHM":             &cfg.Transport.TokenAlgorithm,
 		"CA_BUNDLE_FILE":              &cfg.Transport.CABundleFile,
@@ -1343,6 +1342,26 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		return true
 	}
 	return false
+}
+
+// applyMOKStringVar handles MOK enrollment and module signing options.
+func applyMOKStringVar(cfg *config.MachineConfig, key, value string) bool {
+	sb := &cfg.Provision.SecureBoot
+	switch key {
+	case "SECUREBOOT_SIGNING":
+		sb.Signing = value
+	case "MOK_CERT_PATH":
+		sb.MOKCertPath = value
+	case "MOK_PASSWORD":
+		sb.MOKPassword = value
+	case "MODULE_SIGNING_ENROLLMENT":
+		sb.ModuleSigning.Enrollment = value
+	case "MODULE_SIGNING_CERT_DIR":
+		sb.ModuleSigning.CertDir = value
+	default:
+		return false
+	}
+	return true
 }
 
 // applyImageWriteVar handles the image write and cosign verification options.
@@ -1720,7 +1739,7 @@ func applyBoolIntVar(cfg *config.MachineConfig, key, value string) (bool, error)
 	if handled, err := applyIntVar(cfg, key, value); handled {
 		return true, err
 	}
-	if applyCrashArtifactsBoolVar(cfg, key, value) {
+	if applyCrashArtifactsBoolVar(cfg, key, value) || applyModuleSigningBoolVar(cfg, key, value) {
 		return true, nil
 	}
 	if applyCoreBoolVar(cfg, key, value) {
@@ -1809,6 +1828,16 @@ func applyCrashArtifactsBoolVar(cfg *config.MachineConfig, key, value string) bo
 		cfg.Provision.CrashArtifacts.Enabled = parseBoolVar(value)
 	case "CRASH_ARTIFACTS_INCLUDE_MEMORY_DUMPS":
 		cfg.Provision.CrashArtifacts.IncludeMemoryDumps = parseBoolVar(value)
+	default:
+		return false
+	}
+	return true
+}
+
+func applyModuleSigningBoolVar(cfg *config.MachineConfig, key, value string) bool {
+	switch key {
+	case "MODULE_SIGNING_ALLOW_FAILURE":
+		cfg.Provision.SecureBoot.ModuleSigning.AllowFailure = parseBoolVar(value)
 	default:
 		return false
 	}
