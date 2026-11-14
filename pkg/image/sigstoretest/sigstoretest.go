@@ -17,6 +17,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha1" //nolint:gosec // ESS signingCertificate v1 uses SHA-1
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -106,6 +107,8 @@ type Options struct {
 	BadInclusionProof bool
 	// BadSET breaks the signed entry timestamp.
 	BadSET bool
+	// NoSET leaves the signed entry timestamp out of a Rekor v1 entry.
+	NoSET bool
 
 	// MediaType is the bundle media type; default BundleMediaType (v0.3).
 	MediaType string
@@ -137,6 +140,10 @@ type Options struct {
 	// TimestampWithoutCert leaves the TSA certificate out of the token; the
 	// trusted root lists it.
 	TimestampWithoutCert bool
+	// TimestampESS selects the signed attribute naming the TSA certificate:
+	// "" signingCertificateV2 (SHA-256), "v1" signingCertificate (SHA-1),
+	// "none" leaves it out, "wrong" names another certificate.
+	TimestampESS string
 
 	// LeafP384 gives the certificate a P-384 key that still signs with
 	// SHA-256, which a verifier must refuse.
@@ -544,6 +551,10 @@ func (s *Sigstore) logEntry(kind string, body []byte, o Options, proof bool) (ma
 		"inclusionPromise":  map[string]any{"signedEntryTimestamp": set},
 		"canonicalizedBody": body,
 	}
+	if o.NoSET {
+		delete(entry, "inclusionPromise")
+		delete(entry, "integratedTime")
+	}
 	if !proof {
 		return entry, nil
 	}
@@ -675,6 +686,13 @@ func (s *Sigstore) timestamp(sig []byte, o Options) ([]byte, error) {
 		return nil, err
 	}
 	attrs := [][]byte{contentType, messageDigest}
+	if o.TimestampESS != "none" {
+		ess, err := essAttribute(authority.cert, o.TimestampESS)
+		if err != nil {
+			return nil, err
+		}
+		attrs = append(attrs, ess)
+	}
 	slices.SortFunc(attrs, bytes.Compare) // DER SET OF
 	signedAttrs, err := tlv(asn1.ClassUniversal, asn1.TagSet, attrs...)
 	if err != nil {
@@ -743,6 +761,50 @@ func (s *Sigstore) timestamp(sig []byte, o Options) ([]byte, error) {
 		return nil, err
 	}
 	return tlv(asn1.ClassUniversal, asn1.TagSequence, status, token)
+}
+
+// essAttribute returns the signed attribute signingCertificateV2 (or, with
+// kind "v1", signingCertificate) naming cert, or with kind "wrong" a hash of
+// other bytes.
+func essAttribute(cert *x509.Certificate, kind string) ([]byte, error) {
+	raw := cert.Raw
+	if kind == "wrong" {
+		raw = []byte("another certificate")
+	}
+	oid := asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 47}
+	h := sha256.Sum256(raw)
+	certHash := h[:]
+	if kind == "v1" {
+		oid = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 12}
+		h1 := sha1.Sum(raw) //nolint:gosec // as specified
+		certHash = h1[:]
+	}
+	octet, err := asn1.Marshal(certHash)
+	if err != nil {
+		return nil, err
+	}
+	// ESSCertIDv2 with the default hashAlgorithm (SHA-256) has only the hash.
+	id, err := tlv(asn1.ClassUniversal, asn1.TagSequence, octet)
+	if err != nil {
+		return nil, err
+	}
+	certs, err := tlv(asn1.ClassUniversal, asn1.TagSequence, id)
+	if err != nil {
+		return nil, err
+	}
+	value, err := tlv(asn1.ClassUniversal, asn1.TagSequence, certs)
+	if err != nil {
+		return nil, err
+	}
+	values, err := tlv(asn1.ClassUniversal, asn1.TagSet, value)
+	if err != nil {
+		return nil, err
+	}
+	oidDER, err := asn1.Marshal(oid)
+	if err != nil {
+		return nil, err
+	}
+	return tlv(asn1.ClassUniversal, asn1.TagSequence, oidDER, values)
 }
 
 // tlv encodes a constructed value of class and tag holding children.

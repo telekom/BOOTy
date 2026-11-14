@@ -108,19 +108,18 @@ func TestVerifyCosignKeyless(t *testing.T) {
 			edit: func(o *sigstoretest.Options) { o.CertificateChain = true }},
 		{name: "bundle v0.2 without inclusion proof", wantErr: "inclusion proof missing",
 			edit: func(o *sigstoretest.Options) { o.MediaType, o.NoInclusionProof = sigstoretest.BundleMediaTypeV02, true }},
-		{name: "message signature", edit: func(o *sigstoretest.Options) { o.MessageSignature = true }},
-		{name: "message signature v0.1", edit: func(o *sigstoretest.Options) {
-			o.MessageSignature, o.MediaType, o.CertificateChain = true, sigstoretest.BundleMediaTypeV01, true
-		}},
-		{name: "message signature of another digest", signDigest: otherDigest, wantErr: "message digest does not match",
+		// A valid message signature over the manifest (`cosign sign-blob`)
+		// is no image signature, as in cosign (#933 review).
+		{name: "message signature of the manifest", wantErr: "a message signature does not sign an image",
 			edit: func(o *sigstoretest.Options) { o.MessageSignature = true }},
+		{name: "message signature v0.1 with rekor v2", wantErr: "a message signature does not sign an image",
+			edit: func(o *sigstoretest.Options) {
+				o.MessageSignature, o.MediaType, o.CertificateChain, o.RekorV2, o.Timestamp = true, sigstoretest.BundleMediaTypeV01, true, true, true
+			}},
 
 		// RFC 3161 timestamps and Rekor v2.
 		{name: "rekor v1 and timestamp", edit: func(o *sigstoretest.Options) { o.Timestamp = true }},
 		{name: "rekor v2 and timestamp", edit: func(o *sigstoretest.Options) { o.RekorV2, o.Timestamp = true, true }},
-		{name: "rekor v2 message signature", edit: func(o *sigstoretest.Options) {
-			o.RekorV2, o.Timestamp, o.MessageSignature = true, true, true
-		}},
 		{name: "rekor v2 expired certificate stamped in time", edit: func(o *sigstoretest.Options) {
 			o.RekorV2, o.Timestamp, o.SignedAt = true, true, longAgo
 		}},
@@ -139,6 +138,13 @@ func TestVerifyCosignKeyless(t *testing.T) {
 			edit: func(o *sigstoretest.Options) { o.RekorV2, o.Timestamp, o.NoInclusionProof = true, true, true }},
 		{name: "rekor v2 entry of another signature", signDigest: otherDigest, wantErr: "statement subject does not name digest",
 			edit: func(o *sigstoretest.Options) { o.RekorV2, o.Timestamp = true, true }},
+		{name: "timestamp with signingCertificate v1", edit: func(o *sigstoretest.Options) {
+			o.RekorV2, o.Timestamp, o.TimestampESS = true, true, "v1"
+		}},
+		{name: "timestamp without signingCertificate", wantErr: "no signingCertificate or signingCertificateV2",
+			edit: func(o *sigstoretest.Options) { o.RekorV2, o.Timestamp, o.TimestampESS = true, true, "none" }},
+		{name: "timestamp signingCertificate of another certificate", wantErr: "does not name the signer certificate",
+			edit: func(o *sigstoretest.Options) { o.RekorV2, o.Timestamp, o.TimestampESS = true, true, "wrong" }},
 		{name: "TSA not in the trusted root", wantErr: "no timestamp authority of the trusted root signed it",
 			edit: func(o *sigstoretest.Options) { o.RekorV2, o.Timestamp, o.UntrustedTSA = true, true, true }},
 		{name: "message imprint mismatch", wantErr: "message imprint is not the hash of the signature",

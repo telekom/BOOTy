@@ -82,17 +82,17 @@ timestamp thresholds of 1):
 | linux/amd64 | 30,875,808 | 36,610,208 | +5,734,400 (+18.6%) | +1,864,186 | +1,286,768 |
 | linux/arm64 | 28,770,464 | 34,209,952 | +5,439,488 (+18.9%) | +1,693,124 | +1,105,900 |
 
-The standard-library verifier adds 192,512 bytes on amd64 (31,068,320;
-+76,459 gzip -9) and 131,072 bytes on arm64 (28,901,536; +68,995 gzip -9),
+The standard-library verifier adds 200,704 bytes on amd64 (31,076,512;
++79,771 gzip -9) and 131,072 bytes on arm64 (28,901,536; +71,805 gzip -9),
 measured the same way. Of that, Rekor v2, RFC 3161 timestamps and the other
-bundle versions take 65,536 bytes on amd64 (+25,660 gzip -9) and nothing on
-arm64 (64 KiB segment alignment; +20,641 gzip -9).
+bundle versions take 73,728 bytes on amd64 (+28,972 gzip -9) and nothing on
+arm64 (64 KiB segment alignment; +23,451 gzip -9).
 
 It links the Rekor types with go-openapi, in-toto, go-tuf and the
 timestamp-authority client. The compressed growth alone is more than the 5%
 headroom of the initramfs size budgets (`test/e2e/build_flavours_e2e_test.go`).
 BOOTy verifies what cosign and the Sigstore clients write for images
-(bundles v0.1 to v0.3 with DSSE or message signatures, the cosign 2 `.sig`
+(bundles v0.1 to v0.3 with DSSE envelopes, the cosign 2 `.sig`
 tag, Fulcio chain at every verified time, embedded SCT, Rekor v1 SET,
 inclusion proof and checkpoint, Rekor v2 `hashedrekord` 0.0.2 entries with
 signed-note checkpoints, RFC 3161 timestamps) with the standard library in

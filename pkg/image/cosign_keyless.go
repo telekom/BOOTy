@@ -24,8 +24,9 @@ import (
 //   - a Sigstore bundle (v0.1 to v0.3) attached to the image as an OCI
 //     referrer, as cosign 3 does by default: a DSSE envelope with an in-toto
 //     statement of predicate type CosignSignPredicateType whose subject is
-//     the image digest, or a message signature (`cosign sign-blob` style)
-//     whose message digest is the image manifest digest;
+//     the image digest. As in cosign's verifier, nothing else counts as an
+//     image signature: not a message signature (`cosign sign-blob` of the
+//     manifest), not an attestation of another predicate type;
 //   - the sha256-<hex>.sig tag that cosign 2 and `cosign sign
 //     --new-bundle-format=false` write: a simple-signing payload with the
 //     certificate, the Rekor entry (with its SET) and an optional RFC 3161
@@ -183,24 +184,14 @@ func (p *CosignKeyless) verifyBundleLayer(img v1.Image, desc *v1.Descriptor, dig
 	if err := json.Unmarshal(data, &b); err != nil {
 		return fmt.Errorf("parse bundle: %w", err)
 	}
-	hexDigest := strings.TrimPrefix(digestRef.DigestStr(), "sha256:")
-	if b.MessageSignature != nil {
-		// A message signature over the manifest: its digest is the image digest.
-		digest, err := hex.DecodeString(hexDigest)
-		if err != nil {
-			return fmt.Errorf("image digest: %w", err)
-		}
-		_, err = verifySigstoreBundle(p.root, p.identity, &b, digest)
-		return err
-	}
 	if b.DSSEEnvelope == nil || b.DSSEEnvelope.PayloadType != inTotoPayloadType {
-		return errors.New("bundle carries neither an in-toto DSSE envelope nor a message signature")
+		return errors.New("bundle carries no in-toto DSSE envelope (a message signature does not sign an image)")
 	}
 	payload, err := verifySigstoreBundle(p.root, p.identity, &b, nil)
 	if err != nil {
 		return err
 	}
-	return checkCosignStatement(payload, hexDigest)
+	return checkCosignStatement(payload, strings.TrimPrefix(digestRef.DigestStr(), "sha256:"))
 }
 
 // checkCosignStatement checks that the verified in-toto statement is a

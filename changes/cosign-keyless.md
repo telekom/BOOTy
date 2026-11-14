@@ -7,8 +7,9 @@ section: Upgrade notes for CAPRF
   `SYSEXT_COSIGN_*` options) check a Fulcio/Rekor signature of `oci://`
   sources offline against a Sigstore `trusted_root.json` in the ramdisk,
   before the wipe. With keys as well, either kind of signature is accepted.
-  All are unset by default. BOOTy reads bundles v0.1 to v0.3 (DSSE or message
-  signature) attached as OCI referrers and the cosign 2 `.sig` tag, with Rekor
+  All are unset by default. BOOTy reads bundles v0.1 to v0.3 (the DSSE statement of
+  `cosign sign`; as in cosign, a message signature bundle does not sign an
+  image) attached as OCI referrers and the cosign 2 `.sig` tag, with Rekor
   v1 entries (SET, inclusion proof) or Rekor v2 entries (`hashedrekord` 0.0.2,
   checkpoint) and RFC 3161 timestamps of the trusted root's timestamp
   authorities. A Rekor v2 signature needs a timestamp: the certificate is

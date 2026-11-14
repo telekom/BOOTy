@@ -544,15 +544,20 @@ change its checksum while a policy is set (see
 [command payload](caprf-integration.md#command-payload)).
 
 Keyless signature formats: Sigstore bundles v0.1, v0.2 and v0.3 (both media
-type forms) as OCI referrers, with a DSSE in-toto statement (`cosign sign`)
-or a message signature of the manifest digest, and the cosign 2 `.sig` tag;
+type forms) as OCI referrers, with the DSSE in-toto statement of
+`cosign sign` (predicate `https://sigstore.dev/cosign/sign/v1`), and the
+cosign 2 `.sig` tag;
 Rekor v1 entries (SET, inclusion proof and checkpoint) and Rekor v2 entries
 (`hashedrekord` 0.0.2, inclusion proof and signed-note checkpoint); RFC 3161
-timestamps of the trusted root's `timestampAuthorities`. The certificate is
+timestamps of the trusted root's `timestampAuthorities` (signed by the
+certificate that their ESS `signingCertificate(V2)` attribute names). A log
+listed more than once under one ID is used with the copy valid at the
+checked time. The certificate is
 checked at each verified time (Rekor v1 integrated time, RFC 3161 time) and
 needs at least one, so a Rekor v2 signature needs a timestamp. Every Rekor
-entry must verify; a timestamp that does not verify is ignored. Public-key
-bundles and Rekor v2 `dsse` entries are refused. See
+entry must verify; a timestamp that does not verify is ignored. As in
+cosign, a message signature bundle (`cosign sign-blob` of the manifest) is no
+image signature. Public-key bundles and Rekor v2 `dsse` entries are refused. See
 [keyless verification](../README.md#keyless-cosign-verification). See
 [cosign verification](../README.md#cosign-verification-of-oci-images-and-sysexts).
 

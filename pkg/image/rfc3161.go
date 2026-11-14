@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
+	"crypto/sha1" //nolint:gosec // ESS signingCertificate (v1) names the signer by its SHA-1, RFC 2634
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -27,7 +28,17 @@ var (
 	oidContentType   = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 3}
 	oidMessageDigest = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 4}
 	oidEKU           = asn1.ObjectIdentifier{2, 5, 29, 37}
+	// ESS signingCertificate (RFC 2634) and signingCertificateV2 (RFC 5035).
+	oidSigningCertificate   = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 12}
+	oidSigningCertificateV2 = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 47}
 )
+
+// essCertID is the hash of the signing certificate that a signed ESS
+// signingCertificate(V2) attribute names.
+type essCertID struct {
+	hash     crypto.Hash
+	certHash []byte
+}
 
 // timeStampToken is the part of a TimeStampResp that BOOTy checks.
 type timeStampToken struct {
@@ -40,6 +51,7 @@ type timeStampToken struct {
 	imprintHash crypto.Hash
 	imprint     []byte
 	genTime     time.Time
+	essIDs      []essCertID // from the signed attributes
 }
 
 // verifyRFC3161 verifies the DER TimeStampResp resp over sig against the
@@ -98,6 +110,12 @@ func (tok *timeStampToken) verifyBy(tsa *sigstoreCA) error {
 	}
 	if err := checkTimestampingLeaf(signer); err != nil {
 		return err
+	}
+	// The signed ESS attribute binds the signature to this certificate.
+	for _, id := range tok.essIDs {
+		if !bytes.Equal(hashOf(id.hash, signer.Raw), id.certHash) {
+			return errors.New("signing certificate attribute does not name the signer certificate")
+		}
 	}
 	alg, err := cmsSignatureAlgorithm(signer.PublicKey, tok.digest)
 	if err != nil {
@@ -180,6 +198,7 @@ func (tok *timeStampToken) verifySignedAttrs() error {
 	h := tok.digest.New()
 	h.Write(tok.tstInfo)
 	var contentType, digest bool
+	tok.essIDs = nil
 	for _, a := range attrs {
 		var attr struct {
 			Type   asn1.ObjectIdentifier
@@ -192,21 +211,87 @@ func (tok *timeStampToken) verifySignedAttrs() error {
 		if err != nil || len(values) != 1 {
 			return errors.New("malformed signed attribute value")
 		}
-		switch {
-		case attr.Type.Equal(oidContentType):
-			var oid asn1.ObjectIdentifier
-			_, err := asn1.Unmarshal(values[0], &oid)
-			contentType = err == nil && oid.Equal(oidTSTInfo)
-		case attr.Type.Equal(oidMessageDigest):
-			var md []byte
-			_, err := asn1.Unmarshal(values[0], &md)
-			digest = err == nil && bytes.Equal(md, h.Sum(nil))
+		ct, md, err := tok.readSignedAttr(attr.Type, values[0], h.Sum(nil))
+		if err != nil {
+			return err
 		}
+		contentType, digest = contentType || ct, digest || md
 	}
 	if !contentType || !digest {
 		return errors.New("signed attributes do not name the TSTInfo content type and digest")
 	}
+	if len(tok.essIDs) == 0 {
+		return errors.New("signed attributes have no signingCertificate or signingCertificateV2")
+	}
 	return nil
+}
+
+// readSignedAttr reads one signed attribute value: whether it is the
+// TSTInfo content type, whether it is the message digest tstDigest, and an
+// ESS signing certificate into tok.essIDs.
+func (tok *timeStampToken) readSignedAttr(typ asn1.ObjectIdentifier, value, tstDigest []byte) (contentType, digest bool, err error) {
+	switch {
+	case typ.Equal(oidContentType):
+		var oid asn1.ObjectIdentifier
+		_, err := asn1.Unmarshal(value, &oid)
+		return err == nil && oid.Equal(oidTSTInfo), false, nil
+	case typ.Equal(oidMessageDigest):
+		var md []byte
+		_, err := asn1.Unmarshal(value, &md)
+		return false, err == nil && bytes.Equal(md, tstDigest), nil
+	case typ.Equal(oidSigningCertificate), typ.Equal(oidSigningCertificateV2):
+		id, err := parseESSCertID(value, typ.Equal(oidSigningCertificateV2))
+		if err != nil {
+			return false, false, err
+		}
+		tok.essIDs = append(tok.essIDs, id)
+	}
+	return false, false, nil
+}
+
+// parseESSCertID returns the first ESSCertID(v2) of a SigningCertificate
+// (SHA-1) or SigningCertificateV2 (hashAlgorithm, default SHA-256) value:
+// the one of the signer.
+func parseESSCertID(value []byte, v2 bool) (essCertID, error) {
+	bad := errors.New("malformed signing certificate attribute")
+	sc, err := asn1Children(value, asn1.ClassUniversal, asn1.TagSequence)
+	if err != nil || len(sc) == 0 {
+		return essCertID{}, bad
+	}
+	certs, err := asn1Children(sc[0], asn1.ClassUniversal, asn1.TagSequence)
+	if err != nil || len(certs) == 0 {
+		return essCertID{}, bad
+	}
+	f, err := asn1Children(certs[0], asn1.ClassUniversal, asn1.TagSequence)
+	if err != nil || len(f) == 0 {
+		return essCertID{}, bad
+	}
+	id := essCertID{hash: crypto.SHA1}
+	if v2 {
+		id.hash = crypto.SHA256
+		var alg pkix.AlgorithmIdentifier
+		if _, err := asn1.Unmarshal(f[0], &alg); err == nil { // hashAlgorithm present
+			if id.hash = hashByOID(alg.Algorithm); id.hash == 0 || len(f) < 2 {
+				return essCertID{}, bad
+			}
+			f = f[1:]
+		}
+	}
+	if rest, err := asn1.Unmarshal(f[0], &id.certHash); err != nil || len(rest) != 0 {
+		return essCertID{}, bad
+	}
+	return id, nil
+}
+
+// hashOf hashes data with SHA-1 or a hash of hashByOID.
+func hashOf(h crypto.Hash, data []byte) []byte {
+	if h == crypto.SHA1 {
+		sum := sha1.Sum(data) //nolint:gosec // see the import
+		return sum[:]
+	}
+	hh := h.New()
+	hh.Write(data)
+	return hh.Sum(nil)
 }
 
 // parseTimeStampResp parses TimeStampResp (RFC 3161, section 2.4.2) with
@@ -239,18 +324,27 @@ func parseTimeStampResp(der []byte) (*timeStampToken, error) {
 // signedDataOfTimeStampResp checks the granted status and returns the
 // fields of the token's SignedData: version, digestAlgorithms,
 // encapContentInfo, [0] certificates, [1] crls, signerInfos.
+// checkTimeStampStatus accepts the PKIStatusInfo granted (0) and
+// grantedWithMods (1).
+func checkTimeStampStatus(der []byte) error {
+	status, err := asn1Children(der, asn1.ClassUniversal, asn1.TagSequence)
+	var code int
+	if err != nil || len(status) == 0 {
+		return errors.New("malformed timestamp status")
+	}
+	if _, err := asn1.Unmarshal(status[0], &code); err != nil || code < 0 || code > 1 {
+		return fmt.Errorf("timestamp status %d is not granted", code)
+	}
+	return nil
+}
+
 func signedDataOfTimeStampResp(der []byte) ([][]byte, error) {
 	resp, err := asn1Children(der, asn1.ClassUniversal, asn1.TagSequence)
 	if err != nil || len(resp) != 2 {
 		return nil, errors.New("not a timestamp response with a token")
 	}
-	status, err := asn1Children(resp[0], asn1.ClassUniversal, asn1.TagSequence)
-	var code int
-	if err != nil || len(status) == 0 {
-		return nil, errors.New("malformed timestamp status")
-	}
-	if _, err := asn1.Unmarshal(status[0], &code); err != nil || code > 1 { // granted, grantedWithMods
-		return nil, fmt.Errorf("timestamp status %d is not granted", code)
+	if err := checkTimeStampStatus(resp[0]); err != nil {
+		return nil, err
 	}
 	ci, err := asn1Children(resp[1], asn1.ClassUniversal, asn1.TagSequence)
 	var ciType asn1.ObjectIdentifier

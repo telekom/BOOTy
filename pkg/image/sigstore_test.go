@@ -6,6 +6,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/telekom/BOOTy/pkg/image/sigstoretest"
 )
 
 // TestVerifySigstoreBundleRecorded checks the verifier against a bundle that
@@ -119,5 +122,109 @@ func TestMerkleRootFromProofBounds(t *testing.T) {
 		if _, err := merkleRootFromProof(tc.index, tc.size, leaf, tc.proof); err == nil {
 			t.Errorf("merkleRootFromProof(%d, %d, %d hashes) succeeded", tc.index, tc.size, len(tc.proof))
 		}
+	}
+}
+
+// trustedRootWith returns the trusted root of ss changed by edit, which
+// gets the JSON object.
+func trustedRootWith(t *testing.T, ss *sigstoretest.Sigstore, edit func(map[string]any)) *sigstoreRoot {
+	t.Helper()
+	data, err := ss.TrustedRootJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	edit(m)
+	if data, err = json.Marshal(m); err != nil {
+		t.Fatal(err)
+	}
+	root, err := parseSigstoreRoot(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// withValidity returns a copy of the log or authority JSON object l with
+// the validFor window [start, end] of its public key.
+func withValidity(l any, start, end time.Time) map[string]any {
+	data, _ := json.Marshal(l) //nolint:errchkjson // a JSON object read from JSON
+	var c map[string]any
+	_ = json.Unmarshal(data, &c) //nolint:errchkjson // as above
+	c["publicKey"].(map[string]any)["validFor"] = map[string]string{
+		"start": start.UTC().Format(time.RFC3339), "end": end.UTC().Format(time.RFC3339),
+	}
+	return c
+}
+
+// The #933 review: a log listed twice under one ID (e.g. with two validity
+// windows) must not shadow the other entry; every Rekor v1 entry's key must
+// be valid at every verified time, also without a SET; a Rekor v1
+// checkpoint needs the log origin of the base URL.
+func TestSigstoreLogKeys(t *testing.T) {
+	ss, err := sigstoretest.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedAt := time.Now().Add(-time.Hour)
+	retired := func(l any) map[string]any {
+		return withValidity(l, signedAt.Add(-48*time.Hour), signedAt.Add(-24*time.Hour))
+	}
+	id := sigstoreIdentity{san: regexp.MustCompile(`^` + regexp.QuoteMeta(testIdentity) + `$`), issuer: testIssuer}
+	for _, tc := range []struct {
+		name    string
+		opts    sigstoretest.Options
+		edit    func(map[string]any)
+		wantErr string
+	}{
+		{name: "rekor and CT log listed twice, the retired copy last", edit: func(m map[string]any) {
+			for _, k := range []string{"tlogs", "ctlogs"} {
+				logs := m[k].([]any)
+				m[k] = append(logs, retired(logs[0]))
+			}
+		}},
+		{name: "rekor key retired", wantErr: "log key not valid", edit: func(m map[string]any) {
+			logs := m["tlogs"].([]any)
+			logs[0] = retired(logs[0])
+		}},
+		{name: "CT key retired", wantErr: "no SCT verifies", edit: func(m map[string]any) {
+			logs := m["ctlogs"].([]any)
+			logs[0] = retired(logs[0])
+		}},
+		{name: "no SET, proof and timestamp", opts: sigstoretest.Options{NoSET: true, Timestamp: true}, edit: func(map[string]any) {}},
+		{name: "no SET, rekor key retired before the timestamp", wantErr: "log key not valid at every signing time",
+			opts: sigstoretest.Options{NoSET: true, Timestamp: true}, edit: func(m map[string]any) {
+				logs := m["tlogs"].([]any)
+				logs[0] = retired(logs[0])
+			}},
+		{name: "rekor log without base URL", wantErr: "no checkpoint origin", edit: func(m map[string]any) {
+			delete(m["tlogs"].([]any)[0].(map[string]any), "baseUrl")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := tc.opts
+			o.Identity, o.Issuer, o.SignedAt = testIdentity, testIssuer, signedAt
+			data, err := ss.Bundle("sha256:"+strings.Repeat("ab", 32), o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var b sigstoreBundle
+			if err := json.Unmarshal(data, &b); err != nil {
+				t.Fatal(err)
+			}
+			_, err = verifySigstoreBundle(trustedRootWith(t, ss, tc.edit), id, &b, nil)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("verifySigstoreBundle() = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("verifySigstoreBundle() = %v, want %q", err, tc.wantErr)
+			}
+		})
 	}
 }

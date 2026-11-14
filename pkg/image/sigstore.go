@@ -79,10 +79,12 @@ var (
 
 // sigstoreRoot is the parsed trusted root.
 type sigstoreRoot struct {
-	cas    []sigstoreCA
-	tsas   []sigstoreCA               // timestamp authorities
-	tlogs  map[string]*sigstoreLogKey // by hex log ID
-	ctlogs map[string]*sigstoreLogKey
+	cas  []sigstoreCA
+	tsas []sigstoreCA // timestamp authorities
+	// Logs by hex log ID. A log can be listed more than once, e.g. with
+	// several validity windows; a key valid at the checked time is used.
+	tlogs  map[string][]*sigstoreLogKey
+	ctlogs map[string][]*sigstoreLogKey
 }
 
 type sigstoreCA struct {
@@ -207,8 +209,8 @@ func parseSigstoreCAs(cas []sigstoreCAJSON, tsa bool) ([]sigstoreCA, error) {
 	return out, nil
 }
 
-func parseSigstoreLogs(logs []sigstoreLogJSON) (map[string]*sigstoreLogKey, error) {
-	out := make(map[string]*sigstoreLogKey, len(logs))
+func parseSigstoreLogs(logs []sigstoreLogJSON) (map[string][]*sigstoreLogKey, error) {
+	out := make(map[string][]*sigstoreLogKey, len(logs))
 	for i, l := range logs {
 		key, err := x509.ParsePKIXPublicKey(l.PublicKey.RawBytes)
 		if err != nil {
@@ -232,7 +234,8 @@ func parseSigstoreLogs(logs []sigstoreLogJSON) (map[string]*sigstoreLogKey, erro
 		if l.PublicKey.ValidFor.End != nil {
 			k.end = *l.PublicKey.ValidFor.End
 		}
-		out[hex.EncodeToString(l.LogID.KeyID)] = k
+		id := hex.EncodeToString(l.LogID.KeyID)
+		out[id] = append(out[id], k)
 	}
 	return out, nil
 }
@@ -477,9 +480,8 @@ func verifySigstoreTimestamps(root *sigstoreRoot, b *sigstoreBundle, sig []byte)
 
 // verifySigstoreTlog checks that every entry is of a log of the trusted root
 // and records the signature, the certificate and the signed content. It
-// returns the integrated times of the Rekor v1 entries with a SET. Entries
-// without a SET need tsTimes, the verified timestamps, to check the log key
-// validity at.
+// returns the integrated times of the Rekor v1 entries with a SET. The key
+// of each entry must be valid at every verified time: these and tsTimes.
 func verifySigstoreTlog(root *sigstoreRoot, entries []sigstoreTlogEntry, leaf *x509.Certificate, c *signedContent, version string, tsTimes []time.Time) ([]time.Time, error) {
 	if len(entries) == 0 {
 		return nil, errors.New("bundle has no transparency log entry")
@@ -489,6 +491,7 @@ func verifySigstoreTlog(root *sigstoreRoot, entries []sigstoreTlogEntry, leaf *x
 	}
 	seen := make(map[string]bool, len(entries))
 	var times []time.Time
+	keys := make([][]*sigstoreLogKey, len(entries)) // the keys each entry verifies with
 	for i := range entries {
 		e := &entries[i]
 		k := fmt.Sprintf("%x/%d", e.LogID.KeyID, e.LogIndex)
@@ -496,23 +499,40 @@ func verifySigstoreTlog(root *sigstoreRoot, entries []sigstoreTlogEntry, leaf *x
 			return nil, fmt.Errorf("duplicate tlog entry %d", e.LogIndex)
 		}
 		seen[k] = true
-		t, err := verifySigstoreTlogEntry(root, e, leaf, c, version, tsTimes)
-		if err != nil {
-			return nil, fmt.Errorf("tlog entry %d: %w", e.LogIndex, err)
+		logID := hex.EncodeToString(e.LogID.KeyID)
+		candidates := root.tlogs[logID]
+		if len(candidates) == 0 {
+			return nil, fmt.Errorf("tlog entry %d: log %s is not in the trusted root", e.LogIndex, logID)
+		}
+		var errs []error
+		var t time.Time
+		for _, key := range candidates {
+			ti, err := verifySigstoreTlogEntry(e, key, logID, leaf, c, version, tsTimes)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			keys[i], t = append(keys[i], key), ti
+		}
+		if len(keys[i]) == 0 {
+			return nil, fmt.Errorf("tlog entry %d: %w", e.LogIndex, errors.Join(errs...))
 		}
 		if !t.IsZero() {
 			times = append(times, t)
 		}
 	}
+	all := slices.Concat(times, tsTimes)
+	for i := range entries {
+		if !slices.ContainsFunc(keys[i], func(k *sigstoreLogKey) bool { return k.validAtAll(all) }) {
+			return nil, fmt.Errorf("tlog entry %d: log key not valid at every signing time", entries[i].LogIndex)
+		}
+	}
 	return times, nil
 }
 
-func verifySigstoreTlogEntry(root *sigstoreRoot, e *sigstoreTlogEntry, leaf *x509.Certificate, c *signedContent, version string, tsTimes []time.Time) (time.Time, error) {
-	logID := hex.EncodeToString(e.LogID.KeyID)
-	key, ok := root.tlogs[logID]
-	if !ok {
-		return time.Time{}, fmt.Errorf("log %s is not in the trusted root", logID)
-	}
+// verifySigstoreTlogEntry checks one entry with one key of its log; the key
+// validity is checked by the caller.
+func verifySigstoreTlogEntry(e *sigstoreTlogEntry, key *sigstoreLogKey, logID string, leaf *x509.Certificate, c *signedContent, version string, tsTimes []time.Time) (time.Time, error) {
 	if e.KindVersion.Kind+" "+e.KindVersion.Version == rekorV2Kind {
 		return time.Time{}, verifyRekorV2Entry(e, key, leaf, c, tsTimes)
 	}
@@ -526,14 +546,11 @@ func verifySigstoreTlogEntry(root *sigstoreRoot, e *sigstoreTlogEntry, leaf *x50
 		return time.Time{}, errors.New("neither a signed entry timestamp nor an inclusion proof")
 	}
 	var integrated time.Time
-	var err error
 	if hasSET {
-		integrated, err = verifySET(e, key, logID)
-	} else {
-		err = key.validAtAll(tsTimes)
-	}
-	if err != nil {
-		return time.Time{}, err
+		var err error
+		if integrated, err = verifySET(e, key, logID); err != nil {
+			return time.Time{}, err
+		}
 	}
 	if e.InclusionProof != nil {
 		leafHash := sha256.Sum256(append([]byte{0}, e.CanonicalizedBody...))
@@ -564,13 +581,8 @@ func verifySET(e *sigstoreTlogEntry, key *sigstoreLogKey, logID string) (time.Ti
 	return integrated, nil
 }
 
-func (k *sigstoreLogKey) validAtAll(times []time.Time) error {
-	for _, t := range times {
-		if !k.validAt(t) {
-			return fmt.Errorf("log key not valid at the timestamp %s", t.UTC().Format(time.RFC3339))
-		}
-	}
-	return nil
+func (k *sigstoreLogKey) validAtAll(times []time.Time) bool {
+	return !slices.ContainsFunc(times, func(t time.Time) bool { return !k.validAt(t) })
 }
 
 // verifyRekorV2Entry checks a Rekor v2 hashedrekord 0.0.2 entry, which has
@@ -579,9 +591,6 @@ func (k *sigstoreLogKey) validAtAll(times []time.Time) error {
 func verifyRekorV2Entry(e *sigstoreTlogEntry, key *sigstoreLogKey, leaf *x509.Certificate, c *signedContent, tsTimes []time.Time) error {
 	if len(tsTimes) == 0 {
 		return errors.New("a Rekor v2 entry carries no time: it needs a verified RFC 3161 timestamp")
-	}
-	if err := key.validAtAll(tsTimes); err != nil {
-		return err
 	}
 	if e.InclusionProof == nil {
 		return errors.New("inclusion proof missing (required for Rekor v2)")
@@ -821,7 +830,8 @@ func verifyCheckpoint(note string, log *sigstoreLogKey, v2 bool) (size int64, ro
 	if !v2 {
 		origin = log.host
 	}
-	if v2 && origin == "" {
+	if origin == "" {
+		// Without the origin the checkpoint could be of any log with the key.
 		return 0, nil, errors.New("the log has no base URL in the trusted root, so no checkpoint origin")
 	}
 	text, sigs, ok := strings.Cut(note, "\n\n")
@@ -833,7 +843,7 @@ func verifyCheckpoint(note string, log *sigstoreLogKey, v2 bool) (size int64, ro
 	if len(lines) < 4 {
 		return 0, nil, errors.New("too few lines")
 	}
-	if origin != "" && lines[0] != origin && (v2 || !strings.HasPrefix(lines[0], origin+" - ")) {
+	if lines[0] != origin && (v2 || !strings.HasPrefix(lines[0], origin+" - ")) {
 		return 0, nil, fmt.Errorf("origin %q is not the log %q", lines[0], origin)
 	}
 	if err := verifyNoteSignatures(text, sigs, key, origin); err != nil {
@@ -851,13 +861,13 @@ func verifyCheckpoint(note string, log *sigstoreLogKey, v2 bool) (size int64, ro
 }
 
 // verifyNoteSignatures checks the signature lines of a signed note: those
-// of key (under origin, when set) must all verify, and there must be one.
+// of key under origin must all verify, and there must be one.
 func verifyNoteSignatures(text, sigs string, key crypto.PublicKey, origin string) error {
 	verified := false
 	for line := range strings.Lines(sigs) {
 		rest, ok := strings.CutPrefix(line, "— ")
 		f := strings.Fields(rest)
-		if !ok || len(f) != 2 || (origin != "" && f[0] != origin) {
+		if !ok || len(f) != 2 || f[0] != origin {
 			continue
 		}
 		raw, err := base64.StdEncoding.DecodeString(f[1])
@@ -990,10 +1000,10 @@ func verifySCT(root *sigstoreRoot, sct, issuerKeyHash, tbs []byte) bool {
 	if err != nil || len(rest) != 0 {
 		return false
 	}
-	key, ok := root.ctlogs[hex.EncodeToString(logID)]
-	if !ok || ts > math.MaxInt64 || !key.validAt(time.UnixMilli(int64(ts))) {
+	if ts > math.MaxInt64 {
 		return false
 	}
+	at := time.UnixMilli(int64(ts))
 	// digitally-signed struct: version, signature_type certificate_timestamp,
 	// timestamp, entry_type precert_entry, issuer_key_hash, tbs<3>,
 	// extensions<2>.
@@ -1006,7 +1016,9 @@ func verifySCT(root *sigstoreRoot, sct, issuerKeyHash, tbs []byte) bool {
 	b.Write(tbs)
 	b.Write([]byte{byte(len(ext) >> 8), byte(len(ext))})
 	b.Write(ext)
-	return verifySigstoreSig(key.key, b.Bytes(), sig)
+	return slices.ContainsFunc(root.ctlogs[hex.EncodeToString(logID)], func(k *sigstoreLogKey) bool {
+		return k.validAt(at) && verifySigstoreSig(k.key, b.Bytes(), sig)
+	})
 }
 
 // tlsVector returns the content of a TLS vector with a length prefix of n
