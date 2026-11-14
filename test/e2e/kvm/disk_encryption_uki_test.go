@@ -401,17 +401,31 @@ func (vm *ukiVM) boot(phase string, key []byte) (string, bool) {
 // espFile reads or replaces a file on the ESP of the installed disk.
 func (vm *ukiVM) espFile(espPart int, rel string, data []byte) []byte {
 	mnt, cleanup := mountQcow2Partition(vm.t, vm.disk, espPart)
+	defer vm.waitDiskUnlocked()
 	defer cleanup()
 	p := filepath.Join(mnt, rel)
-	if data != nil {
-		// mountQcow2Partition mounts read-only; qemu-nbd itself is writable.
-		run(vm.t, "remount the ESP read-write", "mount", "-o", "remount,rw", mnt)
-		if err := os.WriteFile(p, data, 0o644); err != nil {
-			vm.t.Fatal(err)
-		}
-		return nil
+	if data == nil {
+		return readFile(vm.t, p)
 	}
-	return readFile(vm.t, p)
+	// mountQcow2Partition mounts read-only; qemu-nbd itself is writable.
+	run(vm.t, "remount the ESP read-write", "mount", "-o", "remount,rw", mnt)
+	if err := os.WriteFile(p, data, 0o644); err != nil {
+		vm.t.Fatal(err)
+	}
+	run(vm.t, "unmount the ESP", "umount", mnt)
+	return nil
+}
+
+// waitDiskUnlocked waits until qemu-nbd has released the image lock.
+func (vm *ukiVM) waitDiskUnlocked() {
+	for deadline := time.Now().Add(60 * time.Second); ; time.Sleep(time.Second) {
+		if exec.CommandContext(context.Background(), "qemu-img", "info", vm.disk).Run() == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			vm.t.Fatalf("%s is still locked after the ESP change", vm.disk)
+		}
+	}
 }
 
 // enrollDB adds a Secure Boot certificate (PEM) to db, as a provisioner
