@@ -145,6 +145,9 @@ type Orchestrator struct {
 	encryptionSkipped bool
 	// ukiDigest is the UKI SHA-256 from the verified image manifest.
 	ukiDigest string
+	// ukiPCRPin is the DER of DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE, read
+	// with the digest.
+	ukiPCRPin []byte
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -2403,7 +2406,7 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 // digest references, which go-containerregistry checks, so they get the
 // signed bytes. An HTTP image source needs IMAGE_CHECKSUM instead.
 func (o *Orchestrator) verifyCosignSignatures(ctx context.Context, imageURL string) error {
-	o.ukiDigest = ""
+	o.ukiDigest, o.ukiPCRPin = "", nil
 	if err := o.checkCosignSources([]string{imageURL}); err != nil {
 		return err
 	}
@@ -2416,6 +2419,9 @@ func (o *Orchestrator) verifyCosignSignatures(ctx context.Context, imageURL stri
 		if err := o.loadUKIDigest(ctx, imageURL); err != nil {
 			return err
 		}
+	} else if err := o.loadUKIDigest(ctx, ""); err != nil {
+		// No verified manifest, so no UKI digest (an HTTP image).
+		return err
 	}
 	sysext := &o.cfg.Provision.Sysext
 	p := sysextCosignPolicy(sysext)

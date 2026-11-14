@@ -5,6 +5,7 @@ package provision
 import (
 	"bytes"
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
@@ -44,10 +45,11 @@ const (
 	tpmAlgSHA256   = 0x000B
 )
 
-// ukiPCRSignature returns the .pcrsig JSON for sections (with .pcrpkey):
-// for every phase the TPM2 PolicyPCR digest of the expected PCR 11, signed
-// with key (RSASSA-PKCS1-v1_5, SHA-256), as systemd-measure writes it.
-func ukiPCRSignature(sections map[string][]byte, key *rsa.PrivateKey) ([]byte, error) {
+// ukiPCRPolicies returns, per phase of ukiPCRPhases, the TPM2 PolicyPCR
+// digest of the PCR 11 value that systemd-stub and systemd-pcrextend
+// produce for sections: H(0 || CC || TPML_PCR_SELECTION {sha256: PCR 11}
+// || H(PCR 11)) from the empty policy.
+func ukiPCRPolicies(sections map[string][]byte) [][32]byte {
 	extend := func(pcr [32]byte, data []byte) [32]byte {
 		h := sha256.Sum256(data)
 		return sha256.Sum256(append(pcr[:], h[:]...))
@@ -58,22 +60,12 @@ func ukiPCRSignature(sections map[string][]byte, key *rsa.PrivateKey) ([]byte, e
 			pcr = extend(extend(pcr, append([]byte("."+name), 0)), b)
 		}
 	}
-	// pkfp is the SHA-256 of the PKCS#1 public key (OpenSSL i2d_PublicKey).
-	fp := sha256.Sum256(x509.MarshalPKCS1PublicKey(&key.PublicKey))
-	type entry struct {
-		PCRs []int  `json:"pcrs"`
-		PKFP string `json:"pkfp"`
-		Pol  string `json:"pol"`
-		Sig  string `json:"sig"`
-	}
-	entries := make([]entry, 0, len(ukiPCRPhases))
+	pols := make([][32]byte, 0, len(ukiPCRPhases))
 	for _, phase := range ukiPCRPhases {
 		v := pcr
 		for word := range strings.SplitSeq(phase, ":") {
 			v = extend(v, []byte(word))
 		}
-		// TPM2_PolicyPCR from the empty policy: H(0 || CC || TPML_PCR_SELECTION
-		// {sha256: PCR 11} || H(PCR 11)).
 		pcrDigest := sha256.Sum256(v[:])
 		var in bytes.Buffer
 		in.Write(make([]byte, sha256.Size))
@@ -82,19 +74,84 @@ func ukiPCRSignature(sections map[string][]byte, key *rsa.PrivateKey) ([]byte, e
 		_ = binary.Write(&in, binary.BigEndian, uint16(tpmAlgSHA256))
 		in.Write([]byte{3, 0x00, 0x08, 0x00})
 		in.Write(pcrDigest[:])
-		pol := sha256.Sum256(in.Bytes())
+		pols = append(pols, sha256.Sum256(in.Bytes()))
+	}
+	return pols
+}
+
+// ukiPCRSigEntry is one signed policy in .pcrsig.
+type ukiPCRSigEntry struct {
+	PCRs []int  `json:"pcrs"`
+	PKFP string `json:"pkfp"`
+	Pol  string `json:"pol"`
+	Sig  string `json:"sig"`
+}
+
+// ukiPCRSignature returns the .pcrsig JSON for sections (with .pcrpkey):
+// the policies of ukiPCRPolicies signed with key (RSASSA-PKCS1-v1_5,
+// SHA-256), as systemd-measure writes them.
+func ukiPCRSignature(sections map[string][]byte, key *rsa.PrivateKey) ([]byte, error) {
+	// pkfp is the SHA-256 of the PKCS#1 public key (OpenSSL i2d_PublicKey).
+	fp := sha256.Sum256(x509.MarshalPKCS1PublicKey(&key.PublicKey))
+	var entries []ukiPCRSigEntry
+	for _, pol := range ukiPCRPolicies(sections) {
 		h := sha256.Sum256(pol[:])
 		sig, err := rsa.SignPKCS1v15(nil, key, crypto.SHA256, h[:])
 		if err != nil {
 			return nil, fmt.Errorf("sign the PCR 11 policy: %w", err)
 		}
-		entries = append(entries, entry{[]int{11}, hex.EncodeToString(fp[:]), hex.EncodeToString(pol[:]), base64.StdEncoding.EncodeToString(sig)})
+		entries = append(entries, ukiPCRSigEntry{[]int{11}, hex.EncodeToString(fp[:]), hex.EncodeToString(pol[:]), base64.StdEncoding.EncodeToString(sig)})
 	}
-	out, err := json.Marshal(map[string][]entry{"sha256": entries})
+	out, err := json.Marshal(map[string][]ukiPCRSigEntry{"sha256": entries})
 	if err != nil {
 		return nil, fmt.Errorf("encode the PCR 11 signature: %w", err)
 	}
 	return out, nil
+}
+
+// checkUKIInitrdPolicy checks that sigJSON has the PCR 11 policy of the
+// enter-initrd phase of sections, signed by pubDER (RSA or ECDSA, as
+// systemd-measure signs): the initramfs unseals in that phase. A .pcrsig
+// for the later phases only would pass the test unseal of the first-boot
+// unit, which runs in userspace, and lock the TPM2 out from the next boot.
+func checkUKIInitrdPolicy(sections map[string][]byte, sigJSON, pubDER []byte) error {
+	for _, name := range ukiUnmodeledSections {
+		if sections[name] != nil {
+			return fmt.Errorf("cannot check the PCR 11 policy of a UKI with a .%s section", name)
+		}
+	}
+	pub, err := x509.ParsePKIXPublicKey(pubDER)
+	if err != nil {
+		return fmt.Errorf(".pcrpkey: %w", err)
+	}
+	var doc struct {
+		SHA256 []ukiPCRSigEntry `json:"sha256"`
+	}
+	if err := json.Unmarshal(bytes.TrimRight(sigJSON, "\x00"), &doc); err != nil {
+		return fmt.Errorf(".pcrsig: %w", err)
+	}
+	pol := ukiPCRPolicies(sections)[0]
+	h := sha256.Sum256(pol[:])
+	for _, e := range doc.SHA256 {
+		sig, err := base64.StdEncoding.DecodeString(e.Sig)
+		if err != nil || !slices.Equal(e.PCRs, []int{11}) || e.Pol != hex.EncodeToString(pol[:]) {
+			continue
+		}
+		switch k := pub.(type) {
+		case *rsa.PublicKey:
+			err = rsa.VerifyPKCS1v15(k, crypto.SHA256, h[:], sig)
+		case *ecdsa.PublicKey:
+			if !ecdsa.VerifyASN1(k, h[:], sig) {
+				err = errors.New("bad ECDSA signature")
+			}
+		default:
+			err = fmt.Errorf("unsupported key type %T", pub)
+		}
+		if err == nil {
+			return nil
+		}
+	}
+	return errors.New(".pcrsig has no policy for the enter-initrd phase of this UKI signed by its .pcrpkey: the initramfs could not unseal")
 }
 
 // peLayout holds the header offsets of a PE32+ image.

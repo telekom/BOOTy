@@ -68,7 +68,11 @@ const (
 // ukiPerHostRefused are UKI sections that per-host signing refuses: the
 // ones that it adds, and the ones whose PCR 11 measurement
 // ukiPCRSignature does not model.
-var ukiPerHostRefused = []string{"pcrsig", "pcrpkey", "dtbauto", "hwids", "efifw"}
+var ukiPerHostRefused = append([]string{"pcrsig", "pcrpkey"}, ukiUnmodeledSections...)
+
+// ukiUnmodeledSections are measured by systemd-stub in ways that
+// ukiPCRPolicies does not model.
+var ukiUnmodeledSections = []string{"dtbauto", "hwids", "efifw"}
 
 // The binaries that the installed system needs to bind the volume.
 var ukiTargetTools = []string{"usr/bin/systemd-cryptenroll", "usr/sbin/cryptsetup"}
@@ -109,18 +113,40 @@ func (o *Orchestrator) loadUKIDigest(ctx context.Context, imageURL string) error
 	if !o.cfg.Provision.DiskEncryption.UKI() {
 		return nil
 	}
-	v, err := ociManifestAnnotation(ctx, imageURL, UKIDigestAnnotation)
-	if err != nil {
-		return fmt.Errorf("read the UKI digest annotation: %w", err)
+	var v string
+	if imageURL != "" {
+		var err error
+		if v, err = ociManifestAnnotation(ctx, imageURL, UKIDigestAnnotation); err != nil {
+			return fmt.Errorf("read the UKI digest annotation: %w", err)
+		}
 	}
 	v = strings.ToLower(strings.TrimSpace(v))
 	if _, err := hex.DecodeString(v); err != nil || len(v) != 2*sha256.Size {
 		if o.cfg.Provision.DiskEncryption.AllowFailure {
 			return nil
 		}
-		return fmt.Errorf("no UKI digest: the image manifest has no hex SHA-256 in the annotation %s", UKIDigestAnnotation)
+		return fmt.Errorf("no UKI digest: the image must be a cosign-verified oci:// image whose manifest has a hex SHA-256 in the annotation %s", UKIDigestAnnotation)
 	}
 	o.ukiDigest = v
+	return o.loadPCRPin()
+}
+
+// loadPCRPin reads DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE before wipe-disks:
+// a deploy archive can not replace the file (caprf), but its /deploy swap
+// can remove it.
+func (o *Orchestrator) loadPCRPin() error {
+	o.ukiPCRPin = nil
+	f := o.cfg.Provision.DiskEncryption.PCRPublicKeyFile
+	if f == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(f) //nolint:gosec // configured trust material in the ramdisk
+	if err != nil {
+		return fmt.Errorf("read DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE: %w", err)
+	}
+	if o.ukiPCRPin, err = parsePublicKeyPEM(raw); err != nil {
+		return fmt.Errorf("DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE: %w", err)
+	}
 	return nil
 }
 
@@ -300,18 +326,11 @@ func (o *Orchestrator) checkCIUKI(sections map[string][]byte, signed bool) (pubP
 	if err != nil {
 		return nil, nil, fmt.Errorf(".pcrpkey: %w", err)
 	}
-	if f := o.cfg.Provision.DiskEncryption.PCRPublicKeyFile; f != "" {
-		raw, err := os.ReadFile(f) //nolint:gosec // configured trust material in the ramdisk
-		if err != nil {
-			return nil, nil, fmt.Errorf("read DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE: %w", err)
-		}
-		pinned, err := parsePublicKeyPEM(raw)
-		if err != nil {
-			return nil, nil, fmt.Errorf("DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE: %w", err)
-		}
-		if !bytes.Equal(pub, pinned) {
-			return nil, nil, errors.New(".pcrpkey is not the key in DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE")
-		}
+	if o.cfg.Provision.DiskEncryption.PCRPublicKeyFile != "" && !bytes.Equal(pub, o.ukiPCRPin) {
+		return nil, nil, errors.New(".pcrpkey is not the key in DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE")
+	}
+	if err := checkUKIInitrdPolicy(sections, sigJSON, pub); err != nil {
+		return nil, nil, err
 	}
 	return pubPEM, sigJSON, nil
 }

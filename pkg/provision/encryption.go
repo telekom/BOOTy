@@ -191,7 +191,7 @@ func (o *Orchestrator) streamEncryptedImage(ctx context.Context, url string, opt
 			st.lvm = lvm
 			return o.formatEncryptedPartition(ctx, st, number, size)
 		},
-		Check: checkLVMRamdisk,
+		Check: o.checkEncryptedRoot,
 	}, opts...)
 	if errors.Is(err, image.ErrEncryptedRootUnsupported) && o.cfg.Provision.DiskEncryption.AllowFailure {
 		// Refused before the first disk write.
@@ -310,6 +310,16 @@ var isRootFilesystem = func(ctx context.Context, o *Orchestrator, device string)
 // checkLVMRamdisk runs before stream-image writes any image byte (wipe-disks
 // has cleared the target already): an LVM physical volume needs lvm in the
 // ramdisk.
+// checkEncryptedRoot runs before the first write of the encrypted
+// partition: an unsupported layout still takes the
+// DISK_ENCRYPTION_ALLOW_FAILURE fallback.
+func (o *Orchestrator) checkEncryptedRoot(lvm bool) error {
+	if lvm && o.cfg.Provision.DiskEncryption.UKI() {
+		return fmt.Errorf("%w: DISK_ENCRYPTION=luks2-tpm2-uki does not support an LVM physical volume yet", image.ErrEncryptedRootUnsupported)
+	}
+	return checkLVMRamdisk(lvm)
+}
+
 func checkLVMRamdisk(lvm bool) error {
 	if !lvm {
 		return nil

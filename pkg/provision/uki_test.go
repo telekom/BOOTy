@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/image"
 )
 
 // testPE builds a minimal PE32+ image with the named sections, laid out
@@ -78,6 +80,13 @@ func testPE(t *testing.T, signed bool, sections ...[2]string) []byte {
 
 func testPublicKeyPEM(t *testing.T) []byte {
 	t.Helper()
+	_, pub := testPCRKey(t)
+	return pub
+}
+
+// testPCRKey is a PCR policy key and its PEM public key.
+func testPCRKey(t *testing.T) (*rsa.PrivateKey, []byte) {
+	t.Helper()
 	k, err := rsa.GenerateKey(rand.Reader, 1024) //nolint:gosec // test key
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +95,27 @@ func testPublicKeyPEM(t *testing.T) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	return k, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+}
+
+// testCIPCRSig is the .pcrsig of a ci UKI with .linux k, .cmdline root=x
+// and .pcrpkey pub, for the phases from first on.
+func testCIPCRSig(t *testing.T, key *rsa.PrivateKey, pub []byte, first int) string {
+	t.Helper()
+	js, err := ukiPCRSignature(map[string][]byte{"linux": []byte("k"), "cmdline": []byte("root=x"), "pcrpkey": pub}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string][]ukiPCRSigEntry
+	if err := json.Unmarshal(js, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["sha256"] = doc["sha256"][first:]
+	js, err = json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(js)
 }
 
 func TestUKISections(t *testing.T) {
@@ -163,8 +192,8 @@ func countKeyGeneration(t *testing.T, fail bool) *int {
 // signed UKI and installs its public material; no private key exists.
 func TestPrepareUKICIMakesNoKey(t *testing.T) {
 	countKeyGeneration(t, true)
-	pub := testPublicKeyPEM(t)
-	sig := `{"sha256":[{"pcrs":[11],"sig":"x"}]}`
+	key, pub := testPCRKey(t)
+	sig := testCIPCRSig(t, key, pub, 0)
 	uki := testPE(t, true, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}, [2]string{".pcrpkey", string(pub)}, [2]string{".pcrsig", sig})
 	o, cmd, root, esp := ukiTestHost(t, config.SigningCI, uki)
 
@@ -173,6 +202,14 @@ func TestPrepareUKICIMakesNoKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	o.cfg.Provision.DiskEncryption.PCRPublicKeyFile = pinned
+	if err := o.loadPCRPin(); err != nil {
+		t.Fatal(err)
+	}
+	// The pin was read before the disk was written; a later change of the
+	// file (a deploy archive swaps /deploy) does not matter.
+	if err := os.Remove(pinned); err != nil {
+		t.Fatal(err)
+	}
 	st, err := o.prepareUKI(root, esp)
 	if err != nil {
 		t.Fatal(err)
@@ -189,19 +226,29 @@ func TestPrepareUKICIMakesNoKey(t *testing.T) {
 		t.Fatal("ci mode changed the UKI")
 	}
 
-	// Another pinned key, an unsigned UKI, a UKI without .pcrsig or
-	// without a command line, or a digest that the manifest does not name
-	// all fail.
+	// Another pinned key, an unsigned UKI, a UKI without .pcrsig, with a
+	// .pcrsig only for the userspace phases or by another key, without a
+	// command line, or a digest that the manifest does not name all fail.
 	if err := os.WriteFile(pinned, testPublicKeyPEM(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.loadPCRPin(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := o.prepareUKI(root, esp); err == nil || !strings.Contains(err.Error(), "not the key in") {
 		t.Fatalf("other pinned key: %v", err)
 	}
 	o.cfg.Provision.DiskEncryption.PCRPublicKeyFile = ""
+	other, _ := testPCRKey(t)
 	for name, bad := range map[string][]byte{
 		"unsigned":  testPE(t, false, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}, [2]string{".pcrpkey", string(pub)}, [2]string{".pcrsig", sig}),
 		"no pcrsig": testPE(t, true, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}, [2]string{".pcrpkey", string(pub)}),
+		"userspace phases only": testPE(t, true, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}, [2]string{".pcrpkey", string(pub)},
+			[2]string{".pcrsig", testCIPCRSig(t, key, pub, 1)}),
+		"signed by another key": testPE(t, true, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}, [2]string{".pcrpkey", string(pub)},
+			[2]string{".pcrsig", testCIPCRSig(t, other, pub, 0)}),
+		"policy of another UKI": testPE(t, true, [2]string{".linux", "k2"}, [2]string{".cmdline", "root=x"}, [2]string{".pcrpkey", string(pub)},
+			[2]string{".pcrsig", sig}),
 	} {
 		o, _, root, esp := ukiTestHost(t, config.SigningCI, bad)
 		if _, err := o.prepareUKI(root, esp); err == nil {
@@ -526,6 +573,16 @@ func TestLoadUKIDigest(t *testing.T) {
 			t.Errorf("annotation %q: err=%v digest=%q", v, err, o.ukiDigest)
 		}
 	}
+	value = strings.Repeat("a", 64)
+	if err := o.loadUKIDigest(context.Background(), ""); err == nil || o.ukiDigest != "" {
+		t.Errorf("no verified OCI manifest (HTTP image): err=%v digest=%q", err, o.ukiDigest)
+	}
+	cfg.Provision.DiskEncryption.PCRPublicKeyFile = filepath.Join(t.TempDir(), "missing.pem")
+	if err := o.loadUKIDigest(context.Background(), "oci://r/i"); err == nil || !strings.Contains(err.Error(), "DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE") {
+		t.Errorf("missing pin file: err=%v", err)
+	}
+	cfg.Provision.DiskEncryption.PCRPublicKeyFile = ""
+	o.ukiDigest, value = "", ""
 	cfg.Provision.DiskEncryption.AllowFailure = true
 	if err := o.loadUKIDigest(context.Background(), "oci://r/i"); err != nil || o.ukiDigest != "" {
 		t.Errorf("allow failure: err=%v digest=%q", err, o.ukiDigest)
@@ -533,5 +590,20 @@ func TestLoadUKIDigest(t *testing.T) {
 	value = " " + strings.Repeat("A", 64) + "\n"
 	if err := o.loadUKIDigest(context.Background(), "oci://r/i"); err != nil || o.ukiDigest != strings.Repeat("a", 64) {
 		t.Errorf("valid: err=%v digest=%q", err, o.ukiDigest)
+	}
+}
+
+// TestCheckEncryptedRootUKILVM: the UKI mode refuses an LVM physical
+// volume before the first write, as an unsupported layout, so
+// DISK_ENCRYPTION_ALLOW_FAILURE can still fall back.
+func TestCheckEncryptedRootUKILVM(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.DiskEncryption.Mode = config.DiskEncryptionLUKS2TPM2UKI
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	if err := o.checkEncryptedRoot(true); !errors.Is(err, image.ErrEncryptedRootUnsupported) {
+		t.Fatalf("err = %v, want ErrEncryptedRootUnsupported", err)
+	}
+	if err := o.checkEncryptedRoot(false); err != nil {
+		t.Fatal(err)
 	}
 }

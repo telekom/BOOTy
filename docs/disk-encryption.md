@@ -666,9 +666,11 @@ the key in that file.
 Provisioning (BOOTy, Secure Boot off):
 
 1. `verify-image` verifies the cosign signature of the image and reads the
-   UKI digest annotation; without a hex SHA-256 there it fails before
-   `wipe-disks` (with `DISK_ENCRYPTION_ALLOW_FAILURE` the `stream-image`
-   preflight installs without encryption instead).
+   UKI digest annotation; without a hex SHA-256 there (or with an HTTP
+   image) it fails before `wipe-disks` (with `DISK_ENCRYPTION_ALLOW_FAILURE`
+   the `stream-image` preflight installs without encryption instead). It
+   also reads `DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE` then, so a later
+   `/deploy` swap cannot remove the pin.
 2. `stream-image` checks as for `luks2-tpm2` and that the digest is there
    (before the first disk write, so `DISK_ENCRYPTION_ALLOW_FAILURE`
    applies), then formats and writes as for `luks2-tpm2`, with the empty
@@ -682,7 +684,10 @@ Provisioning (BOOTy, Secure Boot off):
      the result (signature, the new sections, the old ones unchanged),
      writes it over the UKI and wipes the keys.
    - `ci`: needs a Secure Boot signature, `.pcrsig` and `.pcrpkey`; checks
-     the pinned key; makes no key.
+     the pinned key, and that `.pcrsig` holds the policy of the
+     `enter-initrd` phase of this UKI signed by its `.pcrpkey` (a `.pcrsig`
+     for the userspace phases only would pass the first-boot test unseal
+     and then lock the initramfs out); makes no key.
    - writes the PCR public key and signature to
      `/etc/booty/tpm2-pcr-public-key.pem` and `/etc/booty/tpm2-pcr-signature.json`,
      and the first-boot unit `booty-luks-tpm2-enroll.service`. crypttab,
@@ -801,6 +806,8 @@ them.
 - Per-host: kernel and initramfs updates need reprovisioning (see above).
 - No status callback from the first-boot unit yet.
 - One UKI, no multi-profile UKIs, no devicetree selection.
+- No LVM physical volume yet: refused before the first write, so
+  `DISK_ENCRYPTION_ALLOW_FAILURE` falls back to an unencrypted install.
 - x86-64 with the SHA-256 PCR bank.
 
 ### Test
