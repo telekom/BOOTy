@@ -78,6 +78,9 @@ func TestValidateModuleSigning(t *testing.T) {
 		{ModuleSigningConfig{Enabled: true}, "", true, true},
 		{ModuleSigningConfig{Enabled: true, Enrollment: "mokutil"}, "", false, true},
 		{ModuleSigningConfig{Enabled: true, Enrollment: "external"}, "", false, true},
+		{ModuleSigningConfig{Enabled: true, Target: "sysext"}, "", false, false},
+		{ModuleSigningConfig{Enabled: true, Target: "sysext", CertDir: "/etc/keys"}, "", true, false},
+		{ModuleSigningConfig{Enabled: true, Target: "bogus"}, "", true, false},
 	} {
 		errs := validateModuleSigning(tc.mode, tc.reEnable, &tc.m, ab)
 		if (len(errs) > 0) != tc.wantErr {

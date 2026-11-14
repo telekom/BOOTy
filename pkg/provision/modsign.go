@@ -44,6 +44,11 @@ type ReportModuleSigning struct {
 	Modules    int    `json:"modules"`
 	Enrollment string `json:"enrollment"`
 	CertPath   string `json:"certPath"`
+	// Target is sysext when the modules are in a system extension
+	// (Sysext, with the dm-verity RootHash); empty for in-place signing.
+	Target     string `json:"target,omitempty"`
+	Sysext     string `json:"sysext,omitempty"`
+	RootHash   string `json:"rootHash,omitempty"`
 	CertSHA256 string `json:"certSHA256"`
 	Cert       []byte `json:"cert"`
 }
@@ -72,6 +77,9 @@ func (o *Orchestrator) signKernelModules(ctx context.Context) error {
 }
 
 func (o *Orchestrator) doSignKernelModules(ctx context.Context, ms config.ModuleSigningConfig) error {
+	if ms.TargetOrDefault() == config.ModuleSigningTargetSysext {
+		return o.signKernelModulesSysext(ctx, ms)
+	}
 	root := o.config.rootDir
 	res, err := secureboot.SignModuleTree(root, "BOOTy module signing "+o.cfg.Hostname)
 	if err != nil {

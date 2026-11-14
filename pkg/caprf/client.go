@@ -1292,6 +1292,7 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"MOK_PASSWORD":                &cfg.Provision.SecureBoot.MOKPassword,
 		"MODULE_SIGNING_ENROLLMENT":   &cfg.Provision.SecureBoot.ModuleSigning.Enrollment,
 		"MODULE_SIGNING_CERT_DIR":     &cfg.Provision.SecureBoot.ModuleSigning.CertDir,
+		"MODULE_SIGNING_TARGET":       &cfg.Provision.SecureBoot.ModuleSigning.Target,
 		"TOKEN_URL":                   &cfg.Transport.TokenURL,
 		"TOKEN_ALGORITHM":             &cfg.Transport.TokenAlgorithm,
 		"CA_BUNDLE_FILE":              &cfg.Transport.CABundleFile,

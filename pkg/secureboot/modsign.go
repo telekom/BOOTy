@@ -69,6 +69,9 @@ type SignResult struct {
 	Modules []string
 	// Kernels are the kernel versions with signed modules, for depmod.
 	Kernels []string
+	// SealSignature is the detached signature of the data that the seal
+	// callback of SignModulesInto returned.
+	SealSignature []byte
 }
 
 // SignModuleTree generates a per-host RSA key in memory, signs every module
@@ -78,6 +81,26 @@ type SignResult struct {
 // resolved inside rootDir, so a symlink in the image cannot redirect a write
 // out of the target.
 func SignModuleTree(rootDir, commonName string) (*SignResult, error) {
+	return signModules(rootDir, nil, commonName, nil)
+}
+
+// SignModulesInto is SignModuleTree for a read-only target: it writes the
+// signed copies to usr/<path> below stageDir (lib/modules is usr/lib/modules
+// on merged-/usr systems) and leaves rootDir unchanged. When it found
+// modules, it then calls seal with the certificate while the key still
+// exists, and signs the data that seal returns, typically a dm-verity root
+// hash, into SealSignature: a detached CMS signature like the module
+// signatures, which the kernel checks for dm-verity root hashes too.
+func SignModulesInto(rootDir, stageDir, commonName string, seal func(certDER []byte) ([]byte, error)) (*SignResult, error) {
+	stage, err := os.OpenRoot(stageDir)
+	if err != nil {
+		return nil, fmt.Errorf("open staging directory: %w", err)
+	}
+	defer func() { _ = stage.Close() }()
+	return signModules(rootDir, stage, commonName, seal)
+}
+
+func signModules(rootDir string, stage *os.Root, commonName string, seal func([]byte) ([]byte, error)) (*SignResult, error) {
 	root, err := os.OpenRoot(rootDir)
 	if err != nil {
 		return nil, fmt.Errorf("open target root: %w", err)
@@ -94,13 +117,22 @@ func SignModuleTree(rootDir, commonName string) (*SignResult, error) {
 	defer s.destroy()
 	res := &SignResult{CertDER: s.cert.Raw}
 	for _, m := range modules {
-		if err := s.signFile(root, m); err != nil {
+		if err := s.signFile(root, m, stage); err != nil {
 			return nil, fmt.Errorf("sign module %s: %w", m, err)
 		}
 		res.Modules = append(res.Modules, m)
 		// lib/modules/<kernel>/...
 		if k := strings.Split(m, "/")[2]; !slices.Contains(res.Kernels, k) {
 			res.Kernels = append(res.Kernels, k)
+		}
+	}
+	if seal != nil && len(modules) > 0 {
+		data, err := seal(res.CertDER)
+		if err != nil {
+			return nil, err
+		}
+		if res.SealSignature, err = s.signDetached(data); err != nil {
+			return nil, err
 		}
 	}
 	return res, nil
@@ -218,11 +250,16 @@ func (s *moduleSigner) destroy() {
 	s.key = nil
 }
 
-// signFile signs one module in place, keeping its compression. The file is
+// signFile signs one module, keeping its compression: in place, or with a
+// stage as a copy at usr/<name> in the stage. In place, the file is
 // rewritten, not replaced, so its owner, mode and extended attributes (the
 // SELinux label modules_object_t on RHEL-like images) stay.
-func (s *moduleSigner) signFile(root *os.Root, name string) error {
-	f, err := root.OpenFile(name, os.O_RDWR, 0)
+func (s *moduleSigner) signFile(root *os.Root, name string, stage *os.Root) error {
+	flag := os.O_RDWR
+	if stage != nil {
+		flag = os.O_RDONLY
+	}
+	f, err := root.OpenFile(name, flag, 0)
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}
@@ -246,6 +283,16 @@ func (s *moduleSigner) signFile(root *os.Root, name string) error {
 	if err != nil {
 		return fmt.Errorf("compress: %w", err)
 	}
+	if stage != nil {
+		dst := path.Join("usr", name)
+		if err := stage.MkdirAll(path.Dir(dst), 0o755); err != nil {
+			return fmt.Errorf("create staging directory: %w", err)
+		}
+		if err := stage.WriteFile(dst, out, 0o644); err != nil {
+			return fmt.Errorf("write signed copy: %w", err)
+		}
+		return nil
+	}
 	if _, err := f.WriteAt(out, 0); err != nil {
 		return fmt.Errorf("write: %w", err)
 	}
@@ -266,12 +313,7 @@ func (s *moduleSigner) sign(module []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	digest := sha256.Sum256(mod)
-	sig, err := rsa.SignPKCS1v15(nil, s.key, crypto.SHA256, digest[:])
-	if err != nil {
-		return nil, fmt.Errorf("sign: %w", err)
-	}
-	p7, err := modulePKCS7(s.cert, sig)
+	p7, err := s.signDetached(mod)
 	if err != nil {
 		return nil, err
 	}
@@ -279,6 +321,17 @@ func (s *moduleSigner) sign(module []byte) ([]byte, error) {
 	trailer[2] = pkeyIDPKCS7
 	binary.BigEndian.PutUint32(trailer[8:], uint32(len(p7))) //nolint:gosec // a few hundred bytes
 	return slices.Concat(mod, p7, trailer[:], []byte(moduleSigMagic)), nil
+}
+
+// signDetached returns the detached CMS signature of data in the format of
+// sign-file, which the kernel verifies for modules and dm-verity root hashes.
+func (s *moduleSigner) signDetached(data []byte) ([]byte, error) {
+	digest := sha256.Sum256(data)
+	sig, err := rsa.SignPKCS1v15(nil, s.key, crypto.SHA256, digest[:])
+	if err != nil {
+		return nil, fmt.Errorf("sign: %w", err)
+	}
+	return modulePKCS7(s.cert, sig)
 }
 
 // StripModuleSignature returns the module without its appended signature.

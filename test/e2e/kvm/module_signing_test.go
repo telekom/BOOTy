@@ -51,7 +51,9 @@ try "modprobe $SIGNED" SIGNED_MODULE
 echo "SIGNED_SIGNER=$(modinfo -F signer $SIGNED)"
 try "insmod /opt/booty-e2e/$UNSIGNED.ko" UNSIGNED_MODULE
 try "insmod /opt/booty-e2e/$OTHERKEY.ko" OTHERKEY_MODULE
-dmesg | grep -i -e 'module verification' -e 'Lockdown' -e 'Loaded X.509 cert .BOOTy' | sed 's/^/DMESG /'
+echo "SYSEXT_MERGED=$(systemd-sysext status 2>/dev/null | grep -c booty-modules)"
+journalctl -b -u systemd-sysext --no-pager -o cat 2>/dev/null | tail -n 5 | sed 's/^/SYSEXTLOG /'
+dmesg | grep -i -e 'module verification' -e 'Lockdown' -e 'Loaded X.509 cert .BOOTy' -e 'verity' | sed 's/^/DMESG /'
 echo "` + modCheckEnd + `"
 systemctl poweroff --no-block
 `
@@ -97,7 +99,7 @@ func TestModuleSigningSecureBootVM(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	gzImage := prepareModuleImage(t, osImage, dir)
+	gzImage, _ := prepareModuleImage(t, osImage, dir)
 	baseURL := startImageServer(t, gzImage)
 	helperEFI, err := os.ReadFile(helper)
 	if err != nil {
@@ -213,8 +215,10 @@ func TestModuleSigningSecureBootVM(t *testing.T) {
 }
 
 // prepareModuleImage installs the check service and three test modules into
-// the root file system of the cloud image and returns the gzipped raw image.
-func prepareModuleImage(t *testing.T, osImage, dir string) string {
+// the root file system of the cloud image and returns the gzipped raw image
+// and the test modules (signed, unsigned, other key). extra runs with the
+// image root mounted at mnt.
+func prepareModuleImage(t *testing.T, osImage, dir string, extra ...func(mnt, kernel string)) (string, []testModule) {
 	t.Helper()
 	raw := filepath.Join(dir, "os.raw")
 	run(t, "convert OS image to raw", "qemu-img", "convert", "-O", "raw", osImage, raw)
@@ -246,13 +250,16 @@ func prepareModuleImage(t *testing.T, osImage, dir string) string {
 		t.Fatal(err)
 	}
 	t.Logf("test modules: signed=%s unsigned=%s other-key=%s", signed.name, unsigned.name, otherKey.name)
+	for _, f := range extra {
+		f(mnt, filepath.Base(kernels[0]))
+	}
 	run(t, "unmount image root", "umount", mnt)
 	run(t, "detach image", "losetup", "-d", loop)
 	gz := compressGzip(t, raw)
 	if err := os.Remove(raw); err != nil {
 		t.Fatal(err)
 	}
-	return gz
+	return gz, names
 }
 
 type testModule struct {

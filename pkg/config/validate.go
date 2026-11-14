@@ -793,8 +793,19 @@ func validateModuleSigning(imageMode string, reEnable bool, m *ModuleSigningConf
 	default:
 		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.enrollment %q: want efi-helper, mokutil or external", m.Enrollment))
 	}
-	if dir := m.CertDirOrDefault(); !path.IsAbs(dir) || path.Clean(dir) != dir {
+	dir := m.CertDirOrDefault()
+	if !path.IsAbs(dir) || path.Clean(dir) != dir {
 		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.certDir %q: must be a clean absolute path", m.CertDir))
+	}
+	switch m.TargetOrDefault() {
+	case ModuleSigningTargetInPlace:
+	case ModuleSigningTargetSysext:
+		// The certificate goes into the extension, which covers /usr only.
+		if !strings.HasPrefix(dir, "/usr/") {
+			errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.certDir %q: target sysext needs a directory below /usr", dir))
+		}
+	default:
+		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.target %q: want in-place or sysext", m.Target))
 	}
 	return errs
 }

@@ -219,24 +219,79 @@ Proposed order:
    unlock), or the provisioner predicts PCR 7 and 14 with
    `systemd-pcrlock` from the expected variables.
 
-## dm-verity roots
+## dm-verity roots (experimental)
 
-Signing modules changes the root file system after imaging, so it cannot
-work with a dm-verity protected root: the root hash would no longer match.
-Two ways keep the signed modules outside the verified root:
+Signing modules in place changes the root file system after imaging, so it
+cannot work with a dm-verity protected root or `/usr`: the root hash would no
+longer match. `MODULE_SIGNING_TARGET=sysext` keeps the signed modules outside
+it. **Experimental:** opt-in, the layout and file names may change, and only
+the KVM scenario below has run it.
 
-- **Per-host sysext.** BOOTy builds an EROFS image with
-  `/usr/lib/modules/<kernel>/updates/...` and `modules.dep*`, adds a verity
-  tree, and signs the root hash with the same per-host key before destroying
-  it. `systemd-sysext` verifies the signature against the kernel keyring that
-  holds the MOK (`CONFIG_DM_VERITY_VERIFY_ROOTHASH_SIG_SECONDARY_KEYRING`).
-  This builds on the signed sysext preload work.
-- **Extra partition.** A small partition mounted on
-  `/usr/lib/modules/<kernel>/updates`. The kernel still checks each module
-  signature, so tampered modules are refused, but `modules.dep` and modprobe
-  configuration are not protected.
+### What BOOTy does
 
-Modules needed in the initramfs need a per-host initrd addon in both cases.
+With `MODULE_SIGNING_TARGET=sysext`, `sign-kernel-modules`:
+
+1. reads the out-of-tree modules of the target
+   (`/usr/lib/modules/*/{updates,extra}`, a merged `/usr` is required) and
+   writes signed copies to the same paths in a staging tree in RAM. Nothing
+   below `/usr` of the target changes, and no `depmod` or initramfs rebuild
+   runs in the target;
+2. adds `usr/lib/extension-release.d/extension-release.booty-modules`
+   (`ID` and `VERSION_ID` of the target) and the certificate
+   (`MODULE_SIGNING_CERT_DIR`, below `/usr`);
+3. builds an ext4 image of the tree (no journal), computes its dm-verity hash
+   tree (SHA-256, 4 KiB blocks, veritysetup format with superblock), and
+   signs the root hash, as the lower-case hex string that dm-verity checks,
+   with the per-host key. Then it destroys the key;
+4. installs `/var/lib/extensions/booty-modules.raw` with the sidecar files
+   `systemd-sysext` reads: `.verity` (hash tree), `.roothash` and
+   `.roothash.p7s` (detached CMS signature, the format of module signatures);
+5. enables `systemd-sysext.service` with a drop-in that refreshes with
+   `--image-policy=root=signed+absent:usr=signed+absent`, so only images
+   with a signed root hash merge.
+
+At boot, `systemd-sysext` opens the image with dm-verity and passes the
+signature to the kernel, which checks it against the secondary keyring. The
+`.machine` keyring with the enrolled MOK is linked to it (Linux 5.18+), and
+the kernel needs `CONFIG_DM_VERITY_VERIFY_ROOTHASH_SIG_SECONDARY_KEYRING`.
+The overlay then shadows the unsigned modules of the base `/usr` with the
+signed copies at the same paths, so `modprobe` and the `modules.dep` of the
+image find them. The report carries the root hash
+(`secureBoot.moduleSigning.rootHash`). Enrollment works as for in-place
+signing.
+
+### Limits
+
+- The image policy applies to every extension on the host: unsigned
+  extensions (for example from `SYSEXT_LAYERS`) no longer merge.
+- ext4, not EROFS or squashfs: `mkfs.ext4` is already in the ramdisk, and
+  EROFS would add erofs-utils to every ramdisk. dm-verity and the signature
+  work the same way. EROFS is the better production format (smaller, built
+  read-only), and switching means changing one `mkfs` call.
+- The extension carries no `modules.dep`. Modules that the image's
+  `modules.dep` does not list (not run through `depmod` when the image was
+  built) load only with `insmod <path>`.
+- Modules that the initramfs needs are not covered: the initramfs is not
+  rebuilt, and the extension merges after the root is mounted.
+- The drop-in and the `sysinit.target.wants` link go to `/etc`. On images
+  whose `/etc` is read-only too, they belong in the image or a confext.
+- The image signature uses the module signing certificate: the kernel
+  ignores the module-signing-only EKU, so the same key verifies both.
+
+### Per-host sysext and extra partition compared
+
+| | Per-host sysext (prototype) | Extra partition on `.../updates` |
+|---|---|---|
+| Integrity of the module files | dm-verity, root hash signed by the per-host key | per-module signature only |
+| `modules.dep`, modprobe configuration, extension content | covered by verity | not protected |
+| A changed or unsigned image | refused at merge (`signed` policy); a changed block fails the read | a changed module is refused at load, other files are not checked |
+| Disk layout | files in `/var/lib/extensions`, no repartitioning | needs a partition in the image layout and an fstab or mount unit |
+| Needs | systemd-sysext (252+), merged `/usr`, the kernel option above | nothing beyond module signature checks |
+| Initramfs modules | not covered | not covered |
+
+The sysext keeps the image read-only and protects all extension files, so
+the prototype uses it. The extra partition is simpler and works with any
+init, but it protects only what the kernel checks per module.
 
 ## Evidence
 

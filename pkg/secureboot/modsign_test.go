@@ -182,3 +182,50 @@ func TestMOKSignatureList(t *testing.T) {
 		t.Fatalf("bad GUIDs %x", esl[:44])
 	}
 }
+
+// SignModulesInto leaves the target unchanged, writes signed copies below
+// usr/ of the stage, and signs the seal data with the same key.
+func TestSignModulesInto(t *testing.T) {
+	root, stage := t.TempDir(), t.TempDir()
+	plain := writeModules(t, root)
+	before := map[string][]byte{}
+	for name := range plain {
+		before[name], _ = os.ReadFile(filepath.Join(root, name))
+	}
+	seal := []byte("0123abcd")
+	var sealCert []byte
+	res, err := SignModulesInto(root, stage, "BOOTy test", func(cert []byte) ([]byte, error) {
+		sealCert = cert
+		return seal, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(res.CertDER)
+	if err != nil || !bytes.Equal(sealCert, res.CertDER) {
+		t.Fatalf("seal got another certificate: %v", err)
+	}
+	for name, want := range plain {
+		if got, _ := os.ReadFile(filepath.Join(root, name)); !bytes.Equal(got, before[name]) {
+			t.Fatalf("%s changed in the target", name)
+		}
+		data, err := os.ReadFile(filepath.Join(stage, "usr", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		signed, err := decompressModule(name, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		verifyModule(t, name, signed, want, cert)
+	}
+	var ci contentInfo
+	if _, err := asn1.Unmarshal(res.SealSignature, &ci); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(seal)
+	if err := rsa.VerifyPKCS1v15(cert.PublicKey.(*rsa.PublicKey), crypto.SHA256, digest[:], ci.Content.SignerInfos[0].Signature); err != nil {
+		t.Fatalf("seal signature: %v", err)
+	}
+	verifyWithOpenSSL(t, seal, res.SealSignature, cert)
+}
