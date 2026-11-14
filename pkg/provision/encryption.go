@@ -86,6 +86,9 @@ var (
 
 const efiGlobalGUID = "8be4df61-93ca-11d2-aa0d-00e098032b8c"
 
+// shimLockGUID owns the shim MOK variables.
+const shimLockGUID = "605dab50-e046-4300-abb6-3dd810dd8b23"
+
 // encryptionExtras are the inputs of writeEncryptionFiles besides the keys.
 type encryptionExtras struct {
 	libs      []string
@@ -807,6 +810,18 @@ if [ -e "$bound" ]; then
 	say "done: key slot $LUKS_ENROLL_SLOT and the enrollment key are gone, the TPM2 (PCR $TPM2_PCRS) and the recovery key unlock $dev"
 	exit 0
 fi
+
+# A MOK change that shim applies on a later boot (mokutil with
+# SECUREBOOT_SIGNING=ci or per-host and MODULE_SIGNING_ENROLLMENT=mokutil,
+# waiting for the MokManager confirmation) changes PCR 14 after the binding,
+# and the initramfs without the enrollment key would then ask for the
+# recovery key.
+for v in MokNew MokDel MokXNew MokXDel MokSB MokDB; do
+	if [ -e "/sys/firmware/efi/efivars/$v-` + shimLockGUID + `" ]; then
+		say "a MOK change ($v) is pending in MokManager, the enrollment waits"
+		exit 0
+	fi
+done
 
 step=start
 # A .booty-old link brings back the original image; where the swap did not
