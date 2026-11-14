@@ -1238,10 +1238,8 @@ func applyLogFlushTimeoutVar(cfg *config.MachineConfig, value string) error {
 }
 
 func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
-	if applyNetworkStringVar(cfg, key, value) || applySecureBootDigestVar(cfg, key, value) || applyPartitionLayoutSourceVar(cfg, key, value) || applyImageWriteVar(cfg, key, value) {
-		return true
-	}
-	if applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) || applyCheckStringVar(cfg, key, value) {
+	if applyNetworkStringVar(cfg, key, value) || applySecureBootDigestVar(cfg, key, value) || applyPartitionLayoutSourceVar(cfg, key, value) || applyImageWriteVar(cfg, key, value) ||
+		applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) || applyCheckStringVar(cfg, key, value) {
 		return true
 	}
 
