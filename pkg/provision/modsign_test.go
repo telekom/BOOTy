@@ -119,6 +119,33 @@ func TestSignKernelModulesFailsClosed(t *testing.T) {
 	}
 }
 
+// Re-signed modules whose certificate cannot be installed are never enrolled:
+// that fails the step even with MODULE_SIGNING_ALLOW_FAILURE.
+func TestSignKernelModulesFatalAfterModulesRewritten(t *testing.T) {
+	o, _ := newTestOrchestratorWithCommander(t,
+		moduleSigningConfig(config.SigningPerHost, config.ModuleSigningConfig{AllowFailure: true}), &mockProvider{})
+	root := o.config.rootDir
+	mod := filepath.Join(root, "lib/modules/6.8.0-1/updates/x.ko")
+	if err := os.MkdirAll(filepath.Dir(mod), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mod, []byte("\x7fELF"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A file where the certificate directory should be.
+	certDir := filepath.Join(root, config.DefaultModuleSigningCertDir)
+	if err := os.MkdirAll(filepath.Dir(certDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certDir, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := o.signKernelModules(context.Background())
+	if !errors.Is(err, secureboot.ErrModulesModified) {
+		t.Fatalf("err = %v, want ErrModulesModified", err)
+	}
+}
+
 // The enrollment never falls back to a certificate that the image ships at
 // the certificate path (a failed signing with MODULE_SIGNING_ALLOW_FAILURE).
 func TestEnrollModuleSigningKeyNeedsCertOfThisRun(t *testing.T) {

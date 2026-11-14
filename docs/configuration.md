@@ -531,7 +531,7 @@ These keys apply to the provision and deprovision modes.
 | `MOK_CERT_PATH` | (unset) | absolute path in the target | With `SECUREBOOT_SIGNING=ci`: the DER certificate of the CI key that signed the modules, enrolled like the per-host one. It must have the module-signing-only EKU `1.3.6.1.4.1.2312.16.1.2`. |
 | `MODULE_SIGNING_ENROLLMENT` | `efi-helper` | `efi-helper`, `mokutil`, `external` | How the firmware learns the certificate: `efi-helper` boots `mok-enroll.efi` once to write MokList (Secure Boot must be off while provisioning and at the next boot, so not with `SECUREBOOT_REENABLE=true`); `mokutil` queues it for one MokManager confirmation with `MOK_PASSWORD`; `external` leaves it to the provisioner (for example Redfish db enrollment). |
 | `MODULE_SIGNING_CERT_DIR` | `/usr/share/booty/secureboot` | absolute path outside `/run`, `/proc`, `/sys`, `/dev` | Target directory of `booty-module-signing.der`. |
-| `MODULE_SIGNING_ALLOW_FAILURE` | `false` | boolean | Continue provisioning when signing or enrollment fails. By default provisioning fails. |
+| `MODULE_SIGNING_ALLOW_FAILURE` | `false` | boolean | Continue provisioning when signing or enrollment fails. By default provisioning fails. A failure after a module was rewritten always fails. |
 | `SECUREBOOT_PINNED_DIGESTS` | (unset) | JSON object with keys `shim`, `grub`, `kernel` | All pins in one key. A single-component key wins over its entry here. |
 
 ## Disk encryption

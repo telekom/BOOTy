@@ -70,6 +70,11 @@ func IsModuleSigningOnly(cert *x509.Certificate) bool {
 	return slices.ContainsFunc(cert.UnknownExtKeyUsage, OIDModuleSigningOnly.Equal)
 }
 
+// ErrModulesModified marks a module signing error after the first module
+// write: modules may carry signatures of a key that is destroyed and never
+// enrolled, so the caller must not continue as if nothing had changed.
+var ErrModulesModified = errors.New("modules were rewritten")
+
 // SignResult is the outcome of SignModuleTree. It holds no key material.
 type SignResult struct {
 	// CertDER is the DER certificate of the per-host signing key.
@@ -111,7 +116,7 @@ func SignModuleTree(rootDir, commonName string) (*SignResult, error) {
 	res := &SignResult{CertDER: s.cert.Raw}
 	for _, m := range modules {
 		if err := s.signFile(root, m); err != nil {
-			return nil, fmt.Errorf("sign module %s: %w", m, err)
+			return nil, fmt.Errorf("sign module %s: %w: %w", m, ErrModulesModified, err)
 		}
 		res.Modules = append(res.Modules, m)
 		// lib/modules/<kernel>/...

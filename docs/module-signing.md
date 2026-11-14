@@ -95,7 +95,10 @@ new certificate. A report file that the interrupted run already installed is
 kept, so it may name the earlier certificate.
 
 Any signing or enrollment error fails provisioning (`BOOTY-EFI-010`,
-`BOOTY-EFI-011`) unless `MODULE_SIGNING_ALLOW_FAILURE=true`.
+`BOOTY-EFI-011`) unless `MODULE_SIGNING_ALLOW_FAILURE=true`. An error after
+the first module was rewritten (a write that fails, or a certificate that
+cannot be installed) fails provisioning even then: those modules carry the
+signature of a key that nothing enrolls, and Secure Boot would refuse them.
 
 `mok-enroll.efi` is built from [hack/mok-enroll](../hack/mok-enroll) with
 gnu-efi. It is not in the production initramfs yet; the KVM scenario adds it
