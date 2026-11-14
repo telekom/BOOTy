@@ -346,8 +346,9 @@ func TestUKIBootEntryStep(t *testing.T) {
 	names := func(mode string) []string {
 		cfg := &config.MachineConfig{}
 		cfg.Provision.DiskEncryption.Mode = mode
-		var n []string
-		for _, s := range newTestOrchestrator(t, cfg, &mockProvider{}).provisionSteps() {
+		steps := newTestOrchestrator(t, cfg, &mockProvider{}).provisionSteps()
+		n := make([]string, 0, len(steps))
+		for _, s := range steps {
 			n = append(n, s.Name)
 		}
 		return n

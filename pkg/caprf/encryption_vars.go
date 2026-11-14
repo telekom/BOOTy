@@ -45,9 +45,10 @@ func applyDiskEncryptionVar(cfg *config.MachineConfig, key, value string) (bool,
 // lockedDiskEncryption is the disk encryption config without Target: a
 // standby payload or deploy archive may pick another partition, but never
 // turn encryption off, weaken it or send the key or the token elsewhere.
-func lockedDiskEncryption(d config.DiskEncryptionConfig) config.DiskEncryptionConfig {
-	d.Target = ""
-	return d
+func lockedDiskEncryption(d *config.DiskEncryptionConfig) config.DiskEncryptionConfig {
+	c := *d
+	c.Target = ""
+	return c
 }
 
 // EscrowRecoveryKey posts body, which holds the LUKS recovery key, to
