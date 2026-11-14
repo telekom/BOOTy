@@ -95,6 +95,77 @@ func TestVerifyCosignKeyless(t *testing.T) {
 		{name: "integrated after the certificate expired", wantErr: "certificate has expired",
 			edit: func(o *sigstoretest.Options) { o.SignedAt = longAgo; o.IntegratedAt = longAgo.Add(time.Hour) }},
 		{name: "unsigned", unsigned: true, wantErr: "no Sigstore bundle referrer"},
+
+		// Bundle versions and content.
+		{name: "bundle v0.1 with a chain and SET only", edit: func(o *sigstoretest.Options) {
+			o.MediaType, o.CertificateChain, o.NoInclusionProof = sigstoretest.BundleMediaTypeV01, true, true
+		}},
+		{name: "bundle v0.2 with a chain", edit: func(o *sigstoretest.Options) {
+			o.MediaType, o.CertificateChain = sigstoretest.BundleMediaTypeV02, true
+		}},
+		{name: "bundle v0.3 old media type", edit: func(o *sigstoretest.Options) { o.MediaType = sigstoretest.BundleMediaTypeV03 }},
+		{name: "bundle v0.3 with a chain", wantErr: "must carry a certificate, not a certificate chain",
+			edit: func(o *sigstoretest.Options) { o.CertificateChain = true }},
+		{name: "bundle v0.2 without inclusion proof", wantErr: "inclusion proof missing",
+			edit: func(o *sigstoretest.Options) { o.MediaType, o.NoInclusionProof = sigstoretest.BundleMediaTypeV02, true }},
+		{name: "message signature", edit: func(o *sigstoretest.Options) { o.MessageSignature = true }},
+		{name: "message signature v0.1", edit: func(o *sigstoretest.Options) {
+			o.MessageSignature, o.MediaType, o.CertificateChain = true, sigstoretest.BundleMediaTypeV01, true
+		}},
+		{name: "message signature of another digest", signDigest: otherDigest, wantErr: "message digest does not match",
+			edit: func(o *sigstoretest.Options) { o.MessageSignature = true }},
+
+		// RFC 3161 timestamps and Rekor v2.
+		{name: "rekor v1 and timestamp", edit: func(o *sigstoretest.Options) { o.Timestamp = true }},
+		{name: "rekor v2 and timestamp", edit: func(o *sigstoretest.Options) { o.RekorV2, o.Timestamp = true, true }},
+		{name: "rekor v2 message signature", edit: func(o *sigstoretest.Options) {
+			o.RekorV2, o.Timestamp, o.MessageSignature = true, true, true
+		}},
+		{name: "rekor v2 expired certificate stamped in time", edit: func(o *sigstoretest.Options) {
+			o.RekorV2, o.Timestamp, o.SignedAt = true, true, longAgo
+		}},
+		{name: "timestamp without embedded certificate", edit: func(o *sigstoretest.Options) {
+			o.RekorV2, o.Timestamp, o.TimestampWithoutCert = true, true, true
+		}},
+		{name: "rekor v2 without timestamp", wantErr: "needs a verified RFC 3161 timestamp",
+			edit: func(o *sigstoretest.Options) { o.RekorV2 = true }},
+		{name: "rekor v2 bad checkpoint signature", wantErr: "signature by the log key does not verify",
+			edit: func(o *sigstoretest.Options) { o.RekorV2, o.Timestamp, o.BadCheckpoint = true, true, true }},
+		{name: "rekor v2 checkpoint by another key", wantErr: "signature by the log key does not verify",
+			edit: func(o *sigstoretest.Options) { o.RekorV2, o.Timestamp, o.WrongLogKey = true, true, true }},
+		{name: "rekor v2 inclusion proof mismatch", wantErr: "computed root hash does not match",
+			edit: func(o *sigstoretest.Options) { o.RekorV2, o.Timestamp, o.BadProofHash = true, true, true }},
+		{name: "rekor v2 without inclusion proof", wantErr: "inclusion proof missing",
+			edit: func(o *sigstoretest.Options) { o.RekorV2, o.Timestamp, o.NoInclusionProof = true, true, true }},
+		{name: "rekor v2 entry of another signature", signDigest: otherDigest, wantErr: "statement subject does not name digest",
+			edit: func(o *sigstoretest.Options) { o.RekorV2, o.Timestamp = true, true }},
+		{name: "TSA not in the trusted root", wantErr: "no timestamp authority of the trusted root signed it",
+			edit: func(o *sigstoretest.Options) { o.RekorV2, o.Timestamp, o.UntrustedTSA = true, true, true }},
+		{name: "message imprint mismatch", wantErr: "message imprint is not the hash of the signature",
+			edit: func(o *sigstoretest.Options) { o.RekorV2, o.Timestamp, o.BadTimestampImprint = true, true, true }},
+		{name: "timestamp after the certificate expired", wantErr: "certificate has expired",
+			edit: func(o *sigstoretest.Options) {
+				o.RekorV2, o.Timestamp, o.SignedAt, o.TimestampAt = true, true, longAgo, longAgo.Add(time.Hour)
+			}},
+		// Every verified time counts: a SET in time does not excuse a late
+		// timestamp.
+		{name: "rekor v1 in time, timestamp late", wantErr: "certificate has expired",
+			edit: func(o *sigstoretest.Options) {
+				o.Timestamp, o.SignedAt, o.TimestampAt = true, longAgo, longAgo.Add(time.Hour)
+			}},
+		// An untrusted timestamp is ignored when the SET gives a time.
+		{name: "rekor v1 and untrusted timestamp", edit: func(o *sigstoretest.Options) { o.Timestamp, o.UntrustedTSA = true, true }},
+		{name: "legacy with timestamp", legacy: true, edit: func(o *sigstoretest.Options) { o.Timestamp = true }},
+		{name: "legacy timestamp late", legacy: true, wantErr: "certificate has expired",
+			edit: func(o *sigstoretest.Options) {
+				o.Timestamp, o.SignedAt, o.TimestampAt = true, longAgo, longAgo.Add(time.Hour)
+			}},
+
+		// Certificate checks of the #933 review.
+		{name: "P-384 key signing with SHA-256", wantErr: "signature does not verify against the certificate",
+			edit: func(o *sigstoretest.Options) { o.LeafP384 = true }},
+		{name: "no digitalSignature key usage", wantErr: "lacks the digitalSignature key usage",
+			edit: func(o *sigstoretest.Options) { o.NoDigitalSignature = true }},
 	}
 	for i, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -145,6 +216,27 @@ func TestVerifyCosignKeyless(t *testing.T) {
 			}
 		})
 	}
+
+	// More referrers than the cap that are no bundles (SBOMs, scan
+	// reports) must not hide the bundle.
+	t.Run("many other referrers", func(t *testing.T) {
+		ref := pushTestImage(t, host+"/os/keyless-referrers")
+		for i := range maxCosignReferrers + 6 {
+			if err := sigstoretest.PushReferrer(ref, "application/spdx+json", fmt.Appendf(nil, `{"n":%d}`, i), nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		b, err := ss.Bundle(ref.DigestStr(), sigstoretest.Options{Identity: testIdentity, Issuer: testIssuer})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sigstoretest.PushBundle(ref, b); err != nil {
+			t.Fatal(err)
+		}
+		if err := VerifyCosignKeyless(context.Background(), ref.String(), policy); err != nil {
+			t.Fatalf("VerifyCosignKeyless() = %v", err)
+		}
+	})
 
 	t.Run("tag not digest", func(t *testing.T) {
 		err := VerifyCosignKeyless(context.Background(), host+"/os/unsigned:v1", policy)

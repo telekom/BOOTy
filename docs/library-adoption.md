@@ -82,21 +82,28 @@ timestamp thresholds of 1):
 | linux/amd64 | 30,875,808 | 36,610,208 | +5,734,400 (+18.6%) | +1,864,186 | +1,286,768 |
 | linux/arm64 | 28,770,464 | 34,209,952 | +5,439,488 (+18.9%) | +1,693,124 | +1,105,900 |
 
-The standard-library verifier of this change adds 126,976 bytes on amd64
-(31,002,784; +50,799 gzip -9) and 131,072 bytes on arm64 (28,901,536;
-+48,354 gzip -9), measured the same way.
+The standard-library verifier adds 192,512 bytes on amd64 (31,068,320;
++76,459 gzip -9) and 131,072 bytes on arm64 (28,901,536; +68,995 gzip -9),
+measured the same way. Of that, Rekor v2, RFC 3161 timestamps and the other
+bundle versions take 65,536 bytes on amd64 (+25,660 gzip -9) and nothing on
+arm64 (64 KiB segment alignment; +20,641 gzip -9).
 
 It links the Rekor types with go-openapi, in-toto, go-tuf and the
 timestamp-authority client. The compressed growth alone is more than the 5%
 headroom of the initramfs size budgets (`test/e2e/build_flavours_e2e_test.go`).
-BOOTy verifies the subset that cosign writes for images (Fulcio chain at the
-integrated time, embedded SCT, Rekor v1 SET, inclusion proof and checkpoint,
-DSSE or message signature) with the standard library in `pkg/image/sigstore.go`.
-It is checked against a bundle that the public-good instance signed
-(`pkg/image/testdata/sigstore`) and against bundles from the local Sigstore in
-`pkg/image/sigstoretest`, which sigstore-go v1.4.0 also accepts (and rejects
-when the SCT, SET, inclusion proof or issuer is broken). Revisit sigstore-go
-when Rekor v2 entries or RFC 3161 timestamps are needed.
+BOOTy verifies what cosign and the Sigstore clients write for images
+(bundles v0.1 to v0.3 with DSSE or message signatures, the cosign 2 `.sig`
+tag, Fulcio chain at every verified time, embedded SCT, Rekor v1 SET,
+inclusion proof and checkpoint, Rekor v2 `hashedrekord` 0.0.2 entries with
+signed-note checkpoints, RFC 3161 timestamps) with the standard library in
+`pkg/image/sigstore.go` and `pkg/image/rfc3161.go`. It passes the keyless
+cases of the sigstore-conformance `bundle-verify` suite and a bundle that the
+public-good instance signed (`pkg/image/testdata/sigstore`), and the bundles
+of the local Sigstore in `pkg/image/sigstoretest` get the same verdict from
+sigstore-go v1.4.0 (with one SCT, one tlog entry and one observer timestamp),
+except two cases where BOOTy is stricter: a Fulcio leaf without the
+digitalSignature key usage, and a P-384 key signing with SHA-256, which
+sigstore-go accepts through its compatibility verifier.
 
 ## Verification
 

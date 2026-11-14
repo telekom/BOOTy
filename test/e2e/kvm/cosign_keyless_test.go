@@ -22,8 +22,9 @@ import (
 // Scenario cosign-keyless (.github/workflows/kvm-matrix.yml) runs
 // ^TestKeylessCosign: the layered-layout fixture as an oci:// image with
 // IMAGE_COSIGN_TRUSTED_ROOT, signed keyless by a local Sigstore
-// (pkg/image/sigstoretest: CA, CT log and Rekor keys made at test time, so
-// there are no recorded fixtures to refresh).
+// (pkg/image/sigstoretest: CA, CT log, Rekor v1 and v2 log and timestamp
+// authority keys made at test time, so there are no recorded fixtures to
+// refresh).
 
 const (
 	keylessTrustedRootPath = "deploy/trusted_root.json"
@@ -45,7 +46,7 @@ func TestKeylessCosignSignedOCIImageVM(t *testing.T) {
 	pushHost, guestHost := startABOCIRegistry(t)
 	imageDigest := pushCosignTestImage(t, pushHost, "test/layered-os",
 		static.NewLayer(readFile(t, compressGzip(t, createLayeredLayoutTestDiskImage(t, 512))), types.OCILayer))
-	signKeylessBundle(t, ss, pushHost+"/test/layered-os@"+imageDigest, keylessIdentity)
+	signKeylessBundle(t, ss, pushHost+"/test/layered-os@"+imageDigest, sigstoretest.Options{Identity: keylessIdentity})
 
 	sysextPayload := []byte("keyless signed sysext vm e2e\n")
 	sysextDigest := pushCosignTestImage(t, pushHost, "test/node-tuning",
@@ -103,12 +104,65 @@ func TestKeylessCosignOtherIdentityRefusedVM(t *testing.T) {
 	pushHost, guestHost := startABOCIRegistry(t)
 	imageDigest := pushCosignTestImage(t, pushHost, "test/layered-os",
 		static.NewLayer(readFile(t, compressGzip(t, createLayeredLayoutTestDiskImage(t, 512))), types.OCILayer))
-	signKeylessBundle(t, ss, pushHost+"/test/layered-os@"+imageDigest, "https://ci.example/someone/else//.ci/build.yml@refs/heads/main")
+	signKeylessBundle(t, ss, pushHost+"/test/layered-os@"+imageDigest, sigstoretest.Options{Identity: "https://ci.example/someone/else//.ci/build.yml@refs/heads/main"})
 
 	output, targetDisk := runKeylessProvision(t, ss, "keyless-refused", "oci://"+guestHost+"/test/layered-os@"+imageDigest, nil)
+	assertRefusedBeforeWipe(t, output, targetDisk, "does not match the identity regexp")
+}
+
+// TestKeylessCosignRekorV2TimestampVM provisions from an image whose bundle
+// has a Rekor v2 entry (no SET, signed-note checkpoint) and an RFC 3161
+// timestamp, as cosign 3 writes with a Rekor v2 log and a TSA.
+func TestKeylessCosignRekorV2TimestampVM(t *testing.T) {
+	requireRoot(t)
+	qemuAvailable(t)
+	requireProvisionTools(t)
+	requireDiskInspectTools(t)
+
+	ss := newKeylessTestSigstore(t)
+	pushHost, guestHost := startABOCIRegistry(t)
+	imageDigest := pushCosignTestImage(t, pushHost, "test/layered-os",
+		static.NewLayer(readFile(t, compressGzip(t, createLayeredLayoutTestDiskImage(t, 512))), types.OCILayer))
+	signKeylessBundle(t, ss, pushHost+"/test/layered-os@"+imageDigest,
+		sigstoretest.Options{Identity: keylessIdentity, RekorV2: true, Timestamp: true})
+
+	output, targetDisk := runKeylessProvision(t, ss, "keyless-rekor-v2", "oci://"+guestHost+"/test/layered-os@"+imageDigest, nil)
+	assertProvisionSucceeded(t, output)
+	for _, want := range []string{"image cosign signature verified", "method=keyless"} {
+		if !strings.Contains(string(output), want) {
+			t.Fatalf("output lacks %q. tail:\n%s", want, tail(output, 3000))
+		}
+	}
+	root, cleanup := mountQcow2Partition(t, targetDisk, 2)
+	defer cleanup()
+	if got := strings.TrimSpace(readProvisionedFile(t, root, "etc/hostname")); got != "keyless-rekor-v2" {
+		t.Fatalf("hostname = %q", got)
+	}
+}
+
+// TestKeylessCosignRekorV2WithoutTimestampRefusedVM signs with a Rekor v2
+// entry but no timestamp: nothing attests when the short-lived certificate
+// signed, so BOOTy must stop in verify-image, before the wipe.
+func TestKeylessCosignRekorV2WithoutTimestampRefusedVM(t *testing.T) {
+	requireRoot(t)
+	qemuAvailable(t)
+	requireProvisionTools(t)
+
+	ss := newKeylessTestSigstore(t)
+	pushHost, guestHost := startABOCIRegistry(t)
+	imageDigest := pushCosignTestImage(t, pushHost, "test/layered-os",
+		static.NewLayer(readFile(t, compressGzip(t, createLayeredLayoutTestDiskImage(t, 512))), types.OCILayer))
+	signKeylessBundle(t, ss, pushHost+"/test/layered-os@"+imageDigest, sigstoretest.Options{Identity: keylessIdentity, RekorV2: true})
+
+	output, targetDisk := runKeylessProvision(t, ss, "keyless-no-timestamp", "oci://"+guestHost+"/test/layered-os@"+imageDigest, nil)
+	assertRefusedBeforeWipe(t, output, targetDisk, "needs a verified RFC 3161 timestamp")
+}
+
+func assertRefusedBeforeWipe(t *testing.T, output []byte, targetDisk, reason string) {
+	t.Helper()
 	text := string(output)
-	if !strings.Contains(text, "step=verify-image") || !strings.Contains(text, "does not match the identity regexp") {
-		t.Fatalf("no keyless refusal in verify-image. tail:\n%s", tail(output, 3000))
+	if !strings.Contains(text, "step=verify-image") || !strings.Contains(text, reason) {
+		t.Fatalf("no keyless refusal (%q) in verify-image. tail:\n%s", reason, tail(output, 3000))
 	}
 	for _, step := range []string{"step=wipe-disks", "step=stream-image"} {
 		if strings.Contains(text, step) {
@@ -127,13 +181,14 @@ func newKeylessTestSigstore(t *testing.T) *sigstoretest.Sigstore {
 	return ss
 }
 
-func signKeylessBundle(t *testing.T, ss *sigstoretest.Sigstore, ref, identity string) {
+func signKeylessBundle(t *testing.T, ss *sigstoretest.Sigstore, ref string, o sigstoretest.Options) {
 	t.Helper()
 	d, err := name.NewDigest(ref)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := ss.Bundle(d.DigestStr(), sigstoretest.Options{Identity: identity, Issuer: keylessIssuer})
+	o.Issuer = keylessIssuer
+	b, err := ss.Bundle(d.DigestStr(), o)
 	if err != nil {
 		t.Fatal(err)
 	}

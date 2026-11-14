@@ -14,8 +14,8 @@ the wipe (README "Cosign verification of OCI images and sysexts"), and
 `IMAGE_COSIGN_TRUSTED_ROOT` / `SYSEXT_COSIGN_TRUSTED_ROOT` with an identity
 regexp and an OIDC issuer verify keyless signatures offline against a
 trusted root in the ramdisk, in the Sigstore bundle format and the `.sig` tag
-layout (README "Keyless cosign verification"). Rekor v2 entries and RFC 3161
-timestamps are not read yet. It extends
+layout, with Rekor v1 or v2 entries and RFC 3161 timestamps (README "Keyless
+cosign verification"). It extends
 [proposal-release-pipelines.md](proposal-release-pipelines.md) and
 [proposal-image-signatures.md](proposal-image-signatures.md).
 

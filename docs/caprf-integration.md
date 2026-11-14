@@ -216,7 +216,11 @@ EXTRA_KERNEL_PARAMS=intel_iommu=on
   The command type selects the mode.
 - A payload can change the image, but not the policy its signature is
   checked against: the `IMAGE_COSIGN_*` and `SYSEXT_COSIGN_*` options (keys,
-  trusted root, identity, issuer) are fixed too.
+  trusted root, identity, issuer) are fixed too. With such a policy in
+  `/deploy/vars`, a payload can not add an image or sysext source that is not
+  `oci://` (checked only by a checksum) or change the checksum of one
+  (`IMAGE_CHECKSUM`, `IMAGE_CHECKSUM_TYPE`, `IMAGE_CHECKSUM_SCOPE`, a layer
+  `sha256`); it can drop one or switch to another `oci://` source.
 - A payload can not redirect a request that carries the bearer token:
   `INVENTORY_URL`, `FIRMWARE_URL`, `HEALTH_CHECK_URL`, `TELEMETRY_URL`,
   `METRICS_URL`, `EVENT_URL`, `CRASH_ARTIFACTS_PREPARE_URL` and

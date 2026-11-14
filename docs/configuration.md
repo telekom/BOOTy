@@ -539,8 +539,21 @@ The image and the sysext options are independent: image keys do not check
 sysexts and sysext keys do not check the image, so set both. All are unset by
 default. Keys and a keyless policy can be set together; a signature of either
 kind is then accepted, so the weaker one decides. A standby command payload
-can not change any cosign option (see
-[command payload](caprf-integration.md#command-payload)). See
+can not change any cosign option, nor add a source that is not `oci://` or
+change its checksum while a policy is set (see
+[command payload](caprf-integration.md#command-payload)).
+
+Keyless signature formats: Sigstore bundles v0.1, v0.2 and v0.3 (both media
+type forms) as OCI referrers, with a DSSE in-toto statement (`cosign sign`)
+or a message signature of the manifest digest, and the cosign 2 `.sig` tag;
+Rekor v1 entries (SET, inclusion proof and checkpoint) and Rekor v2 entries
+(`hashedrekord` 0.0.2, inclusion proof and signed-note checkpoint); RFC 3161
+timestamps of the trusted root's `timestampAuthorities`. The certificate is
+checked at each verified time (Rekor v1 integrated time, RFC 3161 time) and
+needs at least one, so a Rekor v2 signature needs a timestamp. Every Rekor
+entry must verify; a timestamp that does not verify is ignored. Public-key
+bundles and Rekor v2 `dsse` entries are refused. See
+[keyless verification](../README.md#keyless-cosign-verification). See
 [cosign verification](../README.md#cosign-verification-of-oci-images-and-sysexts).
 
 ## OverlayFS

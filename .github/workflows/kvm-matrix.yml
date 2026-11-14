@@ -222,8 +222,9 @@ jobs:
             test_regex: "^TestKeylessCosign"
             privileged: true
             setup: ""
-            # Two QEMU runs.
-            go_timeout: 30m
+            # Four QEMU runs: Rekor v1 bundle and .sig tag, Rekor v2 with an
+            # RFC 3161 timestamp, and two refusals before the wipe.
+            go_timeout: 45m
           - scenario: crash-artifacts
             qemu_extra: ""
             test_tag: e2e

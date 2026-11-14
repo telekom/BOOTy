@@ -20,7 +20,10 @@ import (
 // The payload can not change the settings that the running ramdisk already
 // uses: the transport (tokens, callback URLs, TLS), the agent endpoints, the
 // network, MODE, DRY_RUN, CAPRF_LEGACY_COMPAT and the cosign verification
-// policy of the image and the sysexts. It can not change a URL
+// policy of the image and the sysexts. Under a cosign policy of the base
+// vars it can not add a source that the policy does not cover (not oci://,
+// so only checked by a checksum) or change the checksum of one; it can drop
+// such a source. It can not change a URL
 // that BOOTy posts to with the bearer token (inventory, firmware, health,
 // telemetry, crash artifacts). Unknown keys are rejected too. A payload
 // with only blank and comment lines returns no keys.
@@ -82,11 +85,43 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 			fixed = append(fixed, s.name)
 		}
 	}
+	if base := uncoveredSources(ref); slices.ContainsFunc(uncoveredSources(cfg), func(s string) bool { return !slices.Contains(base, s) }) {
+		fixed = append(fixed, "cosign (a source that is not oci:// or its checksum)")
+	}
 	if len(fixed) > 0 {
 		return nil, nil, fmt.Errorf("payload changes %s settings, which can not change in a running ramdisk",
 			strings.Join(fixed, ", "))
 	}
 	return cfg, keys, nil
+}
+
+// uncoveredSources returns, for the image and the sysexts under a cosign
+// policy in cfg, each source that the policy does not cover (not oci://)
+// with the checksum that stands in for its signature. A payload adding one
+// could replace a signed image with an unsigned one of its own checksum.
+func uncoveredSources(cfg *config.MachineConfig) []string {
+	var out []string
+	im, sx := &cfg.Provision.Image, &cfg.Provision.Sysext
+	if len(im.CosignPublicKeys) > 0 || im.CosignTrustedRoot != "" || im.CosignIdentityRegexp != "" || im.CosignOIDCIssuer != "" {
+		for _, u := range im.URLs {
+			if !isOCISource(u) {
+				out = append(out, "image "+u+" "+im.Checksum+" "+im.ChecksumType+" "+im.ChecksumScope)
+			}
+		}
+	}
+	if len(sx.CosignPublicKeys) > 0 || sx.CosignTrustedRoot != "" || sx.CosignIdentityRegexp != "" || sx.CosignOIDCIssuer != "" {
+		for i := range sx.Layers {
+			if l := &sx.Layers[i]; !isOCISource(l.Source) {
+				out = append(out, "sysext "+l.Source+" "+l.SHA256)
+			}
+		}
+	}
+	return out
+}
+
+// isOCISource is image.IsOCIReference of the trimmed source.
+func isOCISource(source string) bool {
+	return len(strings.TrimSpace(source)) >= len("oci://") && strings.EqualFold(strings.TrimSpace(source)[:len("oci://")], "oci://")
 }
 
 // cosignVars returns the cosign verification settings of cfg.

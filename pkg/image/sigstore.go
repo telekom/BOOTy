@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -28,28 +29,44 @@ import (
 )
 
 // An offline verifier for keyless Sigstore signatures: a Fulcio certificate
-// with an embedded SCT, recorded in a Rekor v1 transparency log, checked
+// with an embedded SCT, recorded in a Rekor transparency log, checked
 // against a trusted_root.json. It covers what cosign writes for container
 // images and nothing more, with the standard library only, so the ramdisk
 // does not grow by the ~5.7 MB that sigstore-go adds (see
 // docs/library-adoption.md). Supported:
 //
-//   - bundle media types v0.1 to v0.3, content DSSE envelope (one
-//     signature) or message signature;
+//   - bundle media types v0.1 to v0.3 (certificate chain up to v0.2, single
+//     certificate from v0.3 on), content DSSE envelope (one signature) or
+//     message signature;
 //   - Rekor v1 entries of kind dsse 0.0.1, intoto 0.0.2 and hashedrekord
-//     0.0.1. Each needs a signed entry timestamp (SET), whose integrated
-//     time is the time the certificate is checked at; an inclusion proof,
-//     required from bundle v0.2 on, is checked against its signed
-//     checkpoint;
-//   - ECDSA, RSA PKCS#1 v1.5 and Ed25519 keys.
+//     0.0.1: a signed entry timestamp (SET, required for bundle v0.1) and an
+//     inclusion proof with a signed checkpoint (required from v0.2 on);
+//   - Rekor v2 (rekor-tiles) entries of kind hashedrekord 0.0.2, also for
+//     DSSE (digest of the pre-authentication encoding): the entry body is
+//     rebuilt from the bundle and proven by the inclusion proof and the
+//     checkpoint, a signed note of the log key under the log's origin;
+//   - RFC 3161 timestamps of a timestamp authority of the trusted root
+//     (rfc3161.go);
+//   - ECDSA, RSA PKCS#1 v1.5 and Ed25519 log and authority keys.
 //
-// Not supported, so refused: Rekor v2 entries (no SET), RFC 3161
-// timestamps, public-key bundles.
+// Every transparency log entry must verify. The certificate is checked at
+// every verified time: the integrated time of a Rekor v1 entry with a SET
+// and the time of each RFC 3161 timestamp that verifies (one that does not
+// is ignored, as in sigstore-go). At least one time is required, so a
+// bundle with only Rekor v2 entries needs a timestamp; this is sigstore-go's
+// WithObserverTimestamps(1) with a transparency log threshold of 1.
+//
+// Not supported, so refused: Rekor v2 dsse 0.0.2 entries (sigstore-go does
+// not verify them either), public-key bundles.
 
 const (
 	sigstoreTrustedRootMediaType = "application/vnd.dev.sigstore.trustedroot+json;version=0.1"
 	// A trusted root holds a few certificates and keys.
 	maxSigstoreTrustedRootSize = 1 << 20
+	// The limits of sigstore-go: more entries or timestamps are refused.
+	maxSigstoreTlogEntries = 32
+	maxSigstoreTimestamps  = 32
+	rekorV2Kind            = "hashedrekord 0.0.2"
 )
 
 var (
@@ -63,17 +80,25 @@ var (
 // sigstoreRoot is the parsed trusted root.
 type sigstoreRoot struct {
 	cas    []sigstoreCA
-	tlogs  map[string]sigstoreLogKey // by hex log ID
-	ctlogs map[string]sigstoreLogKey
+	tsas   []sigstoreCA               // timestamp authorities
+	tlogs  map[string]*sigstoreLogKey // by hex log ID
+	ctlogs map[string]*sigstoreLogKey
 }
 
 type sigstoreCA struct {
 	roots, intermediates []*x509.Certificate
+	leaf                 *x509.Certificate // timestamp authorities: the signing certificate, if listed
 	start, end           time.Time
+}
+
+func (ca *sigstoreCA) validAt(t time.Time) bool {
+	return !t.Before(ca.start) && (ca.end.IsZero() || !t.After(ca.end))
 }
 
 type sigstoreLogKey struct {
 	key        crypto.PublicKey
+	origin     string // host name of the base URL: the checkpoint origin of a Rekor v2 log
+	host       string // host and port of the base URL: the origin of a Rekor v1 log
 	start, end time.Time
 }
 
@@ -83,6 +108,7 @@ type validFor struct {
 }
 
 type sigstoreLogJSON struct {
+	BaseURL   string `json:"baseUrl"`
 	PublicKey struct {
 		RawBytes []byte   `json:"rawBytes"`
 		ValidFor validFor `json:"validFor"`
@@ -92,8 +118,17 @@ type sigstoreLogJSON struct {
 	} `json:"logId"`
 }
 
+type sigstoreCAJSON struct {
+	CertChain struct {
+		Certificates []struct {
+			RawBytes []byte `json:"rawBytes"`
+		} `json:"certificates"`
+	} `json:"certChain"`
+	ValidFor validFor `json:"validFor"`
+}
+
 // loadSigstoreRoot reads a trusted_root.json (protobuf-specs TrustedRoot,
-// JSON form). Timestamp authorities are ignored.
+// JSON form).
 func loadSigstoreRoot(path string) (*sigstoreRoot, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // configured trusted root path in the ramdisk
 	if err != nil {
@@ -110,14 +145,8 @@ func parseSigstoreRoot(data []byte) (*sigstoreRoot, error) {
 		MediaType string            `json:"mediaType"`
 		Tlogs     []sigstoreLogJSON `json:"tlogs"`
 		CTLogs    []sigstoreLogJSON `json:"ctlogs"`
-		CAs       []struct {
-			CertChain struct {
-				Certificates []struct {
-					RawBytes []byte `json:"rawBytes"`
-				} `json:"certificates"`
-			} `json:"certChain"`
-			ValidFor validFor `json:"validFor"`
-		} `json:"certificateAuthorities"`
+		CAs       []sigstoreCAJSON  `json:"certificateAuthorities"`
+		TSAs      []sigstoreCAJSON  `json:"timestampAuthorities"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse trusted root: %w", err)
@@ -133,28 +162,11 @@ func parseSigstoreRoot(data []byte) (*sigstoreRoot, error) {
 	if r.ctlogs, err = parseSigstoreLogs(raw.CTLogs); err != nil {
 		return nil, fmt.Errorf("ctlogs: %w", err)
 	}
-	for i, ca := range raw.CAs {
-		certs := ca.CertChain.Certificates
-		if len(certs) == 0 {
-			return nil, fmt.Errorf("certificate authority %d has no certificates", i)
-		}
-		c := sigstoreCA{start: ca.ValidFor.Start}
-		if ca.ValidFor.End != nil {
-			c.end = *ca.ValidFor.End
-		}
-		// The chain is ordered from the intermediates to the root.
-		for j, raw := range certs {
-			cert, err := x509.ParseCertificate(raw.RawBytes)
-			if err != nil {
-				return nil, fmt.Errorf("certificate authority %d: %w", i, err)
-			}
-			if j == len(certs)-1 {
-				c.roots = append(c.roots, cert)
-			} else {
-				c.intermediates = append(c.intermediates, cert)
-			}
-		}
-		r.cas = append(r.cas, c)
+	if r.cas, err = parseSigstoreCAs(raw.CAs, false); err != nil {
+		return nil, fmt.Errorf("certificate authorities: %w", err)
+	}
+	if r.tsas, err = parseSigstoreCAs(raw.TSAs, true); err != nil {
+		return nil, fmt.Errorf("timestamp authorities: %w", err)
 	}
 	if len(r.cas) == 0 || len(r.tlogs) == 0 || len(r.ctlogs) == 0 {
 		return nil, errors.New("trusted root needs certificate authorities, tlogs and ctlogs")
@@ -162,17 +174,61 @@ func parseSigstoreRoot(data []byte) (*sigstoreRoot, error) {
 	return r, nil
 }
 
-func parseSigstoreLogs(logs []sigstoreLogJSON) (map[string]sigstoreLogKey, error) {
-	out := make(map[string]sigstoreLogKey, len(logs))
+// parseSigstoreCAs parses certificate chains ordered from the leaf or the
+// intermediates to the root. For a timestamp authority a first certificate
+// that is no CA is the signing certificate.
+func parseSigstoreCAs(cas []sigstoreCAJSON, tsa bool) ([]sigstoreCA, error) {
+	out := make([]sigstoreCA, 0, len(cas))
+	for i, ca := range cas {
+		certs := ca.CertChain.Certificates
+		if len(certs) == 0 {
+			return nil, fmt.Errorf("authority %d has no certificates", i)
+		}
+		c := sigstoreCA{start: ca.ValidFor.Start}
+		if ca.ValidFor.End != nil {
+			c.end = *ca.ValidFor.End
+		}
+		for j, raw := range certs {
+			cert, err := x509.ParseCertificate(raw.RawBytes)
+			if err != nil {
+				return nil, fmt.Errorf("authority %d: %w", i, err)
+			}
+			switch {
+			case j == len(certs)-1:
+				c.roots = append(c.roots, cert)
+			case j == 0 && tsa && !cert.IsCA:
+				c.leaf = cert
+			default:
+				c.intermediates = append(c.intermediates, cert)
+			}
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+func parseSigstoreLogs(logs []sigstoreLogJSON) (map[string]*sigstoreLogKey, error) {
+	out := make(map[string]*sigstoreLogKey, len(logs))
 	for i, l := range logs {
 		key, err := x509.ParsePKIXPublicKey(l.PublicKey.RawBytes)
 		if err != nil {
-			return nil, fmt.Errorf("log %d: %w", i, err)
+			// PKCS1_RSA_PKCS1V5, still used by the staging CT log.
+			rsaKey, errPKCS1 := x509.ParsePKCS1PublicKey(l.PublicKey.RawBytes)
+			if errPKCS1 != nil {
+				return nil, fmt.Errorf("log %d: %w", i, err)
+			}
+			key = rsaKey
 		}
 		if len(l.LogID.KeyID) == 0 {
 			return nil, fmt.Errorf("log %d has no log ID", i)
 		}
-		k := sigstoreLogKey{key: key, start: l.PublicKey.ValidFor.Start}
+		if l.PublicKey.ValidFor.Start.IsZero() {
+			return nil, fmt.Errorf("log %d has no validity start", i)
+		}
+		k := &sigstoreLogKey{key: key, start: l.PublicKey.ValidFor.Start}
+		if u, err := url.Parse(l.BaseURL); err == nil {
+			k.origin, k.host = u.Hostname(), u.Host
+		}
 		if l.PublicKey.ValidFor.End != nil {
 			k.end = *l.PublicKey.ValidFor.End
 		}
@@ -181,7 +237,7 @@ func parseSigstoreLogs(logs []sigstoreLogJSON) (map[string]sigstoreLogKey, error
 	return out, nil
 }
 
-func (k sigstoreLogKey) validAt(t time.Time) bool {
+func (k *sigstoreLogKey) validAt(t time.Time) bool {
 	return !t.Before(k.start) && (k.end.IsZero() || !t.After(k.end))
 }
 
@@ -198,7 +254,12 @@ type sigstoreBundle struct {
 				RawBytes []byte `json:"rawBytes"`
 			} `json:"certificates"`
 		} `json:"x509CertificateChain"`
-		TlogEntries []sigstoreTlogEntry `json:"tlogEntries"`
+		TlogEntries               []sigstoreTlogEntry `json:"tlogEntries"`
+		TimestampVerificationData struct {
+			RFC3161Timestamps []struct {
+				SignedTimestamp []byte `json:"signedTimestamp"`
+			} `json:"rfc3161Timestamps"`
+		} `json:"timestampVerificationData"`
 	} `json:"verificationMaterial"`
 	DSSEEnvelope *struct {
 		Payload     []byte `json:"payload"`
@@ -249,33 +310,61 @@ type sigstoreIdentity struct {
 	issuer string         // exact
 }
 
-// verifySigstoreBundle verifies b against root and id and returns the DSSE
-// payload, or with artifact the message signature over it. Exactly one of
-// a DSSE envelope and artifact must be given.
-func verifySigstoreBundle(root *sigstoreRoot, id sigstoreIdentity, b *sigstoreBundle, artifact []byte) ([]byte, error) {
+// verifySigstoreBundle verifies b against root and id. A DSSE envelope is
+// verified with digest nil and its payload returned; a message signature
+// must sign the SHA-256 digest (of the artifact, or of an image manifest).
+func verifySigstoreBundle(root *sigstoreRoot, id sigstoreIdentity, b *sigstoreBundle, digest []byte) ([]byte, error) {
+	return verifySigstoreBundleMessage(root, id, b, digest, nil)
+}
+
+// verifySigstoreBundleMessage is verifySigstoreBundle with the signed
+// message itself (the .sig tag payload), which the signature is checked
+// over; an Ed25519 key signs the message rather than its digest.
+func verifySigstoreBundleMessage(root *sigstoreRoot, id sigstoreIdentity, b *sigstoreBundle, digest, message []byte) ([]byte, error) {
 	m := bundleVersionRe.FindStringSubmatch(b.MediaType)
 	if m == nil {
 		return nil, fmt.Errorf("unsupported bundle media type %q", b.MediaType)
 	}
-	needProof := m[1]+m[2] != "0.1"
-	leaf, err := bundleLeaf(b)
+	version := m[1] + m[2]
+	leaf, err := bundleLeaf(b, version)
 	if err != nil {
 		return nil, err
 	}
-	payload, sig, signed, err := bundleContent(b, artifact)
+	if leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		return nil, errors.New("signing certificate lacks the digitalSignature key usage")
+	}
+	c, err := bundleContent(b, digest)
 	if err != nil {
 		return nil, err
 	}
-	if !verifyCosignKey(leaf.PublicKey, signed, sig) {
+	c.message = message
+	if !c.verify(leaf.PublicKey) {
 		return nil, errors.New("signature does not verify against the certificate")
 	}
-	integrated, err := verifySigstoreTlog(root, b.VerificationMaterial.TlogEntries, leaf, sig, payload, needProof)
+	if n := len(b.VerificationMaterial.TimestampVerificationData.RFC3161Timestamps); n > maxSigstoreTimestamps {
+		return nil, fmt.Errorf("%d timestamps, more than %d", n, maxSigstoreTimestamps)
+	}
+	tsTimes, tsErr := verifySigstoreTimestamps(root, b, c.sig)
+	times, err := verifySigstoreTlog(root, b.VerificationMaterial.TlogEntries, leaf, c, version, tsTimes)
 	if err != nil {
+		if tsErr != nil {
+			err = fmt.Errorf("%w; %w", err, tsErr)
+		}
 		return nil, err
 	}
-	chain, err := verifySigstoreChain(root, leaf, integrated)
-	if err != nil {
+	times = append(times, tsTimes...)
+	if len(times) == 0 {
+		err := errors.New("no verified signing time: the bundle needs a Rekor v1 signed entry timestamp or an RFC 3161 timestamp of a trusted timestamp authority")
+		if tsErr != nil {
+			err = fmt.Errorf("%w: %w", err, tsErr)
+		}
 		return nil, err
+	}
+	var chain []*x509.Certificate
+	for _, t := range times {
+		if chain, err = verifySigstoreChain(root, leaf, t); err != nil {
+			return nil, err
+		}
 	}
 	if err := verifySigstoreSCT(root, leaf, chain[1]); err != nil {
 		return nil, err
@@ -283,39 +372,80 @@ func verifySigstoreBundle(root *sigstoreRoot, id sigstoreIdentity, b *sigstoreBu
 	if err := id.verify(leaf); err != nil {
 		return nil, err
 	}
-	return payload, nil
+	return c.payload, nil
 }
 
-// bundleContent returns the payload, the signature and the signed bytes
-// (the DSSE pre-authentication encoding or the artifact).
-func bundleContent(b *sigstoreBundle, artifact []byte) (payload, sig, signed []byte, err error) {
+// signedContent is what a bundle signs.
+type signedContent struct {
+	dsse    bool
+	payload []byte // DSSE payload
+	pae     []byte // DSSE pre-authentication encoding, the signed bytes
+	digest  []byte // message signature: the signed SHA-256 digest
+	message []byte // message signature: the message, when known
+	sig     []byte
+}
+
+// verify checks the signature over the PAE or the message with the hash of
+// the key's algorithm only (ECDSA P-256/SHA-256, P-384/SHA-384,
+// P-521/SHA-512, RSA/SHA-256, Ed25519), or over the SHA-256 message digest
+// for a P-256 or RSA key.
+func (c *signedContent) verify(key crypto.PublicKey) bool {
+	if c.dsse {
+		return verifySigstoreSig(key, c.pae, c.sig)
+	}
+	if c.message != nil {
+		return verifySigstoreSig(key, c.message, c.sig)
+	}
+	switch k := key.(type) {
+	case *ecdsa.PublicKey:
+		return k.Curve == elliptic.P256() && ecdsa.VerifyASN1(k, c.digest, c.sig)
+	case *rsa.PublicKey:
+		return rsa.VerifyPKCS1v15(k, crypto.SHA256, c.digest, c.sig) == nil
+	}
+	return false
+}
+
+// loggedHash is the SHA-256 hash a Rekor v1 entry records: of the DSSE
+// payload, or the message digest.
+func (c *signedContent) loggedHash() []byte {
+	if c.dsse {
+		h := sha256.Sum256(c.payload)
+		return h[:]
+	}
+	return c.digest
+}
+
+func bundleContent(b *sigstoreBundle, digest []byte) (*signedContent, error) {
 	switch {
-	case b.DSSEEnvelope != nil && b.MessageSignature == nil && artifact == nil:
+	case b.DSSEEnvelope != nil && b.MessageSignature == nil && digest == nil:
 		env := b.DSSEEnvelope
 		if len(env.Signatures) != 1 {
-			return nil, nil, nil, fmt.Errorf("DSSE envelope has %d signatures, want 1", len(env.Signatures))
+			return nil, fmt.Errorf("DSSE envelope has %d signatures, want 1", len(env.Signatures))
 		}
-		payload = env.Payload
-		signed = fmt.Appendf(nil, "DSSEv1 %d %s %d %s", len(env.PayloadType), env.PayloadType, len(payload), payload)
-		return payload, env.Signatures[0].Sig, signed, nil
-	case b.MessageSignature != nil && b.DSSEEnvelope == nil && artifact != nil:
+		pae := fmt.Appendf(nil, "DSSEv1 %d %s %d %s", len(env.PayloadType), env.PayloadType, len(env.Payload), env.Payload)
+		return &signedContent{dsse: true, payload: env.Payload, pae: pae, sig: env.Signatures[0].Sig}, nil
+	case b.MessageSignature != nil && b.DSSEEnvelope == nil && digest != nil:
 		ms := b.MessageSignature
-		h := sha256.Sum256(artifact)
-		if ms.MessageDigest.Algorithm != "SHA2_256" || !bytes.Equal(ms.MessageDigest.Digest, h[:]) {
-			return nil, nil, nil, errors.New("message digest does not match the artifact")
+		if ms.MessageDigest.Algorithm != "SHA2_256" || !bytes.Equal(ms.MessageDigest.Digest, digest) {
+			return nil, errors.New("message digest does not match the artifact")
 		}
-		return artifact, ms.Signature, artifact, nil
+		return &signedContent{digest: digest, sig: ms.Signature}, nil
 	default:
-		return nil, nil, nil, errors.New("bundle content does not match the expected signature kind")
+		return nil, errors.New("bundle content does not match the expected signature kind")
 	}
 }
 
-func bundleLeaf(b *sigstoreBundle) (*x509.Certificate, error) {
+func bundleLeaf(b *sigstoreBundle, version string) (*x509.Certificate, error) {
 	vm := &b.VerificationMaterial
 	var der []byte
 	switch {
+	case vm.Certificate != nil && vm.X509CertificateChain != nil:
+		return nil, errors.New("bundle has both a certificate and a certificate chain")
 	case vm.Certificate != nil:
 		der = vm.Certificate.RawBytes
+	case vm.X509CertificateChain != nil && version == "0.3":
+		// As sigstore-go: a v0.3 bundle carries the certificate alone.
+		return nil, errors.New("a bundle v0.3 must carry a certificate, not a certificate chain")
 	case vm.X509CertificateChain != nil && len(vm.X509CertificateChain.Certificates) > 0:
 		// The rest of the chain must come from the trusted root.
 		der = vm.X509CertificateChain.Certificates[0].RawBytes
@@ -329,37 +459,100 @@ func bundleLeaf(b *sigstoreBundle) (*x509.Certificate, error) {
 	return leaf, nil
 }
 
-// verifySigstoreTlog checks that one entry of a known log records sig, the
-// leaf and payload, with a valid SET (and inclusion proof when present or
-// needed). It returns the integrated time of that entry.
-func verifySigstoreTlog(root *sigstoreRoot, entries []sigstoreTlogEntry, leaf *x509.Certificate, sig, payload []byte, needProof bool) (time.Time, error) {
+// verifySigstoreTimestamps returns the times of the RFC 3161 timestamps of
+// the bundle over sig that verify; the error explains the others.
+func verifySigstoreTimestamps(root *sigstoreRoot, b *sigstoreBundle, sig []byte) ([]time.Time, error) {
+	var times []time.Time
 	var errs []error
-	for i := range entries {
-		e := &entries[i]
-		t, err := verifySigstoreTlogEntry(root, e, leaf, sig, payload, needProof)
-		if err == nil {
-			return t, nil
+	for i, ts := range b.VerificationMaterial.TimestampVerificationData.RFC3161Timestamps {
+		t, err := root.verifyRFC3161(ts.SignedTimestamp, sig)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("RFC 3161 timestamp %d: %w", i, err))
+			continue
 		}
-		errs = append(errs, fmt.Errorf("tlog entry %d: %w", e.LogIndex, err))
+		times = append(times, t)
 	}
-	if len(errs) == 0 {
-		return time.Time{}, errors.New("bundle has no transparency log entry")
-	}
-	return time.Time{}, errors.Join(errs...)
+	return times, errors.Join(errs...)
 }
 
-func verifySigstoreTlogEntry(root *sigstoreRoot, e *sigstoreTlogEntry, leaf *x509.Certificate, sig, payload []byte, needProof bool) (time.Time, error) {
+// verifySigstoreTlog checks that every entry is of a log of the trusted root
+// and records the signature, the certificate and the signed content. It
+// returns the integrated times of the Rekor v1 entries with a SET. Entries
+// without a SET need tsTimes, the verified timestamps, to check the log key
+// validity at.
+func verifySigstoreTlog(root *sigstoreRoot, entries []sigstoreTlogEntry, leaf *x509.Certificate, c *signedContent, version string, tsTimes []time.Time) ([]time.Time, error) {
+	if len(entries) == 0 {
+		return nil, errors.New("bundle has no transparency log entry")
+	}
+	if len(entries) > maxSigstoreTlogEntries {
+		return nil, fmt.Errorf("%d transparency log entries, more than %d", len(entries), maxSigstoreTlogEntries)
+	}
+	seen := make(map[string]bool, len(entries))
+	var times []time.Time
+	for i := range entries {
+		e := &entries[i]
+		k := fmt.Sprintf("%x/%d", e.LogID.KeyID, e.LogIndex)
+		if seen[k] {
+			return nil, fmt.Errorf("duplicate tlog entry %d", e.LogIndex)
+		}
+		seen[k] = true
+		t, err := verifySigstoreTlogEntry(root, e, leaf, c, version, tsTimes)
+		if err != nil {
+			return nil, fmt.Errorf("tlog entry %d: %w", e.LogIndex, err)
+		}
+		if !t.IsZero() {
+			times = append(times, t)
+		}
+	}
+	return times, nil
+}
+
+func verifySigstoreTlogEntry(root *sigstoreRoot, e *sigstoreTlogEntry, leaf *x509.Certificate, c *signedContent, version string, tsTimes []time.Time) (time.Time, error) {
 	logID := hex.EncodeToString(e.LogID.KeyID)
 	key, ok := root.tlogs[logID]
 	if !ok {
 		return time.Time{}, fmt.Errorf("log %s is not in the trusted root", logID)
 	}
+	if e.KindVersion.Kind+" "+e.KindVersion.Version == rekorV2Kind {
+		return time.Time{}, verifyRekorV2Entry(e, key, leaf, c, tsTimes)
+	}
+	hasSET := e.InclusionPromise != nil && len(e.InclusionPromise.SignedEntryTimestamp) > 0
+	switch {
+	case !hasSET && version == "0.1":
+		return time.Time{}, errors.New("no signed entry timestamp (required for bundle v0.1)")
+	case e.InclusionProof == nil && version != "0.1":
+		return time.Time{}, errors.New("inclusion proof missing (required from bundle v0.2 on)")
+	case !hasSET && e.InclusionProof == nil:
+		return time.Time{}, errors.New("neither a signed entry timestamp nor an inclusion proof")
+	}
+	var integrated time.Time
+	var err error
+	if hasSET {
+		integrated, err = verifySET(e, key, logID)
+	} else {
+		err = key.validAtAll(tsTimes)
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	if e.InclusionProof != nil {
+		leafHash := sha256.Sum256(append([]byte{0}, e.CanonicalizedBody...))
+		if err := verifyInclusionProof(e, key, leafHash[:], false); err != nil {
+			return time.Time{}, fmt.Errorf("inclusion proof: %w", err)
+		}
+	}
+	if err := checkRekorBody(e, leaf, c); err != nil {
+		return time.Time{}, err
+	}
+	return integrated, nil
+}
+
+// verifySET checks the signed entry timestamp of a Rekor v1 entry and
+// returns its integrated time.
+func verifySET(e *sigstoreTlogEntry, key *sigstoreLogKey, logID string) (time.Time, error) {
 	integrated := time.Unix(e.IntegratedTime, 0)
 	if !key.validAt(integrated) {
 		return time.Time{}, errors.New("log key not valid at the integrated time")
-	}
-	if e.InclusionPromise == nil || len(e.InclusionPromise.SignedEntryTimestamp) == 0 {
-		return time.Time{}, errors.New("no signed entry timestamp (Rekor v2 entries are not supported)")
 	}
 	// RFC 8785 canonical JSON of the Rekor payload: the keys sorted, and
 	// base64 and hex strings that need no escaping.
@@ -368,55 +561,97 @@ func verifySigstoreTlogEntry(root *sigstoreRoot, e *sigstoreTlogEntry, leaf *x50
 	if !verifySigstoreSig(key.key, set, e.InclusionPromise.SignedEntryTimestamp) {
 		return time.Time{}, errors.New("signed entry timestamp does not verify")
 	}
-	switch {
-	case e.InclusionProof != nil:
-		if err := verifyInclusionProof(e, key.key); err != nil {
-			return time.Time{}, fmt.Errorf("inclusion proof: %w", err)
-		}
-	case needProof:
-		return time.Time{}, errors.New("inclusion proof missing")
-	}
-	if err := checkRekorBody(e, leaf, sig, payload); err != nil {
-		return time.Time{}, err
-	}
 	return integrated, nil
 }
 
-// checkRekorBody checks that the log entry body records the signature, the
-// certificate and the hash of the signed payload.
-func checkRekorBody(e *sigstoreTlogEntry, leaf *x509.Certificate, sig, payload []byte) error {
+func (k *sigstoreLogKey) validAtAll(times []time.Time) error {
+	for _, t := range times {
+		if !k.validAt(t) {
+			return fmt.Errorf("log key not valid at the timestamp %s", t.UTC().Format(time.RFC3339))
+		}
+	}
+	return nil
+}
+
+// verifyRekorV2Entry checks a Rekor v2 hashedrekord 0.0.2 entry, which has
+// no SET and no integrated time: the body rebuilt from the bundle must be
+// the logged one and be included in the tree of the signed checkpoint.
+func verifyRekorV2Entry(e *sigstoreTlogEntry, key *sigstoreLogKey, leaf *x509.Certificate, c *signedContent, tsTimes []time.Time) error {
+	if len(tsTimes) == 0 {
+		return errors.New("a Rekor v2 entry carries no time: it needs a verified RFC 3161 timestamp")
+	}
+	if err := key.validAtAll(tsTimes); err != nil {
+		return err
+	}
+	if e.InclusionProof == nil {
+		return errors.New("inclusion proof missing (required for Rekor v2)")
+	}
+	body, err := rekorV2Body(leaf, c)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(body, e.CanonicalizedBody) {
+		return errors.New("entry does not record the signature, the certificate and the digest")
+	}
+	leafHash := sha256.Sum256(append([]byte{0}, body...))
+	if err := verifyInclusionProof(e, key, leafHash[:], true); err != nil {
+		return fmt.Errorf("inclusion proof: %w", err)
+	}
+	return nil
+}
+
+// rekorV2Body returns the RFC 8785 canonical JSON of the hashedrekord 0.0.2
+// entry (protojson of rekor-tiles' Entry) that records c and leaf. For DSSE
+// the digest is of the PAE, with the hash of the key's algorithm.
+func rekorV2Body(leaf *x509.Certificate, c *signedContent) ([]byte, error) {
+	details, hashName, h, err := rekorKeyDetails(leaf.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	digest := c.digest
+	if c.dsse {
+		hh := h.New()
+		hh.Write(c.pae)
+		digest = hh.Sum(nil)
+	}
+	b64 := base64.StdEncoding.EncodeToString
+	return fmt.Appendf(nil, `{"apiVersion":"0.0.2","kind":"hashedrekord","spec":{"hashedRekordV002":{"data":{"algorithm":%q,"digest":%q},`+
+		`"signature":{"content":%q,"verifier":{"keyDetails":%q,"x509Certificate":{"rawBytes":%q}}}}}}`,
+		hashName, b64(digest), b64(c.sig), details, b64(leaf.Raw)), nil
+}
+
+// rekorKeyDetails returns the protobuf-specs PublicKeyDetails, the hash
+// algorithm name and the hash of a signing key, as sigstore's default
+// algorithm registry.
+func rekorKeyDetails(key crypto.PublicKey) (details, hashName string, h crypto.Hash, err error) {
+	switch k := key.(type) {
+	case *ecdsa.PublicKey:
+		switch k.Curve {
+		case elliptic.P256():
+			return "PKIX_ECDSA_P256_SHA_256", "SHA2_256", crypto.SHA256, nil
+		case elliptic.P384():
+			return "PKIX_ECDSA_P384_SHA_384", "SHA2_384", crypto.SHA384, nil
+		case elliptic.P521():
+			return "PKIX_ECDSA_P521_SHA_512", "SHA2_512", crypto.SHA512, nil
+		}
+	case *rsa.PublicKey:
+		switch n := k.N.BitLen(); n {
+		case 2048, 3072, 4096:
+			return fmt.Sprintf("PKIX_RSA_PKCS1V15_%d_SHA256", n), "SHA2_256", crypto.SHA256, nil
+		}
+	}
+	return "", "", 0, fmt.Errorf("no Rekor v2 entry for a %T signing key", key)
+}
+
+// checkRekorBody checks that the Rekor v1 entry body records the signature,
+// the certificate and the hash of the signed content, with an entry kind
+// for that content.
+func checkRekorBody(e *sigstoreTlogEntry, leaf *x509.Certificate, c *signedContent) error {
 	kv := e.KindVersion.Kind + " " + e.KindVersion.Version
 	var body struct {
-		Kind       string `json:"kind"`
-		APIVersion string `json:"apiVersion"`
-		Spec       struct {
-			// hashedrekord 0.0.1
-			Data struct {
-				Hash struct{ Algorithm, Value string } `json:"hash"`
-			} `json:"data"`
-			Signature struct {
-				Content   []byte `json:"content"`
-				PublicKey struct {
-					Content []byte `json:"content"`
-				} `json:"publicKey"`
-			} `json:"signature"`
-			// dsse 0.0.1
-			PayloadHash struct{ Algorithm, Value string } `json:"payloadHash"`
-			Signatures  []struct {
-				Signature []byte `json:"signature"`
-				Verifier  []byte `json:"verifier"`
-			} `json:"signatures"`
-			// intoto 0.0.2
-			Content struct {
-				PayloadHash struct{ Algorithm, Value string } `json:"payloadHash"`
-				Envelope    struct {
-					Signatures []struct {
-						Sig       []byte `json:"sig"`
-						PublicKey []byte `json:"publicKey"`
-					} `json:"signatures"`
-				} `json:"envelope"`
-			} `json:"content"`
-		} `json:"spec"`
+		Kind       string      `json:"kind"`
+		APIVersion string      `json:"apiVersion"`
+		Spec       rekorV1Spec `json:"spec"`
 	}
 	if err := json.Unmarshal(e.CanonicalizedBody, &body); err != nil {
 		return fmt.Errorf("parse entry body: %w", err)
@@ -424,36 +659,17 @@ func checkRekorBody(e *sigstoreTlogEntry, leaf *x509.Certificate, sig, payload [
 	if body.Kind+" "+body.APIVersion != kv {
 		return fmt.Errorf("entry body is %s %s, entry says %s", body.Kind, body.APIVersion, kv)
 	}
-	var hash struct{ Algorithm, Value string }
-	var entrySig, entryCert []byte
-	s := &body.Spec
-	switch kv {
-	case "hashedrekord 0.0.1":
-		hash, entrySig, entryCert = s.Data.Hash, s.Signature.Content, s.Signature.PublicKey.Content
-	case "dsse 0.0.1":
-		if len(s.Signatures) != 1 {
-			return fmt.Errorf("dsse entry has %d signatures, want 1", len(s.Signatures))
-		}
-		hash, entrySig, entryCert = s.PayloadHash, s.Signatures[0].Signature, s.Signatures[0].Verifier
-	case "intoto 0.0.2":
-		sigs := s.Content.Envelope.Signatures
-		if len(sigs) != 1 {
-			return fmt.Errorf("intoto entry has %d signatures, want 1", len(sigs))
-		}
-		// The intoto entry encodes the signature in base64 twice.
-		decoded, err := base64.StdEncoding.DecodeString(string(sigs[0].Sig))
-		if err != nil {
-			return fmt.Errorf("intoto signature: %w", err)
-		}
-		hash, entrySig, entryCert = s.Content.PayloadHash, decoded, sigs[0].PublicKey
-	default:
-		return fmt.Errorf("unsupported entry kind %s", kv)
+	if err := checkRekorKind(kv, c.dsse); err != nil {
+		return err
 	}
-	want := sha256.Sum256(payload)
-	if hash.Algorithm != "sha256" || hash.Value != hex.EncodeToString(want[:]) {
+	hash, entrySig, entryCert, err := rekorBodyFields(kv, &body.Spec)
+	if err != nil {
+		return err
+	}
+	if hash.Algorithm != "sha256" || hash.Value != hex.EncodeToString(c.loggedHash()) {
 		return errors.New("entry does not record the hash of the signed payload")
 	}
-	if !bytes.Equal(entrySig, sig) {
+	if !bytes.Equal(entrySig, c.sig) {
 		return errors.New("entry does not record the signature")
 	}
 	block, _ := pem.Decode(entryCert)
@@ -463,19 +679,89 @@ func checkRekorBody(e *sigstoreTlogEntry, leaf *x509.Certificate, sig, payload [
 	return nil
 }
 
+type rekorHash struct{ Algorithm, Value string }
+
+// rekorV1Spec is the spec of the Rekor v1 entry kinds BOOTy reads.
+type rekorV1Spec struct {
+	// hashedrekord 0.0.1
+	Data struct {
+		Hash rekorHash `json:"hash"`
+	} `json:"data"`
+	Signature struct {
+		Content   []byte `json:"content"`
+		PublicKey struct {
+			Content []byte `json:"content"`
+		} `json:"publicKey"`
+	} `json:"signature"`
+	// dsse 0.0.1
+	PayloadHash rekorHash `json:"payloadHash"`
+	Signatures  []struct {
+		Signature []byte `json:"signature"`
+		Verifier  []byte `json:"verifier"`
+	} `json:"signatures"`
+	// intoto 0.0.2
+	Content struct {
+		PayloadHash rekorHash `json:"payloadHash"`
+		Envelope    struct {
+			Signatures []struct {
+				Sig       []byte `json:"sig"`
+				PublicKey []byte `json:"publicKey"`
+			} `json:"signatures"`
+		} `json:"envelope"`
+	} `json:"content"`
+}
+
+// rekorBodyFields returns the payload hash, signature and PEM certificate
+// that an entry of kind kv records.
+func rekorBodyFields(kv string, s *rekorV1Spec) (hash rekorHash, entrySig, entryCert []byte, err error) {
+	switch kv {
+	case "hashedrekord 0.0.1":
+		return s.Data.Hash, s.Signature.Content, s.Signature.PublicKey.Content, nil
+	case "dsse 0.0.1":
+		if len(s.Signatures) != 1 {
+			return hash, nil, nil, fmt.Errorf("dsse entry has %d signatures, want 1", len(s.Signatures))
+		}
+		return s.PayloadHash, s.Signatures[0].Signature, s.Signatures[0].Verifier, nil
+	case "intoto 0.0.2":
+		sigs := s.Content.Envelope.Signatures
+		if len(sigs) != 1 {
+			return hash, nil, nil, fmt.Errorf("intoto entry has %d signatures, want 1", len(sigs))
+		}
+		// The intoto entry encodes the signature in base64 twice.
+		decoded, err := base64.StdEncoding.DecodeString(string(sigs[0].Sig))
+		if err != nil {
+			return hash, nil, nil, fmt.Errorf("intoto signature: %w", err)
+		}
+		return s.Content.PayloadHash, decoded, sigs[0].PublicKey, nil
+	}
+	return hash, nil, nil, fmt.Errorf("unsupported entry kind %s", kv)
+}
+
+// checkRekorKind ties the Rekor v1 entry kind to the content: hashedrekord
+// for a message signature, dsse or intoto for a DSSE envelope.
+func checkRekorKind(kv string, dsse bool) error {
+	if (kv == "hashedrekord 0.0.1") == dsse {
+		return fmt.Errorf("a %s entry does not record a %s", kv, map[bool]string{true: "DSSE envelope", false: "message signature"}[dsse])
+	}
+	return nil
+}
+
 // verifyInclusionProof checks the RFC 6962 inclusion proof of the entry
-// body and the checkpoint that the log signed over the root hash.
-func verifyInclusionProof(e *sigstoreTlogEntry, key crypto.PublicKey) error {
+// leaf hash and the checkpoint that the log signed over the root hash. A
+// Rekor v2 checkpoint must name the log origin.
+func verifyInclusionProof(e *sigstoreTlogEntry, key *sigstoreLogKey, leafHash []byte, v2 bool) error {
 	p := e.InclusionProof
-	leaf := sha256.Sum256(append([]byte{0}, e.CanonicalizedBody...))
-	rootHash, err := merkleRootFromProof(p.LogIndex, p.TreeSize, leaf[:], p.Hashes)
+	if v2 && p.LogIndex != e.LogIndex {
+		return errors.New("proof log index is not the entry log index")
+	}
+	rootHash, err := merkleRootFromProof(p.LogIndex, p.TreeSize, leafHash, p.Hashes)
 	if err != nil {
 		return err
 	}
 	if !bytes.Equal(rootHash, p.RootHash) {
 		return errors.New("computed root hash does not match")
 	}
-	size, cpRoot, err := verifyCheckpoint(p.Checkpoint.Envelope, key)
+	size, cpRoot, err := verifyCheckpoint(p.Checkpoint.Envelope, key, v2)
 	if err != nil {
 		return fmt.Errorf("checkpoint: %w", err)
 	}
@@ -524,45 +810,103 @@ func merkleRootFromProof(index, size int64, leaf []byte, proof [][]byte) ([]byte
 
 // verifyCheckpoint verifies a signed note checkpoint ("origin\nsize\nroot
 // base64\n...\n\n— name base64(keyhint+signature)\n") with key and returns
-// its tree size and root hash.
-func verifyCheckpoint(note string, key crypto.PublicKey) (size int64, rootHash []byte, err error) {
+// its tree size and root hash. Signature lines of other keys (witness
+// cosignatures) are skipped; as golang.org/x/mod/sumdb/note, one of the log
+// key must be there and all of them must verify. The log origin is the
+// signer name and the first line: for Rekor v2 the host name of the base
+// URL, which it needs; for Rekor v1 the host and port, extended with
+// " - <tree ID>".
+func verifyCheckpoint(note string, log *sigstoreLogKey, v2 bool) (size int64, rootHash []byte, err error) {
+	key, origin := log.key, log.origin
+	if !v2 {
+		origin = log.host
+	}
+	if v2 && origin == "" {
+		return 0, nil, errors.New("the log has no base URL in the trusted root, so no checkpoint origin")
+	}
 	text, sigs, ok := strings.Cut(note, "\n\n")
 	if !ok {
 		return 0, nil, errors.New("not a signed note")
 	}
 	text += "\n"
-	verified := false
-	for line := range strings.Lines(sigs) {
-		f := strings.Fields(strings.TrimPrefix(line, "— "))
-		if !strings.HasPrefix(line, "— ") || len(f) != 2 {
-			continue
-		}
-		raw, err := base64.StdEncoding.DecodeString(f[1])
-		if err == nil && len(raw) > 4 && verifySigstoreSig(key, []byte(text), raw[4:]) {
-			verified = true
-			break
-		}
-	}
-	if !verified {
-		return 0, nil, errors.New("no signature by the log key")
-	}
 	lines := strings.Split(text, "\n")
 	if len(lines) < 4 {
 		return 0, nil, errors.New("too few lines")
+	}
+	if origin != "" && lines[0] != origin && (v2 || !strings.HasPrefix(lines[0], origin+" - ")) {
+		return 0, nil, fmt.Errorf("origin %q is not the log %q", lines[0], origin)
+	}
+	if err := verifyNoteSignatures(text, sigs, key, origin); err != nil {
+		return 0, nil, err
 	}
 	size, err = strconv.ParseInt(lines[1], 10, 64)
 	if err != nil {
 		return 0, nil, fmt.Errorf("tree size: %w", err)
 	}
 	rootHash, err = base64.StdEncoding.DecodeString(lines[2])
-	if err != nil {
-		return 0, nil, fmt.Errorf("root hash: %w", err)
+	if err != nil || len(rootHash) != sha256.Size {
+		return 0, nil, errors.New("malformed root hash")
 	}
 	return size, rootHash, nil
 }
 
+// verifyNoteSignatures checks the signature lines of a signed note: those
+// of key (under origin, when set) must all verify, and there must be one.
+func verifyNoteSignatures(text, sigs string, key crypto.PublicKey, origin string) error {
+	verified := false
+	for line := range strings.Lines(sigs) {
+		rest, ok := strings.CutPrefix(line, "— ")
+		f := strings.Fields(rest)
+		if !ok || len(f) != 2 || (origin != "" && f[0] != origin) {
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(f[1])
+		hint, errHint := noteKeyHash(f[0], key)
+		if err != nil || errHint != nil || len(raw) <= 4 || !bytes.Equal(raw[:4], hint) {
+			continue
+		}
+		if !verifySigstoreSig(key, []byte(text), raw[4:]) {
+			return errors.New("signature by the log key does not verify")
+		}
+		verified = true
+	}
+	if !verified {
+		return errors.New("no signature by the log key")
+	}
+	return nil
+}
+
+// noteKeyHash returns the 4 byte key hint of a signed note signature by
+// key under name, as rekor-tiles' note.KeyHash: for ECDSA the SHA-256 of
+// the PKIX key (as Rekor v1), for Ed25519 and RSA the hash of name, a
+// newline, the algorithm and the key (C2SP signed-note).
+func noteKeyHash(name string, key crypto.PublicKey) ([]byte, error) {
+	h := sha256.New()
+	switch k := key.(type) {
+	case *ecdsa.PublicKey:
+		der, err := x509.MarshalPKIXPublicKey(k)
+		if err != nil {
+			return nil, fmt.Errorf("marshal log key: %w", err)
+		}
+		h.Write(der)
+	case ed25519.PublicKey:
+		h.Write([]byte(name + "\n\x01"))
+		h.Write(k)
+	case *rsa.PublicKey:
+		der, err := x509.MarshalPKIXPublicKey(k)
+		if err != nil {
+			return nil, fmt.Errorf("marshal log key: %w", err)
+		}
+		h.Write([]byte(name + "\n\xffPKIX-RSA-PKCS#1v1.5"))
+		h.Write(der)
+	default:
+		return nil, fmt.Errorf("no note key hash for a %T key", key)
+	}
+	return h.Sum(nil)[:4], nil
+}
+
 // verifySigstoreChain verifies the leaf against the Fulcio CAs at the
-// integrated time t and returns the chain from the leaf to the root.
+// verified time t and returns the chain from the leaf to the root.
 func verifySigstoreChain(root *sigstoreRoot, leaf *x509.Certificate, t time.Time) ([]*x509.Certificate, error) {
 	// Fulcio marks the SAN critical when the subject is empty; Go leaves a
 	// SAN with a name type it does not know (otherName) unhandled.
@@ -590,9 +934,9 @@ func verifySigstoreChain(root *sigstoreRoot, leaf *x509.Certificate, t time.Time
 		errs = append(errs, err)
 	}
 	if len(errs) == 0 {
-		return nil, fmt.Errorf("no certificate authority valid at the integrated time %s", t.UTC().Format(time.RFC3339))
+		return nil, fmt.Errorf("no certificate authority valid at the signing time %s", t.UTC().Format(time.RFC3339))
 	}
-	return nil, fmt.Errorf("certificate chain at the integrated time %s: %w", t.UTC().Format(time.RFC3339), errors.Join(errs...))
+	return nil, fmt.Errorf("certificate chain at the signing time %s: %w", t.UTC().Format(time.RFC3339), errors.Join(errs...))
 }
 
 // verifySigstoreSCT checks that one SCT embedded in leaf is signed by a CT

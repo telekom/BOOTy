@@ -69,6 +69,21 @@ func TestVerifySigstoreBundleRecorded(t *testing.T) {
 				p := b.VerificationMaterial.TlogEntries[0].InclusionProof
 				p.Checkpoint.Envelope = strings.Replace(p.Checkpoint.Envelope, "27657875", "27657876", 1)
 			}},
+		{name: "checkpoint of another log", wantErr: `origin "rekor.example.dev - 2605736670972794746" is not the log`,
+			edit: func(b *sigstoreBundle) {
+				p := b.VerificationMaterial.TlogEntries[0].InclusionProof
+				p.Checkpoint.Envelope = strings.Replace(p.Checkpoint.Envelope, "rekor.sigstore.dev - ", "rekor.example.dev - ", 1)
+			}},
+		{name: "checkpoint key hint", wantErr: "no signature by the log key",
+			edit: func(b *sigstoreBundle) {
+				p := b.VerificationMaterial.TlogEntries[0].InclusionProof
+				p.Checkpoint.Envelope = strings.Replace(p.Checkpoint.Envelope, "— rekor.sigstore.dev wNI9", "— rekor.sigstore.dev wNI8", 1)
+			}},
+		{name: "duplicate tlog entry", wantErr: "duplicate tlog entry",
+			edit: func(b *sigstoreBundle) {
+				vm := &b.VerificationMaterial
+				vm.TlogEntries = append(vm.TlogEntries, vm.TlogEntries[0])
+			}},
 		{name: "missing tlog entry", wantErr: "no transparency log entry",
 			edit: func(b *sigstoreBundle) { b.VerificationMaterial.TlogEntries = nil }},
 		{name: "missing SET", wantErr: "no signed entry timestamp",

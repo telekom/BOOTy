@@ -977,36 +977,56 @@ With these three options (YAML `provision.image.cosignTrustedRoot`,
 signature of the digest-pinned `oci://` source before any disk is wiped, offline:
 
 - the Fulcio certificate chains to a certificate authority of the trusted
-  root at the time the transparency log recorded the signature, so a
-  certificate that has expired since is fine, one that had expired by then
-  is not;
+  root at every verified signing time: the integrated time of a Rekor v1
+  entry with a signed entry timestamp (SET) and the time of each RFC 3161
+  timestamp of a timestamp authority of the trusted root. A certificate that
+  has expired since is fine, one that had expired by then is not. At least
+  one such time is required;
 - an SCT embedded in the certificate verifies against a CT log key of the
   trusted root;
-- a Rekor entry verifies against a Rekor key of the trusted root: its signed
-  entry timestamp (SET), and its inclusion proof and signed checkpoint when
-  present (required from bundle v0.2 on), and it records the signature, the
-  certificate and the hash of the signed payload;
+- every Rekor entry verifies against a log key of the trusted root and
+  records the signature, the certificate and the signed digest: a Rekor v1
+  entry by its SET (required for bundle v0.1) and its inclusion proof and
+  signed checkpoint (required from bundle v0.2 on); a Rekor v2 entry
+  (rekor-tiles, `hashedrekord` 0.0.2, no SET and no integrated time) by its
+  inclusion proof and checkpoint, a signed note of the log key under the log
+  origin, so it needs an RFC 3161 timestamp;
+- an RFC 3161 timestamp counts when its signing certificate chains to a
+  timestamp authority of the trusted root at its time, which is inside the
+  authority's validity, and it stamps the hash of the signature; one that does
+  not verify is ignored, as in sigstore-go;
 - the signature verifies with the certificate key and covers the image
   digest;
 - the certificate SAN (URI or e-mail) matches
   `IMAGE_COSIGN_IDENTITY_REGEXP` in full (as if wrapped in `^(?:...)$`), and
   its OIDC issuer extension equals `IMAGE_COSIGN_OIDC_ISSUER`.
 
-BOOTy reads the Sigstore bundle that `cosign sign` (cosign 3) attaches to the
-image as an OCI referrer (a DSSE envelope with an in-toto statement of
-predicate type `https://sigstore.dev/cosign/sign/v1` about the digest), and
-the keyless signatures under the `sha256-<hex>.sig` tag that cosign 2 and
-`cosign sign --new-bundle-format=false` write. Registries without the
-referrers API are read through the `sha256-<hex>` fallback tag. Any missing or
-failing part stops provisioning with `BOOTY-IMG-001`; a registry or network
-error reports `BOOTY-IMG-008`. A missing one of the three options fails
-`verify-image` and dry-run. Rekor v2 entries (checkpoint only, no SET) and
-RFC 3161 timestamps are not supported yet and are refused.
+BOOTy reads these signature formats:
+
+| Format | Written by | Content | Transparency log | Time source |
+|---|---|---|---|---|
+| Bundle v0.3 (`application/vnd.dev.sigstore.bundle.v0.3+json` or `+json;version=0.3`), OCI referrer | `cosign sign` (cosign 3), with Rekor v1 or v2 and a TSA | DSSE in-toto statement of predicate type `https://sigstore.dev/cosign/sign/v1` about the digest, or a message signature of the manifest digest | Rekor v1 `dsse`/`intoto`/`hashedrekord`, Rekor v2 `hashedrekord` 0.0.2 | SET, RFC 3161 |
+| Bundle v0.2 and v0.1 (`+json;version=0.x`, `x509CertificateChain`), OCI referrer | older cosign and Sigstore clients | as v0.3 | Rekor v1 (v0.1 needs the SET, v0.2 the inclusion proof) | SET, RFC 3161 |
+| `sha256-<hex>.sig` tag | cosign 2, `cosign sign --new-bundle-format=false` | simple-signing payload | Rekor v1 bundle annotation (SET) | SET, `dev.sigstore.cosign/rfc3161timestamp` |
+
+Registries without the referrers API are read through the `sha256-<hex>`
+fallback tag. Up to 64 referrers that may hold a bundle are checked (other
+artifact types, such as SBOMs, do not count), with up to 4 bundles each. Any
+missing or failing part stops provisioning with `BOOTY-IMG-001`; a registry or
+network error reports `BOOTY-IMG-008`. A missing one of the three options fails
+`verify-image` and dry-run. Not supported, so refused: public-key bundles,
+Rekor v2 `dsse` 0.0.2 entries (cosign logs DSSE to Rekor v2 as `hashedrekord`
+over the DSSE pre-authentication encoding; sigstore-go does not verify `dsse`
+0.0.2 either). The verifier passes the keyless cases of the
+[sigstore-conformance](https://github.com/sigstore/sigstore-conformance)
+`bundle-verify` suite (`pkg/image/testdata/sigstore/conformance`).
 
 Keys and a keyless policy can be configured together: a signature that
 satisfies either is accepted (keys are checked first), for example while
 moving from keys to keyless signing. A standby command payload can not
-change any `IMAGE_COSIGN_*` or `SYSEXT_COSIGN_*` option. The verifier uses
+change any `IMAGE_COSIGN_*` or `SYSEXT_COSIGN_*` option, and under a cosign
+policy of the vars file it can not add an image or sysext source that is not
+`oci://` (only checked by a checksum) or change the checksum of one. The verifier uses
 the Go standard library; `sigstore-go` would add about 5.6 MB to the binary
 (see [library adoption](docs/library-adoption.md#sigstore-go)).
 
