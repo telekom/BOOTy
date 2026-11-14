@@ -395,3 +395,49 @@ func TestDeployArchiveVarsLikeTheISO(t *testing.T) {
 		})
 	}
 }
+
+// A deploy archive must keep the cosign lock-down of the base vars like a
+// vars payload (#933 review): its deploy/vars can neither drop nor change
+// the policy nor add a source that the policy does not cover, and its
+// files can not replace the pinned trust material, directly under /deploy
+// or through deploy/file-system copied over the ramdisk.
+func TestDeployArchiveKeepsCosignLockDown(t *testing.T) {
+	root := useDeployRoot(t)
+	trustedRoot := filepath.Join(root, "file-system", "trusted_root.json")
+	policy := "IMAGE_COSIGN_TRUSTED_ROOT=" + trustedRoot + "\nIMAGE_COSIGN_IDENTITY_REGEXP=https://ci\\.example/.*\n" +
+		"IMAGE_COSIGN_OIDC_ISSUER=https://ci.example\nSYSEXT_COSIGN_PUBKEYS=/etc/booty/sysext.pub\n"
+	base := baseAgentVars + policy
+	signed := "IMAGE=oci://registry.example/os@sha256:" + strings.Repeat("a", 64) + "\n"
+	for _, tc := range []struct {
+		name    string
+		vars    string
+		files   []archiveEntry
+		wantErr string
+	}{
+		{name: "same policy", vars: policy + signed},
+		{name: "policy dropped", vars: signed, wantErr: "changes cosign settings"},
+		{name: "other trusted root", vars: strings.Replace(policy, trustedRoot, "/tmp/evil.json", 1) + signed, wantErr: "changes cosign settings"},
+		{name: "http image with own checksum", vars: policy + "IMAGE=https://evil.example/os.img\nIMAGE_CHECKSUM=" + strings.Repeat("b", 64) + "\n",
+			wantErr: "not oci://"},
+		{name: "replaces the trusted root", vars: policy + signed, wantErr: "replaces the cosign trust material",
+			files: []archiveEntry{{name: "deploy/file-system/trusted_root.json", body: "{}"}}},
+		{name: "replaces a key through the ramdisk copy", vars: policy + signed, wantErr: "replaces the cosign trust material",
+			files: []archiveEntry{{name: "deploy/file-system/etc/booty/sysext.pub", body: "key"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := append([]archiveEntry{{name: "deploy/vars", body: tc.vars}}, tc.files...)
+			c := &Client{vars: []byte(base)}
+			_, _, err := c.CommandConfig(deployArchive(t, entries...))
+			defer c.DiscardCommandFiles()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CommandConfig() = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("CommandConfig() = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}

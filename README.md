@@ -1031,7 +1031,11 @@ satisfies either is accepted (keys are checked first), for example while
 moving from keys to keyless signing. A standby command payload can not
 change any `IMAGE_COSIGN_*` or `SYSEXT_COSIGN_*` option, and under a cosign
 policy of the vars file it can not add an image or sysext source that is not
-`oci://` (only checked by a checksum) or change the checksum of one. The verifier uses
+`oci://` (only checked by a checksum) or change the checksum of one. This holds for vars payloads and deploy archives alike. Standby reads the
+cosign keys and trusted roots once at start; verification uses only these
+copies, and a deploy archive that would write one of these paths (under
+`/deploy`, or through `deploy/file-system` copied over the ramdisk) is
+refused. The verifier uses
 the Go standard library; `sigstore-go` would add about 5.6 MB to the binary
 (see [library adoption](docs/library-adoption.md#sigstore-go)).
 

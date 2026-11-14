@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"math"
 	"net/url"
-	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -132,7 +131,7 @@ type sigstoreCAJSON struct {
 // loadSigstoreRoot reads a trusted_root.json (protobuf-specs TrustedRoot,
 // JSON form).
 func loadSigstoreRoot(path string) (*sigstoreRoot, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // configured trusted root path in the ramdisk
+	data, err := readCosignFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read trusted root: %w", err)
 	}
@@ -996,6 +995,7 @@ func verifySCT(root *sigstoreRoot, sct, issuerKeyHash, tbs []byte) bool {
 	if err != nil || len(rest) < 2 || rest[0] != 4 { // SHA-256
 		return false
 	}
+	sigAlg := rest[1]
 	sig, rest, err := tlsVectorRest(rest[2:], 2)
 	if err != nil || len(rest) != 0 {
 		return false
@@ -1017,8 +1017,22 @@ func verifySCT(root *sigstoreRoot, sct, issuerKeyHash, tbs []byte) bool {
 	b.Write([]byte{byte(len(ext) >> 8), byte(len(ext))})
 	b.Write(ext)
 	return slices.ContainsFunc(root.ctlogs[hex.EncodeToString(logID)], func(k *sigstoreLogKey) bool {
-		return k.validAt(at) && verifySigstoreSig(k.key, b.Bytes(), sig)
+		return k.validAt(at) && verifySCTSig(k.key, sigAlg, b.Bytes(), sig)
 	})
+}
+
+// verifySCTSig checks an SCT signature with the algorithm the SCT declares
+// (RFC 5246 SignatureAndHashAlgorithm, the hash is SHA-256): ECDSA (3) of
+// any curve, as a P-384 CT log signs SHA-256, or RSA PKCS#1 v1.5 (1).
+func verifySCTSig(key crypto.PublicKey, alg byte, msg, sig []byte) bool {
+	h := sha256.Sum256(msg)
+	switch k := key.(type) {
+	case *ecdsa.PublicKey:
+		return alg == 3 && ecdsa.VerifyASN1(k, h[:], sig)
+	case *rsa.PublicKey:
+		return alg == 1 && rsa.VerifyPKCS1v15(k, crypto.SHA256, h[:], sig) == nil
+	}
+	return false
 }
 
 // tlsVector returns the content of a TLS vector with a length prefix of n

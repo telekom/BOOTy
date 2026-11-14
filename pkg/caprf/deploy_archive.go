@@ -88,6 +88,13 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 	if err != nil {
 		return nil, nil, err
 	}
+	if fixed := cosignLockViolations(ref, cfg); len(fixed) > 0 {
+		return nil, nil, fmt.Errorf("deploy archive changes %s settings, which can not change in a running ramdisk",
+			strings.Join(fixed, ", "))
+	}
+	if p := archiveReplacesTrustFile(tree, ref.CosignTrustFiles()); p != "" {
+		return nil, nil, fmt.Errorf("deploy archive replaces the cosign trust material %s", p)
+	}
 	if len(keys) == 0 {
 		// Standby would run such a command with the base config, and the
 		// files of the archive would not match it.
@@ -103,6 +110,30 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 	cfg.Provision.CrashArtifacts.PrepareURL = ref.Provision.CrashArtifacts.PrepareURL
 	cfg.Provision.CrashArtifacts.UploadURL = ref.Provision.CrashArtifacts.UploadURL
 	return cfg, keys, nil
+}
+
+// archiveReplacesTrustFile returns the first of the cosign trust files
+// that the staged tree would write: under /deploy itself, or through the
+// copy of deploy/file-system over the ramdisk root (provisioner files with
+// PROVISIONER_FILES_TARGET=ramdisk). Verification uses the copies pinned at
+// start either way; this refuses such an archive outright.
+func archiveReplacesTrustFile(tree string, files []string) string {
+	for _, p := range files {
+		p = filepath.Clean(p)
+		var candidates []string
+		if rel, err := filepath.Rel(deployRoot, p); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+			candidates = append(candidates, filepath.Join(tree, rel))
+		}
+		if filepath.IsAbs(p) {
+			candidates = append(candidates, filepath.Join(tree, "file-system", p))
+		}
+		for _, c := range candidates {
+			if _, err := os.Lstat(c); err == nil {
+				return p
+			}
+		}
+	}
+	return ""
 }
 
 // ApplyCommandFiles swaps the staged per-job directories of the deploy

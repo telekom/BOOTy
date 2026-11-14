@@ -152,3 +152,17 @@ type ImageConfig struct {
 	// certificate.
 	CosignOIDCIssuer string `yaml:"cosignOIDCIssuer,omitempty" json:"cosignOIDCIssuer,omitempty"`
 }
+
+// CosignTrustFiles returns the cosign public key and trusted root paths of
+// the image and the sysexts: the trust material that standby pins at start
+// (image.PinCosignFiles).
+func (c *MachineConfig) CosignTrustFiles() []string {
+	im, sx := &c.Provision.Image, &c.Provision.Sysext
+	out := append(append([]string(nil), im.CosignPublicKeys...), sx.CosignPublicKeys...)
+	for _, p := range []string{im.CosignTrustedRoot, sx.CosignTrustedRoot} {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}

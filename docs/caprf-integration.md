@@ -220,7 +220,12 @@ EXTRA_KERNEL_PARAMS=intel_iommu=on
   `/deploy/vars`, a payload can not add an image or sysext source that is not
   `oci://` (checked only by a checksum) or change the checksum of one
   (`IMAGE_CHECKSUM`, `IMAGE_CHECKSUM_TYPE`, `IMAGE_CHECKSUM_SCOPE`, a layer
-  `sha256`); it can drop one or switch to another `oci://` source.
+  `sha256`); it can drop one or switch to another `oci://` source. A deploy
+  archive is held to the same rules: its `deploy/vars` must keep the cosign
+  options of `/deploy/vars`, and it can not write a cosign key or trusted
+  root path (under `/deploy` or through `deploy/file-system`). BOOTy reads
+  the keys and trusted roots once when standby starts and verifies only
+  against these copies.
 - A payload can not redirect a request that carries the bearer token:
   `INVENTORY_URL`, `FIRMWARE_URL`, `HEALTH_CHECK_URL`, `TELEMETRY_URL`,
   `METRICS_URL`, `EVENT_URL`, `CRASH_ARTIFACTS_PREPARE_URL` and

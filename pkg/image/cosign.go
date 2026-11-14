@@ -19,7 +19,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -70,7 +69,7 @@ func LoadCosignPublicKeys(paths []string) ([]crypto.PublicKey, error) {
 	}
 	keys := make([]crypto.PublicKey, 0, len(paths))
 	for _, p := range paths {
-		data, err := os.ReadFile(p) //nolint:gosec // configured key path in the ramdisk
+		data, err := readCosignFile(p)
 		if err != nil {
 			return nil, fmt.Errorf("read cosign public key: %w", err)
 		}

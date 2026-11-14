@@ -228,3 +228,27 @@ func TestSigstoreLogKeys(t *testing.T) {
 		})
 	}
 }
+
+// A P-384 CT log signs SCTs over SHA-256 (RFC 6962), which must verify,
+// while a P-384 leaf must sign with SHA-384 (#933 review).
+func TestSigstoreP384CTLog(t *testing.T) {
+	ss, err := sigstoretest.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ss.UseP384CTLog(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := ss.Bundle("sha256:"+strings.Repeat("ab", 32), sigstoretest.Options{Identity: testIdentity, Issuer: testIssuer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b sigstoreBundle
+	if err := json.Unmarshal(data, &b); err != nil {
+		t.Fatal(err)
+	}
+	id := sigstoreIdentity{san: regexp.MustCompile(`^` + regexp.QuoteMeta(testIdentity) + `$`), issuer: testIssuer}
+	if _, err := verifySigstoreBundle(trustedRootWith(t, ss, func(map[string]any) {}), id, &b, nil); err != nil {
+		t.Fatalf("verifySigstoreBundle() = %v", err)
+	}
+}

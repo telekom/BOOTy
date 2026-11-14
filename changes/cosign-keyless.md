@@ -23,3 +23,9 @@ section: Upgrade notes for CAPRF
   replaced the signed image with one checked only by the payload's checksum.
   Dropping such a source, or switching to another `oci://` source, which is
   verified, still works.
+- A deploy archive payload is held to the same rules: its `deploy/vars` must
+  keep the cosign options of `/deploy/vars` (an archive without them was
+  able to clear the policy), and an archive that writes a configured cosign
+  key or trusted root path is refused. Standby reads the cosign keys and
+  trusted roots once at start and verifies only against these copies, so a
+  command can not swap the trust material.

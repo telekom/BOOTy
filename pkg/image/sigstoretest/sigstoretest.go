@@ -101,6 +101,9 @@ type Options struct {
 	Predicate string
 	// NoSCT issues the certificate without an SCT.
 	NoSCT bool
+	// BadSCT issues the certificate with an SCT whose signature is broken;
+	// the certificate and the log entry stay valid.
+	BadSCT bool
 	// NoInclusionProof leaves the inclusion proof out of the bundle.
 	NoInclusionProof bool
 	// BadInclusionProof breaks the root hash of the inclusion proof.
@@ -227,6 +230,17 @@ func newTSA(start time.Time) (*tsa, error) {
 		return nil, err
 	}
 	return t, nil
+}
+
+// UseP384CTLog replaces the CT log key with a P-384 key, which still signs
+// SCTs over SHA-256 as RFC 6962 requires. Call it before issuing.
+func (s *Sigstore) UseP384CTLog() error {
+	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		return err
+	}
+	s.ctKey = key
+	return nil
 }
 
 // TrustedRootJSON returns the trusted_root.json of the CA and the logs.
@@ -479,7 +493,7 @@ func (s *Sigstore) leaf(o Options) (*x509.Certificate, *ecdsa.PrivateKey, error)
 	if err != nil || o.NoSCT {
 		return pre, key, err
 	}
-	sctExt, err := s.sctExtension(pre.RawTBSCertificate, at)
+	sctExt, err := s.sctExtension(pre.RawTBSCertificate, at, o.BadSCT)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -490,7 +504,7 @@ func (s *Sigstore) leaf(o Options) (*x509.Certificate, *ecdsa.PrivateKey, error)
 
 // sctExtension signs an RFC 6962 SCT over the precertificate TBS and
 // returns the SCT list extension.
-func (s *Sigstore) sctExtension(tbs []byte, at time.Time) (pkix.Extension, error) {
+func (s *Sigstore) sctExtension(tbs []byte, at time.Time, bad bool) (pkix.Extension, error) {
 	der, err := x509.MarshalPKIXPublicKey(&s.ctKey.PublicKey)
 	if err != nil {
 		return pkix.Extension{}, err
@@ -506,6 +520,9 @@ func (s *Sigstore) sctExtension(tbs []byte, at time.Time) (pkix.Extension, error
 	signed.Write([]byte{byte(len(tbs) >> 16), byte(len(tbs) >> 8), byte(len(tbs))})
 	signed.Write(tbs)
 	signed.Write([]byte{0, 0}) // no extensions
+	if bad {
+		signed.WriteByte(0) // signs other bytes
+	}
 	sig, err := signSHA256(s.ctKey, signed.Bytes())
 	if err != nil {
 		return pkix.Extension{}, err

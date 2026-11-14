@@ -270,3 +270,58 @@ func TestVerifyCosignKeylessPolicy(t *testing.T) {
 		})
 	}
 }
+
+// The dry run checks keyless-only IMAGE and SYSEXT policies like keys: a
+// valid root passes; a missing option, an unreadable root or an invalid
+// identity regexp fails (#933 review).
+func TestDryRunCosignKeyless(t *testing.T) {
+	ss, err := sigstoretest.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootJSON, err := ss.TrustedRootJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootPath := filepath.Join(t.TempDir(), "trusted_root.json")
+	if err := os.WriteFile(rootPath, rootJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const (
+		imageRef  = "oci://registry.example/os@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		sysextRef = "oci://registry.example/ext@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+		issuer    = "https://ci.example"
+	)
+	type keyless struct{ root, identity, issuer string }
+	good := keyless{rootPath, `https://ci\.example/.*`, issuer}
+	for _, tc := range []struct {
+		name          string
+		image, sysext keyless
+		want          DryRunStatus
+	}{
+		{name: "image keyless", image: good, want: DryRunPass},
+		{name: "sysext keyless", sysext: good, want: DryRunPass},
+		{name: "both keyless", image: good, sysext: good, want: DryRunPass},
+		{name: "image issuer missing", image: keyless{rootPath, good.identity, ""}, want: DryRunFail},
+		{name: "sysext identity missing", sysext: keyless{rootPath, "", issuer}, want: DryRunFail},
+		{name: "image trusted root missing", image: keyless{"", good.identity, issuer}, want: DryRunFail},
+		{name: "image unreadable trusted root", image: keyless{rootPath + ".missing", good.identity, issuer}, want: DryRunFail},
+		{name: "sysext unreadable trusted root", sysext: keyless{rootPath + ".missing", good.identity, issuer}, want: DryRunFail},
+		{name: "image invalid identity regexp", image: keyless{rootPath, "(", issuer}, want: DryRunFail},
+		{name: "sysext invalid identity regexp", sysext: keyless{rootPath, "(", issuer}, want: DryRunFail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Image.URLs = []string{imageRef}
+			im, sx := &cfg.Provision.Image, &cfg.Provision.Sysext
+			im.CosignTrustedRoot, im.CosignIdentityRegexp, im.CosignOIDCIssuer = tc.image.root, tc.image.identity, tc.image.issuer
+			sx.Enabled = true
+			sx.Layers = []config.SysextLayerConfig{{Name: "ext", Source: sysextRef}}
+			sx.CosignTrustedRoot, sx.CosignIdentityRegexp, sx.CosignOIDCIssuer = tc.sysext.root, tc.sysext.identity, tc.sysext.issuer
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+			if got := o.dryRunCosignKeys(context.Background()); got.Status != tc.want {
+				t.Fatalf("dryRunCosignKeys() = %s (%s), want %s", got.Status, got.Message, tc.want)
+			}
+		})
+	}
+}

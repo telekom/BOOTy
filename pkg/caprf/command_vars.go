@@ -77,22 +77,33 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 			[]string{cfg.Telemetry.URL, cfg.Telemetry.MetricsURL, cfg.Telemetry.EventURL}},
 		{"crash artifact", []string{ref.Provision.CrashArtifacts.PrepareURL, ref.Provision.CrashArtifacts.UploadURL},
 			[]string{cfg.Provision.CrashArtifacts.PrepareURL, cfg.Provision.CrashArtifacts.UploadURL}},
-		// The signature policy: a payload may change the image, but not
-		// weaken what its signature is checked against.
-		{"cosign", cosignVars(ref), cosignVars(cfg)},
 	} {
 		if !reflect.DeepEqual(s.ref, s.cand) {
 			fixed = append(fixed, s.name)
 		}
 	}
-	if base := uncoveredSources(ref); slices.ContainsFunc(uncoveredSources(cfg), func(s string) bool { return !slices.Contains(base, s) }) {
-		fixed = append(fixed, "cosign (a source that is not oci:// or its checksum)")
-	}
+	fixed = append(fixed, cosignLockViolations(ref, cfg)...)
 	if len(fixed) > 0 {
 		return nil, nil, fmt.Errorf("payload changes %s settings, which can not change in a running ramdisk",
 			strings.Join(fixed, ", "))
 	}
 	return cfg, keys, nil
+}
+
+// cosignLockViolations names what cfg, the config of a standby command,
+// changes of the cosign lock-down of ref, the base config: the signature
+// policy (a command may change the image, but not weaken what its
+// signature is checked against) and the sources the policy does not cover.
+// Both payload kinds, vars lines and deploy archives, are checked.
+func cosignLockViolations(ref, cfg *config.MachineConfig) []string {
+	var out []string
+	if !reflect.DeepEqual(cosignVars(ref), cosignVars(cfg)) {
+		out = append(out, "cosign")
+	}
+	if base := uncoveredSources(ref); slices.ContainsFunc(uncoveredSources(cfg), func(s string) bool { return !slices.Contains(base, s) }) {
+		out = append(out, "cosign (a source that is not oci:// or its checksum)")
+	}
+	return out
 }
 
 // uncoveredSources returns, for the image and the sysexts under a cosign

@@ -2,6 +2,13 @@ package image
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http/httptest"
@@ -89,6 +96,7 @@ func TestVerifyCosignKeyless(t *testing.T) {
 		{name: "other predicate", wantErr: "is not a cosign signature",
 			edit: func(o *sigstoretest.Options) { o.Predicate = "https://example.com/sbom" }},
 		{name: "missing SCT", wantErr: "certificate has no embedded SCT", edit: func(o *sigstoretest.Options) { o.NoSCT = true }},
+		{name: "SCT with a broken signature", wantErr: "no SCT verifies", edit: func(o *sigstoretest.Options) { o.BadSCT = true }},
 		{name: "missing inclusion proof", wantErr: "inclusion proof missing", edit: func(o *sigstoretest.Options) { o.NoInclusionProof = true }},
 		{name: "invalid inclusion proof", wantErr: "computed root hash does not match", edit: func(o *sigstoretest.Options) { o.BadInclusionProof = true }},
 		{name: "invalid SET", legacy: true, wantErr: "signed entry timestamp does not verify", edit: func(o *sigstoretest.Options) { o.BadSET = true }},
@@ -287,4 +295,83 @@ func TestLoadCosignKeyless(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The trust material is pinned at start (#933 review): replacing the
+// trusted root or a key file afterwards, or creating one that was missing,
+// changes nothing.
+func TestPinCosignFiles(t *testing.T) {
+	t.Cleanup(unpinCosignFiles)
+	ss, err := sigstoretest.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	attacker, err := sigstoretest.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	rootPath, keyPath, missing := filepath.Join(dir, "trusted_root.json"), filepath.Join(dir, "cosign.pub"), filepath.Join(dir, "later.pub")
+	good, err := ss.TrustedRootJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := pemPublicKey(t)
+	for p, data := range map[string][]byte{rootPath: good, keyPath: key} {
+		if err := os.WriteFile(p, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	PinCosignFiles(rootPath, keyPath, missing)
+
+	evil, err := attacker.TrustedRootJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for p, data := range map[string][]byte{rootPath: evil, keyPath: pemPublicKey(t), missing: pemPublicKey(t)} {
+		if err := os.WriteFile(p, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	policy, err := LoadCosignKeyless(rootPath, `https://ci\.example/group/os-image//\.ci/build\.yml@refs/heads/main`, testIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for signer, want := range map[*sigstoretest.Sigstore]bool{ss: true, attacker: false} {
+		data, err := signer.Bundle("sha256:"+strings.Repeat("ab", 32), sigstoretest.Options{Identity: testIdentity, Issuer: testIssuer})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var b sigstoreBundle
+		if err := json.Unmarshal(data, &b); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := verifySigstoreBundle(policy.root, policy.identity, &b, nil); (err == nil) != want {
+			t.Fatalf("bundle of the %s Sigstore: verify = %v", map[bool]string{true: "pinned", false: "replacing"}[want], err)
+		}
+	}
+	keys, err := LoadCosignPublicKeys([]string{keyPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinnedKeys, err := parseCosignPublicKeys(key)
+	if err != nil || len(keys) != 1 || !keys[0].(interface{ Equal(crypto.PublicKey) bool }).Equal(pinnedKeys[0]) {
+		t.Fatalf("LoadCosignPublicKeys() = %v, %v; want the pinned key", keys, err)
+	}
+	if _, err := LoadCosignPublicKeys([]string{missing}); err == nil {
+		t.Fatal("a key file missing at pin time was loaded")
+	}
+}
+
+func pemPublicKey(t *testing.T) []byte {
+	t.Helper()
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&k.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
 }
