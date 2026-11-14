@@ -248,6 +248,26 @@ func TestSignModuleTreeRefusesNonELF(t *testing.T) {
 	}
 }
 
+func TestSignModuleTreeChecksWritableBeforeSigning(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root opens a read-only file for writing")
+	}
+	root := t.TempDir()
+	plain := writeModules(t, root)
+	late := filepath.Join(root, "lib/modules/6.9.0-2/updates/z.ko")
+	writeFile(t, late, []byte("\x7fELF late"))
+	if err := os.Chmod(late, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SignModuleTree(root, "BOOTy test"); err == nil {
+		t.Fatal("a read-only module was accepted")
+	}
+	got, err := os.ReadFile(filepath.Join(root, "lib/modules/6.8.0-1/updates/dkms/a.ko"))
+	if err != nil || !bytes.Equal(got, plain["lib/modules/6.8.0-1/updates/dkms/a.ko"]) {
+		t.Fatalf("a module was rewritten before the refusal: %v", err)
+	}
+}
+
 func TestQueueMOKEnrollment(t *testing.T) {
 	dir := t.TempDir()
 	cert := []byte("der certificate")

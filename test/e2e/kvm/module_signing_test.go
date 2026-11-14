@@ -361,6 +361,133 @@ func TestModuleSigningCIVM(t *testing.T) {
 	t.Logf("CI-signed module %s loads with the CI certificate enrolled", mods[0].name)
 }
 
+// TestModuleSigningMokutilVM provisions with MODULE_SIGNING_ENROLLMENT=mokutil:
+// BOOTy queues MokNew and MokAuth. With Secure Boot on, shim starts
+// MokManager, and the test confirms the request at the serial console like
+// an operator at the BMC console, with MOK_PASSWORD. MokManager must accept
+// the password (MokAuth), write the certificate to MokList, and the BOOTy
+// signed module must load.
+func TestModuleSigningMokutilVM(t *testing.T) {
+	dir := t.TempDir()
+	const password = "booty-mok-e2e"
+	gzImage, _ := prepareModuleImage(t, requireModSignHost(t), dir)
+	m := newModSignVM(t, dir, gzImage, map[string]string{
+		"HOSTNAME": "modmok-e2e", "SECUREBOOT_SIGNING": "per-host",
+		"MODULE_SIGNING_ENROLLMENT": "mokutil", "MOK_PASSWORD": password,
+	})
+	out := m.provision("provision")
+	if !strings.Contains(out, "MOK enrollment queued") || strings.Contains(out, "MOK enrollment staged") {
+		t.Fatal("enrollment mokutil did not queue the MOK request")
+	}
+	pending := map[string]bool{}
+	for _, v := range efiVariables(t, m.vars) {
+		if v.GUID == shimLockGUID {
+			pending[v.Name] = true
+		}
+	}
+	if !pending["MokNew"] || !pending["MokAuth"] {
+		t.Fatalf("MokNew and MokAuth not queued: %v", pending)
+	}
+	if certs := bootyMOKCerts(t, m.vars); len(certs) != 0 {
+		t.Fatalf("MokList holds %d BOOTy certificates before MokManager ran", len(certs))
+	}
+
+	setSecureBoot(t, m.vars, true)
+	m.mokManagerEnroll("mokmanager", password)
+	if certs := bootyMOKCerts(t, m.vars); len(certs) != 1 {
+		t.Fatalf("MokList holds %d BOOTy certificates after MokManager, want 1", len(certs))
+	}
+	for _, v := range efiVariables(t, m.vars) {
+		if v.GUID == shimLockGUID && (v.Name == "MokNew" || v.Name == "MokAuth") {
+			t.Fatalf("MokManager left %s", v.Name)
+		}
+	}
+	report := m.check("secure boot on")
+	requireLine(t, report, "SECUREBOOT=1")
+	requireLine(t, report, "SIGNED_MODULE=loaded")
+	requireLine(t, report, "SIGNED_SIGNER=BOOTy module signing modmok-e2e")
+	requireLine(t, report, "UNSIGNED_MODULE=refused")
+}
+
+// mokManagerEnroll boots shim with a pending MOK request and answers
+// MokManager on the serial console: any key, Enroll MOK, Continue, Yes, the
+// password, then Reboot (or Continue boot, where a MokManager version offers
+// that), until QEMU exits on the reset.
+func (m *modSignVM) mokManagerEnroll(phase, password string) {
+	m.t.Helper()
+	t := m.t
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	var out syncBuffer
+	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", m.args("-net", "none")...)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("QEMU %s: %v", phase, err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	ansi := regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
+	const down = "\x1b[B"
+	steps := []struct{ wait, send string }{
+		{"Press any key", " "},
+		{"Enroll MOK", down + "\r"},
+		{"View key 0", down + "\r"},     // View key 0, Continue
+		{"Enroll the key", down + "\r"}, // No, Yes
+		{"Password", password + "\r"},
+		{"Reboot", "\r"},
+	}
+	from, step := 0, 0
+	var doneAt time.Time
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case err := <-exited:
+			text := readableSerial(out.Bytes())
+			if ctx.Err() != nil {
+				t.Fatalf("QEMU %s timed out after step %d. output:\n%s", phase, step, text)
+			}
+			if step < len(steps)-1 {
+				t.Fatalf("QEMU %s exited (%v) before MokManager asked for %q. output:\n%s", phase, err, steps[step].wait, text)
+			}
+			t.Logf("QEMU %s exited (%v). output:\n%s", phase, err, text)
+			return
+		case <-tick.C:
+			if step == len(steps) {
+				// The reset does not always end QEMU (runQEMUUntilReset);
+				// MokList is in the variable store by then.
+				if time.Since(doneAt) > 30*time.Second {
+					t.Logf("QEMU %s did not exit on the reset; stopping it. output:\n%s", phase, readableSerial(out.Bytes()))
+					_ = cmd.Process.Kill()
+					<-exited
+					return
+				}
+				continue
+			}
+			text := ansi.ReplaceAllString(string(out.Bytes()), "")
+			i := strings.Index(text[min(from, len(text)):], steps[step].wait)
+			if i < 0 && step == len(steps)-1 {
+				i = strings.Index(text[min(from, len(text)):], "Continue boot")
+			}
+			if i < 0 {
+				continue
+			}
+			from += i + len(steps[step].wait)
+			// MokManager redraws the screen; let it settle before the keys.
+			time.Sleep(time.Second)
+			if _, err := stdin.Write([]byte(steps[step].send)); err != nil {
+				t.Fatalf("QEMU %s: send keys: %v", phase, err)
+			}
+			step++
+			doneAt = time.Now()
+		}
+	}
+}
+
 // TestModuleSigningOffVM is the regression case for the default: without
 // SECUREBOOT_SIGNING, with mok-enroll.efi in the ramdisk and Secure Boot
 // off, provisioning must leave the module, the ESP and the EFI variables as
