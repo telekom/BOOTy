@@ -138,6 +138,16 @@ func checkArchiveCosign(tree string, ref, cfg *config.MachineConfig) error {
 	if p != "" {
 		return fmt.Errorf("deploy archive replaces the cosign trust material %s", p)
 	}
+	// The pinned PCR 11 policy key is read when the UKI is prepared, so a
+	// replaced file would move the pin.
+	if f := ref.Provision.DiskEncryption.PCRPublicKeyFile; f != "" {
+		if p, err = archiveReplacesTrustFile(tree, []string{f}); err != nil {
+			return err
+		}
+		if p != "" {
+			return fmt.Errorf("deploy archive replaces the PCR policy key %s (DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE)", p)
+		}
+	}
 	if cosignPolicySet(ref) && (ref.ProvisionerFilesInRamdisk() || cfg.ProvisionerFilesInRamdisk()) {
 		bad, err := ramdiskCopyViolation(tree, ref.Transport.CABundleFile)
 		if err != nil {

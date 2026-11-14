@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -30,7 +31,8 @@ func TestParseVarsDiskEncryption(t *testing.T) {
 func TestParseVarsUKISigning(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader("export DISK_ENCRYPTION=\"luks2-tpm2-uki\"\nexport SECUREBOOT_SIGNING=\"ci\"\n" +
 		"export DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE=\"/deploy/pcr.pem\"\nexport DISK_ENCRYPTION_RECOVERY_KEY_URL=\"https://p/key\"\n" +
-		"export IMAGE_COSIGN_PUBKEYS=\"/deploy/cosign.pub\"\nexport MOK_CERT_PATH=\"/usr/share/booty/secureboot/ci.der\"\n"))
+		"export IMAGE_COSIGN_PUBKEYS=\"/deploy/cosign.pub\"\nexport MOK_CERT_PATH=\"/usr/share/booty/secureboot/ci.der\"\n" +
+		"export MODULE_SIGNING_ENROLLMENT=\"external\"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +132,7 @@ func TestCommandPayloadCannotChangeDiskEncryption(t *testing.T) {
 	}
 	// Nor the signer or the pinned PCR key of the UKI mode.
 	uki := []byte(commandBaseVars + "\nDISK_ENCRYPTION=luks2-tpm2-uki\nSECUREBOOT_SIGNING=ci\n" +
-		"DISK_ENCRYPTION_RECOVERY_KEY_URL=https://caprf/key\nIMAGE_COSIGN_PUBKEYS=/deploy/cosign.pub\nMOK_CERT_PATH=/usr/share/booty/secureboot/ci.der\n")
+		"DISK_ENCRYPTION_RECOVERY_KEY_URL=https://caprf/key\nIMAGE_COSIGN_PUBKEYS=/deploy/cosign.pub\nMOK_CERT_PATH=/usr/share/booty/secureboot/ci.der\nMODULE_SIGNING_ENROLLMENT=external\n")
 	for _, payload := range []string{"SECUREBOOT_SIGNING=per-host", "DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE=/deploy/evil.pem"} {
 		if _, _, err := MergeCommandVars(uki, []byte(payload)); err == nil || !strings.Contains(err.Error(), "disk encryption") {
 			t.Errorf("payload %q: err = %v, want the disk encryption lock", payload, err)
@@ -167,5 +169,30 @@ func TestDeployArchiveValidatesRestoredEncryption(t *testing.T) {
 		body: "HOSTNAME=w\nPARTITION_LAYOUT_URL=https://caprf/layout\n"}))
 	if err == nil {
 		t.Fatal("archive with a partition layout accepted under disk encryption")
+	}
+}
+
+// The file of DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE is trust material like a
+// cosign key: a deploy archive can not replace it, under /deploy or through
+// the ramdisk copy of deploy/file-system.
+func TestDeployArchiveCannotReplacePCRPublicKey(t *testing.T) {
+	root := useDeployRoot(t)
+	uki := "DISK_ENCRYPTION=luks2-tpm2-uki\nSECUREBOOT_SIGNING=ci\nDISK_ENCRYPTION_RECOVERY_KEY_URL=https://caprf/key\n" +
+		"IMAGE_COSIGN_PUBKEYS=/etc/booty/image.pub\nMOK_CERT_PATH=/usr/share/booty/secureboot/ci.der\nMODULE_SIGNING_ENROLLMENT=external\n" +
+		"PROVISIONER_FILES_TARGET=ramdisk\nDISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE="
+	vars := "HOSTNAME=w\nIMAGE=oci://registry.example/os@sha256:" + strings.Repeat("a", 64) + "\n"
+	for name, tc := range map[string]struct{ pin, entry string }{
+		"under /deploy":       {filepath.Join(root, "pcr.pem"), "deploy/pcr.pem"},
+		"through the ramdisk": {"/etc/ssl/booty-pcr.pem", "deploy/file-system/etc/ssl/booty-pcr.pem"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			base := uki + tc.pin + "\n"
+			c := &Client{vars: []byte(baseAgentVars + base)}
+			_, _, err := c.CommandConfig(deployArchive(t, archiveEntry{name: "deploy/vars", body: vars + base}, archiveEntry{name: tc.entry, body: "evil"}))
+			defer c.DiscardCommandFiles()
+			if err == nil || !strings.Contains(err.Error(), "replaces the PCR policy key") {
+				t.Fatalf("CommandConfig() = %v, want the PCR key refused", err)
+			}
+		})
 	}
 }

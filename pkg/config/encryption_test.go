@@ -49,6 +49,7 @@ func TestValidateUKISigning(t *testing.T) {
 			c.Provision.DiskEncryption = DiskEncryptionConfig{Mode: DiskEncryptionLUKS2TPM2UKI, RecoveryKeyURL: "https://p/key"}
 			c.Provision.SecureBoot.Signing = signing
 			c.Provision.Image.CosignPublicKeys = []string{"/cosign.pub"}
+			c.Provision.SecureBoot.ModuleSigning.Enrollment = ModuleSigningEnrollExternal
 		}
 	}
 	tests := []struct {
@@ -64,6 +65,7 @@ func TestValidateUKISigning(t *testing.T) {
 		{"uki without cosign", func(c *Config) { uki("ci")(c); c.Provision.Image.CosignPublicKeys = nil }, "needs cosign verification of the image"},
 		{"pinned key with per-host", func(c *Config) { uki("per-host")(c); c.Provision.DiskEncryption.PCRPublicKeyFile = "/pcr.pem" }, "BOOTy makes the key"},
 		{"signer without uki", func(c *Config) { c.Provision.SecureBoot.Signing = "ci" }, ""},
+		{"uki with MOK enrollment", func(c *Config) { uki("per-host")(c); c.Provision.SecureBoot.ModuleSigning.Enrollment = "" }, "MokList does not reach the kernel"},
 		{"pinned key without uki", func(c *Config) { c.Provision.DiskEncryption.PCRPublicKeyFile = "/pcr.pem" }, `needs provision.diskEncryption.mode "luks2-tpm2-uki"`},
 		{"uki with keyless cosign", func(c *Config) {
 			uki("ci")(c)

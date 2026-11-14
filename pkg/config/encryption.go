@@ -119,9 +119,6 @@ func (c *Config) validateDiskEncryption() []string {
 	return errs
 }
 
-// validateDiskEncryptionTransport checks the values that reach the
-// installed system (sourced from a shell file, posted with curl
-// --proto =https) and the TLS verification of the key hand-off.
 // validateUKISigning checks SECUREBOOT_SIGNING against the disk encryption
 // mode: the UKI mode needs a signer.
 // The UKI digest comes from the signed image manifest, so the image must
@@ -152,9 +149,19 @@ func (c *Config) validateUKISigning() []string {
 	if d.StatusURL != "" {
 		errs = append(errs, fmt.Sprintf("provision.diskEncryption.statusURL is not supported with provision.diskEncryption.mode %q yet", DiskEncryptionLUKS2TPM2UKI))
 	}
+	// The firmware boots the UKI without shim, so no MokList reaches the
+	// kernel: only a db certificate verifies the signed modules.
+	if signing != SigningOff && c.Provision.SecureBoot.ModuleSigning.EnrollmentMethod() != ModuleSigningEnrollExternal {
+		errs = append(errs, fmt.Sprintf("provision.diskEncryption.mode %q boots without shim, so MokList does not reach the kernel: "+
+			"provision.secureBoot.moduleSigning.enrollment must be %q (the provisioner enrolls the module certificate in db)",
+			DiskEncryptionLUKS2TPM2UKI, ModuleSigningEnrollExternal))
+	}
 	return errs
 }
 
+// validateDiskEncryptionTransport checks the values that reach the
+// installed system (sourced from a shell file, posted with curl
+// --proto =https) and the TLS verification of the key hand-off.
 func (c *Config) validateDiskEncryptionTransport() []string {
 	var errs []string
 	const unsafe = "'\"\\ \t\n$`"
