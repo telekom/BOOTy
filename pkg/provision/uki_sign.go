@@ -172,8 +172,8 @@ func appendPESections(b []byte, sections ...[2][]byte) ([]byte, error) {
 		return nil, fmt.Errorf("unexpected PE layout: %d bytes after the last section", len(b)-int(end))
 	}
 	table := l.secTable + peSectionHdrSize*l.nsec
-	if table+peSectionHdrSize*len(sections) > int(l.sizeOfHeader) ||
-		!bytes.Equal(b[table:table+peSectionHdrSize*len(sections)], make([]byte, peSectionHdrSize*len(sections))) {
+	free := table + peSectionHdrSize*len(sections)
+	if free > int(l.sizeOfHeader) || slices.ContainsFunc(b[table:free], func(c byte) bool { return c != 0 }) {
 		return nil, errors.New("no room in the PE headers for more sections")
 	}
 	out := slices.Clone(b)
