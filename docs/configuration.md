@@ -78,7 +78,7 @@ values are false.
 
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
-| `MODE` | `provision` | `provision`, `deprovision`, `hard`, `soft-deprovision`, `soft`, `decommission`, `standby`, `dry-run`, `check` | Operating mode. `hard` is an alias of `deprovision`, `soft` is an alias of `soft-deprovision`. `deprovision` wipes the disks and removes the EFI boot entries. `soft-deprovision` renames `grub.cfg`. `decommission` wipes every disk and removes every EFI boot entry, and logs failures without stopping. `check` runs the health checks only. |
+| `MODE` | `provision` | `provision`, `deprovision`, `hard`, `soft-deprovision`, `soft`, `decommission`, `standby`, `dry-run`, `check` | Operating mode. `hard` is an alias of `deprovision`, `soft` is an alias of `soft-deprovision`. `deprovision` crypto-erases LUKS2 headers (`DEPROVISION_CRYPTO_ERASE`), wipes the disks and removes the EFI boot entries. `soft-deprovision` renames `grub.cfg`. `decommission` wipes every disk and removes every EFI boot entry, and logs failures without stopping. `check` runs the health checks only. |
 | `DRY_RUN` | `false` | boolean | Sets `MODE=dry-run`. Dry-run skips the network setup and the token flow, runs read-only checks and reports the result. |
 | `HOSTNAME` | (unset) | host name | Machine name. BOOTy writes it into the target OS, sends it to `TOKEN_URL`, and with `RAMDISK_HOSTNAME=true` sets it as the ramdisk host name for provisioning. |
 | `PROVISION_TARGET_OS` | (unset) | `linux` | Target OS class. Provisioning preflight fails when it is empty or not `linux`. Alias: `TARGET_OS`. |
@@ -524,7 +524,8 @@ Requires a TPM2, Secure Boot in user mode, a whole-disk raw GPT image whose
 encrypted partition is the last one, and an image with dracut,
 `systemd-cryptsetup` and the TPM2 libraries. Turns kexec off. Without
 `DISK_ENCRYPTION` none of this changes anything. A standby command payload
-or deploy archive can change only `DISK_ENCRYPTION_TARGET`.
+or deploy archive can change only `DISK_ENCRYPTION_TARGET`, and not
+`DEPROVISION_CRYPTO_ERASE`.
 
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
@@ -533,6 +534,7 @@ or deploy archive can change only `DISK_ENCRYPTION_TARGET`.
 | `DISK_ENCRYPTION_RECOVERY_KEY_URL` | (unset) | URL | Required with `DISK_ENCRYPTION`. BOOTy posts the recovery key here (JSON, bearer token) before it formats the partition; any answer other than 2xx, a redirect included, fails the run. HTTPS with TLS verification (`CA_BUNDLE_FILE` roots apply); plain HTTP only on loopback, `INSECURE_TRANSPORT` does not apply. BOOTy never logs or stores the key. YAML `provision.diskEncryption.recoveryKeyURL`. |
 | `DISK_ENCRYPTION_STATUS_URL` | (unset) | https URL | The installed system posts the enrollment result here (`tpm2-bound`, `slot1-removed` or `failed`; JSON, the bearer token of the provisioning run, no key). Best effort. The token is stored in the target until the enrollment ends. YAML `provision.diskEncryption.statusURL`. |
 | `DISK_ENCRYPTION_ALLOW_FAILURE` | `false` | `true`, `false`, `1`, `0`, `yes`, `no` | Provision without encryption when a check before the first disk write fails (no TPM, Secure Boot check, ramdisk tools, unsupported image layout). Errors after the first write always fail the run. Any other value stops the parse. YAML `provision.diskEncryption.allowFailure`. |
+| `DEPROVISION_CRYPTO_ERASE` | `true` | `true`, `false`, `1`, `0`, `yes`, `no`; empty is the default | `deprovision`/`hard` and `decommission` crypto-erase every LUKS2 header on the disks that they wipe, right before the wipe: `cryptsetup luksErase`, then zeros over both header copies and the keyslots area, then a check that no header copy is left. A host without LUKS2 runs no tool and sees no change. Any failure, also a damaged header, fails the run (`BOOTY-DSK-029`); a device that cannot be read is skipped and named in the status. `false` skips the step. A standby command payload or deploy archive cannot change it. Any other value stops the parse. See [Crypto-erase at deprovision](disk-encryption.md#crypto-erase-at-deprovision). YAML `deprovision.cryptoErase`. |
 | `DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK` | `false` | same as above | Encrypt although the firmware has no Secure Boot or is in setup mode (no PK). The installed system still binds only with Secure Boot on in user mode; until then the enrollment key unlocks. YAML `provision.diskEncryption.skipSecureBootCheck`. |
 
 ## Sysext

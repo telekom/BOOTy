@@ -557,6 +557,27 @@ jobs:
               curl -fsSL --retry 3 -o libtss2-rc0t64.deb https://launchpad.net/ubuntu/+archive/primary/+files/libtss2-rc0t64_4.1.3-6_amd64.deb
               echo "8bfb7d88fa9c83f37fe77a06d9745fc0176c28df079486ccacd2b8b6a927a652  libtss2-rc0t64.deb" | sha256sum -c -
               echo "DISK_ENCRYPTION_DEBS=${PWD}/libtss2-rc0t64.deb" >> "${GITHUB_ENV}"
+          # Crypto-erase at deprovision (docs/disk-encryption.md): provision
+          # with encryption, deprovision with WIPE_DEPTH=quick; the LUKS2
+          # header copies and keyslots are gone and the escrowed recovery key
+          # opens nothing, not even with the old metadata written back.
+          - scenario: disk-encryption-crypto-erase-ubuntu-26.04
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestDiskEncryptionCryptoEraseVM$"
+            go_timeout: 40m
+            timeout_minutes: 55
+            privileged: true
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+            mirror_os_image: ubuntu-26.04-server-cloudimg-amd64.img
+            mirror_os_image_url: https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img
+            mirror_os_image_sha256: 8800651811af9a85465ad1d552add729947bb16488dddb4a9b5305a3d97332b2
+            setup: |
+              sudo apt-get install -y --no-install-recommends cryptsetup-bin
+              sudo apt-get install -y --no-install-recommends python3-virt-firmware || sudo pip3 install --break-system-packages virt-firmware
+              curl -fsSL --retry 3 -o libtss2-rc0t64.deb https://launchpad.net/ubuntu/+archive/primary/+files/libtss2-rc0t64_4.1.3-6_amd64.deb
+              echo "8bfb7d88fa9c83f37fe77a06d9745fc0176c28df079486ccacd2b8b6a927a652  libtss2-rc0t64.deb" | sha256sum -c -
+              echo "DISK_ENCRYPTION_DEBS=${PWD}/libtss2-rc0t64.deb" >> "${GITHUB_ENV}"
           # The same image without DISK_ENCRYPTION: no encryption step, the
           # partition table, plain root and boot entry as before.
           - scenario: disk-encryption-off-ubuntu-26.04
