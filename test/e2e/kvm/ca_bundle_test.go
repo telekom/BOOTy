@@ -118,6 +118,8 @@ func TestCABundleFilePrivateCAQEMU(t *testing.T) {
 		vars["IMAGE"] = caprf.baseURL + "/image.gz"
 		vars["DISK_DEVICE"] = "/dev/vda"
 		vars["SUCCESS_ACTION"] = "poweroff"
+		// No NTP source: the run needs the Date probe over the private CA.
+		vars["TIME_SYNC"] = "require"
 		initramfs := buildProvisionInitramfsWithFiles(t, vars, map[string]string{"deploy/ca-bundle.pem": ca.pem})
 
 		output := runQEMUProvision(t, findKernel(t), initramfs, targetDisk, 6*time.Minute)
@@ -126,6 +128,9 @@ func TestCABundleFilePrivateCAQEMU(t *testing.T) {
 		caprf.requireStatuses(t, "init", "success")
 		if !strings.Contains(string(output), "added extra root certificates") {
 			t.Fatal("BOOTy did not log the CA bundle load")
+		}
+		if text := string(output); !strings.Contains(text, "measured clock skew") || !strings.Contains(text, "source=caprf-date") {
+			t.Fatal("the time sync did not use the CAPRF Date header over the private CA")
 		}
 	})
 
