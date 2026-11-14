@@ -92,7 +92,7 @@ BOOTy follows the
 | 8, 9 | GRUB: commands (8), loaded files such as the BOOTy kernel and initramfs (9) | Read and quote only |
 | 10 | IMA | None |
 | 11 to 13 | systemd-stub (UKI sections, command line, sysexts); only for a future UKI boot | None today |
-| 14 | shim MokList | None. Do not bind LUKS keys to it |
+| 14 | shim MokList | None. [Disk encryption](disk-encryption.md) binds LUKS to PCR 7+14 in the installed OS, after the MOK is final; never bind to it during provisioning |
 | 15 | systemd machine identity and volume keys | None |
 | 16 | Debug | None |
 | 23 | Application support | BOOTy runtime events (`PCRBooty`) |

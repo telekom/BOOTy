@@ -107,6 +107,7 @@ func (c *Config) Validate() error {
 	if err := validateSecureBootConfig(c.Provision.Image.Mode, &c.Provision.SecureBoot, &c.Provision.AB); err != nil {
 		errs = append(errs, err.Error())
 	}
+	errs = append(errs, c.validateDiskEncryption()...)
 	errs = append(errs, validateTokenRenewal(&c.Transport)...)
 	errs = append(errs, validateTime(&c.Time)...)
 

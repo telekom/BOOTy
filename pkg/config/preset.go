@@ -85,6 +85,8 @@ func (c *Config) applyLegacyCompatPreset() {
 	presetBool(&c.Transport.Insecure, true)
 	presetBool(&c.Transport.SkipTLSVerify, true)
 	presetBool(&c.Provision.Image.AllowInsecureHTTP, true)
+	// The legacy image curl calls have no --location.
+	presetBool(&c.Provision.Image.FollowRedirects, false)
 	presetBool(&c.Transport.ExportVars, true)
 	presetString(&c.ProvisionerFilesTarget, ProvisionerFilesRamdisk)
 	presetBool(&c.Provision.WriteResolvConf, false)

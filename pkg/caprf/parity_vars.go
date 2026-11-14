@@ -32,6 +32,7 @@ func applyParityVar(cfg *config.MachineConfig, key, value string) bool {
 		"SKIP_TLS_VERIFY":           &cfg.Transport.SkipTLSVerify,
 		"EXPORT_VARS":               &cfg.Transport.ExportVars,
 		"IMAGE_ALLOW_INSECURE_HTTP": &cfg.Provision.Image.AllowInsecureHTTP,
+		"IMAGE_FOLLOW_REDIRECTS":    &cfg.Provision.Image.FollowRedirects,
 		"WRITE_RESOLV_CONF":         &cfg.Provision.WriteResolvConf,
 		"RAMDISK_HOSTNAME":          &cfg.RamdiskHostname,
 		"NIC_FIRMWARE_LOG":          &cfg.Provision.Firmware.LogNICs,

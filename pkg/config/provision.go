@@ -130,6 +130,7 @@ type ProvisionConfig struct {
 	Disk           DiskConfig           `yaml:"disk"           json:"disk"`
 	Firmware       FirmwareConfig       `yaml:"firmware"       json:"firmware"`
 	SecureBoot     SecureBootConfig     `yaml:"secureBoot"     json:"secureBoot"`
+	DiskEncryption DiskEncryptionConfig `yaml:"diskEncryption" json:"diskEncryption"`
 	CloudInit      CloudInitConfig      `yaml:"cloudInit"      json:"cloudInit"`
 	OverlayFS      OverlayFSConfig      `yaml:"overlayFS"      json:"overlayFS"`
 	Sysext         SysextConfig         `yaml:"sysext"         json:"sysext"`

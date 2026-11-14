@@ -58,7 +58,7 @@ func verifyWithStream(ctx context.Context, imageURL, keyring, sigFile string) er
 
 	resp, err := gpgHTTPClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return fmt.Errorf("streaming image for verification from %s: %w", RedactURL(imageURL), &redactedSourceError{rawSource: imageURL, err: err})
+		return fmt.Errorf("streaming image for verification from %s: %w", RedactURL(imageURL), &redactedSourceError{rawSource: imageURL, err: withoutRedirectURL(err)})
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -78,7 +78,7 @@ func downloadToTemp(ctx context.Context, rawURL, pattern string) (string, error)
 
 	resp, err := gpgHTTPClient.Do(req) //nolint:gosec // URL from trusted config
 	if err != nil {
-		return "", fmt.Errorf("downloading %s: %w", RedactURL(rawURL), &redactedSourceError{rawSource: rawURL, err: err})
+		return "", fmt.Errorf("downloading %s: %w", RedactURL(rawURL), &redactedSourceError{rawSource: rawURL, err: withoutRedirectURL(err)})
 	}
 	defer func() { _ = resp.Body.Close() }()
 

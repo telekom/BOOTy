@@ -63,8 +63,8 @@ var errArchiveVars = errors.New("deploy archive vars do not parse or validate")
 // change yet: ApplyCommandFiles swaps the staged directories in once every
 // check of the command passed, DiscardCommandFiles drops them. The settings
 // that the running ramdisk uses (transport, agent, network, MODE, DRY_RUN,
-// CAPRF_LEGACY_COMPAT and the bearer-token URLs) keep the values of the base
-// vars: the agent keeps its token and network.
+// CAPRF_LEGACY_COMPAT, IMAGE_FOLLOW_REDIRECTS and the bearer-token URLs) keep
+// the values of the base vars: the agent keeps its token and network.
 func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, keys []string, err error) {
 	ref, err := ParseVars(bytes.NewReader(c.vars))
 	if err != nil {
@@ -96,12 +96,24 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 	c.stagedDeploy = staging
 	cfg.Transport, cfg.Agent, cfg.Network = ref.Transport, ref.Agent, ref.Network
 	cfg.Mode, cfg.DryRun, cfg.LegacyCompat = ref.Mode, ref.DryRun, ref.LegacyCompat
+	// main.go applies it once, before the first image client.
+	cfg.Provision.Image.FollowRedirects = ref.Provision.Image.FollowRedirects
 	cfg.Provision.Inventory.URL = ref.Provision.Inventory.URL
 	cfg.Provision.Firmware.URL = ref.Provision.Firmware.URL
 	cfg.Health.ReportURL = ref.Health.ReportURL
 	cfg.Telemetry.URL, cfg.Telemetry.MetricsURL, cfg.Telemetry.EventURL = ref.Telemetry.URL, ref.Telemetry.MetricsURL, ref.Telemetry.EventURL
 	cfg.Provision.CrashArtifacts.PrepareURL = ref.Provision.CrashArtifacts.PrepareURL
 	cfg.Provision.CrashArtifacts.UploadURL = ref.Provision.CrashArtifacts.UploadURL
+	// Only the target partition of the disk encryption may change.
+	target := cfg.Provision.DiskEncryption.Target
+	cfg.Provision.DiskEncryption = ref.Provision.DiskEncryption
+	cfg.Provision.DiskEncryption.Target = target
+	// The restored settings can conflict with the archive (an archive
+	// without DISK_ENCRYPTION and with a PARTITION_LAYOUT): check the final
+	// config, like ParseVars checked the archive alone.
+	if err := cfg.Validate(); err != nil {
+		return nil, nil, errArchiveVars
+	}
 	return cfg, keys, nil
 }
 

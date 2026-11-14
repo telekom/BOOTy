@@ -1,6 +1,6 @@
 # Proposal: Full LUKS Disk Encryption
 
-## Status: In Progress (library implemented in pkg/disk/luks — orchestrator integration pending)
+## Status: Superseded by [disk encryption](disk-encryption.md) (`DISK_ENCRYPTION=luks2-tpm2`)
 
 ## Priority: P1
 
