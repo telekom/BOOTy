@@ -502,7 +502,9 @@ root is mounted.
 | `ERROR_URL` | — | CAPRF error status endpoint |
 | `LOG_URL` | — | CAPRF structured log endpoint |
 | `LOG_FLUSH_TIMEOUT_SEC` | `5` | Seconds (0-60) to wait before kexec, reboot or power off for the queued `LOG_URL` lines |
-| `DEBUG_URL` | — | CAPRF debug payload endpoint |
+| `DEBUG_URL` | — | CAPRF debug endpoint: the kernel log, once |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. Also from the kernel command line. See [docs/logging.md](docs/logging.md) |
+| `LOG_FORMAT` | `text` | Console log format: `text` or `json` |
 | `HEARTBEAT_URL` | — | Standby mode: URL for periodic keepalives |
 | `COMMANDS_URL` | — | Standby mode: URL to poll for pending commands |
 | `TOKEN_URL` | — | JWT token acquisition endpoint (HTTPS required except localhost) |
@@ -1340,7 +1342,9 @@ opened volume. The recovery key goes to `DISK_ENCRYPTION_RECOVERY_KEY_URL`
 first; the installed system binds the volume to the TPM2 (PCR 7+14) on its
 first boot with Secure Boot on. It protects disks at rest, not against
 someone with the server or its console. See
-[docs/disk-encryption.md](docs/disk-encryption.md). The vars parser still
+[docs/disk-encryption.md](docs/disk-encryption.md). Hard deprovisioning and
+decommission crypto-erase every LUKS2 header on the disks they wipe
+(`DEPROVISION_CRYPTO_ERASE=false` skips it). The vars parser still
 rejects every key that starts with `LUKS_`.
 
 ### JWT Authentication

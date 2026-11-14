@@ -4,6 +4,7 @@ package caprf
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -163,10 +164,11 @@ func isShellIdentifier(s string) bool {
 	return true
 }
 
-// FailureConfig reads only CAPRF_LEGACY_COMPAT and FAILURE_ACTION from the
-// vars file and returns a config with the resulting FailureAction. It also
-// works when the rest of the file does not parse, so BOOTy can still wait
-// instead of rebooting after a vars file error.
+// FailureConfig reads only CAPRF_LEGACY_COMPAT, FAILURE_ACTION, LOG_LEVEL
+// and LOG_FORMAT from the vars file and returns a config with the resulting
+// FailureAction and log settings. It also works when the rest of the file
+// does not parse, so BOOTy can still wait instead of rebooting after a vars
+// file error, and sets up logging before the full parse.
 func FailureConfig(varsPath string) *config.MachineConfig {
 	cfg := &config.MachineConfig{}
 	f, err := os.Open(varsPath) //nolint:gosec // trusted path from ISO
@@ -191,6 +193,12 @@ func FailureConfig(varsPath string) *config.MachineConfig {
 					value = ""
 				}
 				cfg.FailureAction = strings.ToLower(strings.TrimSpace(value))
+			// An empty entry is the default and wins over the environment,
+			// so it is kept as the default value, not as absent.
+			case "LOG_LEVEL":
+				cfg.Transport.LogLevel = cmp.Or(value, "info")
+			case "LOG_FORMAT":
+				cfg.Transport.LogFormat = cmp.Or(value, "text")
 			}
 		}
 		if err != nil {
@@ -1215,6 +1223,9 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 	if key == "LOG_FLUSH_TIMEOUT_SEC" {
 		return applyLogFlushTimeoutVar(cfg, value)
 	}
+	if key == "DEPROVISION_CRYPTO_ERASE" {
+		return applyCryptoEraseVar(cfg, value)
+	}
 	if handled, err := applySRIOVVar(cfg, key, value); handled {
 		return err
 	}
@@ -1236,11 +1247,25 @@ func applyLogFlushTimeoutVar(cfg *config.MachineConfig, value string) error {
 	return nil
 }
 
-func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
-	if applyNetworkStringVar(cfg, key, value) || applySecureBootDigestVar(cfg, key, value) || applyPartitionLayoutSourceVar(cfg, key, value) || applyImageWriteVar(cfg, key, value) {
-		return true
+// applyCryptoEraseVar sets DEPROVISION_CRYPTO_ERASE strictly, like the
+// disk encryption booleans: a typo must not turn the crypto-erase off. An
+// empty value is unset (on).
+func applyCryptoEraseVar(cfg *config.MachineConfig, value string) error {
+	cfg.Deprovision.CryptoErase = nil
+	if strings.TrimSpace(value) == "" {
+		return nil
 	}
-	if applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) || applyCheckStringVar(cfg, key, value) {
+	on, err := parseWatchdogBool(value)
+	if err != nil {
+		return fmt.Errorf("invalid DEPROVISION_CRYPTO_ERASE: %w", err)
+	}
+	cfg.Deprovision.CryptoErase = &on
+	return nil
+}
+
+func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
+	if applyNetworkStringVar(cfg, key, value) || applySecureBootDigestVar(cfg, key, value) || applyPartitionLayoutSourceVar(cfg, key, value) || applyImageWriteVar(cfg, key, value) ||
+		applyOCIPrePullStringVar(cfg, key, value) || applyAgentStringVar(cfg, key, value) || applyCheckStringVar(cfg, key, value) {
 		return true
 	}
 
@@ -1258,6 +1283,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"MODE":                        &cfg.Mode,
 		"OS_FAMILY":                   &cfg.OSFamily,
 		"LOG_URL":                     &cfg.Transport.LogURL,
+		"LOG_LEVEL":                   &cfg.Transport.LogLevel,
+		"LOG_FORMAT":                  &cfg.Transport.LogFormat,
 		"INIT_URL":                    &cfg.Transport.InitURL,
 		"ERROR_URL":                   &cfg.Transport.ErrorURL,
 		"SUCCESS_URL":                 &cfg.Transport.SuccessURL,

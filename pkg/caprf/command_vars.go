@@ -25,8 +25,8 @@ import (
 // so only checked by a checksum) or change the checksum of one; it can drop
 // such a source. It can not change a URL
 // that BOOTy posts to with the bearer token (inventory, firmware, health,
-// telemetry, crash artifacts) and the disk encryption settings except the
-// target partition. Unknown keys are rejected too. A payload
+// telemetry, crash artifacts), the disk encryption settings except the
+// target partition and DEPROVISION_CRYPTO_ERASE. Unknown keys are rejected too. A payload
 // with only blank and comment lines returns no keys.
 //
 // The base is the vars file that BOOTy read at start; MergeCommandVars does
@@ -83,6 +83,9 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 		// The recovery key and the token go to these URLs; turning
 		// encryption off or allowing a failure would downgrade silently.
 		{"disk encryption", lockedDiskEncryption(ref.Provision.DiskEncryption), lockedDiskEncryption(cfg.Provision.DiskEncryption)},
+		// Turning it off would leave the LUKS2 keyslots of a deprovisioned
+		// disk to whoever holds the recovery key.
+		{"DEPROVISION_CRYPTO_ERASE", ref.Deprovision.CryptoErase, cfg.Deprovision.CryptoErase},
 	} {
 		if !reflect.DeepEqual(s.ref, s.cand) {
 			fixed = append(fixed, s.name)

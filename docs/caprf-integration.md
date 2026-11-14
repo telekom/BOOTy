@@ -92,9 +92,9 @@ changed.
 | `MODE` | What BOOTy does |
 |--------|-----------------|
 | `provision` | Runs the provisioning pipeline: writes the image to the target disk and configures the installed OS. |
-| `deprovision`, `hard` | Wipes the disks and removes the EFI boot entries. Without a disk override it wipes every disk. |
+| `deprovision`, `hard` | Crypto-erases the LUKS2 headers on the disks it wipes (`DEPROVISION_CRYPTO_ERASE`), wipes the disks and removes the EFI boot entries. Without a disk override it wipes every disk. |
 | `soft-deprovision`, `soft` | Renames `grub.cfg` to `grub.cfg.bak` in `/boot/grub` and `/boot/grub2` on the installed root. The disk is not wiped. An existing `grub.cfg.bak` counts as done, so a rerun succeeds. If no `grub.cfg` or `grub.cfg.bak` exists, or the root cannot be unmounted after the rename, BOOTy reports an error, not success. |
-| `decommission` | Wipes every disk and removes every EFI boot entry in `BootOrder`. Failures are logged and do not stop the run. CAPRF uses this mode for the `force-clean` annotation. |
+| `decommission` | Crypto-erases the LUKS2 headers (this step fails the run on an error), wipes every disk and removes every EFI boot entry in `BootOrder`. Failures are logged and do not stop the run. CAPRF uses this mode for the `force-clean` annotation. |
 | `standby` | Sends a heartbeat to `HEARTBEAT_URL` every 30 seconds and long polls `COMMANDS_URL` (`?wait=20`), at most every 10 seconds. It runs the `provision`, `deprovision`, `reboot` and `health-check` commands. Both URLs are required. See [Agent mode contract](#agent-mode-contract). |
 | `dry-run` | Runs read-only checks (configuration, image, disk, EFI, health) and reports the result. It does not set up the network and does not write to disks. `DRY_RUN=true` selects this mode. |
 | `check` | Runs the hardware health checks and reports the result. |
@@ -112,8 +112,8 @@ URL is empty, BOOTy skips the callback.
 | `INIT_URL` | At the start of provision and deprovision (`report-init` step). Standby sends `standby`, check mode sends `health-check`. BOOTy also uses `INIT_URL` as the connectivity check target. | `provisioning started`, or `deprovisioning started` in the deprovision modes |
 | `SUCCESS_URL` | At the end of a successful run (`report-success` step), and for dry-run and check results. | `provisioning complete handoff=<method>` or `deprovisioning complete handoff=<method>`, or a check summary. See [Handoff](#handoff). |
 | `ERROR_URL` | When a step fails, when a handoff fails, and, with `FAILURE_ACTION=wait`, when the run fails before or outside a mode. | `step <name> failed [<code>]: <error>` with a [failure code](failure-codes.md), or a short failure message |
-| `LOG_URL` | For every log record at level `INFO` or higher. BOOTy redacts attributes with sensitive names, buffers 256 lines and drops lines when the buffer is full. | One log line |
-| `DEBUG_URL` | Never. BOOTy reads the variable but sends nothing to it. Diagnostic dumps go to the log and through `LOG_URL`. | |
+| `LOG_URL` | For every log record at `LOG_LEVEL` (default `INFO`) or higher. BOOTy redacts attributes with sensitive names, buffers 8192 lines and drops the lowest levels first when the buffer is full. See [Logging](logging.md). | One log line |
+| `DEBUG_URL` | Once, after the vars file is read. Diagnostic dumps go to the log and through `LOG_URL`. | The kernel ring buffer, redacted |
 
 ## Handoff
 

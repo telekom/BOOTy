@@ -107,7 +107,9 @@ type Orchestrator struct {
 	// Runtime state set during provisioning.
 	targetDisk string
 	// skippedDisks are the disks in use that a wipe of all disks skipped.
-	skippedDisks     []string
+	skippedDisks []string
+	// cryptoEraseNote is the status suffix of crypto-erase.
+	cryptoEraseNote  string
 	mirrorDisk       string           // second root disk when DISK_MIRRORING_MODE selected a pair
 	resumeMirrorPair [2]string        // mirror pair restored from a resume checkpoint
 	targetPartitions []disk.Partition // partitions parse-partitions found on targetDisk
