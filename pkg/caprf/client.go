@@ -3,6 +3,7 @@ package caprf
 
 import (
 	"bufio"
+	"cmp"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -191,10 +192,12 @@ func FailureConfig(varsPath string) *config.MachineConfig {
 					value = ""
 				}
 				cfg.FailureAction = strings.ToLower(strings.TrimSpace(value))
+			// An empty entry is the default and wins over the environment,
+			// so it is kept as the default value, not as absent.
 			case "LOG_LEVEL":
-				cfg.Transport.LogLevel = value
+				cfg.Transport.LogLevel = cmp.Or(value, "info")
 			case "LOG_FORMAT":
-				cfg.Transport.LogFormat = value
+				cfg.Transport.LogFormat = cmp.Or(value, "text")
 			}
 		}
 		if err != nil {

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -65,5 +66,45 @@ func TestSetupLoggingFromVars(t *testing.T) {
 	setupLoggingFromVars(vars)
 	if logLevel.Level() != slog.LevelDebug {
 		t.Fatalf("vars LOG_LEVEL=debug gave %v", logLevel.Level())
+	}
+}
+
+// An invalid LOG_FORMAT is reported with LOG_LEVEL=error as well.
+func TestSetupLoggingWarnsAboveLevel(t *testing.T) {
+	orig, origStderr := slog.Default(), os.Stderr
+	t.Cleanup(func() { slog.SetDefault(orig); logLevel.Set(slog.LevelInfo); os.Stderr = origStderr })
+	f, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = f
+	setupLogging("error", "bogus")
+	os.Stderr = origStderr
+	_ = f.Close()
+	out, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "ignoring log setting") || !strings.Contains(string(out), "bogus") {
+		t.Fatalf("no warning for LOG_FORMAT=bogus with LOG_LEVEL=error: %q", out)
+	}
+}
+
+// An empty vars entry resets the setting to the default instead of keeping
+// the environment value.
+func TestSetupLoggingFromVarsEmptyResets(t *testing.T) {
+	orig := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(orig); logLevel.Set(slog.LevelInfo) })
+	t.Setenv("LOG_LEVEL", "debug")
+	t.Setenv("LOG_FORMAT", "json")
+
+	vars := filepath.Join(t.TempDir(), "vars")
+	if err := os.WriteFile(vars, []byte("LOG_LEVEL=\nLOG_FORMAT=\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setupLogging("debug", "json")
+	setupLoggingFromVars(vars)
+	if _, ok := slog.Default().Handler().(*slog.TextHandler); !ok || logLevel.Level() != slog.LevelInfo {
+		t.Fatalf("handler = %T level = %v, want text INFO", slog.Default().Handler(), logLevel.Level())
 	}
 }
