@@ -11,7 +11,10 @@ Status: experimental and opt-in. `SECUREBOOT_SIGNING` selects the mode:
 The enrollment (`MODULE_SIGNING_ENROLLMENT`: `efi-helper`, `mokutil`,
 `external`) is the same for `per-host` and `ci`. With `ci`, every host that
 gets the image trusts the CI key, the shared-key trade-off that `per-host`
-avoids: a leaked CI key can sign modules for all of them. The UKI/PCR 11
+avoids: a leaked CI key can sign modules for all of them. The CI certificate
+must carry the module-signing-only EKU `1.3.6.1.4.1.2312.16.1.2`, or BOOTy
+refuses it: shim trusts every other `MokList` certificate for boot loaders
+and kernels too, and the image alone chooses this one. The UKI/PCR 11
 signing work is meant to use the same setting and modes.
 
 Out-of-tree kernel modules (DKMS output, vendor drivers) in a whole-disk

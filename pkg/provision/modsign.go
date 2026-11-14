@@ -149,8 +149,17 @@ func (o *Orchestrator) readCISigningCert(sb *config.SecureBootConfig) error {
 	if err != nil {
 		return fmt.Errorf("read CI module signing certificate: %w", err)
 	}
-	if _, err := x509.ParseCertificate(der); err != nil {
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
 		return fmt.Errorf("CI module signing certificate %s is not a DER X.509 certificate: %w", sb.MOKCertPath, err)
+	}
+	// The image chooses this certificate and BOOTy enrolls it unattended.
+	// shim trusts MokList for boot images too, except certificates with the
+	// module-signing-only EKU: without it the CI key could sign boot loaders
+	// and kernels that every host with the image boots.
+	if !secureboot.IsModuleSigningOnly(cert) {
+		return fmt.Errorf("CI module signing certificate %s lacks the module-signing-only extended key usage %s",
+			sb.MOKCertPath, secureboot.OIDModuleSigningOnly)
 	}
 	sum := sha256.Sum256(der)
 	o.moduleSigning = &ReportModuleSigning{

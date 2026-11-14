@@ -56,10 +56,17 @@ var (
 	oidSignedData    = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 7, 2}
 	oidSHA256        = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}
 	oidRSAEncryption = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 1}
-	// oidModuleSigningOnly is the extended key usage that limits a key to
-	// kernel module signing, as in the Ubuntu and Fedora MOK certificates.
-	oidModuleSigningOnly = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 2312, 16, 1, 2}
 )
+
+// OIDModuleSigningOnly is the extended key usage that limits a key to
+// kernel module signing: shim refuses such a MokList certificate for boot
+// images.
+var OIDModuleSigningOnly = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 2312, 16, 1, 2}
+
+// IsModuleSigningOnly reports whether cert carries OIDModuleSigningOnly.
+func IsModuleSigningOnly(cert *x509.Certificate) bool {
+	return slices.ContainsFunc(cert.UnknownExtKeyUsage, OIDModuleSigningOnly.Equal)
+}
 
 // SignResult is the outcome of SignModuleTree. It holds no key material.
 type SignResult struct {
@@ -178,7 +185,7 @@ func newModuleSigner(commonName string) (*moduleSigner, error) {
 		NotAfter:              time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning},
-		UnknownExtKeyUsage:    []asn1.ObjectIdentifier{oidModuleSigningOnly},
+		UnknownExtKeyUsage:    []asn1.ObjectIdentifier{OIDModuleSigningOnly},
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 		MaxPathLenZero:        true,
