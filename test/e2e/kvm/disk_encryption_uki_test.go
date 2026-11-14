@@ -14,6 +14,8 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,11 +24,12 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/google/go-containerregistry/pkg/v1/static"
+	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/telekom/BOOTy/pkg/provision"
@@ -268,11 +271,17 @@ dracut --force --no-hostonly --tmpdir /run --add "crypt systemd-cryptsetup syste
 // pushUKIImage pushes the image with the UKI digest annotation, signs it
 // with cosign and returns the oci:// reference for the guest and the PEM
 // cosign public key.
-func pushUKIImage(t *testing.T, img ukiImage) (ref, keyPEM string) {
+func pushUKIImage(t *testing.T, img ukiImage, dir string) (ref, keyPEM string) {
 	t.Helper()
 	key := newCosignTestKey(t)
-	pushHost, guestHost := startABOCIRegistry(t)
-	base, err := mutate.AppendLayers(empty.Image, static.NewLayer(readFile(t, img.gz), types.OCILayer))
+	pushHost, guestHost := startUKIRegistry(t, dir)
+	// The image is about 1 GiB gzipped: stream it from the file into a
+	// registry that keeps blobs on disk.
+	layer, err := tarball.LayerFromFile(img.gz, tarball.WithMediaType(types.OCILayer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := mutate.AppendLayers(empty.Image, layer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,6 +306,24 @@ func pushUKIImage(t *testing.T, img ukiImage) (ref, keyPEM string) {
 		t.Fatal(err)
 	}
 	return "oci://" + guestHost + "/test/uki-os@" + digest.String(), string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+}
+
+// startUKIRegistry is startABOCIRegistry with blobs on disk.
+func startUKIRegistry(t *testing.T, dir string) (pushHost, guestHost string) {
+	t.Helper()
+	blobs := filepath.Join(dir, "registry")
+	if err := os.MkdirAll(blobs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("listen OCI registry: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	srv := &http.Server{Handler: registry.New(registry.WithBlobHandler(registry.NewDiskBlobHandler(blobs))), ReadHeaderTimeout: 10 * time.Second}
+	go func() { _ = srv.Serve(listener) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return fmt.Sprintf("127.0.0.1:%d", port), fmt.Sprintf("10.0.2.2:%d", port)
 }
 
 // ukiVM is one machine: its disk, firmware variables and TPM state.
@@ -452,7 +479,7 @@ func TestDiskEncryptionUKIPerHostVM(t *testing.T) {
 	osImage, debs := ukiAssets(t)
 	dir := t.TempDir()
 	img := prepareUKIImage(t, osImage, dir, debs, nil, nil)
-	ref, cosignPEM := pushUKIImage(t, img)
+	ref, cosignPEM := pushUKIImage(t, img, dir)
 	escrow := startEscrowServer(t)
 	vm := newUKIVM(t, dir)
 
@@ -515,7 +542,7 @@ func TestDiskEncryptionUKICIVM(t *testing.T) {
 		"update":   {marker: "v2", pcr: ci, sb: ci},
 		"tampered": {marker: "v3", pcr: rogue, sb: ci},
 	})
-	ref, cosignPEM := pushUKIImage(t, img)
+	ref, cosignPEM := pushUKIImage(t, img, dir)
 	escrow := startEscrowServer(t)
 	vm := newUKIVM(t, dir)
 
