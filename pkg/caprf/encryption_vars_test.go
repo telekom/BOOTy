@@ -156,3 +156,16 @@ func TestDeployArchiveCannotChangeDiskEncryption(t *testing.T) {
 		t.Fatalf("archive changed disk encryption: %+v", d)
 	}
 }
+
+// An archive without DISK_ENCRYPTION but with a partition layout would
+// get the base encryption back and an invalid combination.
+func TestDeployArchiveValidatesRestoredEncryption(t *testing.T) {
+	useDeployRoot(t)
+	base := baseAgentVars + "DISK_ENCRYPTION=luks2-tpm2\nDISK_ENCRYPTION_RECOVERY_KEY_URL=https://caprf/key\n"
+	c := &Client{vars: []byte(base)}
+	_, _, err := applyArchive(c, deployArchive(t, archiveEntry{name: "deploy/vars",
+		body: "HOSTNAME=w\nPARTITION_LAYOUT_URL=https://caprf/layout\n"}))
+	if err == nil {
+		t.Fatal("archive with a partition layout accepted under disk encryption")
+	}
+}

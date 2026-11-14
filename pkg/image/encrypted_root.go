@@ -66,6 +66,10 @@ func StreamEncryptedRoot(ctx context.Context, url, disk string, target Encrypted
 	if err != nil {
 		return err
 	}
+	// Byte progress for the console and the watchdog, like Stream.
+	counter := &WriteCounter{}
+	defer startProgressTicker(counter)()
+	stream = io.TeeReader(stream, counter)
 	start, size := int64(gptSectorSize)*root.Start, int64(gptSectorSize)*root.Size
 	slog.Info("streaming image with an encrypted partition", "url", RedactURL(url), "disk", disk, "partition", root.Number, "bytes", size)
 	if err := copyReaderRangeToDevice(ctx, stream, disk, start); err != nil {

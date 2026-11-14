@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -418,5 +419,98 @@ func TestEncryptionPreflightFailsWithoutEscrow(t *testing.T) {
 	o := newTestOrchestrator(t, cfg, &mockProvider{})
 	if _, err := o.encryptionPreflight(); err == nil {
 		t.Fatal("bad target accepted")
+	}
+}
+
+func TestRewriteFstabSources(t *testing.T) {
+	in := "# /dev/vda3 comment\nLABEL=cloudimg-rootfs / ext4 defaults 0 1\n/dev/vda3 /data ext4 defaults 0 2\nPARTUUID=abc /srv ext4 defaults 0 2\nUUID=fs /x ext4 defaults 0 2\n"
+	enc := map[string]bool{"/dev/vda3": true, "PARTUUID=abc": true, "UUID=fs": true}
+	out, changed := rewriteFstabSources(in, func(s string) bool { return enc[s] })
+	want := "# /dev/vda3 comment\nLABEL=cloudimg-rootfs / ext4 defaults 0 1\n/dev/mapper/booty_crypt /data ext4 defaults 0 2\n" +
+		"/dev/mapper/booty_crypt /srv ext4 defaults 0 2\nUUID=fs /x ext4 defaults 0 2\n"
+	if !changed || out != want {
+		t.Fatalf("fstab:\n%s", out)
+	}
+}
+
+func TestEncryptionPreflightNeedsTPM2(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.DiskEncryption = config.DiskEncryptionConfig{Mode: config.DiskEncryptionLUKS2TPM2}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.provider = &escrowProvider{}
+	dir := t.TempDir()
+	old := sysTPMDir
+	sysTPMDir = dir
+	t.Cleanup(func() { sysTPMDir = old })
+	if err := os.WriteFile(filepath.Join(dir, "tpm_version_major"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.encryptionPreflight(); !errors.Is(err, errNoTPM2) {
+		t.Fatalf("TPM 1.2: err = %v", err)
+	}
+	if err := os.Remove(filepath.Join(dir, "tpm_version_major")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.encryptionPreflight(); !errors.Is(err, errNoTPM2) {
+		t.Fatalf("no TPM: err = %v", err)
+	}
+}
+
+func TestUseEncryptedRootByNumber(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.DiskEncryption = config.DiskEncryptionConfig{Mode: config.DiskEncryptionLUKS2TPM2, Target: "1"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.encryption = &encryptionState{device: "/dev/vda1"}
+	o.rootPartition = "/dev/vda1"
+	if err := o.useEncryptedRoot(); err != nil || !o.encryption.isRoot || o.rootPartition != "/dev/mapper/booty_crypt" {
+		t.Fatalf("numbered root: root %q isRoot %v err %v", o.rootPartition, o.encryption.isRoot, err)
+	}
+}
+
+func TestEnrollScriptKeepsOriginalImagesUntilCommit(t *testing.T) {
+	p1 := luksEnrollScript[strings.Index(luksEnrollScript, "step=start"):]
+	inOrder(t, p1, "restore() {", `ln -f "$img" "$img.booty-old"`, `mv "$img.booty-new" "$img"`, "trap - EXIT", "rm -f /boot/initrd.img-*.booty-old")
+	restore := p1[strings.Index(p1, "restore() {"):strings.Index(p1, "trap restore EXIT")]
+	if !strings.Contains(restore, "restore_images") || !strings.Contains(luksEnrollScript, `if [ "$old" -ef "$img" ]; then rm -f "$old"; else mv -f "$old" "$img"; fi`) {
+		t.Fatal("restore does not bring the original images back")
+	}
+}
+
+func TestCloseEncryptedDisk(t *testing.T) {
+	calls := stubCryptsetup(t, "")
+	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
+	o.encryption = &encryptionState{device: "/dev/vda3"}
+	if err := o.closeEncryptedDisk(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(cmd.calls))
+	for _, c := range cmd.calls {
+		got = append(got, c.name+" "+strings.Join(c.args, " "))
+	}
+	joined := strings.Join(got, "|")
+	// The data file system grows offline through the mapping, never on the
+	// LUKS partition.
+	if !strings.Contains(joined, "e2fsck -p -f /dev/mapper/booty_crypt") || !strings.Contains(joined, "resize2fs /dev/mapper/booty_crypt") || strings.Contains(joined, "/dev/vda3") {
+		t.Fatalf("data partition commands: %v", got)
+	}
+	if len(*calls) != 1 || strings.Join((*calls)[0].args, " ") != "close booty_crypt" {
+		t.Fatalf("cryptsetup calls %v", *calls)
+	}
+
+	// A failed check keeps the mapping open and fails the step.
+	calls = stubCryptsetup(t, "")
+	o, cmd = newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
+	cmd.setResult("e2fsck -p", nil, &exec.ExitError{})
+	o.encryption = &encryptionState{device: "/dev/vda3"}
+	if err := o.closeEncryptedDisk(context.Background()); err == nil || len(*calls) != 0 {
+		t.Fatalf("failed e2fsck: err=%v cryptsetup=%v", err, *calls)
+	}
+
+	// The root grows online in resize-filesystem; close only closes.
+	calls = stubCryptsetup(t, "")
+	o, cmd = newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
+	o.encryption = &encryptionState{device: "/dev/vda1", isRoot: true}
+	if err := o.closeEncryptedDisk(context.Background()); err != nil || len(cmd.calls) != 0 || len(*calls) != 1 {
+		t.Fatalf("root: err=%v cmds=%v cryptsetup=%v", err, cmd.calls, *calls)
 	}
 }

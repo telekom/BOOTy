@@ -341,6 +341,11 @@ KVM scenarios (`.github/workflows/kvm-matrix.yml`):
   6. Secure Boot off: PCR 7 differs, the TPM2 refuses, the recovery key
      typed at the prompt unlocks;
   7. the recovery key is in none of the serial console logs.
+- `TestDiskEncryptionTPM2DataPartitionVM` (same scenario): the image gets a
+  last ext4 partition 2 mounted at `/data` by PARTUUID; with
+  `DISK_ENCRYPTION_TARGET=2` the root stays plain, `/data` mounts through
+  the mapping (fstab rewritten), its file system has grown to the disk end
+  inside LUKS, and the enrollment key unlocks it.
 - `disk-encryption-off-ubuntu-26.04` (`TestDiskEncryptionOffVM`): the same
   image without the keys: no encryption step runs, the partition table is
   the image's with the root grown, the root is plain ext4, and no BOOTy
@@ -354,7 +359,7 @@ curl -LO https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubun
 curl -LO https://launchpad.net/ubuntu/+archive/primary/+files/libtss2-rc0t64_4.1.3-6_amd64.deb
 sudo env MIRROR_OS_IMAGE=$PWD/ubuntu-26.04-server-cloudimg-amd64.img \
   DISK_ENCRYPTION_DEBS=$PWD/libtss2-rc0t64_4.1.3-6_amd64.deb \
-  go test -tags e2e -run '^TestDiskEncryption' -v -timeout 60m ./test/e2e/kvm/
+  go test -tags e2e -run '^TestDiskEncryption' -v -timeout 90m ./test/e2e/kvm/
 ```
 
 ## Signed UKI and PCR 11
