@@ -297,8 +297,10 @@ func resumeStateSteps() map[string]struct{} {
 		"teardown-chroot":        {},
 		// The per-host key and its certificate exist only in memory, and
 		// enroll-module-signing-key enrolls only the certificate of this run.
-		// Signing again replaces the earlier signatures and certificate.
-		"sign-kernel-modules": {},
+		// Signing again replaces the earlier signatures and certificate, so
+		// the enrollment must run again too.
+		"sign-kernel-modules":       {},
+		"enroll-module-signing-key": {},
 	}
 }
 

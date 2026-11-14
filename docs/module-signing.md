@@ -42,8 +42,9 @@ After the image is written and the target root is mounted:
      it can run only through `BootNext`. OVMF boots it; firmware that skips
      inactive `BootNext` entries needs an active one (not tested on
      hardware);
-   - `mokutil`: `mokutil --import` with `MOK_PASSWORD`; MokManager asks for
-     the password once at the console;
+   - `mokutil`: `mokutil --import` with `MOK_PASSWORD`, run in the target
+     (the ramdisks do not ship mokutil; shim-based targets do); MokManager
+     asks for the password once at the console;
    - `external`: nothing; the provisioner enrolls the certificate.
 3. The provisioning report (`secureBoot.moduleSigning`) carries the
    certificate, its SHA-256 and the number of signed modules, so the
@@ -56,6 +57,14 @@ After the image is written and the target root is mounted:
    `SECUREBOOT_REENABLE=true` is rejected with `efi-helper`: the provisioner
    acts on it when BOOTy reports success, before the enrollment boot, and the
    firmware would then refuse the unsigned helper.
+
+Modules that `copy-machine-files`, machine commands or post-provision
+commands add or rebuild run after signing and stay unsigned: build them into
+the image. Signing writes into the target, so it must run before
+`copy-machine-files`. On a resume (`BOOTY_RESUME`) signing and enrollment run
+again with a new key. The provisioning report sent to `LOG_URL` carries the
+new certificate. A report file that the interrupted run already installed is
+kept, so it may name the earlier certificate.
 
 Any signing or enrollment error fails provisioning (`BOOTY-EFI-010`,
 `BOOTY-EFI-011`) unless `MODULE_SIGNING_ALLOW_FAILURE=true`.

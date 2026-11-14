@@ -70,6 +70,9 @@ func (o *Orchestrator) moduleSigningResult(action string, err error) error {
 // initramfs. The private key exists only in memory during this step.
 func (o *Orchestrator) signKernelModules(ctx context.Context) error {
 	ms := o.cfg.Provision.SecureBoot.ModuleSigning
+	// A rescue retry reuses the orchestrator: never keep the certificate of
+	// an earlier attempt.
+	o.moduleSigning = nil
 	if !ms.Enabled {
 		return nil
 	}
@@ -137,9 +140,9 @@ func (o *Orchestrator) doEnrollModuleSigningKey(ctx context.Context, ms config.M
 		o.log.Info("module signing certificate left for the provisioner to enroll", "cert", o.moduleSigning.CertPath)
 		return nil
 	case config.ModuleSigningEnrollMokutil:
-		// mokutil runs on the ramdisk, so give it a copy of the certificate
-		// of this run rather than a path inside the image.
-		f, err := os.CreateTemp("", "booty-module-signing-*.der")
+		// mokutil runs in the target (the ramdisks lack it), with a copy of
+		// the certificate of this run in /run, which the chroot shares.
+		f, err := os.CreateTemp("/run", "booty-module-signing-*.der")
 		if err != nil {
 			return fmt.Errorf("module signing certificate: %w", err)
 		}
@@ -151,7 +154,7 @@ func (o *Orchestrator) doEnrollModuleSigningKey(ctx context.Context, ms config.M
 		if err != nil {
 			return fmt.Errorf("write module signing certificate: %w", err)
 		}
-		return secureboot.NewMOKEnroller(f.Name(), o.cfg.Provision.SecureBoot.MOKPassword).Enroll(ctx)
+		return secureboot.NewMOKEnroller(f.Name(), o.cfg.Provision.SecureBoot.MOKPassword).InChroot(o.config.rootDir).Enroll(ctx)
 	}
 	return o.stageMOKHelper(ctx, cert)
 }
