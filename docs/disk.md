@@ -179,6 +179,10 @@ The lookup fails when:
 
 ## Wipe Behaviour
 
+Hard deprovisioning and decommission first crypto-erase every LUKS2 header
+on the disks that they wipe (`crypto-erase` step, `DEPROVISION_CRYPTO_ERASE`,
+see [Crypto-erase at deprovision](disk-encryption.md#crypto-erase-at-deprovision)).
+
 `WIPE_DEPTH` selects what a wipe of a disk does. A wipe does not write over
 all data. `quick` leaves the data in place. `thorough` ends with `blkdiscard`
 of the whole disk: on most SSDs and NVMe disks the discarded blocks then read

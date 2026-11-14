@@ -70,6 +70,7 @@ func (o *Orchestrator) deprovisionSteps(mode string) []Step {
 		steps = append(steps, Step{"soft-deprovision", o.softDeprovision})
 	case "decommission":
 		steps = append(steps,
+			Step{"crypto-erase", o.cryptoErase},
 			Step{"decommission-wipe", o.decommissionWipe},
 			Step{"mount-efivarfs", o.mountEFIVarsBestEffort},
 			Step{"remove-all-efi-entries", o.removeAllEFIBootEntries},
@@ -84,10 +85,65 @@ func (o *Orchestrator) deprovisionSteps(mode string) []Step {
 			Step{"select-deprovision-disk", o.selectDeprovisionDisk},
 			Step{"disable-lvm", o.disableLVM},
 			Step{"stop-raid", o.stopRAIDForDeprovision},
+			Step{"crypto-erase", o.cryptoErase},
 			Step{"wipe-disks", o.wipeOrSecureEraseDisks},
 		)
 	}
 	return append(steps, Step{"report-success", o.reportDeprovisionSuccess})
+}
+
+// cryptoErase destroys the LUKS2 headers on the disks that the wipe after it
+// clears: the target disk and its mirror companion, or every disk not in
+// use (docs/disk-encryption.md#crypto-erase-at-deprovision). Any LUKS2
+// header on these disks counts as BOOTy-managed: the disks are wiped
+// anyway, and the LUKS2 format has no field that tells BOOTy's header from
+// another one. A failure fails the run unless DEPROVISION_CRYPTO_ERASE=false.
+func (o *Orchestrator) cryptoErase(ctx context.Context) error {
+	if !config.BoolOr(o.cfg.Deprovision.CryptoErase, true) {
+		o.log.Warn("crypto-erase is off (DEPROVISION_CRYPTO_ERASE=false); LUKS2 keyslots stay until the wipe, which may leave them")
+		o.cryptoEraseNote = "; crypto-erase off (DEPROVISION_CRYPTO_ERASE=false)"
+		return nil
+	}
+	// The config checks of wipe-disks, so a run that would not wipe does
+	// not erase either.
+	if err := o.ensureABPartitionLayout(); err != nil {
+		return err
+	}
+	if err := o.validatePartitionLayoutConfig(); err != nil {
+		return err
+	}
+	o.waitForDisks(ctx, "", "") // decommission has selected no disk yet
+	var disks []string
+	if target := strings.TrimSpace(o.targetDisk); target != "" {
+		disks = append(disks, target)
+		if mirror := strings.TrimSpace(o.mirrorDisk); mirror != "" {
+			disks = append(disks, mirror)
+		}
+	}
+	found, unreadable, err := o.disk.FindLUKS2(disks)
+	if err != nil {
+		return err
+	}
+	if len(found) == 0 {
+		o.log.Debug("no LUKS2 header on the disks to wipe")
+	}
+	erased := make([]string, 0, len(found))
+	for _, d := range found {
+		o.log.Info("crypto-erasing LUKS2 device", "device", d.Device, "luksUUID", d.UUID, "headerBytes", d.Area)
+		if err := o.disk.CryptoEraseLUKS2(ctx, d); err != nil {
+			return err
+		}
+		o.log.Info("LUKS2 keyslots and header destroyed", "device", d.Device, "luksUUID", d.UUID)
+		erased = append(erased, d.Device+" luksUUID="+d.UUID)
+	}
+	o.cryptoEraseNote = ""
+	if len(erased) > 0 {
+		o.cryptoEraseNote = "; crypto-erased: " + strings.Join(erased, ", ")
+	}
+	if len(unreadable) > 0 {
+		o.cryptoEraseNote += "; crypto-erase could not read: " + strings.Join(unreadable, ", ")
+	}
+	return nil
 }
 
 // decommissionWipe matches decommission_wipe in the CAPRF legacy
@@ -304,7 +360,7 @@ func renameGRUBConfig(cfg, bak string) (bool, error) {
 }
 
 func (o *Orchestrator) reportDeprovisionSuccess(ctx context.Context) error {
-	message := "deprovisioning complete handoff=" + deprovisionHandoff(o.cfg) + NotWipedNote(o.skippedDisks) + o.eraseFallbackNote()
+	message := "deprovisioning complete handoff=" + deprovisionHandoff(o.cfg) + o.cryptoEraseNote + NotWipedNote(o.skippedDisks) + o.eraseFallbackNote()
 	return o.reportTerminalSuccess(ctx, "deprovisioning", message)
 }
 
