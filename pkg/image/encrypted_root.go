@@ -102,7 +102,13 @@ func StreamEncryptedRoot(ctx context.Context, url, disk string, target Encrypted
 
 // selectEncryptedRoot picks the partition and checks that it is the last.
 func selectEncryptedRoot(parts []sfdiskPartition, number int) (sfdiskPartition, error) {
-	root, err := selectSourceRootPartition(parts, "", number)
+	candidates := parts
+	if number == 0 {
+		// A physical volume is never a root partition, also with a root label;
+		// only the guarded fallback below picks one.
+		candidates = slices.DeleteFunc(slices.Clone(parts), isLinuxLVMPartition)
+	}
+	root, err := selectSourceRootPartition(candidates, "", number)
 	if err != nil && number == 0 && !slices.ContainsFunc(parts, isLinuxFilesystemPartition) {
 		// No root partition: the root is on LVM, in the single physical volume.
 		if pv, pvErr := selectSingleSourceRootCandidate(parts, isLinuxLVMPartition, "Linux LVM partition"); pvErr == nil {

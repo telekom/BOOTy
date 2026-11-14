@@ -156,4 +156,13 @@ func TestSelectEncryptedRootLVM(t *testing.T) {
 	if _, err := selectEncryptedRoot(two, 0); err == nil {
 		t.Fatal("two physical volumes accepted without a partition number")
 	}
+	// A root label does not make a physical volume the root.
+	named := sfdiskPartition{Number: 3, Start: 8192, Type: linuxLVMGUID, Name: "root"}
+	if _, err := selectEncryptedRoot([]sfdiskPartition{esp, pv, named}, 0); err == nil {
+		t.Fatal("a second physical volume named root accepted")
+	}
+	plain := sfdiskPartition{Number: 2, Start: 4096, Type: linuxFilesystemGUID}
+	if got, err := selectEncryptedRoot([]sfdiskPartition{esp, plain, named}, 0); err == nil && got.Number == 3 {
+		t.Fatal("a physical volume named root won over the root partition")
+	}
 }
