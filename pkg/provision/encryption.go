@@ -97,6 +97,9 @@ type encryptionExtras struct {
 	token     string // bearer token for statusURL
 	ca        []byte // CA_BUNDLE_FILE, for statusURL
 	grubHash  string // unusable GRUB superuser password (pbkdf2)
+	// mokWait: module signing queues a MOK for MokManager (mokutil), so
+	// phase 1 waits while a MOK request is pending.
+	mokWait bool
 }
 
 // withEncryptionSteps adds the disk encryption steps; without
@@ -440,7 +443,9 @@ func secureBootUserMode(dir string) error {
 // GRUB superuser password.
 func (o *Orchestrator) encryptionExtras() (*encryptionExtras, error) {
 	d := &o.cfg.Provision.DiskEncryption
-	e := &encryptionExtras{libs: luksTargetLibs(newroot), hostname: o.cfg.Hostname, statusURL: d.StatusURL}
+	sb := &o.cfg.Provision.SecureBoot
+	e := &encryptionExtras{libs: luksTargetLibs(newroot), hostname: o.cfg.Hostname, statusURL: d.StatusURL,
+		mokWait: sb.SigningMode() != config.SigningOff && sb.ModuleSigning.EnrollmentMethod() == config.ModuleSigningEnrollMokutil}
 	if e.statusURL != "" {
 		if escrow, ok := o.provider.(config.RecoveryKeyEscrow); ok {
 			e.token = escrow.CurrentToken()
@@ -524,13 +529,17 @@ func writeEncryptionFiles(root string, st *encryptionState, e *encryptionExtras)
 	if len(e.ca) > 0 {
 		statusCA = luksStatusCA
 	}
+	mokWait := ""
+	if e.mokWait {
+		mokWait = "1"
+	}
 	files := []file{
 		{luksEnrollKeyPath, st.enrollKey, 0o400},
 		{"/etc/crypttab", crypttab, 0o644},
 		// Sourced by the unit; config validation keeps quotes out.
 		{luksEnvPath, []byte(fmt.Sprintf("LUKS_UUID='%s'\nLUKS_NAME='%s'\nLUKS_ENROLL_SLOT='%d'\nTPM2_PCRS='%s'\n"+
-			"HOST='%s'\nSTATUS_URL='%s'\nSTATUS_CA='%s'\n",
-			st.luksUUID, luksMapperName, luksEnrollSlot, luksTPM2PCRs, e.hostname, e.statusURL, statusCA)), 0o644},
+			"HOST='%s'\nSTATUS_URL='%s'\nSTATUS_CA='%s'\nMOK_WAIT='%s'\n",
+			st.luksUUID, luksMapperName, luksEnrollSlot, luksTPM2PCRs, e.hostname, e.statusURL, statusCA, mokWait)), 0o644},
 		// A host-only build adds tpm2-tss for tpm2-device= in crypttab,
 		// which needs tpm2-tools, and then drops systemd-cryptsetup. The
 		// generic build (the Ubuntu default) with the libraries listed here
@@ -811,13 +820,12 @@ if [ -e "$bound" ]; then
 	exit 0
 fi
 
-# A MOK change that shim applies on a later boot (mokutil with
-# SECUREBOOT_SIGNING=ci or per-host and MODULE_SIGNING_ENROLLMENT=mokutil,
-# waiting for the MokManager confirmation) changes PCR 14 after the binding,
-# and the initramfs without the enrollment key would then ask for the
-# recovery key.
+# With MODULE_SIGNING_ENROLLMENT=mokutil the certificate waits for the
+# MokManager confirmation, maybe on a later boot. That changes PCR 14 after
+# the binding, and the initramfs without the enrollment key would then ask
+# for the recovery key.
 for v in MokNew MokDel MokXNew MokXDel MokSB MokDB; do
-	if [ -e "/sys/firmware/efi/efivars/$v-` + shimLockGUID + `" ]; then
+	if [ "${MOK_WAIT:-}" = 1 ] && [ -e "/sys/firmware/efi/efivars/$v-` + shimLockGUID + `" ]; then
 		say "a MOK change ($v) is pending in MokManager, the enrollment waits"
 		exit 0
 	fi
