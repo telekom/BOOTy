@@ -60,7 +60,7 @@ echo "TPM2_PUBKEY_PCRS=$(cryptsetup luksDump "$dev" | sed -n 's/^\s*tpm2-pubkey-
 echo "TPM2_HASH_PCRS=$(cryptsetup luksDump "$dev" | sed -n 's/^\s*tpm2-hash-pcrs:\s*//p' | tr -d ' ')"
 echo "TOKEN_SUM=$(cryptsetup luksDump "$dev" | sed -n '/^Tokens:/,/^Digests:/p' | sha256sum | cut -c1-16)"
 : >/run/booty-empty-pass
-echo "EMPTY_PASS=$(cryptsetup open --test-passphrase --key-file /run/booty-empty-pass "$dev" >/dev/null 2>&1 && echo opens || echo refused)"
+echo "EMPTY_PASS=$(cryptsetup open --test-passphrase --disable-external-tokens --key-file /run/booty-empty-pass "$dev" >/dev/null 2>&1 && echo opens || echo refused)"
 echo "UNIT=$(systemctl is-enabled booty-luks-tpm2-enroll.service 2>&1)"
 journalctl -b -o cat -u booty-luks-tpm2-enroll.service --no-pager | tail -n 30 | sed 's/^/ENROLL /'
 journalctl -b -o cat --no-pager | grep -i -e 'tpm2' -e 'cryptsetup' | tail -n 30 | sed 's/^/JOURNAL /'
