@@ -384,6 +384,7 @@ func runQEMUAnswerPrompt(t *testing.T, phase string, args []string, prompt strin
 		t.Fatalf("QEMU %s timed out after %s. output:\n%s", phase, timeout, readableSerial([]byte(out.String())))
 	}
 	t.Logf("QEMU %s exited (%v). output:\n%s", phase, err, readableSerial([]byte(out.String())))
+	cancel() // stops the prompt watcher if the prompt never came
 	return []byte(out.String()), <-answered
 }
 
