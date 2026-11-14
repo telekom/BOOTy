@@ -146,6 +146,18 @@ TLS, also with `SKIP_TLS_VERIFY=true` or `EXPORT_VARS=true`. All clients
 verify against the system roots of the ramdisk plus the `CA_BUNDLE_FILE`
 roots.
 
+## Logging
+
+See [Logging](logging.md) for what each level logs, the line format and the
+destinations. `LOG_URL` and `LOG_FLUSH_TIMEOUT_SEC` are in
+[CAPRF endpoints, authentication and transport](#caprf-endpoints-authentication-and-transport).
+
+| Key | Default | Values | Description |
+|-----|---------|--------|-------------|
+| `LOG_LEVEL` | (unset) (`info`) | `debug`, `info`, `warn` (or `warning`), `error`, any letter case | Lowest level that BOOTy logs on the console and ships to `LOG_URL`. Also read from the process environment (kernel command line) at start; the vars entry wins. An invalid value logs `ignoring log setting` and uses `info`; it does not stop the run. YAML `transport.logLevel`. |
+| `LOG_FORMAT` | (unset) (`text`) | `text`, `json`, any letter case | Console line format: slog `key=value` text or one JSON object per line. `LOG_URL` lines keep their `[LEVEL] message key=value` form. Also read from the process environment, like `LOG_LEVEL`; an invalid value uses `text`. Output that bypasses slog (download progress, `dd`, FRR start, rescue messages) stays plain text. YAML `transport.logFormat`. |
+| `DEBUG_URL` | (unset) | URL | BOOTy sends the kernel ring buffer (`dmesg`, redacted) to this URL once, after the vars file is read. A failure is logged at warning level. |
+
 ## Time sync
 
 A wrong RTC (a board swap, a dead CMOS battery, a BIOS reset) makes every
@@ -727,7 +739,6 @@ BOOTy parses these keys, but no code acts on the value:
 
 | Key | Note |
 |-----|------|
-| `DEBUG_URL` | No code sends to it. Debug dumps go to the log, and `LOG_URL` ships them. |
 | `leaf_asn` | Logged in the debug dump only. |
 | `MOK_CERT_PATH` | MOK enrollment is not implemented. |
 | `MOK_PASSWORD` | MOK enrollment is not implemented. |
