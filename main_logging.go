@@ -24,16 +24,20 @@ func setupLogging(level, format string) {
 	f, formatErr := logging.ParseFormat(format)
 	logLevel.Set(l)
 	slog.SetDefault(slog.New(logging.NewHandler(os.Stderr, f, &logLevel)))
+	// The warning bypasses LOG_LEVEL: with LOG_LEVEL=error an invalid
+	// LOG_FORMAT would otherwise fall back to text without a word.
+	warn := slog.New(logging.NewHandler(os.Stderr, f, slog.LevelWarn))
 	for _, err := range []error{levelErr, formatErr} {
 		if err != nil {
-			slog.Warn("ignoring log setting", "error", err)
+			warn.Warn("ignoring log setting", "error", err)
 		}
 	}
 }
 
 // setupLoggingFromVars applies LOG_LEVEL and LOG_FORMAT of the vars file,
 // before the full parse so that the CAPRF client logger uses them too. A
-// vars entry wins over the process environment.
+// vars entry wins over the process environment, an empty one too: it resets
+// the setting to the default.
 func setupLoggingFromVars(varsPath string) {
 	t := caprf.FailureConfig(varsPath).Transport
 	if t.LogLevel == "" && t.LogFormat == "" {
