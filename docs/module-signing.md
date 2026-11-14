@@ -33,7 +33,10 @@ After the image is written and the target root is mounted:
    - `efi-helper` (default): copy `mok-enroll.efi` to
      `\EFI\BOOTy\mok-enroll.efi` on the ESP, create an inactive boot entry
      whose optional data is the certificate as an `EFI_SIGNATURE_LIST`, and
-     set `BootNext` to it;
+     set `BootNext` to it. The entry is inactive and not in `BootOrder`, so
+     it can run only through `BootNext`. OVMF boots it; firmware that skips
+     inactive `BootNext` entries needs an active one (not tested on
+     hardware);
    - `mokutil`: `mokutil --import` with `MOK_PASSWORD`; MokManager asks for
      the password once at the console;
    - `external`: nothing; the provisioner enrolls the certificate.
@@ -71,8 +74,8 @@ to the test ramdisk.
 
 | Option | Unattended | Works with stock shim + kernel | Notes |
 |---|---|---|---|
-| (a) `efi-helper`: BootNext to `mok-enroll.efi` while Secure Boot is off | yes | yes, see [evidence](#evidence) | Needs Secure Boot off during provisioning and a firmware reboot. |
-| (b) Redfish `SecureBootDatabases/db` by the provisioner | yes | no for modules | The kernel puts `db` certificates in the `.platform` keyring, which verifies kexec images, not modules. Useful for boot loaders only. |
+| (a) `efi-helper`: BootNext to `mok-enroll.efi` while Secure Boot is off | yes | yes: Ubuntu 24.04 and 26.04, see [evidence](#evidence) | Needs Secure Boot off during provisioning and a firmware reboot. |
+| (b) Redfish `SecureBootDatabases/db` by the provisioner | yes | distribution kernels only: yes on Ubuntu 24.04 and 26.04 | The kernel puts `db` certificates in the `.platform` keyring. Debian and Ubuntu patch the kernel to verify modules with it; upstream uses it for kexec only. The firmware also trusts EFI images signed by the key. |
 | (c) `mokutil --import` + MokManager | no (one console confirmation) | yes | MokManager waits 10 seconds, then boots without enrolling. |
 
 ### (a) EFI helper
@@ -93,8 +96,12 @@ signature list. It removes earlier lists owned by the BOOTy owner GUID
 one BOOTy certificate and other MOK entries stay. It refuses a malformed
 `MokList` or payload and then changes nothing.
 
-Required versions: shim 15.6 or newer with Linux 5.18 or newer, or a distro
-kernel that loads `MokListRT` into a module-verifying keyring. The
+Tested: Ubuntu 24.04 (shim-signed 1.58+15.8, kernel 6.8.0-139) and Ubuntu
+26.04 (shim-signed 1.59+15.8, kernel 7.0.0-34); `MokListTrustedRT` was 1 and
+the key appeared in `/proc/keys` (`.machine`). Required versions: shim 15.6
+or newer with Linux 5.18 or newer, or a distro kernel that loads
+`MokListRT` into a module-verifying keyring. Debian 12 and 13 ship shim
+15.8 and newer; they were not run in CI. The
 certificate is a CA with `keyCertSign`, because kernels built with
 `CONFIG_INTEGRITY_CA_MACHINE_KEYRING` accept only CA certificates from MOK
 into `.machine`.
@@ -102,9 +109,23 @@ into `.machine`.
 ### (b) db over Redfish
 
 A BMC that implements `SecureBootDatabase` accepts
-`POST .../SecureBoot/SecureBootDatabases/db/Certificates` with the PEM from
-the report. The firmware then trusts EFI images signed by that key, which a
-module key should not do, and the kernel does not use `db` for modules.
+`POST .../SecureBoot/SecureBootDatabases/db/Certificates` with the
+certificate from the report (PEM). `db` is an authenticated variable, so
+nothing in the OS or pre-boot code can add to it without a KEK signature;
+only the BMC (platform owner path) or Setup Mode can. That makes it the
+stronger store, but:
+
+- the firmware then trusts EFI images signed by the key (the module-signing
+  EKU is ignored by firmware). The key is destroyed, so nothing new can be
+  signed, but the trust anchor is broader than needed;
+- the kernel keeps `db` certificates in `.platform`. In the KVM scenario the
+  Ubuntu 24.04 (6.8) and 26.04 (7.0) kernels loaded a module signed by a
+  `db`-only certificate (Debian/Ubuntu patch "make use of platform keyring
+  for module signature verify"). Upstream kernels and distributions without
+  that patch refuse it;
+- every BMC vendor needs its own Redfish call and the update takes effect
+  at the next POST.
+
 BOOTy only emits the certificate for this path (`enrollment: external`).
 
 ### (c) mokutil
@@ -148,10 +169,19 @@ Without reprovisioning, `mokutil --delete` (one MokManager confirmation) or
 The key must be sealed to the final state. With `efi-helper`, BOOTy runs
 with Secure Boot off and before `MokList` changes, so PCR 7 (Secure Boot
 state, PK, KEK, db, dbx, and the authorities shim used) and PCR 14 (MOK)
-during provisioning differ from the first Secure Boot boot. The KVM scenario
-records PCR 7 with Secure Boot on and off and checks that they differ.
-Module signatures are checked by the kernel and are not measured, so a new
-per-host MOK changes PCR 14, not PCR 7.
+during provisioning differ from the first Secure Boot boot. Measured in the
+KVM scenario (OVMF with the Microsoft keys):
+
+| | PCR 7 | PCR 14 |
+|---|---|---|
+| Ubuntu 24.04, Secure Boot on | `C86235C7…` | `A46F893D…` |
+| Ubuntu 24.04, Secure Boot off | `CDF4FCEF…` | `A46F893D…` |
+| Ubuntu 26.04, Secure Boot on | `C86235C7…` | `24BD0348…` |
+
+PCR 7 changes with the Secure Boot state and is the same for both releases
+although their MOKs differ: module signatures are checked by the kernel and
+are not measured, and shim measures `MokList` into PCR 14. A policy on PCR 7
+alone does not notice an extra MOK; PCR 7+14 does.
 
 Proposed order:
 
@@ -198,12 +228,19 @@ Modules needed in the initramfs need a per-host initrd addon in both cases.
   `BOOTyMokEnroll=ok`.
 - KVM scenario `module-signing-ubuntu-24.04` and `module-signing-ubuntu-26.04`
   (`TestModuleSigningSecureBootVM`): Ubuntu cloud image with distro shim and
-  kernel, OVMF Secure Boot firmware with the Microsoft keys, swtpm. Steps:
-  provision with Secure Boot off; enrollment boot; boot with Secure Boot on
-  (BOOTy-signed module loads, unsigned and other-host modules are refused);
-  boot with Secure Boot off (unsigned module loads, PCR 7 differs);
-  `db`-only enrollment (module refused); reprovision (one new certificate in
-  `MokList`).
+  kernel, `OVMF_CODE_4M.secboot.fd` with `OVMF_VARS_4M.ms.fd`, swtpm.
+  1. Provision with Secure Boot off: one module signed, BootNext staged.
+  2. Enrollment boot: `MokList` holds one BOOTy certificate, NV|BS.
+  3. Secure Boot on: lockdown `integrity`; the BOOTy-signed module loads
+     (`signer` is the per-host certificate); an unsigned module and a module
+     signed by another host's key fail with "Key was rejected by service".
+  4. Secure Boot off: the system boots, unsigned modules load (tainted),
+     PCR 7 differs from step 3.
+  5. Reprovision: the helper replaces the certificate; one new one remains.
+  6. `db` only (certificate moved from `MokList` to `db`): see option (b).
+- The helper must be built without AVX: the runner gcc defaults to
+  `-march=x86-64-v3`, and VEX instructions fault (#UD) in firmware.
+  `build.sh` checks the result.
 
 Run it locally on an x86-64 Linux host with KVM, as root:
 

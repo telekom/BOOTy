@@ -186,8 +186,9 @@ func TestModuleSigningSecureBootVM(t *testing.T) {
 	}
 
 	// Option (b): the certificate in db only, as a BMC would enroll it over
-	// Redfish. The kernel keeps db certificates in .platform, which does
-	// not verify modules.
+	// Redfish. The kernel keeps db certificates in the .platform keyring;
+	// Debian and Ubuntu kernels carry a patch that verifies modules with it
+	// too, upstream kernels use it for kexec only.
 	der, err := hex.DecodeString(again[0])
 	if err != nil {
 		t.Fatal(err)
@@ -198,9 +199,17 @@ func TestModuleSigningSecureBootVM(t *testing.T) {
 	}
 	run(t, "move the certificate from MokList to db", "virt-fw-vars", "--inplace", vars,
 		"-d", "MokList", "--add-db", secureboot.MOKOwnerGUID, certFile, "--set-true", "SecureBootEnable")
+	if left := bootyMOKCerts(t, vars); len(left) != 0 {
+		t.Fatalf("MokList still holds %d BOOTy certificates", len(left))
+	}
 	report = modCheckReport(t, "db only", runMirrorQEMU(t, "db only", vm("-net", "none"), 8*time.Minute))
 	requireLine(t, report, "SECUREBOOT=1")
-	requireLine(t, report, "SIGNED_MODULE=refused")
+	requireLine(t, report, "UNSIGNED_MODULE=refused")
+	if field(report, "SIGNED_MODULE") == "loaded" {
+		t.Log("db only: the kernel accepts modules signed by a db certificate (distribution patch)")
+	} else {
+		t.Log("db only: the kernel refuses modules signed by a db certificate (upstream behaviour)")
+	}
 }
 
 // prepareModuleImage installs the check service and three test modules into
