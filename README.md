@@ -1244,12 +1244,16 @@ Debian 6.12 kernel:
 | `/dev/mem`, `/dev/port`, `ioperm` | `dmidecode` fallback only (it reads `/sys/firmware/dmi/tables` first) | refused |
 | `/dev/ipmi0` | BMC watchdog of `WATCHDOG_IPMI_FALLBACK` | not restricted by lockdown |
 
-### LUKS Encryption (Planned)
+### LUKS2 + TPM2 Disk Encryption
 
-The `pkg/disk/luks` library can format, open and close LUKS2 volumes and write
-`/etc/crypttab`. The provisioning flow does not use it yet. The vars parser
-rejects every key that starts with `LUKS_`, so a vars file with `LUKS_ENABLED`
-stops the run. See [docs/proposal-luks-encryption.md](docs/proposal-luks-encryption.md).
+`DISK_ENCRYPTION=luks2-tpm2` formats the root (or the last ext4 partition)
+with LUKS2 while the image is written and writes the partition into the
+opened volume. The recovery key goes to `DISK_ENCRYPTION_RECOVERY_KEY_URL`
+first; the installed system binds the volume to the TPM2 (PCR 7+14) on its
+first boot with Secure Boot on. It protects disks at rest, not against
+someone with the server or its console. See
+[docs/disk-encryption.md](docs/disk-encryption.md). The vars parser still
+rejects every key that starts with `LUKS_`.
 
 ### JWT Authentication
 

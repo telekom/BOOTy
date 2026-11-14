@@ -104,6 +104,16 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 	cfg.Telemetry.URL, cfg.Telemetry.MetricsURL, cfg.Telemetry.EventURL = ref.Telemetry.URL, ref.Telemetry.MetricsURL, ref.Telemetry.EventURL
 	cfg.Provision.CrashArtifacts.PrepareURL = ref.Provision.CrashArtifacts.PrepareURL
 	cfg.Provision.CrashArtifacts.UploadURL = ref.Provision.CrashArtifacts.UploadURL
+	// Only the target partition of the disk encryption may change.
+	target := cfg.Provision.DiskEncryption.Target
+	cfg.Provision.DiskEncryption = ref.Provision.DiskEncryption
+	cfg.Provision.DiskEncryption.Target = target
+	// The restored settings can conflict with the archive (an archive
+	// without DISK_ENCRYPTION and with a PARTITION_LAYOUT): check the final
+	// config, like ParseVars checked the archive alone.
+	if err := cfg.Validate(); err != nil {
+		return nil, nil, errArchiveVars
+	}
 	return cfg, keys, nil
 }
 

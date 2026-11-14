@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/telekom/BOOTy/pkg/disk"
+	"github.com/telekom/BOOTy/pkg/disk/luks"
 )
 
 // probeRootPartition picks the first Linux filesystem partition that holds
@@ -34,7 +35,11 @@ func (o *Orchestrator) probeRootPartition(ctx context.Context, parts []disk.Part
 		if !isLinuxRootPartition(parts[i]) {
 			continue
 		}
-		if err := o.disk.MountPartitionInspect(ctx, parts[i].Node, inspect); err != nil {
+		node := parts[i].Node
+		if o.encryption != nil && node == o.encryption.device {
+			node = luks.MappedPath(luksMapperName) // the file system is in the open mapping
+		}
+		if err := o.disk.MountPartitionInspect(ctx, node, inspect); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, fmt.Errorf("root probe: %w", ctxErr)
 			}

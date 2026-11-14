@@ -715,6 +715,11 @@ func (o *Orchestrator) unmountMirrorBoot() error {
 // writeTargetRootFile writes data to path below root without following
 // symlinks out of the target root, which comes from the streamed image.
 func writeTargetRootFile(root, path string, data []byte) error {
+	return writeTargetRootFileMode(root, path, data, 0o644)
+}
+
+// writeTargetRootFileMode is writeTargetRootFile with the file mode perm.
+func writeTargetRootFileMode(root, path string, data []byte, perm os.FileMode) error {
 	if err := ensureWithinRoot(root, path); err != nil {
 		return err
 	}
@@ -728,5 +733,5 @@ func writeTargetRootFile(root, path string, data []byte) error {
 	if err := ensureTargetParentWithinRoot(root, dir); err != nil {
 		return err
 	}
-	return writeFileAtomic(path, data, 0o644)
+	return writeFileAtomic(path, data, perm)
 }
