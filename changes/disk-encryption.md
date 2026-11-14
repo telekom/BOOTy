@@ -9,4 +9,4 @@ section: Upgrade notes for CAPRF
   token before it encrypts, and fails the run on any answer other than 2xx.
   The endpoint stores (escrows) the key. With encryption on, BOOTy reboots
   through the firmware instead of kexec. The provisioner must turn Secure
-  Boot on for the installed system to bind the volume to the TPM2 (#938).
+  Boot on for the installed system to bind the volume to the TPM2 (#939).
