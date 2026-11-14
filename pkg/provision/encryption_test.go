@@ -238,7 +238,7 @@ func TestEnrollScriptWaitsForPendingMOKChange(t *testing.T) {
 	head = strings.ReplaceAll(head, luksEnvPath, env)
 	head = strings.ReplaceAll(head, "/etc/booty/luks-tpm2.bound", filepath.Join(dir, "bound"))
 	run := func() string {
-		out, err := exec.Command("sh", "-c", head).CombinedOutput()
+		out, err := exec.CommandContext(t.Context(), "sh", "-c", head).CombinedOutput()
 		if err != nil {
 			t.Fatalf("script: %v: %s", err, out)
 		}
