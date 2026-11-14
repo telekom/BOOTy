@@ -232,21 +232,14 @@ func (o *Orchestrator) doEnrollModuleSigningKey(ctx context.Context, ms config.M
 		o.log.Info("module signing certificate left for the provisioner to enroll", "cert", o.moduleSigning.CertPath)
 		return nil
 	case config.ModuleSigningEnrollMokutil:
-		// mokutil runs in the target (the ramdisks lack it), with a copy of
-		// the certificate of this run in /run, which the chroot shares.
-		f, err := os.CreateTemp("/run", "booty-module-signing-*.der")
-		if err != nil {
-			return fmt.Errorf("module signing certificate: %w", err)
+		if ok, reason := efiRuntimeReady(); !ok {
+			return fmt.Errorf("mokutil enrollment: %s: %w", reason, ErrEFIVarsUnavailable)
 		}
-		defer func() { _ = os.Remove(f.Name()) }()
-		_, err = f.Write(cert)
-		if cerr := f.Close(); err == nil {
-			err = cerr
+		if err := secureboot.QueueMOKEnrollment(efi.NewEFIVarReader(reportEFIVarsDir), cert, o.cfg.Provision.SecureBoot.MOKPassword); err != nil {
+			return err //nolint:wrapcheck // names the variables
 		}
-		if err != nil {
-			return fmt.Errorf("write module signing certificate: %w", err)
-		}
-		return secureboot.NewMOKEnroller(f.Name(), o.cfg.Provision.SecureBoot.MOKPassword).InChroot(o.config.rootDir).Enroll(ctx)
+		o.log.Info("MOK enrollment queued: MokManager asks for MOK_PASSWORD at the next boot")
+		return nil
 	}
 	return o.stageMOKHelper(ctx, cert)
 }

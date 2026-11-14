@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/telekom/BOOTy/pkg/efi"
 )
 
 // writeModules creates one module per supported compression below updates
@@ -180,5 +182,45 @@ func TestMOKSignatureList(t *testing.T) {
 	// GUIDs are stored little-endian in their first three fields.
 	if !bytes.Equal(esl[:4], []byte{0xa1, 0x59, 0xc0, 0xa5}) || !bytes.Equal(esl[28:32], []byte{0x35, 0x8d, 0x37, 0x11}) {
 		t.Fatalf("bad GUIDs %x", esl[:44])
+	}
+}
+
+// The per-host key signs only ELF files, and a module it refuses stops the
+// run before any module is rewritten.
+func TestSignModuleTreeRefusesNonELF(t *testing.T) {
+	root := t.TempDir()
+	plain := writeModules(t, root)
+	// A DER blob (a TBSCertificate or Authenticode attributes) as a module.
+	writeFile(t, filepath.Join(root, "lib/modules/6.9.0-2/updates/z.ko"), []byte{0x30, 0x82, 0x01, 0x00})
+	if _, err := SignModuleTree(root, "BOOTy test"); err == nil {
+		t.Fatal("a non-ELF module was signed")
+	}
+	got, err := os.ReadFile(filepath.Join(root, "lib/modules/6.8.0-1/updates/dkms/a.ko"))
+	if err != nil || !bytes.Equal(got, plain["lib/modules/6.8.0-1/updates/dkms/a.ko"]) {
+		t.Fatalf("a module was rewritten before the refusal: %v", err)
+	}
+}
+
+func TestQueueMOKEnrollment(t *testing.T) {
+	dir := t.TempDir()
+	cert := []byte("der certificate")
+	if err := QueueMOKEnrollment(efi.NewEFIVarReader(dir), cert, "pw1"); err != nil {
+		t.Fatal(err)
+	}
+	esl := MOKSignatureList(cert)
+	want := sha256.Sum256(append(slices.Clone(esl), 'p', 0, 'w', 0, '1', 0))
+	for name, data := range map[string][]byte{"MokNew": esl, "MokAuth": want[:]} {
+		got, err := os.ReadFile(filepath.Join(dir, name+"-"+shimLockGUID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, append([]byte{7, 0, 0, 0}, data...)) {
+			t.Errorf("%s = %x", name, got)
+		}
+	}
+	for _, pw := range []string{"", "pässword", string(make([]byte, 257))} {
+		if err := QueueMOKEnrollment(efi.NewEFIVarReader(t.TempDir()), cert, pw); err == nil {
+			t.Errorf("password %q accepted", pw)
+		}
 	}
 }

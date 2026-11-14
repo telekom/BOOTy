@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"debug/elf"
 	"encoding/asn1"
 	"encoding/binary"
 	"errors"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/telekom/BOOTy/pkg/efi"
 	"github.com/ulikunitz/xz"
 )
 
@@ -93,6 +95,13 @@ func SignModuleTree(rootDir, commonName string) (*SignResult, error) {
 	modules, err := findModules(root.FS())
 	if err != nil {
 		return nil, err
+	}
+	// Check every module before the first write: a module that fails later
+	// would leave the earlier ones without their original signatures.
+	for _, m := range modules {
+		if err := checkModule(root, m); err != nil {
+			return nil, fmt.Errorf("module %s: %w", m, err)
+		}
 	}
 	s, err := newModuleSigner(commonName)
 	if err != nil {
@@ -225,26 +234,57 @@ func (s *moduleSigner) destroy() {
 	s.key = nil
 }
 
+// readModule returns the open module file and its uncompressed content
+// without signature. It refuses anything but an ELF file: the signature is
+// a bare RSA signature over the content, and the per-host key must not sign
+// image-chosen bytes such as a certificate or Authenticode attributes.
+func readModule(root *os.Root, name string, flag int) (*os.File, []byte, error) {
+	f, err := root.OpenFile(name, flag, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open: %w", err)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxModuleSize+1))
+	if err == nil && len(data) > maxModuleSize {
+		err = fmt.Errorf("larger than %d bytes", maxModuleSize)
+	}
+	var raw []byte
+	if err == nil {
+		if raw, err = decompressModule(name, data); err != nil {
+			err = fmt.Errorf("decompress: %w", err)
+		}
+	}
+	if err == nil {
+		raw, err = StripModuleSignature(raw)
+	}
+	if err == nil && !bytes.HasPrefix(raw, []byte(elf.ELFMAG)) {
+		err = errors.New("not an ELF file")
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, err
+	}
+	return f, raw, nil
+}
+
+// checkModule reports whether signFile would accept the module, without
+// changing it.
+func checkModule(root *os.Root, name string) error {
+	f, _, err := readModule(root, name, os.O_RDONLY)
+	if err == nil {
+		_ = f.Close()
+	}
+	return err
+}
+
 // signFile signs one module in place, keeping its compression. The file is
 // rewritten, not replaced, so its owner, mode and extended attributes (the
 // SELinux label modules_object_t on RHEL-like images) stay.
 func (s *moduleSigner) signFile(root *os.Root, name string) error {
-	f, err := root.OpenFile(name, os.O_RDWR, 0)
+	f, raw, err := readModule(root, name, os.O_RDWR)
 	if err != nil {
-		return fmt.Errorf("open: %w", err)
+		return err
 	}
 	defer func() { _ = f.Close() }()
-	data, err := io.ReadAll(io.LimitReader(f, maxModuleSize+1))
-	if err != nil {
-		return fmt.Errorf("read: %w", err)
-	}
-	if len(data) > maxModuleSize {
-		return fmt.Errorf("larger than %d bytes", maxModuleSize)
-	}
-	raw, err := decompressModule(name, data)
-	if err != nil {
-		return fmt.Errorf("decompress: %w", err)
-	}
 	signed, err := s.sign(raw)
 	if err != nil {
 		return err
@@ -265,14 +305,10 @@ func (s *moduleSigner) signFile(root *os.Root, name string) error {
 	return nil
 }
 
-// sign returns the module with any existing signature replaced by a
-// signature of the per-host key, in the format of scripts/sign-file:
+// sign returns the module (without signature) with a signature of the
+// per-host key appended, in the format of scripts/sign-file:
 // module || PKCS#7 || struct module_signature || magic.
-func (s *moduleSigner) sign(module []byte) ([]byte, error) {
-	mod, err := StripModuleSignature(module)
-	if err != nil {
-		return nil, err
-	}
+func (s *moduleSigner) sign(mod []byte) ([]byte, error) {
 	digest := sha256.Sum256(mod)
 	sig, err := rsa.SignPKCS1v15(nil, s.key, crypto.SHA256, digest[:])
 	if err != nil {
@@ -452,4 +488,36 @@ func guidLE(a uint32, b, c uint16, d [8]byte) []byte {
 	out = binary.LittleEndian.AppendUint16(out, b)
 	out = binary.LittleEndian.AppendUint16(out, c)
 	return append(out, d[:]...)
+}
+
+// shimLockGUID owns the shim MOK variables.
+const shimLockGUID = "605dab50-e046-4300-abb6-3dd810dd8b23"
+
+// QueueMOKEnrollment asks MokManager to enroll certDER at the next boot,
+// as mokutil --import --simple-hash does: MokAuth is SHA-256 over MokNew
+// and the UCS-2 password, which MokManager asks for once at the console.
+// BOOTy writes the variables itself, so no binary of the image runs with
+// the password or can queue another certificate.
+func QueueMOKEnrollment(vars *efi.EFIVarReader, certDER []byte, password string) error {
+	if password == "" || len(password) > 256 {
+		return errors.New("the MOK password must have 1 to 256 characters")
+	}
+	esl := MOKSignatureList(certDER)
+	h := sha256.New()
+	h.Write(esl)
+	for _, c := range password {
+		if c < 0x20 || c > 0x7e {
+			return errors.New("the MOK password must be printable ASCII, which MokManager can read from the keyboard")
+		}
+		h.Write([]byte{byte(c), 0})
+	}
+	// MokAuth first: MokNew alone would be a request without a password.
+	const attrs = 0x7 // non-volatile, boot service and runtime access, as mokutil
+	if err := vars.WriteVar("MokAuth-"+shimLockGUID, attrs, h.Sum(nil)); err != nil {
+		return fmt.Errorf("queue MOK enrollment: %w", err)
+	}
+	if err := vars.WriteVar("MokNew-"+shimLockGUID, attrs, esl); err != nil {
+		return fmt.Errorf("queue MOK enrollment: %w", err)
+	}
+	return nil
 }

@@ -37,7 +37,11 @@ After the image is written and the target root is mounted:
      the kernel's `scripts/sign-file` (detached CMS, SHA-256, no signed
      attributes, `struct module_signature` and the magic string). An existing
      signature is replaced. Files are read and written through `os.Root`, so a
-     symlink in the image cannot redirect a write;
+     symlink in the image cannot redirect a write. Every module is checked
+     before the first one is rewritten, and a file that is not ELF is
+     refused: the signature is a bare RSA signature over the content, so
+     signing image-chosen bytes would let the image obtain, for example, a
+     certificate issued by the per-host key;
    - modules are rewritten in place, so owner, mode and extended attributes
      (the SELinux label) stay; files larger than 256 MiB, compressed or not,
      are refused;
@@ -57,9 +61,10 @@ After the image is written and the target root is mounted:
      it can run only through `BootNext`. OVMF boots it; firmware that skips
      inactive `BootNext` entries needs an active one (not tested on
      hardware);
-   - `mokutil`: `mokutil --import` with `MOK_PASSWORD`, run in the target
-     (the ramdisks do not ship mokutil; shim-based targets do); MokManager
-     asks for the password once at the console;
+   - `mokutil`: BOOTy writes `MokNew` and `MokAuth` (SHA-256 over `MokNew`
+     and the UCS-2 `MOK_PASSWORD`) itself, as `mokutil --import
+     --simple-hash` does; no binary of the image runs with the password.
+     MokManager asks for the password once at the console;
    - `external`: nothing; the provisioner enrolls the certificate.
 3. The provisioning report (`secureBoot.moduleSigning`) carries the
    certificate, its SHA-256 and the number of signed modules, so the
@@ -178,8 +183,8 @@ BOOTy only emits the certificate for this path (`enrollment: external`).
 
 ### (c) mokutil
 
-The existing `MOKEnroller` path. It needs someone (or a BMC console script)
-to confirm in MokManager, so it is a fallback only.
+`MokNew` and `MokAuth`, written by BOOTy. It needs someone (or a BMC
+console script) to confirm in MokManager, so it is a fallback only.
 
 ## Security analysis
 
