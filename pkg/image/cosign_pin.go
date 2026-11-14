@@ -63,10 +63,15 @@ func PinnedCosignPaths() []string {
 	return slices.Compact(out)
 }
 
-// ResolvePath returns the absolute path p with the symlinks of its longest
+// ResolvePath returns p, made absolute, with the symlinks of its longest
 // existing prefix resolved, so that two names of one file compare equal
 // also when the file itself does not exist yet.
 func ResolvePath(p string) string {
+	// A relative path is resolved against the working directory, so that
+	// it compares equal to the absolute destinations of a deploy archive.
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
 	p = filepath.Clean(p)
 	var rest []string
 	for dir := p; ; dir = filepath.Dir(dir) {

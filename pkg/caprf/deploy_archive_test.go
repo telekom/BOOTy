@@ -513,3 +513,54 @@ func TestDeployArchiveTrustFileThroughSymlink(t *testing.T) {
 		t.Fatalf("CommandConfig() = %v, want the trust file refused", err)
 	}
 }
+
+// An allowed ramdisk directory that is a symlink (etc/ssl/certs -> usr/bin)
+// can not carry a file outside the allowlist (#933 review).
+func TestDeployArchiveRamdiskCopyThroughSymlink(t *testing.T) {
+	useDeployRoot(t)
+	ramdisk := t.TempDir()
+	prev := ramdiskRoot
+	t.Cleanup(func() { ramdiskRoot = prev })
+	ramdiskRoot = ramdisk
+	for _, d := range []string{"usr/bin", "etc/ssl"} {
+		if err := os.MkdirAll(filepath.Join(ramdisk, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("../../usr/bin", filepath.Join(ramdisk, "etc", "ssl", "certs")); err != nil {
+		t.Fatal(err)
+	}
+	base := "IMAGE_COSIGN_PUBKEYS=/etc/booty/image.pub\nPROVISIONER_FILES_TARGET=ramdisk\n"
+	for file, wantErr := range map[string]bool{"etc/ssl/certs/tool": true, "etc/ssl/extra.pem": false} {
+		payload := deployArchive(t, archiveEntry{name: "deploy/vars", body: "HOSTNAME=worker-7\n" + base},
+			archiveEntry{name: "deploy/file-system/" + file, body: "x"})
+		c := &Client{vars: []byte(baseAgentVars + base)}
+		_, _, err := c.CommandConfig(payload)
+		c.DiscardCommandFiles()
+		if got := err != nil && strings.Contains(err.Error(), "copied over the ramdisk"); got != wantErr {
+			t.Fatalf("%s: CommandConfig() = %v, want refused %t", file, err, wantErr)
+		}
+	}
+}
+
+// A trust file configured by a relative path is matched against the
+// absolute archive destinations (#933 review).
+func TestDeployArchiveTrustFileRelativePath(t *testing.T) {
+	root := useDeployRoot(t)
+	t.Chdir(filepath.Dir(root))
+	if err := os.MkdirAll(filepath.Join(root, "machine-files"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "machine-files", "image.pub"), []byte("key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	policy := "IMAGE_COSIGN_PUBKEYS=deploy/machine-files/image.pub\n"
+	payload := deployArchive(t, archiveEntry{name: "deploy/vars", body: "HOSTNAME=worker-7\n" + policy},
+		archiveEntry{name: "deploy/machine-files/image.pub", body: "evil"})
+	c := &Client{vars: []byte(baseAgentVars + policy)}
+	_, _, err := c.CommandConfig(payload)
+	defer c.DiscardCommandFiles()
+	if err == nil || !strings.Contains(err.Error(), "replaces the cosign trust material") {
+		t.Fatalf("CommandConfig() = %v, want the trust file refused", err)
+	}
+}

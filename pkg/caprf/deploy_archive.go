@@ -227,6 +227,21 @@ func ramdiskCopyAllowed(rel string, dir bool, files []string) bool {
 	return slices.ContainsFunc(files, func(f string) bool { return rel == f || dir && strings.HasPrefix(f, rel+"/") })
 }
 
+// ramdiskDestAllowed reports whether the file rel, with the symlinks of the
+// ramdisk resolved, still lands on one of files or in one of the trees
+// (resolved the same way): an allowed directory that is a symlink, such as
+// etc/ssl/certs -> /usr/bin, must not carry a file elsewhere (#933 review).
+func ramdiskDestAllowed(rel string, files []string) bool {
+	resolve := func(r string) string { return image.ResolvePath(filepath.Join(ramdiskRoot, filepath.FromSlash(r))) }
+	dest := resolve(rel)
+	for _, t := range ramdiskCopyTrees {
+		if r := resolve(t); dest == r || strings.HasPrefix(dest, r+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return slices.ContainsFunc(files, func(f string) bool { return dest == resolve(f) })
+}
+
 // ramdiskCopyViolation returns the first entry of the staged
 // deploy/file-system outside the allowlist, or "". caBundle, the
 // CA_BUNDLE_FILE of the base config, is allowed too.
@@ -249,7 +264,8 @@ func ramdiskCopyViolation(tree, caBundle string) (string, error) {
 			return fmt.Errorf("deploy archive: %w", err)
 		}
 		rel = filepath.ToSlash(rel)
-		if !d.IsDir() && !d.Type().IsRegular() || !ramdiskCopyAllowed(rel, d.IsDir(), files) {
+		if !d.IsDir() && !d.Type().IsRegular() || !ramdiskCopyAllowed(rel, d.IsDir(), files) ||
+			!d.IsDir() && !ramdiskDestAllowed(rel, files) {
 			bad = rel
 			return filepath.SkipAll
 		}
