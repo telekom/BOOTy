@@ -287,6 +287,12 @@ Modules needed in the initramfs need a per-host initrd addon in both cases.
      PCR 7 differs from step 3.
   5. Reprovision: the helper replaces the certificate; one new one remains.
   6. `db` only (certificate moved from `MokList` to `db`): see option (b).
+- KVM scenario `module-signing-mokutil-ubuntu-24.04`
+  (`TestModuleSigningMokutilVM`): `MODULE_SIGNING_ENROLLMENT=mokutil`.
+  Provisioning queues `MokNew` and `MokAuth`; with Secure Boot on, shim
+  starts MokManager, the test confirms the request at the serial console
+  with `MOK_PASSWORD`, MokManager writes the certificate to `MokList` and
+  removes the request, and the BOOTy-signed module loads.
 - The helper must be built without AVX: the runner gcc defaults to
   `-march=x86-64-v3`, and VEX instructions fault (#UD) in firmware.
   `build.sh` checks the result.
