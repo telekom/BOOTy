@@ -3,6 +3,7 @@
 package provision
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"errors"
@@ -12,16 +13,18 @@ import (
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/secureboot"
 )
 
-func moduleSigningConfig(ms config.ModuleSigningConfig) *config.MachineConfig {
+func moduleSigningConfig(signing string, ms config.ModuleSigningConfig) *config.MachineConfig {
 	cfg := &config.MachineConfig{Hostname: "host-1"}
+	cfg.Provision.SecureBoot.Signing = signing
 	cfg.Provision.SecureBoot.ModuleSigning = ms
 	return cfg
 }
 
 func TestSignKernelModulesDisabledIsNoop(t *testing.T) {
-	o, cmd := newTestOrchestratorWithCommander(t, moduleSigningConfig(config.ModuleSigningConfig{}), &mockProvider{})
+	o, cmd := newTestOrchestratorWithCommander(t, moduleSigningConfig("", config.ModuleSigningConfig{}), &mockProvider{})
 	if err := o.signKernelModules(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +37,7 @@ func TestSignKernelModulesDisabledIsNoop(t *testing.T) {
 }
 
 func TestSignKernelModules(t *testing.T) {
-	o, cmd := newTestOrchestratorWithCommander(t, moduleSigningConfig(config.ModuleSigningConfig{Enabled: true}), &mockProvider{})
+	o, cmd := newTestOrchestratorWithCommander(t, moduleSigningConfig(config.SigningPerHost, config.ModuleSigningConfig{}), &mockProvider{})
 	root := o.config.rootDir
 	mod := filepath.Join(root, "lib/modules/6.8.0-1/updates/dkms/x.ko")
 	if err := os.MkdirAll(filepath.Dir(mod), 0o755); err != nil {
@@ -70,7 +73,7 @@ func TestSignKernelModules(t *testing.T) {
 func TestSignKernelModulesFailsClosed(t *testing.T) {
 	for _, allow := range []bool{false, true} {
 		o, cmd := newTestOrchestratorWithCommander(t,
-			moduleSigningConfig(config.ModuleSigningConfig{Enabled: true, AllowFailure: allow}), &mockProvider{})
+			moduleSigningConfig(config.SigningPerHost, config.ModuleSigningConfig{AllowFailure: allow}), &mockProvider{})
 		mod := filepath.Join(o.config.rootDir, "lib/modules/6.8.0-1/updates/x.ko")
 		if err := os.MkdirAll(filepath.Dir(mod), 0o755); err != nil {
 			t.Fatal(err)
@@ -90,7 +93,7 @@ func TestSignKernelModulesFailsClosed(t *testing.T) {
 // the certificate path (a failed signing with MODULE_SIGNING_ALLOW_FAILURE).
 func TestEnrollModuleSigningKeyNeedsCertOfThisRun(t *testing.T) {
 	o, _ := newTestOrchestratorWithCommander(t,
-		moduleSigningConfig(config.ModuleSigningConfig{Enabled: true, Enrollment: config.ModuleSigningEnrollExternal}), &mockProvider{})
+		moduleSigningConfig(config.SigningPerHost, config.ModuleSigningConfig{Enrollment: config.ModuleSigningEnrollExternal}), &mockProvider{})
 	planted := filepath.Join(o.config.rootDir, config.DefaultModuleSigningCertDir, moduleCertFile)
 	if err := os.MkdirAll(filepath.Dir(planted), 0o755); err != nil {
 		t.Fatal(err)
@@ -100,6 +103,48 @@ func TestEnrollModuleSigningKeyNeedsCertOfThisRun(t *testing.T) {
 	}
 	if err := o.enrollModuleSigningKey(context.Background()); err == nil {
 		t.Fatal("enrollment without a certificate of this run succeeded")
+	}
+}
+
+// Signing ci holds no key: it signs nothing, reads the CI certificate from
+// the target and reports it for enrollment.
+func TestSignKernelModulesCI(t *testing.T) {
+	cfg := moduleSigningConfig(config.SigningCI, config.ModuleSigningConfig{Enrollment: config.ModuleSigningEnrollExternal})
+	cfg.Provision.SecureBoot.MOKCertPath = "/usr/share/ci/mok.der"
+	o, cmd := newTestOrchestratorWithCommander(t, cfg, &mockProvider{})
+	root := o.config.rootDir
+	signed, _ := secureboot.SignModuleTree(t.TempDir(), "CI key")
+	mod := filepath.Join(root, "lib/modules/6.8.0-1/updates/x.ko")
+	for name, data := range map[string][]byte{mod: []byte("\x7fELF ci-signed"), filepath.Join(root, "usr/share/ci/mok.der"): signed.CertDER} {
+		if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := o.signKernelModules(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(mod); string(got) != "\x7fELF ci-signed" || len(cmd.calls) != 0 {
+		t.Fatalf("signing ci changed the module or ran %v", cmd.calls)
+	}
+	if _, err := os.Stat(filepath.Join(root, config.DefaultModuleSigningCertDir, moduleCertFile)); err == nil {
+		t.Fatal("signing ci installed a per-host certificate")
+	}
+	if ms := o.moduleSigning; ms == nil || ms.Signing != config.SigningCI || ms.Modules != 0 || !bytes.Equal(ms.Cert, signed.CertDER) {
+		t.Fatalf("report %+v", o.moduleSigning)
+	}
+	if err := o.enrollModuleSigningKey(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Not a certificate: fails closed.
+	if err := os.WriteFile(filepath.Join(root, "usr/share/ci/mok.der"), []byte("junk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.signKernelModules(context.Background()); err == nil {
+		t.Fatal("a junk CI certificate was accepted")
 	}
 }
 
@@ -119,9 +164,11 @@ func TestNeedsFirmwareReboot(t *testing.T) {
 	}{
 		{config.SecureBootConfig{}, false},
 		{config.SecureBootConfig{ReEnable: true}, true},
-		{config.SecureBootConfig{ModuleSigning: config.ModuleSigningConfig{Enabled: true}}, true},
-		{config.SecureBootConfig{ModuleSigning: config.ModuleSigningConfig{Enabled: true, Enrollment: "mokutil"}}, true},
-		{config.SecureBootConfig{ModuleSigning: config.ModuleSigningConfig{Enabled: true, Enrollment: "external"}}, false},
+		{config.SecureBootConfig{Signing: config.SigningOff, ModuleSigning: config.ModuleSigningConfig{Enrollment: "mokutil"}}, false},
+		{config.SecureBootConfig{Signing: config.SigningCI}, true},
+		{config.SecureBootConfig{Signing: config.SigningPerHost, ModuleSigning: config.ModuleSigningConfig{Enrollment: config.ModuleSigningEnrollEFIHelper}}, true},
+		{config.SecureBootConfig{Signing: config.SigningPerHost, ModuleSigning: config.ModuleSigningConfig{Enrollment: "mokutil"}}, true},
+		{config.SecureBootConfig{Signing: config.SigningPerHost, ModuleSigning: config.ModuleSigningConfig{Enrollment: "external"}}, false},
 	} {
 		if got := tc.sb.NeedsFirmwareReboot(); got != tc.want {
 			t.Errorf("%+v: got %v", tc.sb, got)

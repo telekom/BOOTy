@@ -771,11 +771,25 @@ func validateABConfig(imageMode string, disableKexec bool, cfg *ABConfig) error 
 	return nil
 }
 
-func validateModuleSigning(imageMode string, reEnable bool, m *ModuleSigningConfig, ab *ABConfig) []string {
-	if !m.Enabled {
-		return nil
+func validateSigningMode(sb *SecureBootConfig) []string {
+	switch sb.SigningMode() {
+	case SigningOff, SigningPerHost:
+	case SigningCI:
+		if p := sb.MOKCertPath; !path.IsAbs(p) || path.Clean(p) != p {
+			return []string{fmt.Sprintf("provision.secureBoot.mokCertPath %q: signing ci needs the clean absolute path of the CI certificate in the target", p)}
+		}
+	default:
+		return []string{fmt.Sprintf("provision.secureBoot.signing %q: want per-host, ci or off", sb.Signing)}
 	}
-	var errs []string
+	return nil
+}
+
+func validateModuleSigning(imageMode string, sb *SecureBootConfig, ab *ABConfig) []string {
+	errs := validateSigningMode(sb)
+	if mode := sb.SigningMode(); mode != SigningPerHost && mode != SigningCI {
+		return errs // off, or an unknown mode
+	}
+	m, reEnable := &sb.ModuleSigning, sb.ReEnable
 	switch m.EnrollmentMethod() {
 	case ModuleSigningEnrollEFIHelper, ModuleSigningEnrollMokutil:
 		// The provisioner re-enables Secure Boot when BOOTy reports success,
@@ -823,7 +837,7 @@ func validateSecureBootConfig(imageMode string, secureBoot *SecureBootConfig, ab
 		strings.EqualFold(strings.TrimSpace(imageMode), ImageModeAB) && ab.PreserveExisting {
 		errs = append(errs, "provision.secureBoot.reEnable requires a hard reboot, but provision.ab.preserveExisting uses kexec")
 	}
-	errs = append(errs, validateModuleSigning(imageMode, secureBoot.ReEnable, &secureBoot.ModuleSigning, ab)...)
+	errs = append(errs, validateModuleSigning(imageMode, secureBoot, ab)...)
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
