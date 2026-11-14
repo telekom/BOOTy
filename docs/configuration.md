@@ -509,9 +509,10 @@ These keys apply to the provision and deprovision modes.
 | `SECUREBOOT_SHIM_SHA256` | (unset) | 64 hex digits, optional `sha256:` prefix | Expected digest of the installed shim. |
 | `SECUREBOOT_GRUB_SHA256` | (unset) | same | Expected digest of the installed GRUB EFI binary. |
 | `SECUREBOOT_KERNEL_SHA256` | (unset) | same | Expected digest of the installed kernel. |
-| `MODULE_SIGNING_ENABLED` | `false` | boolean | Sign the out-of-tree modules of the target (`/lib/modules/*/{updates,extra}`) with a new per-host key, run depmod and rebuild the initramfs. The key exists only in memory. See [module signing](module-signing.md). |
+| `SECUREBOOT_SIGNING` | `off` | `per-host`, `ci`, `off` | Who signs the out-of-tree kernel modules of the target (`/lib/modules/*/{updates,extra}`). `per-host`: BOOTy signs them with a new per-host key, which exists only in memory, runs depmod and rebuilds the initramfs. `ci`: the image arrives signed by CI, and BOOTy holds no key and only enrolls `MOK_CERT_PATH`. `off`: nothing is signed or enrolled, and provisioning runs as without the feature. See [module signing](module-signing.md). |
+| `MOK_CERT_PATH` | (unset) | absolute path in the target | With `SECUREBOOT_SIGNING=ci`: the DER certificate of the CI key that signed the modules, enrolled like the per-host one. |
 | `MODULE_SIGNING_ENROLLMENT` | `efi-helper` | `efi-helper`, `mokutil`, `external` | How the firmware learns the certificate: `efi-helper` boots `mok-enroll.efi` once to write MokList (Secure Boot must be off while provisioning and at the next boot, so not with `SECUREBOOT_REENABLE=true`); `mokutil` queues it for one MokManager confirmation with `MOK_PASSWORD`; `external` leaves it to the provisioner (for example Redfish db enrollment). |
-| `MODULE_SIGNING_TARGET` | `in-place` | `in-place`, `sysext` | Experimental `sysext`: leave `/usr` of the target unchanged (dm-verity roots) and install the signed modules as a per-host system extension with a signed dm-verity root hash in `/var/lib/extensions`. Needs a merged `/usr` and a `MODULE_SIGNING_CERT_DIR` below `/usr`. See [dm-verity roots](module-signing.md#dm-verity-roots-experimental). |
+| `MODULE_SIGNING_TARGET` | `in-place` | `in-place`, `sysext` | Experimental `sysext`: leave `/usr` of the target unchanged (dm-verity roots) and install the signed modules as a per-host system extension with a signed dm-verity root hash in `/var/lib/extensions`. Needs `SECUREBOOT_SIGNING=per-host`, a merged `/usr` and a `MODULE_SIGNING_CERT_DIR` below `/usr`. See [dm-verity roots](module-signing.md#dm-verity-roots-experimental). |
 | `MODULE_SIGNING_CERT_DIR` | `/usr/share/booty/secureboot` | absolute path | Target directory of `booty-module-signing.der`. |
 | `MODULE_SIGNING_ALLOW_FAILURE` | `false` | boolean | Continue provisioning when signing or enrollment fails. By default provisioning fails. |
 | `SECUREBOOT_PINNED_DIGESTS` | (unset) | JSON object with keys `shim`, `grub`, `kernel` | All pins in one key. A single-component key wins over its entry here. |
@@ -682,7 +683,6 @@ BOOTy parses these keys, but no code acts on the value:
 |-----|------|
 | `DEBUG_URL` | No code sends to it. Debug dumps go to the log, and `LOG_URL` ships them. |
 | `leaf_asn` | Logged in the debug dump only. |
-| `MOK_CERT_PATH` | MOK enrollment is not implemented. |
 | `MOK_PASSWORD` | Used only by `MODULE_SIGNING_ENROLLMENT=mokutil`. |
 | `RESCUE_TIMEOUT` | See [Rescue](#rescue). |
 

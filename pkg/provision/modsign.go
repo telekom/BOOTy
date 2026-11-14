@@ -5,6 +5,7 @@ package provision
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -37,10 +38,12 @@ const initramfsUpdateCmd = "if command -v update-initramfs >/dev/null 2>&1; then
 
 var kernelReleasePattern = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
 
-// ReportModuleSigning is the per-host module signing result. Cert (DER,
-// base64 in JSON) lets the provisioner enroll the certificate itself, for
-// example into db over Redfish (enrollment external).
+// ReportModuleSigning is the module signing result. Cert (DER, base64 in
+// JSON) lets the provisioner enroll the certificate itself, for example into
+// db over Redfish (enrollment external). Modules counts the modules that
+// BOOTy signed: none with signing ci.
 type ReportModuleSigning struct {
+	Signing    string `json:"signing"`
 	Modules    int    `json:"modules"`
 	Enrollment string `json:"enrollment"`
 	CertPath   string `json:"certPath"`
@@ -65,18 +68,48 @@ func (o *Orchestrator) moduleSigningResult(action string, err error) error {
 	return err
 }
 
-// signKernelModules signs the out-of-tree modules of the target with a new
-// per-host key, installs the certificate, and rebuilds the module index and
-// initramfs. The private key exists only in memory during this step.
+// signKernelModules prepares the certificate that enroll-module-signing-key
+// enrolls. With signing per-host it signs the out-of-tree modules of the
+// target with a new per-host key, installs the certificate, and rebuilds the
+// module index and initramfs; the private key exists only in memory during
+// this step. With signing ci it only reads the CI certificate from the
+// target. With signing off (the default) it does nothing.
 func (o *Orchestrator) signKernelModules(ctx context.Context) error {
-	ms := o.cfg.Provision.SecureBoot.ModuleSigning
+	sb := &o.cfg.Provision.SecureBoot
 	// A rescue retry reuses the orchestrator: never keep the certificate of
 	// an earlier attempt.
 	o.moduleSigning = nil
-	if !ms.Enabled {
-		return nil
+	switch sb.SigningMode() {
+	case config.SigningPerHost:
+		return o.moduleSigningResult("sign kernel modules", o.doSignKernelModules(ctx, sb.ModuleSigning))
+	case config.SigningCI:
+		return o.moduleSigningResult("read the CI module signing certificate", o.readCISigningCert(sb))
 	}
-	return o.moduleSigningResult("sign kernel modules", o.doSignKernelModules(ctx, ms))
+	return nil
+}
+
+// readCISigningCert reads MOKCertPath from the target: the certificate of
+// the CI key that signed the modules of the image.
+func (o *Orchestrator) readCISigningCert(sb *config.SecureBootConfig) error {
+	root, err := os.OpenRoot(o.config.rootDir)
+	if err != nil {
+		return fmt.Errorf("open target root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	der, err := root.ReadFile(strings.TrimPrefix(sb.MOKCertPath, "/"))
+	if err != nil {
+		return fmt.Errorf("read CI module signing certificate: %w", err)
+	}
+	if _, err := x509.ParseCertificate(der); err != nil {
+		return fmt.Errorf("CI module signing certificate %s is not a DER X.509 certificate: %w", sb.MOKCertPath, err)
+	}
+	sum := sha256.Sum256(der)
+	o.moduleSigning = &ReportModuleSigning{
+		Signing: config.SigningCI, Enrollment: sb.ModuleSigning.EnrollmentMethod(),
+		CertPath: sb.MOKCertPath, CertSHA256: hex.EncodeToString(sum[:]), Cert: der,
+	}
+	o.log.Info("CI module signing certificate to enroll", "cert", sb.MOKCertPath, "certSHA256", o.moduleSigning.CertSHA256)
+	return nil
 }
 
 func (o *Orchestrator) doSignKernelModules(ctx context.Context, ms config.ModuleSigningConfig) error {
@@ -94,7 +127,7 @@ func (o *Orchestrator) doSignKernelModules(ctx context.Context, ms config.Module
 	}
 	sum := sha256.Sum256(res.CertDER)
 	o.moduleSigning = &ReportModuleSigning{
-		Modules: len(res.Modules), Enrollment: ms.EnrollmentMethod(),
+		Signing: config.SigningPerHost, Modules: len(res.Modules), Enrollment: ms.EnrollmentMethod(),
 		CertPath: certPath, CertSHA256: hex.EncodeToString(sum[:]), Cert: res.CertDER,
 	}
 	o.log.Info("signed out-of-tree kernel modules", "modules", len(res.Modules),
@@ -117,17 +150,18 @@ func (o *Orchestrator) doSignKernelModules(ctx context.Context, ms config.Module
 }
 
 // enrollModuleSigningKey makes the firmware trust the certificate that
-// sign-kernel-modules created in this run. It never enrolls a certificate
-// read from the image: with MODULE_SIGNING_ALLOW_FAILURE a failed signing
-// leaves whatever the image ships at the certificate path, for a key its
-// author holds. sign-kernel-modules runs again on a resume for the same
-// reason.
+// sign-kernel-modules prepared in this run. With signing per-host it never
+// enrolls a certificate read from the image: with MODULE_SIGNING_ALLOW_FAILURE
+// a failed signing leaves whatever the image ships at the certificate path,
+// for a key its author holds. sign-kernel-modules runs again on a resume for
+// the same reason. With signing ci the certificate is MOKCertPath of the
+// image by design.
 func (o *Orchestrator) enrollModuleSigningKey(ctx context.Context) error {
-	ms := o.cfg.Provision.SecureBoot.ModuleSigning
-	if !ms.Enabled {
+	sb := &o.cfg.Provision.SecureBoot
+	if sb.SigningMode() == config.SigningOff {
 		return nil
 	}
-	return o.moduleSigningResult("enroll module signing key", o.doEnrollModuleSigningKey(ctx, ms))
+	return o.moduleSigningResult("enroll module signing key", o.doEnrollModuleSigningKey(ctx, sb.ModuleSigning))
 }
 
 func (o *Orchestrator) doEnrollModuleSigningKey(ctx context.Context, ms config.ModuleSigningConfig) error {

@@ -23,7 +23,7 @@ func TestSignKernelModulesSysext(t *testing.T) {
 	}
 	t.Cleanup(func() { hostCommandCombinedOutput = old })
 	o, cmd := newTestOrchestratorWithCommander(t,
-		moduleSigningConfig(config.ModuleSigningConfig{Enabled: true, Target: config.ModuleSigningTargetSysext}), &mockProvider{})
+		moduleSigningConfig(config.SigningPerHost, config.ModuleSigningConfig{Target: config.ModuleSigningTargetSysext}), &mockProvider{})
 	root := o.config.rootDir
 	mod := filepath.Join(root, "usr/lib/modules/6.8.0-1/updates/dkms/x.ko")
 	for name, data := range map[string]string{mod: "\x7fELF", filepath.Join(root, "usr/lib/os-release"): "NAME=Ubuntu\nID=ubuntu\nVERSION_ID=\"24.04\"\n"} {
@@ -74,7 +74,7 @@ func TestSignKernelModulesSysext(t *testing.T) {
 
 func TestSignKernelModulesSysextNeedsMergedUsr(t *testing.T) {
 	o, _ := newTestOrchestratorWithCommander(t,
-		moduleSigningConfig(config.ModuleSigningConfig{Enabled: true, Target: config.ModuleSigningTargetSysext}), &mockProvider{})
+		moduleSigningConfig(config.SigningPerHost, config.ModuleSigningConfig{Target: config.ModuleSigningTargetSysext}), &mockProvider{})
 	if err := os.MkdirAll(filepath.Join(o.config.rootDir, "lib/modules"), 0o755); err != nil {
 		t.Fatal(err)
 	}

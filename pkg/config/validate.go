@@ -771,11 +771,25 @@ func validateABConfig(imageMode string, disableKexec bool, cfg *ABConfig) error 
 	return nil
 }
 
-func validateModuleSigning(imageMode string, reEnable bool, m *ModuleSigningConfig, ab *ABConfig) []string {
-	if !m.Enabled {
-		return nil
+func validateSigningMode(sb *SecureBootConfig) []string {
+	switch sb.SigningMode() {
+	case SigningOff, SigningPerHost:
+	case SigningCI:
+		if p := sb.MOKCertPath; !path.IsAbs(p) || path.Clean(p) != p {
+			return []string{fmt.Sprintf("provision.secureBoot.mokCertPath %q: signing ci needs the clean absolute path of the CI certificate in the target", p)}
+		}
+	default:
+		return []string{fmt.Sprintf("provision.secureBoot.signing %q: want per-host, ci or off", sb.Signing)}
 	}
-	var errs []string
+	return nil
+}
+
+func validateModuleSigning(imageMode string, sb *SecureBootConfig, ab *ABConfig) []string {
+	errs := validateSigningMode(sb)
+	if mode := sb.SigningMode(); mode != SigningPerHost && mode != SigningCI {
+		return errs // off, or an unknown mode
+	}
+	m, reEnable := &sb.ModuleSigning, sb.ReEnable
 	switch m.EnrollmentMethod() {
 	case ModuleSigningEnrollEFIHelper, ModuleSigningEnrollMokutil:
 		// The provisioner re-enables Secure Boot when BOOTy reports success,
@@ -797,13 +811,17 @@ func validateModuleSigning(imageMode string, reEnable bool, m *ModuleSigningConf
 	if !path.IsAbs(dir) || path.Clean(dir) != dir {
 		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.certDir %q: must be a clean absolute path", m.CertDir))
 	}
-	return append(errs, validateModuleSigningTarget(m)...)
+	return append(errs, validateModuleSigningTarget(sb)...)
 }
 
-func validateModuleSigningTarget(m *ModuleSigningConfig) []string {
+func validateModuleSigningTarget(sb *SecureBootConfig) []string {
+	m := &sb.ModuleSigning
 	switch m.TargetOrDefault() {
 	case ModuleSigningTargetInPlace:
 	case ModuleSigningTargetSysext:
+		if sb.SigningMode() != SigningPerHost {
+			return []string{"provision.secureBoot.moduleSigning.target sysext needs signing per-host: the per-host key signs the root hash"}
+		}
 		// The certificate goes into the extension, which covers /usr only.
 		if dir := m.CertDirOrDefault(); !strings.HasPrefix(dir, "/usr/") {
 			return []string{fmt.Sprintf("provision.secureBoot.moduleSigning.certDir %q: target sysext needs a directory below /usr", dir)}
@@ -838,7 +856,7 @@ func validateSecureBootConfig(imageMode string, secureBoot *SecureBootConfig, ab
 		strings.EqualFold(strings.TrimSpace(imageMode), ImageModeAB) && ab.PreserveExisting {
 		errs = append(errs, "provision.secureBoot.reEnable requires a hard reboot, but provision.ab.preserveExisting uses kexec")
 	}
-	errs = append(errs, validateModuleSigning(imageMode, secureBoot.ReEnable, &secureBoot.ModuleSigning, ab)...)
+	errs = append(errs, validateModuleSigning(imageMode, secureBoot, ab)...)
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}

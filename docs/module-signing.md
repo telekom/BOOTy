@@ -1,6 +1,18 @@
 # Per-host module signing
 
-Status: experimental. Opt-in with `MODULE_SIGNING_ENABLED=true`; off by default.
+Status: experimental and opt-in. `SECUREBOOT_SIGNING` selects the mode:
+
+| `SECUREBOOT_SIGNING` | Who signs the modules | Key in BOOTy | What BOOTy enrolls |
+|---|---|---|---|
+| `off` (default) | nobody | none | nothing: no step changes the target, ESP or EFI variables, and `mok-enroll.efi` is never staged |
+| `per-host` | BOOTy, while provisioning | per host, in memory only | the per-host certificate |
+| `ci` | CI, before the image is built | none | `MOK_CERT_PATH`, the CI certificate in the image |
+
+The enrollment (`MODULE_SIGNING_ENROLLMENT`: `efi-helper`, `mokutil`,
+`external`) is the same for `per-host` and `ci`. With `ci`, every host that
+gets the image trusts the CI key, the shared-key trade-off that `per-host`
+avoids: a leaked CI key can sign modules for all of them. The UKI/PCR 11
+signing work is meant to use the same setting and modes.
 
 Out-of-tree kernel modules (DKMS output, vendor drivers) in a whole-disk
 image are either unsigned or signed with a key shared by every host that got
@@ -244,7 +256,8 @@ the KVM scenario below has run it.
 
 ### What BOOTy does
 
-With `MODULE_SIGNING_TARGET=sysext`, `sign-kernel-modules`:
+With `SECUREBOOT_SIGNING=per-host` and `MODULE_SIGNING_TARGET=sysext`,
+`sign-kernel-modules`:
 
 1. reads the out-of-tree modules of the target
    (`/usr/lib/modules/*/{updates,extra}`, a merged `/usr` is required) and

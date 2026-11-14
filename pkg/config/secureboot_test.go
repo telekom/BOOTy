@@ -60,31 +60,39 @@ func TestValidateSecureBootPinnedDigestsRejectsInvalidConfig(t *testing.T) {
 
 func TestValidateModuleSigning(t *testing.T) {
 	ab := &ABConfig{PreserveExisting: true}
+	type m = ModuleSigningConfig
 	for _, tc := range []struct {
-		m        ModuleSigningConfig
-		mode     string
-		wantErr  bool
-		reEnable bool
+		sb      SecureBootConfig
+		mode    string
+		wantErr bool
 	}{
-		{ModuleSigningConfig{Enrollment: "bogus"}, "", false, false}, // disabled: not checked
-		{ModuleSigningConfig{Enabled: true}, "", false, false},
-		{ModuleSigningConfig{Enabled: true, Enrollment: "external", CertDir: "/etc/keys"}, "", false, false},
-		{ModuleSigningConfig{Enabled: true, Enrollment: "bogus"}, "", true, false},
-		{ModuleSigningConfig{Enabled: true, CertDir: "relative"}, "", true, false},
-		{ModuleSigningConfig{Enabled: true, CertDir: "/a/../b"}, "", true, false},
-		{ModuleSigningConfig{Enabled: true}, ImageModeAB, true, false},
-		{ModuleSigningConfig{Enabled: true, Enrollment: "external"}, ImageModeAB, false, false},
+		{SecureBootConfig{ModuleSigning: m{Enrollment: "bogus"}}, "", false}, // off: not checked
+		{SecureBootConfig{Signing: "off", ModuleSigning: m{Enrollment: "bogus"}}, "", false},
+		{SecureBootConfig{Signing: "bogus"}, "", true},
+		{SecureBootConfig{Signing: "per-host"}, "", false},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Enrollment: "external", CertDir: "/etc/keys"}}, "", false},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Enrollment: "bogus"}}, "", true},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{CertDir: "relative"}}, "", true},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{CertDir: "/a/../b"}}, "", true},
+		{SecureBootConfig{Signing: "per-host"}, ImageModeAB, true},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Enrollment: "external"}}, ImageModeAB, false},
 		// Secure Boot back on before the enrollment boot refuses the helper.
-		{ModuleSigningConfig{Enabled: true}, "", true, true},
-		{ModuleSigningConfig{Enabled: true, Enrollment: "mokutil"}, "", false, true},
-		{ModuleSigningConfig{Enabled: true, Enrollment: "external"}, "", false, true},
-		{ModuleSigningConfig{Enabled: true, Target: "sysext"}, "", false, false},
-		{ModuleSigningConfig{Enabled: true, Target: "sysext", CertDir: "/etc/keys"}, "", true, false},
-		{ModuleSigningConfig{Enabled: true, Target: "bogus"}, "", true, false},
+		{SecureBootConfig{Signing: "per-host", ReEnable: true}, "", true},
+		{SecureBootConfig{Signing: "per-host", ReEnable: true, ModuleSigning: m{Enrollment: "mokutil"}}, "", false},
+		{SecureBootConfig{Signing: "per-host", ReEnable: true, ModuleSigning: m{Enrollment: "external"}}, "", false},
+		// ci enrolls the certificate of the image.
+		{SecureBootConfig{Signing: "ci", MOKCertPath: "/usr/share/ci/mok.der"}, "", false},
+		{SecureBootConfig{Signing: "ci"}, "", true},
+		{SecureBootConfig{Signing: "ci", MOKCertPath: "ci/mok.der"}, "", true},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Target: "sysext"}}, "", false},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Target: "sysext", CertDir: "/etc/keys"}}, "", true},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Target: "bogus"}}, "", true},
+		// A sysext needs the per-host key to sign its root hash.
+		{SecureBootConfig{Signing: "ci", MOKCertPath: "/usr/share/ci/mok.der", ModuleSigning: m{Target: "sysext"}}, "", true},
 	} {
-		errs := validateModuleSigning(tc.mode, tc.reEnable, &tc.m, ab)
+		errs := validateModuleSigning(tc.mode, &tc.sb, ab)
 		if (len(errs) > 0) != tc.wantErr {
-			t.Errorf("%+v mode=%q: errs=%v", tc.m, tc.mode, errs)
+			t.Errorf("%+v mode=%q: errs=%v", tc.sb, tc.mode, errs)
 		}
 	}
 }
