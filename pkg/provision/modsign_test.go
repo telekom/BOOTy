@@ -258,3 +258,12 @@ func TestOnChrootBind(t *testing.T) {
 		t.Fatalf("no modules: %v", err)
 	}
 }
+
+// A kernel directory name becomes a depmod argument: it must not be an option.
+func TestKernelReleasePattern(t *testing.T) {
+	for name, want := range map[string]bool{"6.8.0-1-generic": true, "6.12.0+deb13": true, "-n": false, "--help": false, "a b": false, "": false} {
+		if got := kernelReleasePattern.MatchString(name); got != want {
+			t.Errorf("kernelReleasePattern(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

@@ -41,7 +41,7 @@ const dracutRegenerateCmd = "dracut --force --regenerate-all"
 const initramfsUpdateCmd = "if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u -k all; " +
 	"else " + dracutRegenerateCmd + "; fi"
 
-var kernelReleasePattern = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
+var kernelReleasePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
 
 // maxCertSize caps a certificate read from the image; X.509 certificates
 // are a few KiB.
