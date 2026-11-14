@@ -109,7 +109,8 @@ and locked configuration keys apply.
 - The encrypted partition is an LVM physical volume when its GPT type is
   Linux LVM (`E6D6D379-F507-44C2-A23C-238F2A3DF928`). With
   `DISK_ENCRYPTION_TARGET=root` BOOTy takes it when the image has no Linux
-  filesystem partition and exactly one LVM partition; the root is then on
+  filesystem or Discoverable Partitions root partition (x86-64, ARM64) and
+  exactly one LVM partition; the root is then on
   LVM (`ROOT_PARTITION_LABEL` and `ROOT_PARTITION_NUMBER` must be unset).
   A partition number selects an LVM partition as a data VG: the root stays
   the selected root partition, even if an LV looks like a root. It must be

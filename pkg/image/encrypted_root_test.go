@@ -165,6 +165,15 @@ func TestSelectEncryptedRootLVM(t *testing.T) {
 	if got, err := selectEncryptedRoot([]sfdiskPartition{esp, plain, named}, 0); err == nil && got.Number == 3 {
 		t.Fatal("a physical volume named root won over the root partition")
 	}
+	// An unlabeled Discoverable Partitions root is a root: a later physical
+	// volume is not taken for it.
+	for _, guid := range []string{linuxRootX86_64GUID, linuxRootARM64GUID} {
+		dps := sfdiskPartition{Number: 2, Start: 4096, Type: guid}
+		later := sfdiskPartition{Number: 3, Start: 8192, Type: linuxLVMGUID}
+		if got, err := selectEncryptedRoot([]sfdiskPartition{esp, dps, later}, 0); err == nil && got.Number == 3 {
+			t.Fatalf("physical volume selected over the %s root partition", guid)
+		}
+	}
 }
 
 // Check sees the LVM partition before the first disk write; its error

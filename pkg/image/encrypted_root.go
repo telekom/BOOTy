@@ -123,8 +123,9 @@ func selectEncryptedRoot(parts []sfdiskPartition, number int) (sfdiskPartition, 
 		candidates = slices.DeleteFunc(slices.Clone(parts), isLinuxLVMPartition)
 	}
 	root, err := selectSourceRootPartition(candidates, "", number)
-	if err != nil && number == 0 && !slices.ContainsFunc(parts, isLinuxFilesystemPartition) {
-		// No root partition: the root is on LVM, in the single physical volume.
+	if err != nil && number == 0 && !slices.ContainsFunc(parts, isLinuxRootTypePartition) {
+		// No root partition (no Linux filesystem or Discoverable Partitions
+		// root type): the root is on LVM, in the single physical volume.
 		if pv, pvErr := selectSingleSourceRootCandidate(parts, isLinuxLVMPartition, "Linux LVM partition"); pvErr == nil {
 			root, err = pv, nil
 		}
@@ -143,6 +144,20 @@ func selectEncryptedRoot(parts []sfdiskPartition, number int) (sfdiskPartition, 
 
 // linuxLVMGUID is the GPT type of an LVM physical volume.
 const linuxLVMGUID = "E6D6D379-F507-44C2-A23C-238F2A3DF928"
+
+// Discoverable Partitions Specification root types (as in pkg/disk, which
+// imports this package through pkg/config).
+const (
+	linuxRootX86_64GUID = "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709"
+	linuxRootARM64GUID  = "B921B045-1DF0-41C3-AF44-4C6F280D3FAE"
+)
+
+// isLinuxRootTypePartition matches the types of disk.IsLinuxRootPartitionType.
+func isLinuxRootTypePartition(part sfdiskPartition) bool {
+	return isLinuxFilesystemPartition(part) ||
+		strings.EqualFold(part.Type, linuxRootX86_64GUID) ||
+		strings.EqualFold(part.Type, linuxRootARM64GUID)
+}
 
 func isLinuxLVMPartition(part sfdiskPartition) bool {
 	return strings.EqualFold(part.Type, linuxLVMGUID)
