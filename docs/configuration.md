@@ -277,6 +277,9 @@ behaviour changes of this mode.
 | `IMAGE_SIGNATURE_URL` | (unset) | URL | Detached GPG signature of the image. Not supported for `oci://` sources. |
 | `IMAGE_GPG_PUBKEY` | (unset) | file path in the ramdisk | Public key for `IMAGE_SIGNATURE_URL`. |
 | `IMAGE_COSIGN_PUBKEYS` | (unset) | comma-separated PEM public key paths in the ramdisk | Before the wipe, an `oci://` image source must be pinned by digest and carry a cosign signature by one of the keys; an HTTP source needs `IMAGE_CHECKSUM`. See [cosign verification](../README.md#cosign-verification-of-oci-images-and-sysexts). A file may hold several `PUBLIC KEY` blocks (key rotation). Independent of `SYSEXT_COSIGN_PUBKEYS`; set both. Protects against a compromised registry or transport, not against whoever controls the vars (see [threat model](#cosign-threat-model)). YAML `provision.image.cosignPublicKeys`. |
+| `IMAGE_COSIGN_TRUSTED_ROOT` | (unset) | Sigstore `trusted_root.json` path in the ramdisk | Keyless cosign verification: before the wipe, an `oci://` image source must be pinned by digest and carry a keyless signature (Fulcio certificate with an SCT, Rekor entry) that verifies against this trusted root offline; it is never fetched. Needs `IMAGE_COSIGN_IDENTITY_REGEXP` and `IMAGE_COSIGN_OIDC_ISSUER`; a missing one fails `verify-image`. With `IMAGE_COSIGN_PUBKEYS` too, a signature of either kind is accepted. See [keyless verification](../README.md#keyless-cosign-verification). YAML `provision.image.cosignTrustedRoot`. |
+| `IMAGE_COSIGN_IDENTITY_REGEXP` | (unset) | Go regexp | Identity (URI or e-mail SAN) of the signing certificate; must match the whole SAN, as if wrapped in `^(?:...)$`. YAML `provision.image.cosignIdentityRegexp`. |
+| `IMAGE_COSIGN_OIDC_ISSUER` | (unset) | URL | OIDC issuer extension of the signing certificate; exact match. YAML `provision.image.cosignOIDCIssuer`. |
 | `IMAGE_MODE` | `whole-disk` | `whole-disk`, `partition`, `ab` | How BOOTy writes the image. See [A/B partitioning](#ab-partitioning) for `ab`. |
 | `IMAGE_SOURCE_ROOT_LABEL` | (unset) | GPT partition label | Source image root partition to stream into a `PARTITION_LAYOUT` root. Excludes `IMAGE_SOURCE_ROOT_PARTITION`. |
 | `IMAGE_SOURCE_ROOT_PARTITION` | `0` | 1-based partition number | Same as `IMAGE_SOURCE_ROOT_LABEL`, by number. |
@@ -545,16 +548,41 @@ See [Sysext provisioning](sysext-provisioning.md).
 | `SYSEXT_ACTIVE_DIR` | `/var/lib/extensions` | target path | Directory for active layers. |
 | `SYSEXT_ALLOW_INSECURE_HTTP` | `false` | boolean | Accept `http://` layer sources. |
 | `SYSEXT_COSIGN_PUBKEYS` | (unset) | comma-separated PEM public key paths in the ramdisk | Before the wipe, every `oci://` layer source must be pinned by digest and carry a cosign signature by one of the keys; other sources keep `sha256`. Independent of `IMAGE_COSIGN_PUBKEYS`; set both. YAML `provision.sysext.cosignPublicKeys`. |
+| `SYSEXT_COSIGN_TRUSTED_ROOT` | (unset) | Sigstore `trusted_root.json` path in the ramdisk | Keyless verification of every `oci://` layer source, as `IMAGE_COSIGN_TRUSTED_ROOT` for the image. Needs `SYSEXT_COSIGN_IDENTITY_REGEXP` and `SYSEXT_COSIGN_OIDC_ISSUER`. YAML `provision.sysext.cosignTrustedRoot`. |
+| `SYSEXT_COSIGN_IDENTITY_REGEXP` | (unset) | Go regexp | Whole-SAN match for sysext signatures. YAML `provision.sysext.cosignIdentityRegexp`. |
+| `SYSEXT_COSIGN_OIDC_ISSUER` | (unset) | URL | OIDC issuer of sysext signatures; exact match. YAML `provision.sysext.cosignOIDCIssuer`. |
 
 ### Cosign threat model
 
-`IMAGE_COSIGN_PUBKEYS` and `SYSEXT_COSIGN_PUBKEYS` protect against a
-compromised registry or transport: bytes that are not signed by a configured
-key are not written. They do not protect against whoever controls the
+The cosign options (`IMAGE_COSIGN_*`, `SYSEXT_COSIGN_*`, keys or keyless)
+protect against a compromised registry or transport: bytes that are not
+signed by a configured key or identity are not written. They do not protect against whoever controls the
 provisioning vars, who can clear the keys, switch the image to an HTTP source
 with their own `IMAGE_CHECKSUM`, or pin an older digest that is still signed.
-The two options are independent: image keys do not check sysexts and sysext
-keys do not check the image, so set both. Both are unset by default. See
+The image and the sysext options are independent: image keys do not check
+sysexts and sysext keys do not check the image, so set both. All are unset by
+default. Keys and a keyless policy can be set together; a signature of either
+kind is then accepted, so the weaker one decides. A standby command payload
+can not change any cosign option, nor add a source that is not `oci://` or
+change its checksum while a policy is set (see
+[command payload](caprf-integration.md#command-payload)).
+
+Keyless signature formats: Sigstore bundles v0.1, v0.2 and v0.3 (both media
+type forms) as OCI referrers, with the DSSE in-toto statement of
+`cosign sign` (predicate `https://sigstore.dev/cosign/sign/v1`), and the
+cosign 2 `.sig` tag;
+Rekor v1 entries (SET, inclusion proof and checkpoint) and Rekor v2 entries
+(`hashedrekord` 0.0.2, inclusion proof and signed-note checkpoint); RFC 3161
+timestamps of the trusted root's `timestampAuthorities` (signed by the
+certificate that their ESS `signingCertificate(V2)` attribute names). A log
+listed more than once under one ID is used with the copy valid at the
+checked time. The certificate is
+checked at each verified time (Rekor v1 integrated time, RFC 3161 time) and
+needs at least one, so a Rekor v2 signature needs a timestamp. Every Rekor
+entry must verify; a timestamp that does not verify is ignored. As in
+cosign, a message signature bundle (`cosign sign-blob` of the manifest) is no
+image signature. Public-key bundles and Rekor v2 `dsse` entries are refused. See
+[keyless verification](../README.md#keyless-cosign-verification). See
 [cosign verification](../README.md#cosign-verification-of-oci-images-and-sysexts).
 
 ## OverlayFS

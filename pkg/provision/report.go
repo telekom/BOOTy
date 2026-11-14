@@ -168,7 +168,7 @@ func (o *Orchestrator) buildReport(ctx context.Context) *ProvisionReport {
 		r.Verification.Checksum = ReportStateVerified
 	}
 	switch {
-	case len(cfg.Image.CosignPublicKeys) > 0 && image.IsOCIReference(o.bestImageURL):
+	case imageCosignPolicy(&cfg.Image).enabled() && image.IsOCIReference(o.bestImageURL):
 		r.Verification.Signature = ReportSignatureResult{Method: "cosign", Result: ReportStateVerified}
 	case cfg.Image.SignatureURL != "":
 		r.Verification.Signature = ReportSignatureResult{Method: "gpg", Result: ReportStateVerified}

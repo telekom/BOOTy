@@ -1331,6 +1331,18 @@ func applyImageWriteVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Provision.Image.CosignPublicKeys = splitVarList(value)
 	case "SYSEXT_COSIGN_PUBKEYS":
 		cfg.Provision.Sysext.CosignPublicKeys = splitVarList(value)
+	case "IMAGE_COSIGN_TRUSTED_ROOT":
+		cfg.Provision.Image.CosignTrustedRoot = strings.TrimSpace(value)
+	case "IMAGE_COSIGN_IDENTITY_REGEXP":
+		cfg.Provision.Image.CosignIdentityRegexp = value
+	case "IMAGE_COSIGN_OIDC_ISSUER":
+		cfg.Provision.Image.CosignOIDCIssuer = strings.TrimSpace(value)
+	case "SYSEXT_COSIGN_TRUSTED_ROOT":
+		cfg.Provision.Sysext.CosignTrustedRoot = strings.TrimSpace(value)
+	case "SYSEXT_COSIGN_IDENTITY_REGEXP":
+		cfg.Provision.Sysext.CosignIdentityRegexp = value
+	case "SYSEXT_COSIGN_OIDC_ISSUER":
+		cfg.Provision.Sysext.CosignOIDCIssuer = strings.TrimSpace(value)
 	default:
 		return false
 	}
