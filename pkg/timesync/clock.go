@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/telekom/BOOTy/pkg/trust"
 )
 
 // NewSyncer returns a Syncer for the real system clock and RTC.
@@ -18,7 +20,7 @@ func NewSyncer(skipTLSVerify bool) Syncer {
 		Now:      time.Now,
 		Floor:    BuildFloor(),
 		NTP:      NTPClient{}.Query,
-		Date:     DateProbe{SkipTLSVerify: skipTLSVerify}.Probe,
+		Date:     DateProbe{SkipTLSVerify: skipTLSVerify, Roots: trust.Roots()}.Probe,
 		SetClock: setSystemClock,
 		WriteRTC: writeRTC,
 		Log:      slog.Default().With("component", "timesync"),

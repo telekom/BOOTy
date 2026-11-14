@@ -78,7 +78,7 @@ func (s *logSink) waitArrived(t *testing.T, want string) {
 
 func (s *logSink) handler(t *testing.T, maxLines, maxBytes int) *RemoteHandler {
 	t.Helper()
-	client := NewFromConfig(&config.MachineConfig{Transport: config.TransportConfig{LogURL: s.server.URL}})
+	client := mustClient(NewFromConfig(&config.MachineConfig{Transport: config.TransportConfig{LogURL: s.server.URL}}))
 	h := newRemoteHandler(client, slog.NewTextHandler(io.Discard, nil), slog.LevelDebug, maxLines, maxBytes)
 	t.Cleanup(h.Close)
 	return h
@@ -288,7 +288,7 @@ func TestRemoteHandlerCloseRespectsDeadline(t *testing.T) {
 	s := newLogSink(t)
 	s.block = make(chan struct{}) // never released: the sink hangs
 	console := &syncWriter{w: &bytes.Buffer{}}
-	client := NewFromConfig(&config.MachineConfig{Transport: config.TransportConfig{LogURL: s.server.URL}})
+	client := mustClient(NewFromConfig(&config.MachineConfig{Transport: config.TransportConfig{LogURL: s.server.URL}}))
 	h := newRemoteHandler(client, slog.NewTextHandler(console, nil), slog.LevelInfo, 10, 1<<20)
 	h.sink.flushTimeout = 200 * time.Millisecond
 	log := slog.New(h)
@@ -322,7 +322,7 @@ func TestRemoteHandlerFlushTimeoutFromConfig(t *testing.T) {
 		{new(0), 0},
 		{new(12), 12 * time.Second},
 	} {
-		client := NewFromConfig(&config.MachineConfig{Transport: config.TransportConfig{LogFlushTimeoutSec: tc.value}})
+		client := mustClient(NewFromConfig(&config.MachineConfig{Transport: config.TransportConfig{LogFlushTimeoutSec: tc.value}}))
 		h := NewRemoteHandler(client, slog.NewTextHandler(io.Discard, nil), slog.LevelInfo, 1)
 		if h.sink.flushTimeout != tc.want {
 			t.Errorf("flushTimeout = %v, want %v", h.sink.flushTimeout, tc.want)

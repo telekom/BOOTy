@@ -19,7 +19,7 @@ func TestCrashFormUploadClosesReaderWhenRequestIsNotSent(t *testing.T) {
 	if err := os.WriteFile(archive, make([]byte, 1<<20), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c := NewFromConfig(&config.MachineConfig{})
+	c := mustClient(NewFromConfig(&config.MachineConfig{}))
 	// Bearer auth is only allowed for proxy uploads, so applyCrashUploadAuth
 	// fails and the request is never sent.
 	instructions := &crash.PrepareResponse{
