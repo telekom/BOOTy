@@ -433,6 +433,26 @@ func TestDryRunImageReachabilityRefusesRedirect(t *testing.T) {
 	}
 }
 
+// A redirect status without Location never reaches CheckRedirect; the
+// dry-run probe refuses it all the same.
+func TestDryRunImageReachabilityRefusesRedirectWithoutLocation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer srv.Close()
+	t.Cleanup(func() { image.SetFollowRedirects(true) })
+
+	cfg := &config.MachineConfig{}
+	cfg.Provision.Image.URLs = []string{srv.URL + "/test.img"}
+	o := NewOrchestrator(cfg, &dryRunProvider{}, disk.NewManager(nil))
+
+	image.SetFollowRedirects(false)
+	result := o.dryRunImageReachability(context.Background())
+	if result.Status != DryRunFail || !strings.Contains(result.Message, "IMAGE_FOLLOW_REDIRECTS=false") {
+		t.Fatalf("got %s %q, want a refused redirect", result.Status, result.Message)
+	}
+}
+
 func TestDryRunImageUnreachable(t *testing.T) {
 	// Use a closed server for fast, deterministic connection failure.
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

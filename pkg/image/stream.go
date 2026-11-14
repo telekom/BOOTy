@@ -33,22 +33,22 @@ var imageHTTPClient = newImageHTTPClient()
 // IMAGE_PARALLEL_RANGES (at most 16) reuses its connections instead of
 // dialing one per range.
 func newImageHTTPClient() *http.Client {
-	c := NewRedirectPolicyClient(0)
+	c := network.NewHTTPClient(0)
 	if t, ok := c.Transport.(*http.Transport); ok {
 		t.MaxIdleConnsPerHost = 17
 	}
-	return c
+	return withRedirectPolicy(c)
 }
 
-// followRedirects is IMAGE_FOLLOW_REDIRECTS.
-var followRedirects atomic.Bool
-
-func init() { followRedirects.Store(true) }
+// refuseRedirects is IMAGE_FOLLOW_REDIRECTS negated, so that its zero value
+// is the default (follow) for the clients built during package
+// initialization.
+var refuseRedirects atomic.Bool
 
 // SetFollowRedirects sets IMAGE_FOLLOW_REDIRECTS for the clients that
 // RefreshHTTPClients builds afterwards.
 func SetFollowRedirects(follow bool) {
-	followRedirects.Store(follow)
+	refuseRedirects.Store(!follow)
 }
 
 // ErrRedirectRefused is the error of an image request that got a redirect
@@ -62,13 +62,16 @@ type redirectRefusedError struct {
 }
 
 func (e *redirectRefusedError) Error() string {
+	if e.location == "" {
+		return fmt.Sprintf("%s: status %d without Location", ErrRedirectRefused, e.status)
+	}
 	return fmt.Sprintf("%s: status %d to %s", ErrRedirectRefused, e.status, e.location)
 }
 
 func (e *redirectRefusedError) Unwrap() error { return ErrRedirectRefused }
 
 // withoutRedirectURL returns the redirectRefusedError in err without the
-// *url.Error around it: net/http puts the raw Location, query string
+// *url.Error around it: net/http puts the request URL, query string
 // included, into that error.
 func withoutRedirectURL(err error) error {
 	var rerr *redirectRefusedError
@@ -81,17 +84,40 @@ func withoutRedirectURL(err error) error {
 // NewRedirectPolicyClient is network.NewHTTPClient(timeout) that refuses
 // redirects with IMAGE_FOLLOW_REDIRECTS=false.
 func NewRedirectPolicyClient(timeout time.Duration) *http.Client {
-	c := network.NewHTTPClient(timeout)
-	if !followRedirects.Load() {
-		c.CheckRedirect = func(req *http.Request, _ []*http.Request) error {
-			rerr := &redirectRefusedError{location: RedactURL(req.URL.String())}
-			if req.Response != nil {
-				rerr.status = req.Response.StatusCode
-			}
-			return rerr
-		}
+	return withRedirectPolicy(network.NewHTTPClient(timeout))
+}
+
+// withRedirectPolicy makes c fail every redirect status with
+// IMAGE_FOLLOW_REDIRECTS=false. It checks the status in the transport, not
+// in CheckRedirect: net/http hands a redirect without Location to the
+// caller as a plain response and never calls CheckRedirect for it.
+func withRedirectPolicy(c *http.Client) *http.Client {
+	if refuseRedirects.Load() {
+		c.Transport = redirectRefuser{c.Transport}
 	}
 	return c
+}
+
+// redirectRefuser fails the responses net/http would follow, with or
+// without a Location header.
+type redirectRefuser struct{ next http.RoundTripper }
+
+func (r redirectRefuser) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := r.next.RoundTrip(req)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // net/http wraps it in *url.Error
+	}
+	switch resp.StatusCode {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		_ = resp.Body.Close()
+		rerr := &redirectRefusedError{status: resp.StatusCode}
+		if loc, err := resp.Location(); err == nil {
+			rerr.location = RedactURL(loc.String())
+		}
+		return nil, rerr
+	}
+	return resp, nil
 }
 
 // RefreshHTTPClients rebuilds the image download clients so they pick up

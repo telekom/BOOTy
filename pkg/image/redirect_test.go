@@ -12,6 +12,50 @@ import (
 	"time"
 )
 
+// The image client built during package initialization follows redirects,
+// the documented default, without a RefreshHTTPClients call.
+func TestInitialImageClientFollowsRedirects(t *testing.T) {
+	if _, wrapped := imageHTTPClient.Transport.(redirectRefuser); wrapped {
+		t.Fatal("initial image client refuses redirects")
+	}
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "image")
+	}))
+	defer target.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer redirector.Close()
+	body, err := httpGetWithRetry(context.Background(), redirector.URL)
+	if err != nil {
+		t.Fatalf("GET = %v, want the redirect followed", err)
+	}
+	_ = body.Close()
+}
+
+// net/http returns a redirect status without Location as a plain response
+// and never asks CheckRedirect. IMAGE_FOLLOW_REDIRECTS=false refuses it as
+// well, so the source probe does not pick such a source.
+func TestImageRefusesRedirectWithoutLocation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer srv.Close()
+	t.Cleanup(func() {
+		SetFollowRedirects(true)
+		RefreshHTTPClients()
+	})
+	SetFollowRedirects(false)
+	RefreshHTTPClients()
+	ctx := context.Background()
+	if _, err := probeURL(ctx, srv.URL); !errors.Is(err, ErrRedirectRefused) || !strings.Contains(err.Error(), "status 302 without Location") {
+		t.Fatalf("probe = %v, want ErrRedirectRefused for a 302 without Location", err)
+	}
+	if _, err := httpGetWithRetry(ctx, srv.URL); !errors.Is(err, ErrRedirectRefused) {
+		t.Fatalf("GET = %v, want ErrRedirectRefused", err)
+	}
+}
+
 // IMAGE_FOLLOW_REDIRECTS=false: a redirect fails the download, the probe
 // and the signature download at once, the target gets no request and the
 // error redacts the location. The default follows.
