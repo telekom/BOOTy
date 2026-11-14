@@ -166,3 +166,27 @@ func TestSelectEncryptedRootLVM(t *testing.T) {
 		t.Fatal("a physical volume named root won over the root partition")
 	}
 }
+
+// Check sees the LVM partition before the first disk write; its error
+// stops the stream with nothing written and Open not called.
+func TestStreamEncryptedRootCheckBeforeWrite(t *testing.T) {
+	raw := testGPTImage(t)
+	writeGPTEntry(raw, 1, lvmTypeGUID, 4096, 4111, "tcaas-pv")
+	disk := filepath.Join(t.TempDir(), "disk")
+	createTargetFile(t, disk)
+	errNoLVM := errors.New("no lvm")
+	opened, checked := false, false
+	err := StreamEncryptedRoot(context.Background(), serveEncryptedImage(t, raw), disk, EncryptedRoot{
+		Open: func(context.Context, int, int64, bool) (string, error) { opened = true; return "", nil },
+		Check: func(lvm bool) error {
+			checked = lvm
+			return errNoLVM
+		},
+	})
+	if !errors.Is(err, errNoLVM) || opened || !checked {
+		t.Fatalf("err = %v opened = %v checked lvm = %v, want the Check error before Open", err, opened, checked)
+	}
+	if bytes.Contains(readFile(t, disk), []byte("EFI PART")) {
+		t.Fatal("disk written before the check")
+	}
+}

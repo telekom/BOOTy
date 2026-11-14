@@ -29,6 +29,9 @@ type EncryptedRoot struct {
 	// returns the device that receives the partition content. lvm is true
 	// when the partition has the Linux LVM type (an LVM physical volume).
 	Open func(ctx context.Context, number int, size int64, lvm bool) (string, error)
+	// Check, when set, is called with the selected partition before the
+	// first disk write; an error stops the stream with nothing written.
+	Check func(lvm bool) error
 }
 
 // StreamEncryptedRoot writes a raw GPT image to disk like Stream, except
@@ -65,6 +68,11 @@ func StreamEncryptedRoot(ctx context.Context, url, disk string, target Encrypted
 	root, err := selectEncryptedRoot(parts, target.Number)
 	if err != nil {
 		return err
+	}
+	if target.Check != nil {
+		if err := target.Check(isLinuxLVMPartition(root)); err != nil {
+			return err
+		}
 	}
 	stream, checksum, err := wrapChecksum(io.MultiReader(bytes.NewReader(prefix), src), opt)
 	if err != nil {

@@ -239,3 +239,19 @@ func TestCloseEncryptedDiskLVM(t *testing.T) {
 		t.Fatalf("failed deactivation: err=%v cryptsetup=%v", err, *calls)
 	}
 }
+
+func TestCheckLVMRamdisk(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if err := checkLVMRamdisk(false); err != nil {
+		t.Fatalf("no LVM partition: %v", err)
+	}
+	if err := checkLVMRamdisk(true); err == nil || !strings.Contains(err.Error(), "LVM physical volume") {
+		t.Fatalf("err = %v, want lvm missing from the ramdisk", err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("PATH"), "lvm"), []byte("#!/bin/sh\n"), 0o755); err != nil { //nolint:gosec // test binary
+		t.Fatal(err)
+	}
+	if err := checkLVMRamdisk(true); err != nil {
+		t.Fatalf("lvm present: %v", err)
+	}
+}

@@ -172,6 +172,7 @@ func (o *Orchestrator) streamEncryptedImage(ctx context.Context, url string, opt
 			st.lvm = lvm
 			return o.formatEncryptedPartition(ctx, st, number, size)
 		},
+		Check: checkLVMRamdisk,
 	}, opts...)
 	if errors.Is(err, image.ErrEncryptedRootUnsupported) && o.cfg.Provision.DiskEncryption.AllowFailure {
 		// Refused before the first disk write.
@@ -287,16 +288,23 @@ var isRootFilesystem = func(ctx context.Context, o *Orchestrator, device string)
 	return isRoot, nil
 }
 
+// checkLVMRamdisk runs before the first disk write: an LVM physical volume
+// needs lvm in the ramdisk.
+func checkLVMRamdisk(lvm bool) error {
+	if !lvm {
+		return nil
+	}
+	if _, err := executil.LookPath("lvm"); err != nil {
+		return fmt.Errorf("ramdisk, for the LVM physical volume: %w", err)
+	}
+	return nil
+}
+
 // formatEncryptedPartition grows partition number to the disk end, escrows
 // a new recovery key, formats the partition and opens it. The recovery key
 // reaches the provisioner before the partition is formatted.
 func (o *Orchestrator) formatEncryptedPartition(ctx context.Context, st *encryptionState, number int, size int64) (string, error) {
 	st.device = disk.PartitionDevicePath(o.targetDisk, number)
-	if st.lvm {
-		if _, err := executil.LookPath("lvm"); err != nil {
-			return "", fmt.Errorf("ramdisk, for the LVM physical volume: %w", err)
-		}
-	}
 	if out, err := o.disk.Run(ctx, "partprobe", o.targetDisk); err != nil {
 		return "", fmt.Errorf("partprobe %s: %s: %w", o.targetDisk, strings.TrimSpace(string(out)), err)
 	}
