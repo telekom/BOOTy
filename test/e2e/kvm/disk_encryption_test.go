@@ -44,6 +44,8 @@ echo "ENROLL_KEY=$(test -e /etc/booty/luks-enroll.key && echo present || echo ab
 echo "UNIT=$(systemctl is-enabled booty-luks-tpm2-enroll.service 2>&1)"
 echo "INITRD_KEY=$(lsinitrd /boot/initrd.img-$(uname -r) 2>/dev/null | grep -c luks-enroll.key)"
 echo "CRYPTTAB=$(grep "^$LUKS_NAME " /etc/crypttab)"
+for v in PK KEK db dbx; do echo "VAR_$v=$(cat /sys/firmware/efi/efivars/$v-* 2>/dev/null | sha256sum | cut -c1-16)"; done
+journalctl -b -o cat -u secureboot-db.service --no-pager | tail -n 10 | sed 's/^/SBDB /'
 journalctl -b -o cat -u booty-luks-tpm2-enroll.service --no-pager | tail -n 30 | sed 's/^/ENROLL /'
 journalctl -b -o cat --no-pager | grep -i -e 'tpm2' -e 'cryptsetup' | tail -n 30 | sed 's/^/JOURNAL /'
 echo "` + luksCheckEnd + `"
@@ -171,21 +173,25 @@ func TestDiskEncryptionTPM2VM(t *testing.T) {
 	}
 
 	// 4. Secure Boot on again: the TPM2 unlocks without a prompt.
-	out = runMirrorQEMU(t, "tpm2 unlock", vm("-net", "none"), 8*time.Minute)
+	// A prompt is answered only to read the report of the failed unlock.
+	out, prompted := runQEMUAnswerPrompt(t, "tpm2 unlock", vm("-net", "none"), luksPrompt, key, 10*time.Minute)
 	logs = append(logs, out)
 	report = luksCheckReport(t, "tpm2 unlock", out)
-	luksRequireLine(t, report, "SECUREBOOT=1")
-	luksRequireLine(t, report, "ROOT_TYPE=crypt")
-	if strings.Contains(string(out), luksPrompt) {
+	if prompted {
 		t.Fatal("the TPM2 did not unlock: passphrase prompt with Secure Boot on")
 	}
+	luksRequireLine(t, report, "SECUREBOOT=1")
+	luksRequireLine(t, report, "ROOT_TYPE=crypt")
 	pcr7 := luksField(report, "PCR7")
 
 	// 5. Secure Boot off: PCR 7 differs, the TPM2 refuses, the recovery key
 	// unlocks at the prompt.
 	setLUKSSecureBoot(t, vars, false)
-	out = runQEMUAnswerPrompt(t, "recovery key", vm("-net", "none"), luksPrompt, key, 10*time.Minute)
+	out, prompted = runQEMUAnswerPrompt(t, "recovery key", vm("-net", "none"), luksPrompt, key, 10*time.Minute)
 	logs = append(logs, out)
+	if !prompted {
+		t.Fatal("no passphrase prompt after the PCR 7 change")
+	}
 	report = luksCheckReport(t, "recovery key", out)
 	luksRequireLine(t, report, "SECUREBOOT=0")
 	luksRequireLine(t, report, "ROOT_TYPE=crypt")
@@ -345,8 +351,8 @@ func startLUKSSWTPM(t *testing.T, state, sock string) string {
 }
 
 // runQEMUAnswerPrompt is runMirrorQEMU that types answer on the serial
-// console once prompt appears.
-func runQEMUAnswerPrompt(t *testing.T, phase string, args []string, prompt string, answer []byte, timeout time.Duration) []byte {
+// console once prompt appears. It reports whether the prompt appeared.
+func runQEMUAnswerPrompt(t *testing.T, phase string, args []string, prompt string, answer []byte, timeout time.Duration) ([]byte, bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -378,10 +384,7 @@ func runQEMUAnswerPrompt(t *testing.T, phase string, args []string, prompt strin
 		t.Fatalf("QEMU %s timed out after %s. output:\n%s", phase, timeout, readableSerial([]byte(out.String())))
 	}
 	t.Logf("QEMU %s exited (%v). output:\n%s", phase, err, readableSerial([]byte(out.String())))
-	if !<-answered {
-		t.Fatalf("%s: no %q prompt", phase, prompt)
-	}
-	return []byte(out.String())
+	return []byte(out.String()), <-answered
 }
 
 func luksCheckReport(t *testing.T, phase string, out []byte) string {
