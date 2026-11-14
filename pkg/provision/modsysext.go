@@ -54,8 +54,12 @@ func (o *Orchestrator) signKernelModulesSysext(ctx context.Context, ms config.Mo
 	}
 	defer func() { _ = root.Close() }()
 	// /lib/modules must be /usr/lib/modules: an extension covers /usr only.
-	if target, err := root.Readlink("lib"); err != nil || path.Clean(target) != "usr/lib" {
-		return fmt.Errorf("target sysext needs a merged /usr, lib is not a link to usr/lib (%q, %v)", target, err)
+	target, err := root.Readlink("lib")
+	if err != nil {
+		return fmt.Errorf("target sysext needs a merged /usr (lib -> usr/lib): %w", err)
+	}
+	if path.Clean(target) != "usr/lib" {
+		return fmt.Errorf("target sysext needs a merged /usr, lib links to %q", target)
 	}
 	osID, osVersion, err := targetOSRelease(root)
 	if err != nil {

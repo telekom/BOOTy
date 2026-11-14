@@ -797,17 +797,21 @@ func validateModuleSigning(imageMode string, reEnable bool, m *ModuleSigningConf
 	if !path.IsAbs(dir) || path.Clean(dir) != dir {
 		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.certDir %q: must be a clean absolute path", m.CertDir))
 	}
+	return append(errs, validateModuleSigningTarget(m)...)
+}
+
+func validateModuleSigningTarget(m *ModuleSigningConfig) []string {
 	switch m.TargetOrDefault() {
 	case ModuleSigningTargetInPlace:
 	case ModuleSigningTargetSysext:
 		// The certificate goes into the extension, which covers /usr only.
-		if !strings.HasPrefix(dir, "/usr/") {
-			errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.certDir %q: target sysext needs a directory below /usr", dir))
+		if dir := m.CertDirOrDefault(); !strings.HasPrefix(dir, "/usr/") {
+			return []string{fmt.Sprintf("provision.secureBoot.moduleSigning.certDir %q: target sysext needs a directory below /usr", dir)}
 		}
 	default:
-		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.target %q: want in-place or sysext", m.Target))
+		return []string{fmt.Sprintf("provision.secureBoot.moduleSigning.target %q: want in-place or sysext", m.Target)}
 	}
-	return errs
+	return nil
 }
 
 func validateSecureBootConfig(imageMode string, secureBoot *SecureBootConfig, ab *ABConfig) error {
