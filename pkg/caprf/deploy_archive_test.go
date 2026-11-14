@@ -99,7 +99,7 @@ func TestDeployArchiveConfigReplacesJobFiles(t *testing.T) {
 	root := useDeployRoot(t)
 	payload := deployArchive(t,
 		archiveEntry{name: "deploy/", typ: tar.TypeDir},
-		archiveEntry{name: "deploy/vars", body: "TOKEN=job-token\nMODE=provision\nFIRMWARE_URL=https://evil/fw\nHOSTNAME=worker-7\n"},
+		archiveEntry{name: "deploy/vars", body: "TOKEN=job-token\nMODE=provision\nFIRMWARE_URL=https://evil/fw\nIMAGE_FOLLOW_REDIRECTS=false\nHOSTNAME=worker-7\n"},
 		archiveEntry{name: "deploy/machine-files/etc/cloud/nocloud/user-data", body: "#cloud-config\n", mode: 0o4666},
 		archiveEntry{name: "deploy/machine-commands/10-run.sh", body: "#!/bin/sh\n", mode: 0o700},
 	)
@@ -110,11 +110,11 @@ func TestDeployArchiveConfigReplacesJobFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Hostname != "worker-7" || cfg.Transport.Token != "agent-token" || cfg.Mode != "standby" ||
-		cfg.Provision.Firmware.URL != "https://caprf/firmware" {
-		t.Fatalf("hostname %q token %q mode %q firmware %q, want the archive hostname and the live agent settings",
-			cfg.Hostname, cfg.Transport.Token, cfg.Mode, cfg.Provision.Firmware.URL)
+		cfg.Provision.Firmware.URL != "https://caprf/firmware" || cfg.Provision.Image.FollowRedirects != nil {
+		t.Fatalf("hostname %q token %q mode %q firmware %q follow redirects %v, want the archive hostname and the live agent settings",
+			cfg.Hostname, cfg.Transport.Token, cfg.Mode, cfg.Provision.Firmware.URL, cfg.Provision.Image.FollowRedirects)
 	}
-	if strings.Join(keys, ",") != "FIRMWARE_URL,HOSTNAME,MODE,TOKEN" {
+	if strings.Join(keys, ",") != "FIRMWARE_URL,HOSTNAME,IMAGE_FOLLOW_REDIRECTS,MODE,TOKEN" {
 		t.Fatalf("keys = %v", keys)
 	}
 	for file, mode := range map[string]os.FileMode{
