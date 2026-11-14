@@ -25,14 +25,14 @@ func TestReportStatusRebootRequired(t *testing.T) {
 		t.Fatalf("REBOOT_URL: %v %q", err, cfg.Transport.RebootURL)
 	}
 	msg := "reboot-required reason=sriov-firmware adapters=0000:3b:00 settings=maxVFs"
-	if err := NewFromConfig(cfg).ReportStatus(context.Background(), config.StatusRebootRequired, msg); err != nil {
+	if err := mustClient(NewFromConfig(cfg)).ReportStatus(context.Background(), config.StatusRebootRequired, msg); err != nil {
 		t.Fatal(err)
 	}
 	if path != "/status/reboot-required" || body != msg {
 		t.Fatalf("posted %q %q", path, body)
 	}
 	// Without REBOOT_URL the status is skipped, not an error.
-	if err := NewFromConfig(&config.MachineConfig{}).ReportStatus(context.Background(), config.StatusRebootRequired, msg); err != nil {
+	if err := mustClient(NewFromConfig(&config.MachineConfig{})).ReportStatus(context.Background(), config.StatusRebootRequired, msg); err != nil {
 		t.Fatal(err)
 	}
 }

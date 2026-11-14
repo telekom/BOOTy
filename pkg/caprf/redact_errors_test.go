@@ -21,7 +21,7 @@ import (
 const leakURL = "http://127.0.0.1:1/upload?X-Amz-Signature=SECRETSIG123"
 
 func TestTransportErrorsRedactQueryCredentials(t *testing.T) {
-	c := NewFromConfig(&config.MachineConfig{})
+	c := mustClient(NewFromConfig(&config.MachineConfig{}))
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, leakURL, http.NoBody)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestTransportErrorsRedactQueryCredentials(t *testing.T) {
 }
 
 func TestTransportErrorsKeepCancelAndTimeout(t *testing.T) {
-	c := NewFromConfig(&config.MachineConfig{})
+	c := mustClient(NewFromConfig(&config.MachineConfig{}))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -77,7 +77,7 @@ func TestTransportErrorsRedactRedirectTarget(t *testing.T) {
 			w.Header().Set("Location", location)
 			w.WriteHeader(http.StatusFound)
 		}))
-		c := NewFromConfig(&config.MachineConfig{})
+		c := mustClient(NewFromConfig(&config.MachineConfig{}))
 		err := c.doPost(context.Background(), srv.URL+"/start", "{}")
 		srv.Close()
 		if err == nil {

@@ -44,7 +44,7 @@ func TestCrashArtifactsPreWipeUploadFromExistingRoot(t *testing.T) {
 			},
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 
 	result, err := crash.InspectStartup(context.Background(), cfg, disk.NewManager(nil), client, crash.InspectOptions{
 		MountPoint: filepath.Join(t.TempDir(), "crash-root"),
@@ -129,7 +129,7 @@ func TestCrashArtifactsNoEvidenceSkipsUpload(t *testing.T) {
 			},
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	result, err := crash.InspectStartup(context.Background(), cfg, disk.NewManager(nil), client, crash.InspectOptions{
 		MountPoint: filepath.Join(t.TempDir(), "crash-root"),
 		OutputDir:  t.TempDir(),
@@ -165,7 +165,7 @@ func TestCrashArtifactsUploadFailureIsNonFatal(t *testing.T) {
 			},
 		},
 	}
-	client := caprf.NewFromConfig(cfg)
+	client := mustClient(caprf.NewFromConfig(cfg))
 	result, err := crash.InspectStartup(context.Background(), cfg, disk.NewManager(nil), client, crash.InspectOptions{
 		MountPoint: filepath.Join(t.TempDir(), "crash-root"),
 		OutputDir:  t.TempDir(),
@@ -320,4 +320,12 @@ func mapKeys(values map[string][]byte) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+// mustClient returns the client of a NewFromConfig call that must succeed.
+func mustClient(c *caprf.Client, err error) *caprf.Client {
+	if err != nil {
+		panic(err)
+	}
+	return c
 }

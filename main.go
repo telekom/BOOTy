@@ -486,6 +486,7 @@ func runCAPRF(ctx context.Context) {
 	network.SetSkipTLSVerify(config.BoolOr(cfg.Transport.SkipTLSVerify, false))
 	image.SetFollowRedirects(config.BoolOr(cfg.Provision.Image.FollowRedirects, true))
 	image.RefreshHTTPClients()
+	provision.RefreshHTTPClients()
 
 	if cfg.ProvisionerFilesInRamdisk() {
 		// Like copy_files in the legacy common.sh: before any request, so
