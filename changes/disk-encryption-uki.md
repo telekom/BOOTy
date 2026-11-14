@@ -9,4 +9,4 @@ section: Upgrade notes for CAPRF
   ESP and the manifest annotation `com.github.telekom.booty.uki.sha256`.
   With `per-host` the provisioner must enroll the reported certificate
   (`secureBoot.uki.cert`) in `db` before it turns Secure Boot on. Nothing
-  changes with the defaults (#PR).
+  changes with the defaults (#942).
