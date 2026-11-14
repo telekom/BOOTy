@@ -417,7 +417,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 - `step made no progress within its budget, stopping the watchdog keepalive; the hardware resets the host`
 
-### WARN (373 messages)
+### WARN (375 messages)
 
 #### WARN `.`
 
@@ -482,6 +482,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 #### WARN `pkg/caprf`
 
+- `CA_BUNDLE_FILE has no effect on the CAPRF callbacks, the connectivity check and image downloads: SKIP_TLS_VERIFY=true skips their certificate check`
 - `command payload does not parse or validate`
 - `crash artifact prepare failed`
 - `crash artifact upload failed`
@@ -877,12 +878,16 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `setting the system clock failed`
 - `writing the RTC failed, the installed OS starts with the old time`
 
+#### WARN `pkg/trust`
+
+- `system root certificates unavailable, trusting only the CA bundle`
+
 #### WARN `pkg/watchdog`
 
 - `progress resumed, petting the watchdog again`
 - `watchdog keepalive failed`
 
-### INFO (464 messages)
+### INFO (465 messages)
 
 #### INFO `.`
 
@@ -1435,6 +1440,10 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `RTC updated`
 - `clock synchronized`
 - `measured clock skew`
+
+#### INFO `pkg/trust`
+
+- `added extra root certificates`
 
 #### INFO `pkg/watchdog`
 
