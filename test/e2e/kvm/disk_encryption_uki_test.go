@@ -182,12 +182,14 @@ func prepareUKIImage(t *testing.T, osImage, dir string, debs []string, ci *ukiKe
 		run(t, desc, "chroot", mnt, "/bin/sh", "-ec", script)
 	}
 	chroot("install the UKI tools", "export DEBIAN_FRONTEND=noninteractive; apt-get update -q; "+
-		"apt-get install -y -q --no-install-recommends systemd-ukify systemd-boot-efi sbsigntool python3-pefile")
+		"apt-get install -y -q --no-install-recommends systemd-ukify systemd-boot-efi sbsigntool python3-pefile; apt-get clean; df -h / /boot/efi")
 	for _, deb := range debs {
 		luksWriteImageFile(t, mnt, "tmp/"+filepath.Base(deb), readFile(t, deb), 0o644)
 		chroot("install "+filepath.Base(deb), "dpkg -i /tmp/"+filepath.Base(deb)+"; rm /tmp/"+filepath.Base(deb))
 	}
 
+	// The root file system of the cloud image is nearly full: the builder
+	// works in the tmpfs on /run.
 	// The builder's crypttab: generic, by the PARTUUID of the root, which
 	// BOOTy keeps. try-empty-password opens the volume until the first
 	// Secure Boot boot binds it to the TPM2.
@@ -202,8 +204,8 @@ func prepareUKIImage(t *testing.T, osImage, dir string, debs []string, ci *ukiKe
 for l in libtss2-esys.so.0 libtss2-rc.so.0 libtss2-mu.so.0 libtss2-tcti-device.so.0 cryptsetup/libcryptsetup-token-systemd-tpm2.so; do
 	libs="$libs $(ls /usr/lib/*-linux-gnu/$l)"
 done
-dracut --force --no-hostonly --add "crypt systemd-cryptsetup systemd-pcrextend" --omit "tpm2-tss plymouth" \
-	--install "/etc/crypttab $libs" /tmp/uki-initrd.img `+kver)
+dracut --force --no-hostonly --tmpdir /run --add "crypt systemd-cryptsetup systemd-pcrextend" --omit "tpm2-tss plymouth" \
+	--install "/etc/crypttab $libs" /run/uki-initrd.img `+kver)
 	luksWriteImageFile(t, mnt, "usr/local/lib/booty-luks-check.sh", []byte(ukiCheckScript), 0o755)
 	luksWriteImageFile(t, mnt, "etc/systemd/system/booty-luks-check.service", []byte(luksCheckUnit), 0o644)
 	if err := os.Symlink("/etc/systemd/system/booty-luks-check.service",
@@ -225,7 +227,7 @@ dracut --force --no-hostonly --add "crypt systemd-cryptsetup systemd-pcrextend" 
 		return ukiKeys{c(k.pcrKey), c(k.pcrPub), c(k.sbKey), c(k.sbCert)}
 	}
 	build := func(out, marker string, pcr, sb *ukiKeys) {
-		args := []string{"ukify", "build", "--linux=/boot/vmlinuz-" + kver, "--initrd=/tmp/uki-initrd.img", "--uname=" + kver,
+		args := []string{"ukify", "build", "--linux=/boot/vmlinuz-" + kver, "--initrd=/run/uki-initrd.img", "--uname=" + kver,
 			"--os-release=@/etc/os-release", "--output=" + out,
 			"--cmdline='root=UUID=" + rootFSUUID + " ro console=tty1 console=ttyS0 " + marker + "'"}
 		if pcr != nil {
@@ -241,9 +243,9 @@ dracut --force --no-hostonly --add "crypt systemd-cryptsetup systemd-pcrextend" 
 	img.ukiName = "ubuntu-" + kver + ".efi"
 	build("/boot/efi/EFI/Linux/"+img.ukiName, "booty.uki=v1", ci, ci)
 	for name, v := range variants {
-		build("/tmp/"+name+".efi", "booty.uki="+v.marker, &v.pcr, &v.sb)
+		build("/run/"+name+".efi", "booty.uki="+v.marker, &v.pcr, &v.sb)
 		dst := filepath.Join(dir, name+".efi")
-		copyBinary(t, filepath.Join(mnt, "tmp", name+".efi"), dst)
+		copyBinary(t, filepath.Join(mnt, "run", name+".efi"), dst)
 		img.variants[name] = dst
 	}
 	uki := readFile(t, filepath.Join(mnt, "boot/efi/EFI/Linux", img.ukiName))
@@ -253,7 +255,7 @@ dracut --force --no-hostonly --add "crypt systemd-cryptsetup systemd-pcrextend" 
 	if err := os.WriteFile(img.variants["v1"], uki, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	chroot("remove the builder files", "rm -rf /tmp/uki-keys /tmp/uki-initrd.img /tmp/*.efi; apt-get clean")
+	chroot("remove the builder files", "rm -rf /tmp/uki-keys; apt-get clean")
 	unmountAll()
 	run(t, "detach image", "losetup", "-d", loop)
 	img.gz = compressGzip(t, raw)
