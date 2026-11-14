@@ -150,6 +150,34 @@ RUN set -eu; \
       "$pkg" "$ver" "$pkg" "$(printf %s "$ver" | sed 's/%/%25/g; s/:/%3A/g; s/+/%2B/g')" \
       "$(dpkg --print-architecture)" "$VERSION_ID" "$(sha256sum /out/*.EFI | cut -d' ' -f1)" > /sbom-source.json
 
+# mok-enroll.efi: the EFI helper that writes the per-host module signing
+# certificate into the shim MokList on the BootNext boot after provisioning
+# (MODULE_SIGNING_ENROLLMENT=efi-helper, docs/module-signing.md). It is
+# unsigned on purpose, so the firmware runs it only while Secure Boot is off.
+# build.sh builds for the build platform (x86_64 or aarch64), with general
+# registers only, and rejects AVX code. binutils stamps the PE header with
+# SOURCE_DATE_EPOCH (reproducible builds).
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS mok-enroll
+ARG SOURCE_DATE_EPOCH=315532800
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+    gcc libc6-dev binutils gnu-efi \
+    && rm -rf /var/lib/apt/lists/*
+COPY hack/mok-enroll/build.sh hack/mok-enroll/mok-enroll.c /src/
+RUN mkdir /out && sh /src/build.sh /out/mok-enroll.efi
+# The ramdisk SBOM lists the helper as the gnu-efi package it links
+# statically (--target sbom-inputs); it matches the file by its SHA-256.
+RUN set -eu; \
+    . /etc/os-release; \
+    ver=$(dpkg-query -W -f '${Version}' gnu-efi); \
+    printf '{"name":"gnu-efi","version":"%s","purl":"pkg:deb/debian/gnu-efi@%s?arch=%s&distro=debian-%s","sha256":"%s"}\n' \
+      "$ver" "$(printf %s "$ver" | sed 's/%/%25/g; s/:/%3A/g; s/+/%2B/g')" \
+      "$(dpkg --print-architecture)" "$VERSION_ID" "$(sha256sum /out/mok-enroll.efi | cut -d' ' -f1)" > /sbom-source.json
+
+# The shipped helper on its own (--target mok-enroll-efi), for the KVM
+# module signing scenarios.
+FROM scratch AS mok-enroll-efi
+COPY --from=mok-enroll /out/mok-enroll.efi .
+
 # Build FRR (BGP/BFD/Zebra) for EVPN networking — use FRR official stable repo
 FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS frr
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
@@ -419,6 +447,7 @@ RUN ln -sf ../init bin/booty
 RUN mkdir -p usr/lib/booty
 COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
 COPY --from=efi-fallback /out/ usr/lib/booty/efi/
+COPY --from=mok-enroll /out/mok-enroll.efi usr/lib/booty/mok-enroll.efi
 
 # FRR binaries for EVPN networking
 COPY --from=frr /usr/lib/frr/bgpd sbin/bgpd
@@ -523,8 +552,8 @@ COPY --from=split-builder /split/ .
 # What hack/ramdisk_sbom.py needs besides an extracted ramdisk: the package
 # databases of the stages whose Debian files the ramdisks ship, the kernel
 # packages, and the components built in the build (LVM2, sfdisk, the GRUB
-# EFI loader), each with the SHA-256 of its file. Nothing here goes into a
-# ramdisk. The busybox stage ships growpart (cloud-guest-utils); slim-builder
+# EFI loader, mok-enroll.efi), each with the SHA-256 of its file. Nothing
+# here goes into a ramdisk. The busybox stage ships growpart (cloud-guest-utils); slim-builder
 # installs the same package from the same mirror.
 FROM scratch AS sbom-inputs
 COPY --from=tools /usr/lib/os-release os-release
@@ -539,6 +568,7 @@ COPY --from=kernel /sbom-dpkg/ dpkg/kernel/
 COPY --from=lvm /sbom-source.json source/lvm2.json
 COPY --from=sfdisk /sbom-source.json source/util-linux.json
 COPY --from=efi-fallback /sbom-source.json source/grub-efi.json
+COPY --from=mok-enroll /sbom-source.json source/gnu-efi.json
 
 # ── ISO build stage (optional, triggered by --target=iso) ──────────────────
 # UEFI boot image: Debian shim (Microsoft UEFI CA) + Debian-signed GRUB,
@@ -615,6 +645,7 @@ COPY --from=dev /go/src/github.com/telekom/BOOTy/init .
 RUN ln -sf ../init bin/booty
 RUN mkdir -p usr/lib/booty
 COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
+COPY --from=mok-enroll /out/mok-enroll.efi usr/lib/booty/mok-enroll.efi
 
 # Minimal networking tools (DHCP mode — no FRR, no BGP)
 COPY --from=tools /sbin/ip bin/ip
@@ -703,6 +734,7 @@ RUN ln -sf ../init bin/booty
 RUN mkdir -p usr/lib/booty
 COPY --from=dev /go/src/github.com/telekom/BOOTy/esp-sync usr/lib/booty/booty-esp-sync
 COPY --from=efi-fallback /out/ usr/lib/booty/efi/
+COPY --from=mok-enroll /out/mok-enroll.efi usr/lib/booty/mok-enroll.efi
 
 # LVM + sfdisk for disk management
 RUN mkdir -p sbin
@@ -890,6 +922,7 @@ COPY --from=dev-packages /lib/apk/db/installed apk/dev
 COPY --from=lvm /var/lib/dpkg/status dpkg/lvm
 COPY --from=sfdisk /var/lib/dpkg/status dpkg/sfdisk
 COPY --from=efi-fallback /var/lib/dpkg/status dpkg/efi-fallback
+COPY --from=mok-enroll /var/lib/dpkg/status dpkg/mok-enroll
 COPY --from=frr /var/lib/dpkg/status dpkg/frr
 COPY --from=kernel /var/lib/dpkg/status dpkg/kernel
 COPY --from=kernel /sbom-dpkg/status dpkg/kernel-packages
