@@ -122,6 +122,17 @@ func SignModuleTree(rootDir, commonName string) (*SignResult, error) {
 	return res, nil
 }
 
+// FindModules returns the modules that SignModuleTree signs, relative to
+// rootDir.
+func FindModules(rootDir string) ([]string, error) {
+	root, err := os.OpenRoot(rootDir)
+	if err != nil {
+		return nil, fmt.Errorf("open target root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	return findModules(root.FS())
+}
+
 // findModules returns the module files below lib/modules/*/{updates,extra}.
 func findModules(fsys fs.FS) ([]string, error) {
 	kernels, err := fs.ReadDir(fsys, "lib/modules")

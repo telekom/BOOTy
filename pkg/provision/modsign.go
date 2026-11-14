@@ -92,6 +92,23 @@ func onChrootBind(root, file string) bool {
 	return false
 }
 
+// checkModulesOnTarget refuses modules that resolve onto a ramdisk file
+// system bound into the chroot. os.Root keeps a symlink of the image inside
+// the target root, but /run, /proc, /sys and /dev there are the live ones of
+// the ramdisk, and signing rewrites the files.
+func checkModulesOnTarget(root string) error {
+	modules, err := secureboot.FindModules(root)
+	if err != nil {
+		return err //nolint:wrapcheck // names the step
+	}
+	for _, m := range modules {
+		if onChrootBind(root, filepath.Join(root, m)) {
+			return fmt.Errorf("module %s resolves to a ramdisk file system bound into the chroot", m)
+		}
+	}
+	return nil
+}
+
 // ReportModuleSigning is the module signing result. Cert (DER, base64 in
 // JSON) lets the provisioner enroll the certificate itself, for example into
 // db over Redfish (enrollment external). Modules counts the modules that
@@ -130,7 +147,11 @@ func (o *Orchestrator) signKernelModules(ctx context.Context) error {
 	o.moduleSigning = nil
 	switch sb.SigningMode() {
 	case config.SigningPerHost:
-		return o.moduleSigningResult("sign kernel modules", o.doSignKernelModules(ctx, sb.ModuleSigning))
+		err := checkModulesOnTarget(o.config.rootDir)
+		if err == nil {
+			err = o.doSignKernelModules(ctx, sb.ModuleSigning)
+		}
+		return o.moduleSigningResult("sign kernel modules", err)
 	case config.SigningCI:
 		return o.moduleSigningResult("read the CI module signing certificate", o.readCISigningCert(sb))
 	}
