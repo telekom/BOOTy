@@ -103,6 +103,7 @@ var failureCodes = []FailureCode{
 	{"BOOTY-DSK-028", ClassPermanent, AnyStep, "Disk encryption in stream-image failed: preflight (TPM, Secure Boot, tools), recovery key hand-off, image layout or LUKS2 format. Not retried: reprovision."},
 	{"BOOTY-EFI-012", ClassPermanent, "create-uki-boot-entry", "Creating the firmware boot entry for the signed UKI failed."},
 	{"BOOTY-DSK-027", ClassPermanent, "close-encrypted-disk", "Closing the LUKS2 mapping or growing the encrypted data partition failed."},
+	{"BOOTY-DSK-029", ClassHardware, "crypto-erase", "Crypto-erase of a LUKS2 device before the deprovision wipe failed: damaged header, cryptsetup luksErase, overwrite or check. DEPROVISION_CRYPTO_ERASE=false skips it."},
 
 	{"BOOTY-EFI-001", ClassEnvironment, "mount-efivarfs", "Mounting efivarfs failed."},
 	{"BOOTY-EFI-002", ClassEnvironment, AnyStep, "EFI variables unavailable."},
@@ -113,6 +114,8 @@ var failureCodes = []FailureCode{
 	{"BOOTY-EFI-007", ClassPermanent, "verify-secureboot-chain", "Secure Boot chain verification failed."},
 	{"BOOTY-EFI-008", ClassHardware, "create-efi-boot-entry", "Creating the EFI boot entry failed."},
 	{"BOOTY-EFI-009", ClassHardware, "create-mirror-efi-boot-entry", "Creating the mirror EFI boot entry failed."},
+	{"BOOTY-EFI-010", ClassPermanent, "sign-kernel-modules", "Signing the out-of-tree kernel modules failed."},
+	{"BOOTY-EFI-011", ClassPermanent, "enroll-module-signing-key", "Enrolling the module signing key failed."},
 
 	{"BOOTY-OS-001", ClassConfig, "configure-overlayfs", "Overlay file system configuration failed."},
 	{"BOOTY-OS-002", ClassConfig, "set-hostname", "Setting the host name failed."},

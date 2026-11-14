@@ -78,7 +78,7 @@ values are false.
 
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
-| `MODE` | `provision` | `provision`, `deprovision`, `hard`, `soft-deprovision`, `soft`, `decommission`, `standby`, `dry-run`, `check` | Operating mode. `hard` is an alias of `deprovision`, `soft` is an alias of `soft-deprovision`. `deprovision` wipes the disks and removes the EFI boot entries. `soft-deprovision` renames `grub.cfg`. `decommission` wipes every disk and removes every EFI boot entry, and logs failures without stopping. `check` runs the health checks only. |
+| `MODE` | `provision` | `provision`, `deprovision`, `hard`, `soft-deprovision`, `soft`, `decommission`, `standby`, `dry-run`, `check` | Operating mode. `hard` is an alias of `deprovision`, `soft` is an alias of `soft-deprovision`. `deprovision` crypto-erases LUKS2 headers (`DEPROVISION_CRYPTO_ERASE`), wipes the disks and removes the EFI boot entries. `soft-deprovision` renames `grub.cfg`. `decommission` wipes every disk and removes every EFI boot entry, and logs failures without stopping. `check` runs the health checks only. |
 | `DRY_RUN` | `false` | boolean | Sets `MODE=dry-run`. Dry-run skips the network setup and the token flow, runs read-only checks and reports the result. |
 | `HOSTNAME` | (unset) | host name | Machine name. BOOTy writes it into the target OS, sends it to `TOKEN_URL`, and with `RAMDISK_HOSTNAME=true` sets it as the ramdisk host name for provisioning. |
 | `PROVISION_TARGET_OS` | (unset) | `linux` | Target OS class. Provisioning preflight fails when it is empty or not `linux`. Alias: `TARGET_OS`. |
@@ -145,6 +145,18 @@ process environment. The `TOKEN_URL` client uses no proxy and always verifies
 TLS, also with `SKIP_TLS_VERIFY=true` or `EXPORT_VARS=true`. All clients
 verify against the system roots of the ramdisk plus the `CA_BUNDLE_FILE`
 roots.
+
+## Logging
+
+See [Logging](logging.md) for what each level logs, the line format and the
+destinations. `LOG_URL` and `LOG_FLUSH_TIMEOUT_SEC` are in
+[CAPRF endpoints, authentication and transport](#caprf-endpoints-authentication-and-transport).
+
+| Key | Default | Values | Description |
+|-----|---------|--------|-------------|
+| `LOG_LEVEL` | (unset) (`info`) | `debug`, `info`, `warn` (or `warning`), `error`, any letter case | Lowest level that BOOTy logs on the console and ships to `LOG_URL`. Also read from the process environment (kernel command line) at start; the vars entry wins. An invalid value logs `ignoring log setting` and uses `info`; it does not stop the run. YAML `transport.logLevel`. |
+| `LOG_FORMAT` | (unset) (`text`) | `text`, `json`, any letter case | Console line format: slog `key=value` text or one JSON object per line. `LOG_URL` lines keep their `[LEVEL] message key=value` form. Also read from the process environment, like `LOG_LEVEL`; an invalid value uses `text`. Output that bypasses slog (download progress, `dd`, FRR start, rescue messages) stays plain text. YAML `transport.logFormat`. |
+| `DEBUG_URL` | (unset) | URL | BOOTy sends the kernel ring buffer (`dmesg`, redacted) to this URL once, after the vars file is read. A failure is logged at warning level. |
 
 ## Time sync
 
@@ -277,6 +289,9 @@ behaviour changes of this mode.
 | `IMAGE_SIGNATURE_URL` | (unset) | URL | Detached GPG signature of the image. Not supported for `oci://` sources. |
 | `IMAGE_GPG_PUBKEY` | (unset) | file path in the ramdisk | Public key for `IMAGE_SIGNATURE_URL`. |
 | `IMAGE_COSIGN_PUBKEYS` | (unset) | comma-separated PEM public key paths in the ramdisk | Before the wipe, an `oci://` image source must be pinned by digest and carry a cosign signature by one of the keys; an HTTP source needs `IMAGE_CHECKSUM`. See [cosign verification](../README.md#cosign-verification-of-oci-images-and-sysexts). A file may hold several `PUBLIC KEY` blocks (key rotation). Independent of `SYSEXT_COSIGN_PUBKEYS`; set both. Protects against a compromised registry or transport, not against whoever controls the vars (see [threat model](#cosign-threat-model)). YAML `provision.image.cosignPublicKeys`. |
+| `IMAGE_COSIGN_TRUSTED_ROOT` | (unset) | Sigstore `trusted_root.json` path in the ramdisk | Keyless cosign verification: before the wipe, an `oci://` image source must be pinned by digest and carry a keyless signature (Fulcio certificate with an SCT, Rekor entry) that verifies against this trusted root offline; it is never fetched. Needs `IMAGE_COSIGN_IDENTITY_REGEXP` and `IMAGE_COSIGN_OIDC_ISSUER`; a missing one fails `verify-image`. With `IMAGE_COSIGN_PUBKEYS` too, a signature of either kind is accepted. See [keyless verification](../README.md#keyless-cosign-verification). YAML `provision.image.cosignTrustedRoot`. |
+| `IMAGE_COSIGN_IDENTITY_REGEXP` | (unset) | Go regexp | Identity (URI or e-mail SAN) of the signing certificate; must match the whole SAN, as if wrapped in `^(?:...)$`. YAML `provision.image.cosignIdentityRegexp`. |
+| `IMAGE_COSIGN_OIDC_ISSUER` | (unset) | URL | OIDC issuer extension of the signing certificate; exact match. YAML `provision.image.cosignOIDCIssuer`. |
 | `IMAGE_MODE` | `whole-disk` | `whole-disk`, `partition`, `ab` | How BOOTy writes the image. See [A/B partitioning](#ab-partitioning) for `ab`. |
 | `IMAGE_SOURCE_ROOT_LABEL` | (unset) | GPT partition label | Source image root partition to stream into a `PARTITION_LAYOUT` root. Excludes `IMAGE_SOURCE_ROOT_PARTITION`. |
 | `IMAGE_SOURCE_ROOT_PARTITION` | `0` | 1-based partition number | Same as `IMAGE_SOURCE_ROOT_LABEL`, by number. |
@@ -512,6 +527,11 @@ These keys apply to the provision and deprovision modes.
 | `SECUREBOOT_SHIM_SHA256` | (unset) | 64 hex digits, optional `sha256:` prefix | Expected digest of the installed shim. |
 | `SECUREBOOT_GRUB_SHA256` | (unset) | same | Expected digest of the installed GRUB EFI binary. |
 | `SECUREBOOT_KERNEL_SHA256` | (unset) | same | Expected digest of the installed kernel. |
+| `SECUREBOOT_SIGNING` | `off` | `per-host`, `ci`, `off` | Who signs the out-of-tree kernel modules of the target (`/lib/modules/*/{updates,extra}`). `per-host`: BOOTy signs them with a new per-host key, which exists only in memory, runs depmod and rebuilds the initramfs. `ci`: the image arrives signed by CI, and BOOTy holds no key and only enrolls `MOK_CERT_PATH`. `off`: nothing is signed or enrolled, and provisioning runs as without the feature. See [module signing](module-signing.md). |
+| `MOK_CERT_PATH` | (unset) | absolute path in the target | With `SECUREBOOT_SIGNING=ci`: the DER certificate of the CI key that signed the modules, enrolled like the per-host one. It must have the module-signing-only EKU `1.3.6.1.4.1.2312.16.1.2`. |
+| `MODULE_SIGNING_ENROLLMENT` | `efi-helper` | `efi-helper`, `mokutil`, `external` | How the firmware learns the certificate: `efi-helper` boots `mok-enroll.efi` once to write MokList (Secure Boot must be off while provisioning and at the next boot, so not with `SECUREBOOT_REENABLE=true`); `mokutil` queues it for one MokManager confirmation with `MOK_PASSWORD`; `external` leaves it to the provisioner (for example Redfish db enrollment). |
+| `MODULE_SIGNING_CERT_DIR` | `/usr/share/booty/secureboot` | absolute path outside `/run`, `/proc`, `/sys`, `/dev` | Target directory of `booty-module-signing.der`. |
+| `MODULE_SIGNING_ALLOW_FAILURE` | `false` | boolean | Continue provisioning when signing or enrollment fails. By default provisioning fails. A failure after a module was rewritten always fails. |
 | `SECUREBOOT_PINNED_DIGESTS` | (unset) | JSON object with keys `shim`, `grub`, `kernel` | All pins in one key. A single-component key wins over its entry here. |
 
 ## Disk encryption
@@ -521,15 +541,17 @@ Requires a TPM2, Secure Boot in user mode, a whole-disk raw GPT image whose
 encrypted partition is the last one, and an image with dracut,
 `systemd-cryptsetup` and the TPM2 libraries. Turns kexec off. Without
 `DISK_ENCRYPTION` none of this changes anything. A standby command payload
-or deploy archive can change only `DISK_ENCRYPTION_TARGET`.
+or deploy archive can change only `DISK_ENCRYPTION_TARGET`, and not
+`DEPROVISION_CRYPTO_ERASE`.
 
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
-| `DISK_ENCRYPTION` | (unset) | `luks2-tpm2`, `luks2-tpm2-uki` | Format `DISK_ENCRYPTION_TARGET` with LUKS2 while the image is written and write that partition into the opened volume. The installed system binds it to the TPM2 (PCR 7+14) on its first boot with Secure Boot on. `luks2-tpm2-uki`: the installed system boots the signed UKI of the image and binds to PCR 7 and a signed PCR 11 policy; needs `SECUREBOOT_SIGNING` and `IMAGE_COSIGN_PUBKEYS` (see [disk-encryption.md](disk-encryption.md#signed-uki-and-pcr-11)). Not with disk mirroring, RAID, `PARTITION_LAYOUT`, an image mode other than `whole-disk`, or `SKIP_TLS_VERIFY` (also not its `CAPRF_LEGACY_COMPAT` preset). YAML `provision.diskEncryption.mode`. |
-| `DISK_ENCRYPTION_TARGET` | `root` | `root`, partition number | Partition of the image to encrypt. Must be the last partition, ext4 for a data partition; not the ESP. The root needs a separate `/boot` partition. YAML `provision.diskEncryption.target`. |
+| `DISK_ENCRYPTION` | (unset) | `luks2-tpm2`, `luks2-tpm2-uki` | Format `DISK_ENCRYPTION_TARGET` with LUKS2 while the image is written and write that partition into the opened volume. The installed system binds it to the TPM2 (PCR 7+14) on its first boot with Secure Boot on. `luks2-tpm2-uki`: the installed system boots the signed UKI of the image and binds to PCR 7 and a signed PCR 11 policy; needs `SECUREBOOT_SIGNING` and a cosign-verified image (see [disk-encryption.md](disk-encryption.md#signed-uki-and-pcr-11)). Not with disk mirroring, RAID, `PARTITION_LAYOUT`, an image mode other than `whole-disk`, or `SKIP_TLS_VERIFY` (also not its `CAPRF_LEGACY_COMPAT` preset). YAML `provision.diskEncryption.mode`. |
+| `DISK_ENCRYPTION_TARGET` | `root` | `root`, partition number | Partition of the image to encrypt. Must be the last partition, ext4 for a data partition; not the ESP. The root needs a separate `/boot` partition. A partition of the Linux LVM type is the physical volume of VG `tcaas`; `root` selects it when the image has no Linux filesystem or Discoverable Partitions root partition and one LVM partition and the root is on LVM; a number makes it a data VG (see [Root on LVM](disk-encryption.md#root-on-lvm-vg-tcaas)). YAML `provision.diskEncryption.target`. |
 | `DISK_ENCRYPTION_RECOVERY_KEY_URL` | (unset) | URL | Required with `DISK_ENCRYPTION`. BOOTy posts the recovery key here (JSON, bearer token) before it formats the partition; any answer other than 2xx, a redirect included, fails the run. HTTPS with TLS verification (`CA_BUNDLE_FILE` roots apply); plain HTTP only on loopback, `INSECURE_TRANSPORT` does not apply. BOOTy never logs or stores the key. YAML `provision.diskEncryption.recoveryKeyURL`. |
 | `DISK_ENCRYPTION_STATUS_URL` | (unset) | https URL | The installed system posts the enrollment result here (`tpm2-bound`, `slot1-removed` or `failed`; JSON, the bearer token of the provisioning run, no key). Best effort. The token is stored in the target until the enrollment ends. YAML `provision.diskEncryption.statusURL`. |
 | `DISK_ENCRYPTION_ALLOW_FAILURE` | `false` | `true`, `false`, `1`, `0`, `yes`, `no` | Provision without encryption when a check before the first disk write fails (no TPM, Secure Boot check, ramdisk tools, unsupported image layout). Errors after the first write always fail the run. Any other value stops the parse. YAML `provision.diskEncryption.allowFailure`. |
+| `DEPROVISION_CRYPTO_ERASE` | `true` | `true`, `false`, `1`, `0`, `yes`, `no`; empty is the default | `deprovision`/`hard` and `decommission` crypto-erase every LUKS2 header on the disks that they wipe, right before the wipe: `cryptsetup luksErase`, then zeros over both header copies and the keyslots area, then a check that no header copy is left. A host without LUKS2 runs no tool and sees no change. Any failure, also a damaged header, fails the run (`BOOTY-DSK-029`); a device that cannot be read is skipped and named in the status. `false` skips the step. A standby command payload or deploy archive cannot change it. Any other value stops the parse. See [Crypto-erase at deprovision](disk-encryption.md#crypto-erase-at-deprovision). YAML `deprovision.cryptoErase`. |
 | `DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK` | `false` | same as above | Encrypt although the firmware has no Secure Boot or is in setup mode (no PK). The installed system still binds only with Secure Boot on in user mode; until then the enrollment key unlocks. YAML `provision.diskEncryption.skipSecureBootCheck`. |
 | `DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE` | (unset) | path | With `luks2-tpm2-uki` and `SECUREBOOT_SIGNING=ci`: PEM public key file in the ramdisk that the `.pcrpkey` section of the UKI must equal, pinned like `IMAGE_COSIGN_PUBKEYS`. Unset: the `.pcrpkey` of the verified UKI is used. YAML `provision.diskEncryption.pcrPublicKeyFile`. |
 | `SECUREBOOT_SIGNING` | `off` | `off`, `per-host`, `ci` | Who signs the UKI of `DISK_ENCRYPTION=luks2-tpm2-uki`. `per-host`: BOOTy makes a PCR policy key and a Secure Boot key for this host, signs the UKI, and wipes both private keys; the provisioner enrolls the reported certificate in `db`. `ci`: the image pipeline signed the UKI; BOOTy makes no key. Here it acts with `DISK_ENCRYPTION=luks2-tpm2-uki` only; per-host module signing (#935) uses the same setting. A standby command payload or deploy archive cannot change it. YAML `provision.secureBoot.signing`. |
@@ -547,16 +569,41 @@ See [Sysext provisioning](sysext-provisioning.md).
 | `SYSEXT_ACTIVE_DIR` | `/var/lib/extensions` | target path | Directory for active layers. |
 | `SYSEXT_ALLOW_INSECURE_HTTP` | `false` | boolean | Accept `http://` layer sources. |
 | `SYSEXT_COSIGN_PUBKEYS` | (unset) | comma-separated PEM public key paths in the ramdisk | Before the wipe, every `oci://` layer source must be pinned by digest and carry a cosign signature by one of the keys; other sources keep `sha256`. Independent of `IMAGE_COSIGN_PUBKEYS`; set both. YAML `provision.sysext.cosignPublicKeys`. |
+| `SYSEXT_COSIGN_TRUSTED_ROOT` | (unset) | Sigstore `trusted_root.json` path in the ramdisk | Keyless verification of every `oci://` layer source, as `IMAGE_COSIGN_TRUSTED_ROOT` for the image. Needs `SYSEXT_COSIGN_IDENTITY_REGEXP` and `SYSEXT_COSIGN_OIDC_ISSUER`. YAML `provision.sysext.cosignTrustedRoot`. |
+| `SYSEXT_COSIGN_IDENTITY_REGEXP` | (unset) | Go regexp | Whole-SAN match for sysext signatures. YAML `provision.sysext.cosignIdentityRegexp`. |
+| `SYSEXT_COSIGN_OIDC_ISSUER` | (unset) | URL | OIDC issuer of sysext signatures; exact match. YAML `provision.sysext.cosignOIDCIssuer`. |
 
 ### Cosign threat model
 
-`IMAGE_COSIGN_PUBKEYS` and `SYSEXT_COSIGN_PUBKEYS` protect against a
-compromised registry or transport: bytes that are not signed by a configured
-key are not written. They do not protect against whoever controls the
+The cosign options (`IMAGE_COSIGN_*`, `SYSEXT_COSIGN_*`, keys or keyless)
+protect against a compromised registry or transport: bytes that are not
+signed by a configured key or identity are not written. They do not protect against whoever controls the
 provisioning vars, who can clear the keys, switch the image to an HTTP source
 with their own `IMAGE_CHECKSUM`, or pin an older digest that is still signed.
-The two options are independent: image keys do not check sysexts and sysext
-keys do not check the image, so set both. Both are unset by default. See
+The image and the sysext options are independent: image keys do not check
+sysexts and sysext keys do not check the image, so set both. All are unset by
+default. Keys and a keyless policy can be set together; a signature of either
+kind is then accepted, so the weaker one decides. A standby command payload
+can not change any cosign option, nor add a source that is not `oci://` or
+change its checksum while a policy is set (see
+[command payload](caprf-integration.md#command-payload)).
+
+Keyless signature formats: Sigstore bundles v0.1, v0.2 and v0.3 (both media
+type forms) as OCI referrers, with the DSSE in-toto statement of
+`cosign sign` (predicate `https://sigstore.dev/cosign/sign/v1`), and the
+cosign 2 `.sig` tag;
+Rekor v1 entries (SET, inclusion proof and checkpoint) and Rekor v2 entries
+(`hashedrekord` 0.0.2, inclusion proof and signed-note checkpoint); RFC 3161
+timestamps of the trusted root's `timestampAuthorities` (signed by the
+certificate that their ESS `signingCertificate(V2)` attribute names). A log
+listed more than once under one ID is used with the copy valid at the
+checked time. The certificate is
+checked at each verified time (Rekor v1 integrated time, RFC 3161 time) and
+needs at least one, so a Rekor v2 signature needs a timestamp. Every Rekor
+entry must verify; a timestamp that does not verify is ignored. As in
+cosign, a message signature bundle (`cosign sign-blob` of the manifest) is no
+image signature. Public-key bundles and Rekor v2 `dsse` entries are refused. See
+[keyless verification](../README.md#keyless-cosign-verification). See
 [cosign verification](../README.md#cosign-verification-of-oci-images-and-sysexts).
 
 ## OverlayFS
@@ -656,6 +703,7 @@ of waiting for the CAPRF provision timeout.
   | `stream-image` | 1 h | Image modes that write with `dd`; the HTTP download reports every written byte |
   | `mirror-root`, `check-filesystem`, `resize-filesystem` | 1 h | Copies and file system checks of large file systems |
   | `run-machine-commands`, `run-post-provision-cmds` | 1 h | Operator commands |
+  | `sign-kernel-modules` | 1 h | Module signing and initramfs rebuilds (`SECUREBOOT_SIGNING=per-host`) |
   | `close-encrypted-disk` | 1 h | Grows the file system of an encrypted data partition offline |
   | every other step | `WATCHDOG_TIMEOUT_SEC` (300 s) | |
 
@@ -699,10 +747,8 @@ BOOTy parses these keys, but no code acts on the value:
 
 | Key | Note |
 |-----|------|
-| `DEBUG_URL` | No code sends to it. Debug dumps go to the log, and `LOG_URL` ships them. |
 | `leaf_asn` | Logged in the debug dump only. |
-| `MOK_CERT_PATH` | MOK enrollment is not implemented. |
-| `MOK_PASSWORD` | MOK enrollment is not implemented. |
+| `MOK_PASSWORD` | Used only by `MODULE_SIGNING_ENROLLMENT=mokutil`. |
 | `RESCUE_TIMEOUT` | See [Rescue](#rescue). |
 
 ## Planned

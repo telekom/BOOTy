@@ -53,6 +53,7 @@ func TestRedactTextKeepsPlainText(t *testing.T) {
 		"authorization policy loaded",
 		"passphrase file missing",
 		"module verification failed: signature and/or required key missing",
+		"provision step verify-image: verifying image signature: cosign signature verification failed",
 		"design=final signals=3",
 	} {
 		if got := RedactText(in); got != in {

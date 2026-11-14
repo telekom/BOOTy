@@ -435,9 +435,7 @@ func namesPartition(source string) bool {
 // dracut where that is missing. Without mdadm in the target, update-initramfs
 // still succeeds but the initramfs cannot assemble the root array.
 const mirrorInitramfsCmd = "if ! command -v mdadm >/dev/null 2>&1; then " +
-	"echo 'mdadm is not installed in the target image' >&2; exit 1; fi; " +
-	"if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u -k all; " +
-	"else dracut --force --regenerate-all; fi"
+	"echo 'mdadm is not installed in the target image' >&2; exit 1; fi; " + initramfsUpdateCmd
 
 // mdadmConfHeader matches raid_save_mdadm_config of the CAPRF legacy
 // provisioner (common.sh), including its AUTO line: the installed system

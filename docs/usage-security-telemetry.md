@@ -29,10 +29,9 @@ need Secure Boot to be on.
 Planned: Authenticode signature checks of the boot chain. See
 [proposal-secureboot-full-chain.md](proposal-secureboot-full-chain.md).
 
-Planned: MOK enrollment. BOOTy parses `MOK_CERT_PATH` and `MOK_PASSWORD`,
-but no code uses them. The `pkg/secureboot` library has a `mokutil` wrapper
-(`NewMOKEnroller`), but the provisioning flow does not call it. See
-[proposal-secureboot.md](proposal-secureboot.md).
+MOK enrollment (experimental, opt-in): `SECUREBOOT_SIGNING=per-host` signs
+out-of-tree modules with a per-host key, and `ci` enrolls the CI certificate
+in `MOK_CERT_PATH`. See [module-signing.md](module-signing.md).
 
 ## TPM
 

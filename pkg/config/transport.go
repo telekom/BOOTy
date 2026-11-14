@@ -68,6 +68,15 @@ type TransportConfig struct {
 	// Default: nil (5)
 	LogFlushTimeoutSec *int `yaml:"logFlushTimeoutSec,omitempty" json:"logFlushTimeoutSec,omitempty"`
 
+	// LogLevel is the lowest level that BOOTy logs on the console and ships
+	// to LogURL: debug, info, warn or error. See docs/logging.md.
+	// Default: "" (info)
+	LogLevel string `yaml:"logLevel,omitempty" json:"logLevel,omitempty"`
+
+	// LogFormat is the console log format: text or json.
+	// Default: "" (text)
+	LogFormat string `yaml:"logFormat,omitempty" json:"logFormat,omitempty"`
+
 	// InitURL is the endpoint to report provisioning start.
 	// Also used as the primary connectivity check target.
 	// Default: ""

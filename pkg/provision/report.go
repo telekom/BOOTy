@@ -125,8 +125,9 @@ type ReportEncryption struct {
 
 // ReportSecureBoot is the firmware Secure Boot state during provisioning.
 type ReportSecureBoot struct {
-	State    string `json:"state"`
-	ReEnable bool   `json:"reEnable,omitempty"`
+	State         string               `json:"state"`
+	ReEnable      bool                 `json:"reEnable,omitempty"`
+	ModuleSigning *ReportModuleSigning `json:"moduleSigning,omitempty"`
 	// UKI is the signed UKI of DISK_ENCRYPTION=luks2-tpm2-uki.
 	UKI *ReportUKI `json:"uki,omitempty"`
 }
@@ -163,14 +164,14 @@ func (o *Orchestrator) buildReport(ctx context.Context) *ProvisionReport {
 		},
 		Disk:       ReportDisk{Device: o.targetDisk, RootPartition: o.rootPartition, Layout: o.reportLayout(ctx)},
 		Encryption: reportEncryption(o.config.rootDir),
-		SecureBoot: ReportSecureBoot{State: reportSecureBootState(), ReEnable: cfg.SecureBoot.ReEnable, UKI: o.reportUKI()},
+		SecureBoot: ReportSecureBoot{State: reportSecureBootState(), ReEnable: cfg.SecureBoot.ReEnable, ModuleSigning: o.moduleSigning, UKI: o.reportUKI()},
 		Sysexts:    reportSysexts(&cfg.Sysext),
 	}
 	if strings.TrimSpace(cfg.Image.Checksum) != "" {
 		r.Verification.Checksum = ReportStateVerified
 	}
 	switch {
-	case len(cfg.Image.CosignPublicKeys) > 0 && image.IsOCIReference(o.bestImageURL):
+	case imageCosignPolicy(&cfg.Image).enabled() && image.IsOCIReference(o.bestImageURL):
 		r.Verification.Signature = ReportSignatureResult{Method: "cosign", Result: ReportStateVerified}
 	case cfg.Image.SignatureURL != "":
 		r.Verification.Signature = ReportSignatureResult{Method: "gpg", Result: ReportStateVerified}

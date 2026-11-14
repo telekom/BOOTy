@@ -24,8 +24,6 @@ func applyDiskEncryptionVar(cfg *config.MachineConfig, key, value string) (bool,
 		d.RecoveryKeyURL = strings.TrimSpace(value)
 	case "DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE":
 		d.PCRPublicKeyFile = strings.TrimSpace(value)
-	case "SECUREBOOT_SIGNING":
-		cfg.Provision.SecureBoot.Signing = strings.ToLower(strings.TrimSpace(value))
 	case "DISK_ENCRYPTION_STATUS_URL":
 		d.StatusURL = strings.TrimSpace(value)
 	case "DISK_ENCRYPTION_ALLOW_FAILURE":

@@ -354,7 +354,7 @@ func TestUKIBootEntryStep(t *testing.T) {
 		return n
 	}
 	uki := strings.Join(names(config.DiskEncryptionLUKS2TPM2UKI), " ")
-	if !strings.Contains(uki, "create-mirror-efi-boot-entry create-uki-boot-entry teardown-chroot") {
+	if !strings.Contains(uki, "create-mirror-efi-boot-entry enroll-module-signing-key create-uki-boot-entry teardown-chroot") {
 		t.Fatalf("steps: %s", uki)
 	}
 	for _, mode := range []string{"", config.DiskEncryptionLUKS2TPM2} {

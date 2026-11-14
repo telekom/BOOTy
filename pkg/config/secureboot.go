@@ -14,9 +14,17 @@ type SecureBootConfig struct {
 	// Default: {} (digest enforcement disabled)
 	PinnedDigests map[string]string `yaml:"pinnedDigests" json:"pinnedDigests"`
 
-	// MOKCertPath is the path to a DER-encoded MOK certificate for enrollment.
-	// The certificate is enrolled via mokutil so the installed OS trusts
-	// custom-signed kernel modules.
+	// Signing selects who signs the out-of-tree kernel modules of the
+	// target: per-host (BOOTy, with a key that exists only while
+	// provisioning), ci (the image arrives signed; BOOTy only enrolls
+	// MOKCertPath) or off. See docs/module-signing.md. With
+	// DISK_ENCRYPTION=luks2-tpm2-uki it selects the signer of the UKI too
+	// (docs/disk-encryption.md#signed-uki-and-pcr-11).
+	// Default: off
+	Signing string `yaml:"signing" json:"signing"`
+
+	// MOKCertPath is the absolute path in the target of the DER certificate
+	// that signed the modules, for Signing ci.
 	// Default: ""
 	MOKCertPath string `yaml:"mokCertPath" json:"mokCertPath"`
 
@@ -24,26 +32,85 @@ type SecureBootConfig struct {
 	// Default: ""
 	MOKPassword string `yaml:"mokPassword" json:"mokPassword"`
 
-	// Signing selects who signs the boot artifacts that BOOTy installs:
-	// "off", "per-host" (BOOTy makes a key per host, signs, and wipes the
-	// key) or "ci" (the image arrives signed; BOOTy only verifies and
-	// enrolls the public material). Used by the disk encryption mode
-	// luks2-tpm2-uki (docs/disk-encryption.md#signed-uki-and-pcr-11).
-	// Default: "off"
-	Signing string `yaml:"signing" json:"signing"`
+	// ModuleSigning configures Signing per-host and ci: enrollment,
+	// certificate directory and failure handling.
+	ModuleSigning ModuleSigningConfig `yaml:"moduleSigning" json:"moduleSigning"`
 }
 
-// Secure Boot signing modes (SecureBootConfig.Signing), as in #935.
+// Secure Boot signing modes (SecureBootConfig.Signing).
 const (
-	SigningOff     = "off"
+	// SigningOff signs and enrolls nothing: provisioning as without the
+	// feature.
+	SigningOff = "off"
+	// SigningPerHost signs the modules with a new per-host key and enrolls
+	// its certificate.
 	SigningPerHost = "per-host"
-	SigningCI      = "ci"
+	// SigningCI enrolls MOKCertPath, the certificate of the CI key that
+	// signed the modules of the image. BOOTy holds no private key.
+	SigningCI = "ci"
 )
 
-// SigningMode returns Signing or the default "off".
+// SigningMode returns Signing or the default, off.
 func (s *SecureBootConfig) SigningMode() string {
 	if s.Signing == "" {
 		return SigningOff
 	}
 	return s.Signing
+}
+
+// Module signing enrollment methods.
+const (
+	// ModuleSigningEnrollEFIHelper boots mok-enroll.efi once (BootNext) to
+	// write the certificate into MokList. Needs Secure Boot off during
+	// provisioning.
+	ModuleSigningEnrollEFIHelper = "efi-helper"
+	// ModuleSigningEnrollMokutil queues the certificate with mokutil
+	// --import; MokManager asks for MOKPassword once at the console.
+	ModuleSigningEnrollMokutil = "mokutil"
+	// ModuleSigningEnrollExternal only installs and reports the
+	// certificate; the provisioner enrolls it, for example into db over
+	// Redfish.
+	ModuleSigningEnrollExternal = "external"
+)
+
+// DefaultModuleSigningCertDir is where the certificate is installed in the
+// target.
+const DefaultModuleSigningCertDir = "/usr/share/booty/secureboot"
+
+// ModuleSigningConfig controls per-host signing of out-of-tree modules.
+type ModuleSigningConfig struct {
+	// Enrollment is efi-helper (default), mokutil or external.
+	Enrollment string `yaml:"enrollment" json:"enrollment"`
+	// CertDir is the absolute target directory for the DER certificate.
+	// Default: /usr/share/booty/secureboot
+	CertDir string `yaml:"certDir" json:"certDir"`
+	// AllowFailure continues provisioning when signing or enrollment fails.
+	// Default: false (fail closed)
+	AllowFailure bool `yaml:"allowFailure" json:"allowFailure"`
+}
+
+// EnrollmentMethod returns Enrollment or the default.
+func (m ModuleSigningConfig) EnrollmentMethod() string {
+	if m.Enrollment == "" {
+		return ModuleSigningEnrollEFIHelper
+	}
+	return m.Enrollment
+}
+
+// CertDirOrDefault returns CertDir or the default.
+func (m ModuleSigningConfig) CertDirOrDefault() string {
+	if m.CertDir == "" {
+		return DefaultModuleSigningCertDir
+	}
+	return m.CertDir
+}
+
+// NeedsFirmwareReboot reports whether the handoff must go through the
+// firmware instead of kexec: Secure Boot is re-enabled, or a module signing
+// certificate is enrolled. That takes effect at the next firmware boot with
+// every enrollment method.
+func (s *SecureBootConfig) NeedsFirmwareReboot() bool {
+	// external too: a certificate enrolled in db over Redfish takes effect at
+	// the next POST, and kexec would start the kernel without it.
+	return s.ReEnable || s.SigningMode() != SigningOff
 }

@@ -61,11 +61,15 @@ func TestValidateUKISigning(t *testing.T) {
 		{"per-host", uki("per-host"), ""},
 		{"ci with pinned key", func(c *Config) { uki("ci")(c); c.Provision.DiskEncryption.PCRPublicKeyFile = "/pcr.pem" }, ""},
 		{"uki without signer", uki(""), `needs provision.secureBoot.signing "per-host" or "ci"`},
-		{"uki without cosign", func(c *Config) { uki("ci")(c); c.Provision.Image.CosignPublicKeys = nil }, "needs provision.image.cosignPublicKeys"},
+		{"uki without cosign", func(c *Config) { uki("ci")(c); c.Provision.Image.CosignPublicKeys = nil }, "needs cosign verification of the image"},
 		{"pinned key with per-host", func(c *Config) { uki("per-host")(c); c.Provision.DiskEncryption.PCRPublicKeyFile = "/pcr.pem" }, "BOOTy makes the key"},
 		{"signer without uki", func(c *Config) { c.Provision.SecureBoot.Signing = "ci" }, ""},
 		{"pinned key without uki", func(c *Config) { c.Provision.DiskEncryption.PCRPublicKeyFile = "/pcr.pem" }, `needs provision.diskEncryption.mode "luks2-tpm2-uki"`},
-		{"bad signer", func(c *Config) { c.Provision.SecureBoot.Signing = "vendor" }, `want "off", "per-host" or "ci"`},
+		{"uki with keyless cosign", func(c *Config) {
+			uki("ci")(c)
+			c.Provision.Image.CosignPublicKeys = nil
+			c.Provision.Image.CosignTrustedRoot = "/deploy/trusted_root.json"
+		}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
@@ -33,6 +34,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/telekom/BOOTy/pkg/provision"
+	"github.com/telekom/BOOTy/pkg/secureboot"
 )
 
 // Scenarios disk-encryption-uki-per-host and disk-encryption-uki-ci
@@ -105,6 +107,26 @@ func newUKIKeys(t *testing.T, dir, prefix string) ukiKeys {
 		sbKey:  write("sb.key", &pem.Block{Type: "PRIVATE KEY", Bytes: sbDER}),
 		sbCert: write("sb.crt", &pem.Block{Type: "CERTIFICATE", Bytes: cert}),
 	}
+}
+
+// ukiCIModuleCertPath is MOK_CERT_PATH in the ci image.
+const ukiCIModuleCertPath = "/usr/share/booty/secureboot/ci-modules.der"
+
+// newModuleOnlyCert is a DER certificate with the module-signing-only EKU.
+func newModuleOnlyCert(t *testing.T) []byte {
+	t.Helper()
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "BOOTy e2e CI modules"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().AddDate(1, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature,
+		UnknownExtKeyUsage: []asn1.ObjectIdentifier{secureboot.OIDModuleSigningOnly}}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &k.PublicKey, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return der
 }
 
 // ukiImage is the prepared OS image.
@@ -243,6 +265,11 @@ dracut --force --no-hostonly --tmpdir /run --add "crypt systemd-cryptsetup syste
 			args = append(args, "--secureboot-private-key="+s.sbKey, "--secureboot-certificate="+s.sbCert)
 		}
 		chroot("build "+out, "mkdir -p \"$(dirname "+out+")\"; "+strings.Join(args, " "))
+	}
+	if ci != nil {
+		// SECUREBOOT_SIGNING=ci also enrolls the module signing certificate
+		// of the pipeline (#935), a separate module-signing-only one.
+		luksWriteImageFile(t, mnt, strings.TrimPrefix(ukiCIModuleCertPath, "/"), newModuleOnlyCert(t), 0o644)
 	}
 	img.ukiName = "ubuntu-" + kver + ".efi"
 	build("/boot/efi/EFI/Linux/"+img.ukiName, "booty.uki=v1", ci, ci)
@@ -473,15 +500,18 @@ func ukiAssets(t *testing.T) (osImage string, debs []string) {
 func ukiProvisionVars(imageRef, escrowURL, signing string) map[string]string {
 	// The escrow server is HTTPS with a test CA and wants the bearer token.
 	return map[string]string{
-		"TOKEN":                            "e2e-token",
-		"CA_BUNDLE_FILE":                   "/" + luksCAPath,
-		"HOSTNAME":                         "luks-e2e",
-		"MODE":                             "provision",
-		"MIN_DISK_SIZE_GB":                 "1",
-		"IMAGE":                            imageRef,
-		"IMAGE_COSIGN_PUBKEYS":             "/" + cosignTestKeyPath,
-		"DISK_ENCRYPTION":                  "luks2-tpm2-uki",
-		"SECUREBOOT_SIGNING":               signing,
+		"TOKEN":                "e2e-token",
+		"CA_BUNDLE_FILE":       "/" + luksCAPath,
+		"HOSTNAME":             "luks-e2e",
+		"MODE":                 "provision",
+		"MIN_DISK_SIZE_GB":     "1",
+		"IMAGE":                imageRef,
+		"IMAGE_COSIGN_PUBKEYS": "/" + cosignTestKeyPath,
+		"DISK_ENCRYPTION":      "luks2-tpm2-uki",
+		"SECUREBOOT_SIGNING":   signing,
+		// SECUREBOOT_SIGNING drives module signing (#935) too; its
+		// certificate is left to the provisioner here, no helper boot.
+		"MODULE_SIGNING_ENROLLMENT":        "external",
 		"DISK_ENCRYPTION_RECOVERY_KEY_URL": escrowURL + "/recovery-key",
 	}
 }
@@ -576,6 +606,7 @@ func TestDiskEncryptionUKICIVM(t *testing.T) {
 	vm := newUKIVM(t, dir)
 
 	vars := ukiProvisionVars(ref, escrow.url, "ci")
+	vars["MOK_CERT_PATH"] = ukiCIModuleCertPath
 	vars["DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE"] = "/deploy/pcr.pub"
 	out := vm.provision(vars, map[string]string{cosignTestKeyPath: cosignPEM, luksCAPath: escrow.caPEM, "deploy/pcr.pub": string(readFile(t, ci.pcrPub))})
 	if strings.Contains(string(out), "UKI signed with per-host keys") || !strings.Contains(string(out), "UKI prepared") {

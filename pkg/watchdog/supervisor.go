@@ -61,6 +61,8 @@ var DefaultStepBudgets = map[string]time.Duration{
 	"resize-filesystem":       time.Hour,
 	"run-machine-commands":    time.Hour,
 	"run-post-provision-cmds": time.Hour,
+	// Signs every out-of-tree module and rebuilds every initramfs.
+	"sign-kernel-modules": time.Hour,
 	// Grows the file system of an encrypted data partition offline.
 	"close-encrypted-disk": time.Hour,
 }

@@ -47,7 +47,11 @@ func TestDeprovisionWritesSuccessStatusLine(t *testing.T) {
 	read := installTestConsole(t, "deprovision")
 
 	o, _ := newTestOrchestratorWithCommander(t, withPresets(&config.MachineConfig{Mode: "decommission", LegacyCompat: true}), &mockProvider{})
-	o.disk.SetSysfsRoot(t.TempDir())
+	sysfs := t.TempDir()
+	if err := os.Mkdir(filepath.Join(sysfs, "block"), 0o755); err != nil { // no disk
+		t.Fatal(err)
+	}
+	o.disk.SetSysfsRoot(sysfs)
 	if err := o.Deprovision(context.Background()); err != nil {
 		t.Fatalf("Deprovision() = %v", err)
 	}

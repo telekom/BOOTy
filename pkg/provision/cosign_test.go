@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
+	"github.com/telekom/BOOTy/pkg/image"
+	"github.com/telekom/BOOTy/pkg/image/sigstoretest"
 )
 
 func writeTestCosignKey(t *testing.T) string {
@@ -183,6 +185,142 @@ func TestReportCosignSignature(t *testing.T) {
 			o.bestImageURL = tc.imageURL
 			if got := o.buildReport(context.Background()).Verification.Signature; got != tc.want {
 				t.Fatalf("signature = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestVerifyCosignKeylessPolicy covers the keyless options and their
+// combination with keys: either kind of signature is accepted, a missing
+// keyless option fails before any fetch.
+func TestVerifyCosignKeylessPolicy(t *testing.T) {
+	keyPath := writeTestCosignKey(t)
+	ss, err := sigstoretest.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootJSON, err := ss.TrustedRootJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootPath := filepath.Join(t.TempDir(), "trusted_root.json")
+	if err := os.WriteFile(rootPath, rootJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const imageRef = "oci://registry.example/os@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	tests := []struct {
+		name                     string
+		keys                     bool
+		root, identity, issuer   string
+		keyOK, keylessOK         bool
+		wantErr                  string
+		wantKeyCalls, wantKLCall int
+	}{
+		{name: "keyless", root: rootPath, identity: ".*", issuer: "https://ci.example", keylessOK: true, wantKLCall: 1},
+		{name: "keyless refused", root: rootPath, identity: ".*", issuer: "https://ci.example", wantErr: "keyless refused", wantKLCall: 1},
+		{name: "keys first", keys: true, root: rootPath, identity: ".*", issuer: "https://ci.example", keyOK: true, wantKeyCalls: 1},
+		{name: "keyless after keys fail", keys: true, root: rootPath, identity: ".*", issuer: "https://ci.example", keylessOK: true,
+			wantKeyCalls: 1, wantKLCall: 1},
+		{name: "both fail", keys: true, root: rootPath, identity: ".*", issuer: "https://ci.example",
+			wantErr: "key refused\nkeyless refused", wantKeyCalls: 1, wantKLCall: 1},
+		{name: "issuer missing", root: rootPath, identity: ".*", wantErr: "IMAGE_COSIGN_OIDC_ISSUER"},
+		{name: "trusted root missing", identity: ".*", issuer: "https://ci.example", wantErr: "IMAGE_COSIGN_TRUSTED_ROOT"},
+		{name: "unreadable trusted root", root: rootPath + ".missing", identity: ".*", issuer: "https://ci.example", wantErr: "load Sigstore trusted root"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var keyCalls, keylessCalls int
+			prevKey, prevKeyless := verifyCosignSignature, verifyCosignKeyless
+			t.Cleanup(func() { verifyCosignSignature, verifyCosignKeyless = prevKey, prevKeyless })
+			verifyCosignSignature = func(context.Context, string, []crypto.PublicKey) error {
+				keyCalls++
+				if tc.keyOK {
+					return nil
+				}
+				return errors.New("key refused")
+			}
+			verifyCosignKeyless = func(_ context.Context, _ string, p *image.CosignKeyless) error {
+				keylessCalls++
+				if p == nil {
+					t.Fatal("no keyless policy")
+				}
+				if tc.keylessOK {
+					return nil
+				}
+				return errors.New("keyless refused")
+			}
+			cfg := &config.MachineConfig{}
+			if tc.keys {
+				cfg.Provision.Image.CosignPublicKeys = []string{keyPath}
+			}
+			cfg.Provision.Image.CosignTrustedRoot = tc.root
+			cfg.Provision.Image.CosignIdentityRegexp = tc.identity
+			cfg.Provision.Image.CosignOIDCIssuer = tc.issuer
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+			err := o.verifyCosignSignatures(context.Background(), imageRef)
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("verifyCosignSignatures() = %v", err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("verifyCosignSignatures() = %v, want %q", err, tc.wantErr)
+			}
+			if keyCalls != tc.wantKeyCalls || keylessCalls != tc.wantKLCall {
+				t.Fatalf("key calls %d keyless calls %d, want %d and %d", keyCalls, keylessCalls, tc.wantKeyCalls, tc.wantKLCall)
+			}
+		})
+	}
+}
+
+// The dry run checks keyless-only IMAGE and SYSEXT policies like keys: a
+// valid root passes; a missing option, an unreadable root or an invalid
+// identity regexp fails (#933 review).
+func TestDryRunCosignKeyless(t *testing.T) {
+	ss, err := sigstoretest.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootJSON, err := ss.TrustedRootJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootPath := filepath.Join(t.TempDir(), "trusted_root.json")
+	if err := os.WriteFile(rootPath, rootJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const (
+		imageRef  = "oci://registry.example/os@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		sysextRef = "oci://registry.example/ext@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+		issuer    = "https://ci.example"
+	)
+	type keyless struct{ root, identity, issuer string }
+	good := keyless{rootPath, `https://ci\.example/.*`, issuer}
+	for _, tc := range []struct {
+		name          string
+		image, sysext keyless
+		want          DryRunStatus
+	}{
+		{name: "image keyless", image: good, want: DryRunPass},
+		{name: "sysext keyless", sysext: good, want: DryRunPass},
+		{name: "both keyless", image: good, sysext: good, want: DryRunPass},
+		{name: "image issuer missing", image: keyless{rootPath, good.identity, ""}, want: DryRunFail},
+		{name: "sysext identity missing", sysext: keyless{rootPath, "", issuer}, want: DryRunFail},
+		{name: "image trusted root missing", image: keyless{"", good.identity, issuer}, want: DryRunFail},
+		{name: "image unreadable trusted root", image: keyless{rootPath + ".missing", good.identity, issuer}, want: DryRunFail},
+		{name: "sysext unreadable trusted root", sysext: keyless{rootPath + ".missing", good.identity, issuer}, want: DryRunFail},
+		{name: "image invalid identity regexp", image: keyless{rootPath, "(", issuer}, want: DryRunFail},
+		{name: "sysext invalid identity regexp", sysext: keyless{rootPath, "(", issuer}, want: DryRunFail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.MachineConfig{}
+			cfg.Provision.Image.URLs = []string{imageRef}
+			im, sx := &cfg.Provision.Image, &cfg.Provision.Sysext
+			im.CosignTrustedRoot, im.CosignIdentityRegexp, im.CosignOIDCIssuer = tc.image.root, tc.image.identity, tc.image.issuer
+			sx.Enabled = true
+			sx.Layers = []config.SysextLayerConfig{{Name: "ext", Source: sysextRef}}
+			sx.CosignTrustedRoot, sx.CosignIdentityRegexp, sx.CosignOIDCIssuer = tc.sysext.root, tc.sysext.identity, tc.sysext.issuer
+			o := newTestOrchestrator(t, cfg, &mockProvider{})
+			if got := o.dryRunCosignKeys(context.Background()); got.Status != tc.want {
+				t.Fatalf("dryRunCosignKeys() = %s (%s), want %s", got.Status, got.Message, tc.want)
 			}
 		})
 	}

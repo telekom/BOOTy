@@ -72,6 +72,7 @@ and, with `OOB_EFI_VAR`, in the `BootyLastResult` UEFI variable.
 | `BOOTY-DSK-028` | permanent | `*` | Disk encryption in stream-image failed: preflight (TPM, Secure Boot, tools), recovery key hand-off, image layout or LUKS2 format. Not retried: reprovision. |
 | `BOOTY-EFI-012` | permanent | `create-uki-boot-entry` | Creating the firmware boot entry for the signed UKI failed. |
 | `BOOTY-DSK-027` | permanent | `close-encrypted-disk` | Closing the LUKS2 mapping or growing the encrypted data partition failed. |
+| `BOOTY-DSK-029` | hardware | `crypto-erase` | Crypto-erase of a LUKS2 device before the deprovision wipe failed: damaged header, cryptsetup luksErase, overwrite or check. DEPROVISION_CRYPTO_ERASE=false skips it. |
 | `BOOTY-EFI-001` | environment | `mount-efivarfs` | Mounting efivarfs failed. |
 | `BOOTY-EFI-002` | environment | `*` | EFI variables unavailable. |
 | `BOOTY-EFI-003` | hardware | `remove-efi-entries` | Removing EFI boot entries failed. |
@@ -81,6 +82,8 @@ and, with `OOB_EFI_VAR`, in the `BootyLastResult` UEFI variable.
 | `BOOTY-EFI-007` | permanent | `verify-secureboot-chain` | Secure Boot chain verification failed. |
 | `BOOTY-EFI-008` | hardware | `create-efi-boot-entry` | Creating the EFI boot entry failed. |
 | `BOOTY-EFI-009` | hardware | `create-mirror-efi-boot-entry` | Creating the mirror EFI boot entry failed. |
+| `BOOTY-EFI-010` | permanent | `sign-kernel-modules` | Signing the out-of-tree kernel modules failed. |
+| `BOOTY-EFI-011` | permanent | `enroll-module-signing-key` | Enrolling the module signing key failed. |
 | `BOOTY-OS-001` | config | `configure-overlayfs` | Overlay file system configuration failed. |
 | `BOOTY-OS-002` | config | `set-hostname` | Setting the host name failed. |
 | `BOOTY-OS-003` | config | `copy-provisioner-files` | Copying provisioner files failed. |

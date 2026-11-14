@@ -729,6 +729,9 @@ deprovision:
   # device: explicit block device to deprovision (default: "" = auto-detect)
   device: ""
 
+  # cryptoErase: destroy the LUKS2 headers before the wipe (default: true)
+  cryptoErase: true
+
 # ---------------------------------------------------------------------------
 # Agent — standby/hot-standby mode settings.
 # Only read when mode is "standby".

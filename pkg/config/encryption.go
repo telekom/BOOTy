@@ -107,8 +107,9 @@ func (c *Config) validateDiskEncryption() []string {
 		errs = append(errs, "provision.diskEncryption.recoveryKeyURL: "+err.Error())
 	}
 	errs = append(errs, c.validateDiskEncryptionTransport()...)
-	// The root is encrypted in place after the image is written; layouts
-	// that put the root on md, LVM or a declared layout are not supported.
+	// The image is written into the LUKS2 volume as it streams: md and
+	// declared layouts are not supported. An LVM root of the image is (the
+	// physical volume of VG tcaas is encrypted).
 	mirror := strings.ToLower(strings.TrimSpace(c.Provision.Disk.MirroringMode))
 	mode := strings.ToLower(strings.TrimSpace(c.Provision.Image.Mode))
 	if (mirror != "" && mirror != "none") || len(c.Provision.Disk.RAID) > 0 || c.Provision.Disk.PartitionLayoutRequested() ||
@@ -127,13 +128,8 @@ func (c *Config) validateDiskEncryption() []string {
 // be cosign-verified.
 func (c *Config) validateUKISigning() []string {
 	d := &c.Provision.DiskEncryption
+	// validateSigningMode (module signing) refuses unknown values.
 	signing := c.Provision.SecureBoot.SigningMode()
-	switch signing {
-	case SigningOff, SigningPerHost, SigningCI:
-	default:
-		return []string{fmt.Sprintf("provision.secureBoot.signing %q: want %q, %q or %q",
-			c.Provision.SecureBoot.Signing, SigningOff, SigningPerHost, SigningCI)}
-	}
 	var errs []string
 	if !d.UKI() {
 		// Without the UKI mode the signer has nothing to sign here; module
@@ -150,8 +146,8 @@ func (c *Config) validateUKISigning() []string {
 	if d.PCRPublicKeyFile != "" && signing != SigningCI {
 		errs = append(errs, fmt.Sprintf("provision.diskEncryption.pcrPublicKeyFile needs provision.secureBoot.signing %q: with %q BOOTy makes the key", SigningCI, signing))
 	}
-	if len(c.Provision.Image.CosignPublicKeys) == 0 {
-		errs = append(errs, fmt.Sprintf("provision.diskEncryption.mode %q needs provision.image.cosignPublicKeys: the UKI digest comes from the signed image manifest", DiskEncryptionLUKS2TPM2UKI))
+	if img := &c.Provision.Image; len(img.CosignPublicKeys) == 0 && img.CosignTrustedRoot == "" {
+		errs = append(errs, fmt.Sprintf("provision.diskEncryption.mode %q needs cosign verification of the image (provision.image.cosignPublicKeys or cosignTrustedRoot): the UKI digest comes from the signed image manifest", DiskEncryptionLUKS2TPM2UKI))
 	}
 	if d.StatusURL != "" {
 		errs = append(errs, fmt.Sprintf("provision.diskEncryption.statusURL is not supported with provision.diskEncryption.mode %q yet", DiskEncryptionLUKS2TPM2UKI))

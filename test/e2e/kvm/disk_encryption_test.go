@@ -47,6 +47,9 @@ echo "SECUREBOOT=$(od -An -tu1 -j4 -N1 /sys/firmware/efi/efivars/SecureBoot-8be4
 echo "PCR7=$(cat /sys/class/tpm/tpm0/pcr-sha256/7 2>/dev/null)"
 echo "PCR14=$(cat /sys/class/tpm/tpm0/pcr-sha256/14 2>/dev/null)"
 echo "ROOT_TYPE=$(lsblk -no TYPE "$(findmnt -no SOURCE /)")"
+echo "ROOT_VG=$(lvs --noheadings -o vg_name "$(findmnt -no SOURCE /)" 2>/dev/null | tr -d ' ')"
+echo "ROOT_PV=$(pvs --noheadings -o pv_name 2>/dev/null | tr -d ' ' | tr '\n' ',')"
+echo "CMDLINE_LVM=$(grep -o 'rd.luks.uuid=[^ ]* rd.lvm.vg=[^ ]*' /proc/cmdline)"
 echo "GRUB_LOCK=$(grep -c 'superusers="booty-locked"' /boot/grub/grub.cfg)"
 echo "GRUB_UNRESTRICTED=$(grep -c 'menuentry_id_option="--unrestricted' /boot/grub/grub.cfg)"
 echo "GRUB_RECOVERY=$(grep -c 'recovery mode' /boot/grub/grub.cfg)"
@@ -107,13 +110,22 @@ type luksVM struct {
 	boots   int
 }
 
+// luksLayout changes the cloud image: luksData appends an ext4 partition 2
+// (the last one) mounted at /data by PARTUUID; luksLVM moves the root into
+// LV root of VG tcaas on partition 1.
+type luksLayout int
+
+const (
+	luksPlain luksLayout = iota
+	luksData
+	luksLVM
+)
+
 func newLUKSVM(t *testing.T) *luksVM {
-	return newLUKSVMWith(t, false)
+	return newLUKSVMWith(t, luksPlain)
 }
 
-// newLUKSVMWith prepares the image; dataPartition appends an ext4 partition
-// 2 (the last one) mounted at /data by PARTUUID.
-func newLUKSVMWith(t *testing.T, dataPartition bool) *luksVM {
+func newLUKSVMWith(t *testing.T, layout luksLayout) *luksVM {
 	t.Helper()
 	requireRoot(t)
 	qemuAvailable(t)
@@ -126,13 +138,17 @@ func newLUKSVMWith(t *testing.T, dataPartition bool) *luksVM {
 			failOrSkipUnsupportedHost(t, "disk encryption asset missing (MIRROR_OS_IMAGE, OVMF): %q %v", f, err)
 		}
 	}
-	for _, tool := range []string{"virt-fw-vars", "swtpm", "cryptsetup", "sfdisk"} {
+	tools := []string{"virt-fw-vars", "swtpm", "cryptsetup", "sfdisk"}
+	if layout == luksLVM {
+		tools = append(tools, "lvm")
+	}
+	for _, tool := range tools {
 		if _, err := exec.LookPath(tool); err != nil {
 			failOrSkipUnsupportedHost(t, "%s not available", tool)
 		}
 	}
 	v := &luksVM{t: t, dir: t.TempDir(), code: code, kernel: findKernel(t)}
-	gz := prepareLUKSImage(t, osImage, v.dir, strings.Fields(os.Getenv("DISK_ENCRYPTION_DEBS")), dataPartition)
+	gz := prepareLUKSImage(t, osImage, v.dir, strings.Fields(os.Getenv("DISK_ENCRYPTION_DEBS")), layout)
 	v.osRaw = filepath.Join(v.dir, "os.part.json")
 	v.baseURL = startImageServer(t, gz)
 	v.vars = filepath.Join(v.dir, "OVMF_VARS.fd")
@@ -140,7 +156,7 @@ func newLUKSVMWith(t *testing.T, dataPartition bool) *luksVM {
 	setLUKSSecureBoot(t, v.vars, false)
 	v.disk = filepath.Join(v.dir, "disk.qcow2")
 	size := "6G"
-	if dataPartition {
+	if layout == luksData {
 		// The image is 6 GiB then; the data partition grows into the rest.
 		size = "9G"
 	}
@@ -169,8 +185,10 @@ func (v *luksVM) args(extra ...string) []string {
 
 func (v *luksVM) provision(vars, files map[string]string) []byte {
 	initramfs := buildProvisionInitramfsWithFiles(v.t, vars, files)
+	// loglevel=4: kernel info lines (EXT4 mounts) on the serial console can
+	// split a BOOTy line that the tests look for.
 	out := runMirrorQEMU(v.t, "provision", v.args("-kernel", v.kernel, "-initrd", initramfs,
-		"-append", runnerKernelCmdline+" net.ifnames=0"), 15*time.Minute)
+		"-append", runnerKernelCmdline+" net.ifnames=0 loglevel=4"), 15*time.Minute)
 	if !strings.Contains(string(out), "step=report-success") || strings.Contains(string(out), "provisioning step failed") {
 		v.t.Fatal("provisioning did not succeed")
 	}
@@ -336,7 +354,7 @@ func TestDiskEncryptionOffVM(t *testing.T) {
 // file system grows inside the mapping, fstab mounts it through the
 // mapping, the enrollment key unlocks it until the binding.
 func TestDiskEncryptionTPM2DataPartitionVM(t *testing.T) {
-	v := newLUKSVMWith(t, true)
+	v := newLUKSVMWith(t, luksData)
 	escrow := startEscrowServer(t)
 	v.provision(map[string]string{
 		"HOSTNAME":                         "luks-e2e",
@@ -360,6 +378,168 @@ func TestDiskEncryptionTPM2DataPartitionVM(t *testing.T) {
 	var size int64
 	if _, err := fmt.Sscan(luksField(report, "DATA_BYTES"), &size); err != nil || size < 1<<30 {
 		t.Fatalf("data file system %d bytes, want it grown past 1 GiB (%v)", size, err)
+	}
+}
+
+// TestDiskEncryptionLVMTPM2VM provisions an Ubuntu 26.04 image whose root is
+// LV root of VG tcaas (LVM-on-LUKS): BOOTy encrypts the physical volume, the
+// initramfs opens it and activates the VG, and the two-phase TPM2 enrollment
+// works as for a root partition. No LVM label reaches the disk in plain text.
+//
+//nolint:funlen // one VM life cycle, phase by phase
+func TestDiskEncryptionLVMTPM2VM(t *testing.T) {
+	v := newLUKSVMWith(t, luksLVM)
+	escrow := startEscrowServer(t)
+	logs := make([][]byte, 0, 4)
+
+	// 1. Provision with Secure Boot off.
+	out := v.provision(map[string]string{
+		"HOSTNAME":                         "luks-e2e",
+		"IMAGE_ALLOW_INSECURE_HTTP":        "true",
+		"IMAGE":                            v.baseURL + "/image.gz",
+		"MODE":                             "provision",
+		"MIN_DISK_SIZE_GB":                 "1",
+		"TOKEN":                            "e2e-token",
+		"CA_BUNDLE_FILE":                   "/" + luksCAPath,
+		"DISK_ENCRYPTION":                  "luks2-tpm2",
+		"DISK_ENCRYPTION_RECOVERY_KEY_URL": escrow.url + "/recovery-key",
+		"DISK_ENCRYPTION_STATUS_URL":       escrow.url + "/status",
+	}, map[string]string{luksCAPath: escrow.caPEM})
+	logs = append(logs, out)
+	if !bytes.Contains(out, []byte("LVM physical volume opened in the LUKS2 mapping")) {
+		t.Fatal("BOOTy did not open VG tcaas in the LUKS2 mapping")
+	}
+	key := escrow.recoveryKey(t)
+	checkLVMOnLUKSDisk(t, v.disk, key)
+
+	// 2. Secure Boot off: the enrollment key unlocks, the initramfs
+	// activates VG tcaas on the mapping, the unit waits.
+	out = runMirrorQEMU(t, "secure boot off", v.args(), 8*time.Minute)
+	logs = append(logs, out)
+	report := luksCheckReport(t, "secure boot off", out)
+	for _, l := range []string{"SECUREBOOT=0", "ROOT_TYPE=lvm", "ROOT_VG=tcaas", "ROOT_PV=/dev/mapper/booty_crypt,", "CMDLINE_LVM=rd.luks.uuid=",
+		"TPM2_TOKENS=0", "ENROLL_KEY=present", "KEYSLOTS=0,1,", "BOUND=no", "UNIT=enabled"} {
+		luksRequireLine(t, report, l)
+	}
+	if !strings.Contains(report, " rd.lvm.vg=tcaas") {
+		t.Fatal("the kernel command line does not name VG tcaas")
+	}
+
+	// 3. Secure Boot on, phase 1: bound to PCR 7+14.
+	setLUKSSecureBoot(t, v.vars, true)
+	out = runMirrorQEMU(t, "phase 1", v.args(), 10*time.Minute)
+	logs = append(logs, out)
+	report = luksCheckReport(t, "phase 1", out)
+	for _, l := range []string{"SECUREBOOT=1", "ROOT_TYPE=lvm", "TPM2_TOKENS=1", "ENROLL_KEY=present", "BOUND=yes", "INITRD_KEY=0"} {
+		luksRequireLine(t, report, l)
+	}
+	escrow.requireStatus(t, "tpm2-bound")
+
+	// 4. Secure Boot on, phase 2: the TPM2 unlocks without a prompt, then
+	// slot 1 and the key go.
+	out, prompted := runQEMUAnswerPrompt(t, "phase 2", v.args(), luksPrompt, key, 10*time.Minute)
+	logs = append(logs, out)
+	report = luksCheckReport(t, "phase 2", out)
+	if prompted {
+		t.Fatal("the TPM2 did not unlock: passphrase prompt with Secure Boot on")
+	}
+	for _, l := range []string{"SECUREBOOT=1", "ROOT_TYPE=lvm", "ROOT_VG=tcaas", "TPM2_TOKENS=1", "ENROLL_KEY=absent", "BOUND=no", "UNIT=disabled", "GRUB_LOCK=1", "GRUB_RECOVERY=0"} {
+		luksRequireLine(t, report, l)
+	}
+	if slots := luksField(report, "KEYSLOTS"); !strings.HasPrefix(slots, "0,") || strings.HasPrefix(slots, "0,1,") {
+		t.Fatalf("key slots %q: want the recovery slot 0 and the TPM2 slot, not slot 1", slots)
+	}
+	escrow.requireStatus(t, "slot1-removed")
+
+	// 5. The recovery key is on no console.
+	for i, l := range logs {
+		if bytes.Contains(l, key) || bytes.Contains(l, bytes.ReplaceAll(key, []byte("-"), nil)) {
+			t.Fatalf("the recovery key is in the console log of boot %d", i+1)
+		}
+	}
+}
+
+// convertRootToLVM moves the root file system of the cloud image (partition
+// 1, the last one) into LV root of VG tcaas: partition 1 gets 1 GiB more and
+// the Linux LVM type, becomes the physical volume, and the file system is
+// copied into the LV and grown, which leaves dracut room.
+func convertRootToLVM(t *testing.T, raw, dir string) {
+	t.Helper()
+	rootFS := filepath.Join(dir, "root.ext4")
+	loop := strings.TrimSpace(string(runOutput(t, "attach image", "losetup", "-P", "--show", "-f", raw)))
+	run(t, "save image root", "dd", "if="+loop+"p1", "of="+rootFS, "bs=4M", "conv=sparse", "status=none")
+	run(t, "detach image", "losetup", "-d", loop)
+	run(t, "extend image", "truncate", "-s", "+1G", raw)
+	run(t, "move backup GPT", "sgdisk", "-e", raw)
+	grow := exec.CommandContext(t.Context(), "sfdisk", "--no-reread", "--no-tell-kernel", "-N", "1", raw)
+	grow.Stdin = strings.NewReader(", +\n")
+	if out, err := grow.CombinedOutput(); err != nil {
+		t.Fatalf("grow partition 1: %v\n%s", err, out)
+	}
+	run(t, "LVM partition type", "sfdisk", "--part-type", raw, "1", "E6D6D379-F507-44C2-A23C-238F2A3DF928")
+	// Not a root label: BOOTy must pick the single LVM partition.
+	run(t, "LVM partition name", "sfdisk", "--part-label", raw, "1", "tcaas-pv")
+	loop = strings.TrimSpace(string(runOutput(t, "attach image", "losetup", "-P", "--show", "-f", raw)))
+	defer func() { _ = exec.CommandContext(context.Background(), "losetup", "-d", loop).Run() }()
+	// Only the PV of the fixture: a VG tcaas of the host is never touched.
+	pv := loop + "p1"
+	if _, err := os.Stat("/dev/mapper/tcaas-root"); err == nil {
+		t.Fatal("the host has /dev/mapper/tcaas-root; the fixture LV would conflict")
+	}
+	run(t, "create PV", "lvm", "pvcreate", "--devices", pv, "-ff", "-y", pv)
+	defer func() { _ = exec.CommandContext(context.Background(), "lvm", "vgchange", "--devices", pv, "-an", "tcaas").Run() }()
+	run(t, "create VG tcaas", "lvm", "vgcreate", "--devices", pv, "tcaas", pv)
+	run(t, "create LV root", "lvm", "lvcreate", "--devices", pv, "-y", "-l", "100%FREE", "-n", "root", "tcaas")
+	// Not sparse: the physical volume holds the old root file system.
+	run(t, "copy root into LV", "dd", "if="+rootFS, "of=/dev/mapper/tcaas-root", "bs=4M", "conv=fsync", "status=none")
+	run(t, "check LV root", "e2fsck", "-f", "-p", "/dev/mapper/tcaas-root")
+	run(t, "grow LV root", "resize2fs", "/dev/mapper/tcaas-root")
+	run(t, "deactivate VG tcaas", "lvm", "vgchange", "--devices", pv, "-an", "tcaas")
+	run(t, "detach image", "losetup", "-d", loop)
+	if err := os.Remove(rootFS); err != nil {
+		t.Fatal(err)
+	}
+	// The label scan of checkLVMOnLUKSDisk finds a plain physical volume.
+	if n := countPVLabels(t, raw); n != 1 {
+		t.Fatalf("LVM labels in the image: %d, want 1", n)
+	}
+}
+
+// checkLVMOnLUKSDisk checks that the escrowed recovery key opens the LUKS2
+// partition and that no LVM physical volume label is on the disk in plain
+// text: BOOTy wrote the volume only into the mapping.
+func checkLVMOnLUKSDisk(t *testing.T, qcow2 string, recovery []byte) {
+	t.Helper()
+	raw, loop := attachDisk(t, qcow2)
+	part := luksPartition(t, loop)
+	open := exec.CommandContext(t.Context(), "cryptsetup", "open", "--test-passphrase", "--key-file", "-", part)
+	open.Stdin = bytes.NewReader(recovery)
+	if out, err := open.CombinedOutput(); err != nil {
+		t.Fatalf("the escrowed recovery key does not open %s: %v %s", part, err, out)
+	}
+	if n := countPVLabels(t, raw); n != 0 {
+		t.Fatalf("%d LVM physical volume labels on the disk in plain text", n)
+	}
+}
+
+// countPVLabels counts sectors with an LVM2 physical volume label.
+func countPVLabels(t *testing.T, path string) int {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	r := bufio.NewReaderSize(f, 4<<20)
+	sector := make([]byte, 512)
+	n := 0
+	for {
+		if _, err := io.ReadFull(r, sector); err != nil {
+			return n
+		}
+		if bytes.HasPrefix(sector, []byte("LABELONE")) && bytes.Equal(sector[24:32], []byte("LVM2 001")) {
+			n++
+		}
 	}
 }
 
@@ -395,12 +575,16 @@ func addDataPartition(t *testing.T, raw string) {
 // libtss2-rc0t64 on Ubuntu 26.04), the check service and a DHCP netplan
 // into the root file system of the cloud image, saves the partition table
 // of the image as os.part.json and returns the gzipped raw image.
-func prepareLUKSImage(t *testing.T, osImage, dir string, debs []string, dataPartition bool) string {
+func prepareLUKSImage(t *testing.T, osImage, dir string, debs []string, layout luksLayout) string {
 	t.Helper()
+	dataPartition := layout == luksData
 	raw := filepath.Join(dir, "os.raw")
 	run(t, "convert OS image to raw", "qemu-img", "convert", "-O", "raw", osImage, raw)
 	if dataPartition {
 		addDataPartition(t, raw)
+	}
+	if layout == luksLVM {
+		convertRootToLVM(t, raw, dir)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "os.part.json"), runOutput(t, "image partition table", "sfdisk", "-J", raw), 0o600); err != nil {
 		t.Fatal(err)
@@ -427,7 +611,16 @@ func prepareLUKSImage(t *testing.T, osImage, dir string, debs []string, dataPart
 		luksWriteImageFile(t, data, "marker", []byte("booty-data\n"), 0o644)
 		run(t, "unmount data partition", "umount", data)
 	}
-	run(t, "mount image root", "mount", loop+"p1", mnt)
+	rootDev := loop + "p1"
+	if layout == luksLVM {
+		run(t, "activate VG tcaas", "lvm", "vgchange", "--devices", loop+"p1", "-ay", "tcaas")
+		defer func() {
+			_ = exec.CommandContext(context.Background(), "umount", mnt).Run()
+			_ = exec.CommandContext(context.Background(), "lvm", "vgchange", "--devices", loop+"p1", "-an", "tcaas").Run()
+		}()
+		rootDev = "/dev/mapper/tcaas-root"
+	}
+	run(t, "mount image root", "mount", rootDev, mnt)
 	if dataPartition {
 		partUUID := strings.TrimSpace(string(runOutput(t, "data PARTUUID", "blkid", "-o", "value", "-s", "PARTUUID", loop+"p2")))
 		fstab, err := os.ReadFile(filepath.Join(mnt, "etc/fstab"))
@@ -461,6 +654,9 @@ func prepareLUKSImage(t *testing.T, osImage, dir string, debs []string, dataPart
 		t.Fatal(err)
 	}
 	run(t, "unmount image root", "umount", mnt)
+	if layout == luksLVM {
+		run(t, "deactivate VG tcaas", "lvm", "vgchange", "--devices", loop+"p1", "-an", "tcaas")
+	}
 	run(t, "detach image", "losetup", "-d", loop)
 	gz := compressGzip(t, raw)
 	if err := os.Remove(raw); err != nil {

@@ -107,6 +107,10 @@ BOOTy uses `<name>.raw`. With `cosignPublicKeys` (`SYSEXT_COSIGN_PUBKEYS`),
 every OCI source must be pinned by digest and carry a cosign signature by one
 of the keys; BOOTy checks them before the disk is wiped (see
 [cosign verification](../README.md#cosign-verification-of-oci-images-and-sysexts)).
+`cosignTrustedRoot`, `cosignIdentityRegexp` and `cosignOIDCIssuer`
+(`SYSEXT_COSIGN_TRUSTED_ROOT`, `SYSEXT_COSIGN_IDENTITY_REGEXP`,
+`SYSEXT_COSIGN_OIDC_ISSUER`) do the same for keyless signatures (see
+[keyless verification](../README.md#keyless-cosign-verification)).
 
 ```yaml
 provision:

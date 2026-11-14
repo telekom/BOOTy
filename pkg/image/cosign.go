@@ -19,10 +19,10 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 )
@@ -68,7 +68,7 @@ func LoadCosignPublicKeys(paths []string) ([]crypto.PublicKey, error) {
 	}
 	keys := make([]crypto.PublicKey, 0, len(paths))
 	for _, p := range paths {
-		data, err := os.ReadFile(p) //nolint:gosec // configured key path in the ramdisk
+		data, err := readCosignFile(p)
 		if err != nil {
 			return nil, fmt.Errorf("read cosign public key: %w", err)
 		}
@@ -147,26 +147,14 @@ func VerifyCosignSignature(ctx context.Context, reference string, keys []crypto.
 	if len(keys) == 0 {
 		return fmt.Errorf("%w: %s: no public keys configured", ErrCosignVerification, redacted)
 	}
-	ref, err := name.ParseReference(reference)
+	digestRef, err := cosignDigestRef(reference)
 	if err != nil {
-		return fmt.Errorf("parse OCI reference %q: %w", redacted, wrapRedactedOCIRefError(err, reference))
-	}
-	digestRef, ok := ref.(name.Digest)
-	if !ok {
-		return fmt.Errorf("%w: %s must be pinned by digest (@sha256:...)", ErrCosignVerification, redacted)
+		return err
 	}
 	digest := digestRef.DigestStr()
-	sigTag := digestRef.Context().Tag(strings.Replace(digest, ":", "-", 1) + ".sig")
-	sigImg, err := remote.Image(sigTag, RemoteOptions(ctx)...)
+	sigImg, manifest, err := fetchCosignSigTag(digestRef, RemoteOptions(ctx))
 	if err != nil {
-		if cosignFetchTransient(err) {
-			return fmt.Errorf("%w: %w: %s: %w", ErrCosignVerification, ErrCosignFetch, redacted, wrapRedactedOCIRefError(err, reference))
-		}
-		return fmt.Errorf("%w: no signature found for %s: %w", ErrCosignVerification, redacted, wrapRedactedOCIRefError(err, reference))
-	}
-	manifest, err := sigImg.Manifest()
-	if err != nil {
-		return fmt.Errorf("%w: read signature manifest of %s: %w", ErrCosignVerification, redacted, cosignFetchError(err, reference))
+		return err
 	}
 	// A layer that cannot be read does not hide a later valid one; its
 	// error is reported only when no layer verifies.
@@ -201,6 +189,41 @@ func VerifyCosignSignature(ctx context.Context, reference string, keys []crypto.
 		ErrCosignVerification, checked, redacted, digest)
 }
 
+// cosignDigestRef parses reference (without oci://), which must be pinned
+// by digest.
+func cosignDigestRef(reference string) (name.Digest, error) {
+	redacted := RedactOCIRef(reference)
+	ref, err := name.ParseReference(reference)
+	if err != nil {
+		return name.Digest{}, fmt.Errorf("parse OCI reference %q: %w", redacted, wrapRedactedOCIRefError(err, reference))
+	}
+	digestRef, ok := ref.(name.Digest)
+	if !ok {
+		return name.Digest{}, fmt.Errorf("%w: %s must be pinned by digest (@sha256:...)", ErrCosignVerification, redacted)
+	}
+	return digestRef, nil
+}
+
+// fetchCosignSigTag fetches the signature image under the sha256-<hex>.sig
+// tag of digestRef and its manifest.
+func fetchCosignSigTag(digestRef name.Digest, opts []remote.Option) (v1.Image, *v1.Manifest, error) {
+	reference := digestRef.String()
+	redacted := RedactOCIRef(reference)
+	sigTag := digestRef.Context().Tag(strings.Replace(digestRef.DigestStr(), ":", "-", 1) + ".sig")
+	sigImg, err := remote.Image(sigTag, opts...)
+	if err != nil {
+		if cosignFetchTransient(err) {
+			return nil, nil, fmt.Errorf("%w: %w: %s: %w", ErrCosignVerification, ErrCosignFetch, redacted, wrapRedactedOCIRefError(err, reference))
+		}
+		return nil, nil, fmt.Errorf("%w: no signature found for %s: %w", ErrCosignVerification, redacted, wrapRedactedOCIRefError(err, reference))
+	}
+	manifest, err := sigImg.Manifest()
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: read signature manifest of %s: %w", ErrCosignVerification, redacted, cosignFetchError(err, reference))
+	}
+	return sigImg, manifest, nil
+}
+
 // cosignFetchError redacts err and marks it with ErrCosignFetch when a
 // retry may fix it.
 func cosignFetchError(err error, reference string) error {
@@ -232,19 +255,24 @@ func cosignFetchTransient(err error) bool {
 // readCosignPayload reads a payload blob to its end, so go-containerregistry
 // checks it against its layer digest.
 func readCosignPayload(open func() (io.ReadCloser, error)) ([]byte, error) {
+	return readLimited(open, maxCosignPayloadSize)
+}
+
+// readLimited reads a blob of at most limit bytes to its end.
+func readLimited(open func() (io.ReadCloser, error), limit int64) ([]byte, error) {
 	rc, err := open()
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rc.Close() }()
-	payload, err := io.ReadAll(io.LimitReader(rc, maxCosignPayloadSize+1))
+	data, err := io.ReadAll(io.LimitReader(rc, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("read payload: %w", err)
 	}
-	if len(payload) > maxCosignPayloadSize {
-		return nil, fmt.Errorf("payload larger than %d bytes", maxCosignPayloadSize)
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("payload larger than %d bytes", limit)
 	}
-	return payload, nil
+	return data, nil
 }
 
 // cosignSignatureValid reports whether sig (base64) is a signature of
@@ -254,16 +282,7 @@ func cosignSignatureValid(keys []crypto.PublicKey, payload []byte, sig, digest s
 	if err != nil {
 		return false
 	}
-	var p struct {
-		Critical struct {
-			Image struct {
-				DockerManifestDigest string `json:"docker-manifest-digest"`
-			} `json:"image"`
-			Type string `json:"type"`
-		} `json:"critical"`
-	}
-	if err := json.Unmarshal(payload, &p); err != nil ||
-		p.Critical.Type != cosignSignatureType || p.Critical.Image.DockerManifestDigest != digest {
+	if !cosignPayloadNamesDigest(payload, digest) {
 		return false
 	}
 	for _, key := range keys {
@@ -272,6 +291,21 @@ func cosignSignatureValid(keys []crypto.PublicKey, payload []byte, sig, digest s
 		}
 	}
 	return false
+}
+
+// cosignPayloadNamesDigest reports whether payload is a simple-signing
+// cosign signature of digest.
+func cosignPayloadNamesDigest(payload []byte, digest string) bool {
+	var p struct {
+		Critical struct {
+			Image struct {
+				DockerManifestDigest string `json:"docker-manifest-digest"`
+			} `json:"image"`
+			Type string `json:"type"`
+		} `json:"critical"`
+	}
+	return json.Unmarshal(payload, &p) == nil &&
+		p.Critical.Type == cosignSignatureType && p.Critical.Image.DockerManifestDigest == digest
 }
 
 // verifyCosignKey verifies like cosign: ECDSA over SHA-256 (plus the hash

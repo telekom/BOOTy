@@ -5,7 +5,9 @@ runs the same steps as before: the encryption steps are not in the step
 list. BOOTy formats one partition of the image with LUKS2 while it writes
 the image, and writes that partition into the opened volume. The installed
 system binds the volume to the TPM2 (PCR 7+14) once Secure Boot is on. A
-random recovery key goes to the provisioner. Keys are in
+root on LVM is supported: BOOTy then encrypts the physical volume of VG
+`tcaas` ([LVM-on-LUKS](#root-on-lvm-vg-tcaas)). A random recovery key goes
+to the provisioner. Keys are in
 [configuration.md](configuration.md#disk-encryption). Read the
 [threat model](#threat-model) before you rely on it.
 
@@ -36,8 +38,11 @@ Provisioning (BOOTy, Secure Boot off):
      `/dev/mapper/booty_crypt` and streams the partition content of the
      image into the mapping. No byte of the partition reaches the disk in
      plain text. The rest of the image (its backup GPT) is not written.
+   - with an [LVM physical volume](#root-on-lvm-vg-tcaas): checks the VG,
+     grows the physical volume and activates VG `tcaas` on the mapping.
 2. `parse-partitions` checks that the root it finds is the encrypted
-   partition; from then on the root is the mapping. `grow-partition` is
+   partition; from then on the root is the mapping (on LVM: the logical
+   volume of VG `tcaas` that holds the root). `grow-partition` is
    skipped (the partition is grown), `resize-filesystem` grows the file
    system in the mapping.
 3. `prepare-disk-encryption` (before `configure-grub`, target mounted)
@@ -65,7 +70,8 @@ Provisioning (BOOTy, Secure Boot off):
      `CA_BUNDLE_FILE` as `/etc/booty/luks-status-ca.pem`;
    - and runs `dracut --force --regenerate-all` in the target.
 4. `close-encrypted-disk` (after `teardown-chroot`) grows the file system of
-   an encrypted data partition and closes the mapping. BOOTy reboots
+   an encrypted data partition (on LVM: deactivates VG `tcaas`) and closes
+   the mapping. BOOTy reboots
    through the firmware; disk encryption turns kexec off.
 
 Installed system, `booty-luks-tpm2-enroll.service`:
@@ -98,6 +104,58 @@ Installed system, `booty-luks-tpm2-enroll.service`:
 - Later boots: `systemd-cryptsetup` in the initramfs unseals the key with
   the TPM2. When the PCRs differ it asks on the console; the recovery key
   works there.
+
+## Root on LVM (VG tcaas)
+
+Images that put the root file system on a logical volume of VG `tcaas`
+(LVM-on-LUKS) are encrypted at the physical volume. Nothing else changes:
+the same key slots, escrow, enrollment unit, PCR 7+14 binding, GRUB lock
+and locked configuration keys apply.
+
+- The encrypted partition is an LVM physical volume when its GPT type is
+  Linux LVM (`E6D6D379-F507-44C2-A23C-238F2A3DF928`). With
+  `DISK_ENCRYPTION_TARGET=root` BOOTy takes it when the image has no Linux
+  filesystem or Discoverable Partitions root partition (x86-64, ARM64) and
+  exactly one LVM partition; the root is then on
+  LVM (`ROOT_PARTITION_LABEL` and `ROOT_PARTITION_NUMBER` must be unset).
+  A partition number selects an LVM partition as a data VG: the root stays
+  the selected root partition, even if an LV looks like a root. It must be
+  the last partition, like a root partition.
+- `stream-image` writes the physical volume as it is in the image (LVM
+  label, metadata, all logical volumes) into the opened mapping, so no
+  byte of it reaches the disk in plain text. Then, with LVM limited to the
+  mapping (`--devices /dev/mapper/booty_crypt`, so a VG `tcaas` on another
+  disk is not touched):
+  1. `lvm pvs` checks that the volume belongs to VG `tcaas`; another VG
+     fails the run;
+  2. `lvm pvresize` grows it to the mapping. The logical volumes keep the
+     sizes of the image; the space of the grown disk stays free in the VG;
+  3. `lvm vgchange -ay tcaas` activates it (`lvm vgmknodes` creates the
+     device nodes, the ramdisk has no udev), and BOOTy mounts each logical
+     volume read-only to find the root (`/etc/os-release`, or `/etc` and
+     `/usr`; only with `DISK_ENCRYPTION_TARGET=root`). A VG without a root
+     fails the run.
+- The root is that logical volume (`/dev/mapper/tcaas-<lv>`) for the
+  later steps; `grow-partition` is skipped and `resize-filesystem` finds
+  nothing to grow. `enable-lvm` is skipped: its unscoped `vgchange -ay`
+  would also activate a VG `tcaas` of another disk.
+- `prepare-disk-encryption` also needs `/usr/sbin/lvm` in the image
+  (Ubuntu: `lvm2`), adds the dracut `lvm` module to
+  `90-booty-luks.conf`, and appends to the kernel command line in
+  `99-booty-luks.cfg`:
+  `GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX rd.luks.uuid=<luks uuid> rd.lvm.vg=tcaas"`.
+  The initramfs opens `booty_crypt` from crypttab and activates VG
+  `tcaas` on it. The kernel command line is in neither PCR 7 nor 14, so
+  the binding is the same.
+- `close-encrypted-disk` deactivates VG `tcaas` before it closes the
+  mapping.
+- The ramdisk needs `lvm`. `stream-image` checks it after it reads the
+  partition table of the image, before it writes any of the image; this is
+  not a non-destructive preflight, since `wipe-disks` has already cleared
+  the target. `DISK_ENCRYPTION_ALLOW_FAILURE` does not cover it.
+
+Without `DISK_ENCRYPTION`, or with a partition that is not an LVM physical
+volume, BOOTy writes the same files and runs the same commands as before.
 
 ## Threat model
 
@@ -263,6 +321,88 @@ resumed run (`BOOTY_RESUME`) or a retry after the format fails at
 `parse-partitions` or at the LUKS check and needs a new provisioning. No
 resumed step writes to the encrypted partition before that check.
 
+## Crypto-erase at deprovision
+
+On by default; `DEPROVISION_CRYPTO_ERASE=false` turns it off. Without a
+LUKS2 header on the disks nothing changes: BOOTy reads the headers itself
+and runs no tool.
+
+`deprovision`/`hard` and `decommission` run the step `crypto-erase` right
+before the wipe (after `stop-raid`, before `wipe-disks`; before
+`decommission-wipe`). In hard deprovisioning it runs the config checks of
+`wipe-disks` first, so a run that would fail before its wipe erases
+nothing, and it skips when `wipe-disks` keeps the disks (`IMAGE_MODE=ab`
+with `AB_PRESERVE_EXISTING=true`). `decommission` always wipes and does not
+look at the provisioning layout. `soft-deprovision` wipes nothing and does not run it.
+
+1. **Which devices.** The disks that the wipe after it clears: the
+   deprovision device (`DEPROVISION_DEVICE` or `DISK_DEVICE`) and its mirror
+   companion, or every disk that the wipe of all disks takes (no loop, md,
+   dm, ram or optical devices; disks in use are skipped like in the wipe; a
+   named disk in use fails, like its wipe). On each, the whole disk and
+   every partition (from sysfs) are checked for a LUKS2 header: the primary
+   copy at 0 (`LUKS\xba\xbe`, version 2) or a secondary copy at 16 KiB to
+   4 MiB (`SKUL\xba\xbe`) whose `hdr_offset` names that offset, so a header
+   whose primary copy was lost is found too, also behind a read error at
+   another copy. A secondary copy at its
+   `hdr_offset` with another version or an `hdr_size` that does not match
+   is damaged, not foreign: it fails the run, also when a later read of
+   the device fails. Every LUKS2 header there counts as
+   BOOTy-managed: the LUKS2 format has no field that tells the header of
+   #939 from another one (random UUID, no label), and the disks are wiped
+   next anyway, so the step never writes to a disk that the run would leave
+   alone. LUKS2 inside an md array or an LVM volume is not looked at (BOOTy
+   does not create it); LUKS1 is not touched by this step.
+2. **Erase.** For each header, `cryptsetup luksErase --batch-mode <dev>`
+   destroys every keyslot; then `dd` writes zeros over the header area as
+   the header declares it: both copies (2 × `hdr_size`) and the keyslots
+   area (`config.keyslots_size`), at most to the end of the device. The data
+   area is not overwritten here (the wipe and, with `WIPE_DEPTH=thorough`,
+   `blkdiscard` follow): without a key it is noise.
+3. **Check.** BOOTy drops the cached blocks of the device and reads it
+   again; a header copy that is still there fails the run. A header that
+   is gone before its erase (a second path to the same disk, such as a
+   dual-ported SAS disk without dm-multipath) counts as erased.
+4. **Report.** The success status names each device and its LUKS UUID:
+   `deprovisioning complete handoff=… ; crypto-erased: /dev/sda2
+   luksUUID=…`. The header comes from the disk, so a UUID field that is
+   not a UUID is reported as `luksUUID=invalid`. A device that cannot be read (no media, I/O error) is
+   skipped and named (`; crypto-erase could not read: /dev/sdb`); BOOTy
+   cannot erase it, and the wipe after it handles it as before. With
+   `DEPROVISION_CRYPTO_ERASE=false` the status says `; crypto-erase off`.
+
+**Fail closed.** A damaged header (the magic is there, the header does not
+parse), a failed `luksErase`, `dd` or check fails the run with
+`BOOTY-DSK-029` before the wipe, also in `decommission`, which otherwise
+does not stop on disk errors. A missing `cryptsetup` in the ramdisk fails
+too when a LUKS2 header is found. Set `DEPROVISION_CRYPTO_ERASE=false` to
+deprovision such a host with the wipe only.
+
+**Escrow.** `DISK_ENCRYPTION_RECOVERY_KEY_URL` has one call: it receives a
+new recovery key. There is no call that marks a key invalid, so BOOTy sends
+nothing to it at deprovision and does not invent one. After a successful
+crypto-erase the escrowed key opens nothing; the consumer that serves the
+URL can drop it by the `luksUUID` in the deprovision status, which is the
+`luksUUID` of the escrow body. Match it together with the host: whoever
+used the disk can write any UUID into its header.
+
+**Not in standby payloads.** A standby command payload cannot change
+`DEPROVISION_CRYPTO_ERASE` (the payload is refused), and a deploy archive
+gets the value of the vars file back, like the `DISK_ENCRYPTION*` keys
+except the target. Turning it off would leave the keyslots of a disk that
+leaves the host to whoever holds the recovery key, a silent downgrade of
+the same kind as `DISK_ENCRYPTION_ALLOW_FAILURE`. To turn it off for a
+standby host, change the vars file and boot the ramdisk again.
+
+**Logs.** `INFO`: `crypto-erasing LUKS2 device` (device, `luksUUID`,
+`headerBytes`), `LUKS2 keyslots and header destroyed` and `LUKS2 header
+already gone`. `WARN`:
+`crypto-erase is off (DEPROVISION_CRYPTO_ERASE=false)…`, `cannot read the
+device to look for a LUKS2 header`, `cannot list the partitions to look for
+LUKS2 headers`. `DEBUG`: `no LUKS2 header on the disks to wipe`. A failure
+is the step error (`ERROR deprovisioning step failed step=crypto-erase`).
+No key is involved, so nothing is redacted.
+
 ## PCR changes
 
 These change PCR 7 or 14, so the TPM2 refuses and the recovery key is
@@ -298,7 +438,8 @@ follow-up.
 
 - A TPM2 and UEFI Secure Boot in user mode.
 - A whole-disk raw GPT image; the encrypted partition is the last one and
-  not the ESP. Not with disk mirroring, RAID, `PARTITION_LAYOUT`, A/B,
+  not the ESP. A root on LVM: the physical volume of VG `tcaas`, with
+  `lvm2` in the image and `lvm` in the ramdisk. Not with disk mirroring, RAID, `PARTITION_LAYOUT`, A/B,
   `SKIP_TLS_VERIFY` or `CAPRF_LEGACY_COMPAT` (its preset turns on
   `SKIP_TLS_VERIFY`).
 - The root needs a separate `/boot` partition; a data partition must be
@@ -316,10 +457,22 @@ follow-up.
 ## Module signing
 
 With [per-host module signing](https://github.com/telekom/BOOTy/pull/935)
-the MOK is staged during provisioning and enrolled by `mok-enroll.efi` on
-the next firmware boot. If the system boots before Secure Boot is on, the
-unit waits. The first Secure Boot boot sees the final `MokList` in PCR 14
-and binds. No ordering code is needed.
+and `MODULE_SIGNING_ENROLLMENT=efi-helper` the MOK is staged during
+provisioning and enrolled by `mok-enroll.efi` on the next firmware boot,
+with Secure Boot still off, so the unit waits. The first Secure Boot boot
+sees the final `MokList` in PCR 14 and binds.
+
+With `MODULE_SIGNING_ENROLLMENT=mokutil` the certificate waits in `MokNew`
+for a confirmation in MokManager, possibly on a boot with Secure Boot on.
+Phase 1 does not bind while a MOK request (`MokNew`, `MokDel`, `MokXNew`,
+`MokXDel`, `MokSB`, `MokDB`) is pending: shim would change PCR 14 on a
+later boot, and the initramfs without the enrollment key would ask for the
+recovery key. Without this enrollment method the unit does not look at MOK
+requests. A host whose request nobody confirms stays in the
+[enrollment-key window](#the-enrollment-key-window). With
+`MODULE_SIGNING_ENROLLMENT=external`, enroll the certificate (a `db` update
+changes PCR 7) before the first Secure Boot boot, or bind again as in
+[PCR changes](#pcr-changes).
 
 ## Test
 
@@ -346,6 +499,25 @@ KVM scenarios (`.github/workflows/kvm-matrix.yml`):
   `DISK_ENCRYPTION_TARGET=2` the root stays plain, `/data` mounts through
   the mapping (fstab rewritten), its file system has grown to the disk end
   inside LUKS, and the enrollment key unlocks it.
+- `disk-encryption-lvm-ubuntu-26.04` (`TestDiskEncryptionLVMTPM2VM`): the
+  same cloud image with the root moved into LV `root` of VG `tcaas` on
+  partition 1 (Linux LVM type). BOOTy formats partition 1, writes the
+  physical volume into the mapping and finds the root LV; the escrowed
+  recovery key opens the volume; no LVM label is on the disk in plain text.
+  The installed system boots from the LV (`rd.luks.uuid`,
+  `rd.lvm.vg=tcaas`) with the enrollment key, binds to PCR 7+14 with Secure
+  Boot on (phase 1) and unlocks with the TPM2 without a prompt (phase 2),
+  slot 1 gone.
+- `disk-encryption-crypto-erase-ubuntu-26.04`
+  (`TestDiskEncryptionCryptoEraseVM`): provision with encryption, take a
+  header backup, then `MODE=deprovision` with `WIPE_DEPTH=quick` (which
+  leaves partition contents alone, so only the crypto-erase can remove the
+  header). The success status names the device and the escrowed
+  `luksUUID`. At the old partition start both header copies and the
+  keyslots area are zeros, the data area is not, `cryptsetup isLuks` and
+  `luksDump` find nothing; the old metadata without the keyslots area
+  written back is a valid header again, but the recovery key opens no
+  keyslot (with the full backup, the control, it opens).
 - `disk-encryption-off-ubuntu-26.04` (`TestDiskEncryptionOffVM`): the same
   image without the keys: no encryption step runs, the partition table is
   the image's with the root grown, the root is plain ext4, and no BOOTy
@@ -354,7 +526,7 @@ KVM scenarios (`.github/workflows/kvm-matrix.yml`):
 Run them locally on an x86-64 Linux host with KVM, as root:
 
 ```sh
-sudo apt-get install -y qemu-system-x86 ovmf swtpm cryptsetup-bin python3-virt-firmware
+sudo apt-get install -y qemu-system-x86 ovmf swtpm cryptsetup-bin lvm2 python3-virt-firmware
 curl -LO https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img
 curl -LO https://launchpad.net/ubuntu/+archive/primary/+files/libtss2-rc0t64_4.1.3-6_amd64.deb
 sudo env MIRROR_OS_IMAGE=$PWD/ubuntu-26.04-server-cloudimg-amd64.img \
@@ -542,9 +714,7 @@ needs the certificate in `db`: the per-host certificate (provisioner,
 Redfish) or the pipeline certificate. Machines that allow no `db` change
 need the shim path with the MOK enrollment of #935 (`mok-enroll.efi`
 boots, shim loads `\EFI\Linux\<name>.efi` with the per-host key in
-`MokList`, PCR 14 bound). That is a follow-up once #935 is merged; the
-per-host key of this mode and the module signing key of #935 then become
-one key with one enrollment.
+`MokList`, PCR 14 bound). That is a follow-up.
 
 ### UKI threat model
 
@@ -600,9 +770,14 @@ Remaining:
 
 Without `DISK_ENCRYPTION=luks2-tpm2-uki` nothing of this runs: no
 annotation is read, no key is made, no boot entry is added.
-`SECUREBOOT_SIGNING` is the setting of per-host module signing (#935) too;
-once both are in, one per-host key could sign the modules and the UKI with
-one enrollment.
+`SECUREBOOT_SIGNING` is also the setting of
+[module signing](module-signing.md): one setting selects the signer of the
+modules and of the UKI. The keys stay separate on purpose. The module key
+goes into `MokList` with the module-signing-only extended key usage, so it
+can never sign a boot image; the UKI key goes into `db` and signs only the
+UKI. With `ci` the pipeline holds both (`MOK_CERT_PATH` names the module
+certificate in the image); with `per-host` BOOTy makes both and wipes
+them.
 
 ### Limitations
 

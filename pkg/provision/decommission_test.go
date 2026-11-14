@@ -24,7 +24,7 @@ func TestDecommissionStepsMatchLegacyScript(t *testing.T) {
 	}
 	want := []string{
 		"report-init", "copy-provisioner-files", "configure-dns",
-		"decommission-wipe", "mount-efivarfs", "remove-all-efi-entries",
+		"crypto-erase", "decommission-wipe", "mount-efivarfs", "remove-all-efi-entries",
 		"report-success",
 	}
 	if !reflect.DeepEqual(names, want) {

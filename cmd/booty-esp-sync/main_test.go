@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -63,5 +64,63 @@ func TestPairSyncCopiesToPeerDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("marker after synchronization: %v", err)
+	}
+}
+
+func TestSetupLogging(t *testing.T) {
+	origLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(origLogger); slog.SetLogLoggerLevel(slog.LevelInfo) })
+
+	var buf bytes.Buffer
+	if err := setupLogging(&buf, "debug", "json"); err != nil {
+		t.Fatal(err)
+	}
+	slog.Debug("synchronizing EFI system partition", "source", "/boot/efi")
+	if out := buf.String(); !strings.Contains(out, `"level":"DEBUG"`) || !strings.Contains(out, `"source":"/boot/efi"`) {
+		t.Fatalf("json output = %q", out)
+	}
+
+	// text keeps the default logger and only changes its level.
+	slog.SetDefault(origLogger)
+	if err := setupLogging(&buf, "warn", "text"); err != nil {
+		t.Fatal(err)
+	}
+	if slog.Default().Enabled(t.Context(), slog.LevelInfo) || !slog.Default().Enabled(t.Context(), slog.LevelWarn) {
+		t.Fatal("text with warn: info enabled or warn disabled")
+	}
+
+	// An invalid value falls back to info (not fatal: systemd would
+	// restart the service in a loop).
+	if err := setupLogging(&buf, "trace", "text"); err == nil {
+		t.Error("setupLogging accepted level trace")
+	}
+	if slog.Default().Enabled(t.Context(), slog.LevelDebug) || !slog.Default().Enabled(t.Context(), slog.LevelInfo) {
+		t.Fatal("invalid level did not fall back to info")
+	}
+	if err := setupLogging(&buf, "info", "console"); err == nil {
+		t.Error("setupLogging accepted format console")
+	}
+}
+
+// An invalid setting is reported with --log-level=error as well, in the
+// text format of the service.
+func TestSetupLoggingWarnsAboveLevel(t *testing.T) {
+	origLogger, origOut, origFlags := slog.Default(), log.Writer(), log.Flags()
+	t.Cleanup(func() {
+		slog.SetDefault(origLogger)
+		slog.SetLogLoggerLevel(slog.LevelInfo)
+		log.SetOutput(origOut)
+		log.SetFlags(origFlags)
+	})
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	if err := setupLogging(&buf, "error", "bogus"); err == nil {
+		t.Fatal("setupLogging accepted format bogus")
+	}
+	if out := buf.String(); !strings.Contains(out, "WARN ignoring log setting") || !strings.Contains(out, "bogus") {
+		t.Fatalf("no warning for --log-format=bogus with --log-level=error: %q", out)
+	}
+	if slog.Default().Enabled(t.Context(), slog.LevelWarn) {
+		t.Fatal("the warning left the level below error")
 	}
 }

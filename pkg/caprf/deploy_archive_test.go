@@ -395,3 +395,172 @@ func TestDeployArchiveVarsLikeTheISO(t *testing.T) {
 		})
 	}
 }
+
+// A deploy archive must keep the cosign lock-down of the base vars like a
+// vars payload (#933 review): its deploy/vars can neither drop nor change
+// the policy nor add a source that the policy does not cover, and its
+// files can not replace the pinned trust material, directly under /deploy
+// or through deploy/file-system copied over the ramdisk.
+func TestDeployArchiveKeepsCosignLockDown(t *testing.T) {
+	root := useDeployRoot(t)
+	trustedRoot := filepath.Join(root, "file-system", "trusted_root.json")
+	policy := "IMAGE_COSIGN_TRUSTED_ROOT=" + trustedRoot + "\nIMAGE_COSIGN_IDENTITY_REGEXP=https://ci\\.example/.*\n" +
+		"IMAGE_COSIGN_OIDC_ISSUER=https://ci.example\nSYSEXT_COSIGN_PUBKEYS=/etc/booty/sysext.pub\n"
+	base := baseAgentVars + policy
+	signed := "IMAGE=oci://registry.example/os@sha256:" + strings.Repeat("a", 64) + "\n"
+	for _, tc := range []struct {
+		name    string
+		vars    string
+		files   []archiveEntry
+		wantErr string
+	}{
+		{name: "same policy", vars: policy + signed},
+		{name: "policy dropped", vars: signed, wantErr: "changes cosign settings"},
+		{name: "other trusted root", vars: strings.Replace(policy, trustedRoot, "/tmp/evil.json", 1) + signed, wantErr: "changes cosign settings"},
+		{name: "http image with own checksum", vars: policy + "IMAGE=https://evil.example/os.img\nIMAGE_CHECKSUM=" + strings.Repeat("b", 64) + "\n",
+			wantErr: "not oci://"},
+		{name: "replaces the trusted root", vars: policy + signed, wantErr: "replaces the cosign trust material",
+			files: []archiveEntry{{name: "deploy/file-system/trusted_root.json", body: "{}"}}},
+		{name: "replaces a key through the ramdisk copy", vars: policy + signed, wantErr: "replaces the cosign trust material",
+			files: []archiveEntry{{name: "deploy/file-system/etc/booty/sysext.pub", body: "key"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := append([]archiveEntry{{name: "deploy/vars", body: tc.vars}}, tc.files...)
+			c := &Client{vars: []byte(base)}
+			_, _, err := c.CommandConfig(deployArchive(t, entries...))
+			defer c.DiscardCommandFiles()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CommandConfig() = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("CommandConfig() = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// Under a cosign policy the copy of deploy/file-system over the ramdisk
+// (PROVISIONER_FILES_TARGET=ramdisk, in the base or the archive vars) may
+// only write name resolution and CA certificates; anything else would run
+// code in the verifying process (#933 review). Without a policy the copy
+// is unrestricted, as before.
+func TestDeployArchiveRamdiskCopyAllowlist(t *testing.T) {
+	useDeployRoot(t)
+	policy := "IMAGE_COSIGN_PUBKEYS=/etc/booty/image.pub\n"
+	ramdisk := "PROVISIONER_FILES_TARGET=ramdisk\n"
+	for _, tc := range []struct {
+		name, base, vars, file, wantErr string
+	}{
+		{name: "etc/hosts", base: policy + ramdisk, file: "etc/hosts"},
+		{name: "resolv.conf and certificates", base: policy + ramdisk, file: "etc/ssl/certs/extra.pem"},
+		{name: "pki tree", base: policy + ramdisk, file: "etc/pki/ca-trust/source/anchors/ca.pem"},
+		{name: "CA bundle file", base: policy + ramdisk + "CA_BUNDLE_FILE=/usr/local/share/ca.pem\n", file: "usr/local/share/ca.pem"},
+		{name: "a binary", base: policy + ramdisk, file: "usr/bin/x", wantErr: "file-system/usr"},
+		{name: "docker credential helpers", base: policy + ramdisk, file: "root/.docker/config.json", wantErr: "file-system/root"},
+		{name: "ld.so.preload", base: policy + ramdisk, file: "etc/ld.so.preload", wantErr: "file-system/etc/ld.so.preload"},
+		{name: "ramdisk target from the archive", base: policy, vars: ramdisk, file: "usr/bin/x", wantErr: "file-system/usr"},
+		{name: "no ramdisk copy", base: policy, file: "usr/bin/x"},
+		{name: "no cosign policy", base: ramdisk, file: "usr/bin/x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vars := strings.Join([]string{"HOSTNAME=worker-7", strings.TrimSpace(tc.base), strings.TrimSpace(tc.vars)}, "\n") + "\n"
+			payload := deployArchive(t, archiveEntry{name: "deploy/vars", body: vars},
+				archiveEntry{name: "deploy/file-system/" + tc.file, body: "x"})
+			c := &Client{vars: []byte(baseAgentVars + tc.base)}
+			_, _, err := c.CommandConfig(payload)
+			defer c.DiscardCommandFiles()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CommandConfig() = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) || !strings.Contains(err.Error(), "copied over the ramdisk") {
+				t.Fatalf("CommandConfig() = %v, want a refusal naming %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// A trust file is matched with its symlinks resolved: an archive path
+// through an alias (lib -> usr/lib) can not reach it (#933 review).
+func TestDeployArchiveTrustFileThroughSymlink(t *testing.T) {
+	useDeployRoot(t)
+	ramdisk := t.TempDir()
+	prev := ramdiskRoot
+	t.Cleanup(func() { ramdiskRoot = prev })
+	ramdiskRoot = ramdisk
+	if err := os.MkdirAll(filepath.Join(ramdisk, "usr", "lib", "booty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("usr/lib", filepath.Join(ramdisk, "lib")); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(ramdisk, "usr", "lib", "booty", "image.pub")
+	if err := os.WriteFile(key, []byte("key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	policy := "IMAGE_COSIGN_PUBKEYS=" + key + "\n"
+	payload := deployArchive(t, archiveEntry{name: "deploy/vars", body: "HOSTNAME=worker-7\n" + policy},
+		archiveEntry{name: "deploy/file-system/lib/booty/image.pub", body: "evil"})
+	c := &Client{vars: []byte(baseAgentVars + policy)}
+	_, _, err := c.CommandConfig(payload)
+	defer c.DiscardCommandFiles()
+	if err == nil || !strings.Contains(err.Error(), "replaces the cosign trust material") {
+		t.Fatalf("CommandConfig() = %v, want the trust file refused", err)
+	}
+}
+
+// An allowed ramdisk directory that is a symlink (etc/ssl/certs -> usr/bin)
+// can not carry a file outside the allowlist (#933 review).
+func TestDeployArchiveRamdiskCopyThroughSymlink(t *testing.T) {
+	useDeployRoot(t)
+	ramdisk := t.TempDir()
+	prev := ramdiskRoot
+	t.Cleanup(func() { ramdiskRoot = prev })
+	ramdiskRoot = ramdisk
+	for _, d := range []string{"usr/bin", "etc/ssl"} {
+		if err := os.MkdirAll(filepath.Join(ramdisk, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("../../usr/bin", filepath.Join(ramdisk, "etc", "ssl", "certs")); err != nil {
+		t.Fatal(err)
+	}
+	base := "IMAGE_COSIGN_PUBKEYS=/etc/booty/image.pub\nPROVISIONER_FILES_TARGET=ramdisk\n"
+	for file, wantErr := range map[string]bool{"etc/ssl/certs/tool": true, "etc/ssl/extra.pem": false} {
+		payload := deployArchive(t, archiveEntry{name: "deploy/vars", body: "HOSTNAME=worker-7\n" + base},
+			archiveEntry{name: "deploy/file-system/" + file, body: "x"})
+		c := &Client{vars: []byte(baseAgentVars + base)}
+		_, _, err := c.CommandConfig(payload)
+		c.DiscardCommandFiles()
+		if got := err != nil && strings.Contains(err.Error(), "copied over the ramdisk"); got != wantErr {
+			t.Fatalf("%s: CommandConfig() = %v, want refused %t", file, err, wantErr)
+		}
+	}
+}
+
+// A trust file configured by a relative path is matched against the
+// absolute archive destinations (#933 review).
+func TestDeployArchiveTrustFileRelativePath(t *testing.T) {
+	root := useDeployRoot(t)
+	t.Chdir(filepath.Dir(root))
+	if err := os.MkdirAll(filepath.Join(root, "machine-files"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "machine-files", "image.pub"), []byte("key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	policy := "IMAGE_COSIGN_PUBKEYS=deploy/machine-files/image.pub\n"
+	payload := deployArchive(t, archiveEntry{name: "deploy/vars", body: "HOSTNAME=worker-7\n" + policy},
+		archiveEntry{name: "deploy/machine-files/image.pub", body: "evil"})
+	c := &Client{vars: []byte(baseAgentVars + policy)}
+	_, _, err := c.CommandConfig(payload)
+	defer c.DiscardCommandFiles()
+	if err == nil || !strings.Contains(err.Error(), "replaces the cosign trust material") {
+		t.Fatalf("CommandConfig() = %v, want the trust file refused", err)
+	}
+}

@@ -7,9 +7,12 @@ keys (`IMAGE_COSIGN_PUBKEYS`, `SYSEXT_COSIGN_PUBKEYS`, see the README section
 "Cosign verification of OCI images and sysexts"). It does not use the cosign
 library: BOOTy reads the simple-signing signatures under the
 `sha256-<hex>.sig` tag with go-containerregistry and verifies them with the
-Go standard library, so the ramdisk gains no dependency. Keyless signatures,
-Rekor and the Sigstore bundle format remain open
-([proposal-supply-chain-trust.md](proposal-supply-chain-trust.md)).
+Go standard library, so the ramdisk gains no dependency. Keyless signatures
+(Fulcio certificate, SCT, Rekor v1 entry) are verified offline against a
+Sigstore trusted root with `IMAGE_COSIGN_TRUSTED_ROOT` and
+`SYSEXT_COSIGN_TRUSTED_ROOT`, in the Sigstore bundle format (OCI referrers)
+and the `.sig` tag layout, also with the standard library (README "Keyless
+cosign verification").
 
 ## Priority: P3
 

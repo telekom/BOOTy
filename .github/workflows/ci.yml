@@ -1228,12 +1228,15 @@ jobs:
           echo "Using OVMF vars: $OVMF_VARS"
           cp "$OVMF_VARS" /tmp/ovmf_vars.fd
 
+          # 768 MiB: OVMF reserves more memory than a BIOS boot, and with
+          # 512 MiB the default initramfs left ~61 MiB free, so a few more KiB
+          # failed with "Initramfs unpacking failed: write error".
           timeout 120 qemu-system-x86_64 \
             -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
             -drive if=pflash,format=raw,file=/tmp/ovmf_vars.fd \
             -cdrom test-uefi.iso \
             -boot d \
-            -m 512 \
+            -m 768 \
             -display none \
             -monitor none \
             -no-reboot \

@@ -48,6 +48,23 @@ type SysextConfig struct {
 	// sources keep SHA256.
 	// Default: none (no cosign verification)
 	CosignPublicKeys []string `yaml:"cosignPublicKeys,omitempty" json:"cosignPublicKeys,omitempty"`
+
+	// CosignTrustedRoot is the path of a Sigstore trusted_root.json in the
+	// ramdisk (never fetched). With CosignIdentityRegexp and
+	// CosignOIDCIssuer it enables keyless verification: every oci:// layer source, pinned by digest, must carry a
+	// keyless cosign signature whose Fulcio certificate, SCT and Rekor entry
+	// verify against it. With CosignPublicKeys too, either kind of
+	// signature is accepted.
+	// Default: "" (no keyless verification)
+	CosignTrustedRoot string `yaml:"cosignTrustedRoot,omitempty" json:"cosignTrustedRoot,omitempty"`
+
+	// CosignIdentityRegexp must match the whole SAN of the signing
+	// certificate (Go regexp, implicitly anchored).
+	CosignIdentityRegexp string `yaml:"cosignIdentityRegexp,omitempty" json:"cosignIdentityRegexp,omitempty"`
+
+	// CosignOIDCIssuer must equal the OIDC issuer extension of the signing
+	// certificate.
+	CosignOIDCIssuer string `yaml:"cosignOIDCIssuer,omitempty" json:"cosignOIDCIssuer,omitempty"`
 }
 
 // SysextLayerConfig identifies one sysext artifact to load into the provisioned

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
+	"strings"
 )
 
 // ErrEncryptedRootUnsupported marks an image that StreamEncryptedRoot cannot
@@ -17,14 +19,20 @@ var ErrEncryptedRootUnsupported = errors.New("image layout not supported for for
 
 // EncryptedRoot selects the source partition that goes into the LUKS2
 // mapping: Number > 0 selects by number, else the root selection rules of
-// StreamRoot apply.
+// StreamRoot apply. An image without a root partition candidate and with one
+// Linux LVM partition has its root on LVM: that partition is selected.
 type EncryptedRoot struct {
 	Number int
 	// Open is called when the stream reaches the selected partition. The
 	// partition table and every partition before it are on the disk then.
 	// Open grows the partition to the disk end, formats and opens it, and
-	// returns the device that receives the partition content.
-	Open func(ctx context.Context, number int, size int64) (string, error)
+	// returns the device that receives the partition content. lvm is true
+	// when the partition has the Linux LVM type (an LVM physical volume).
+	Open func(ctx context.Context, number int, size int64, lvm bool) (string, error)
+	// Check, when set, is called with the selected partition before the
+	// stream writes to the disk; an error stops it with no image byte
+	// written (earlier steps, such as a wipe, have run already).
+	Check func(lvm bool) error
 }
 
 // StreamEncryptedRoot writes a raw GPT image to disk like Stream, except
@@ -62,6 +70,9 @@ func StreamEncryptedRoot(ctx context.Context, url, disk string, target Encrypted
 	if err != nil {
 		return err
 	}
+	if err := target.check(root); err != nil {
+		return err
+	}
 	stream, checksum, err := wrapChecksum(io.MultiReader(bytes.NewReader(prefix), src), opt)
 	if err != nil {
 		return err
@@ -76,7 +87,7 @@ func StreamEncryptedRoot(ctx context.Context, url, disk string, target Encrypted
 		wipeImageTarget(disk)
 		return fmt.Errorf("writing the image up to partition %d: %w", root.Number, err)
 	}
-	dst, err := target.Open(ctx, root.Number, size)
+	dst, err := target.Open(ctx, root.Number, size, isLinuxLVMPartition(root))
 	if err != nil {
 		wipeImageTarget(disk)
 		return err
@@ -96,9 +107,29 @@ func StreamEncryptedRoot(ctx context.Context, url, disk string, target Encrypted
 	return nil
 }
 
+func (t EncryptedRoot) check(root sfdiskPartition) error {
+	if t.Check == nil {
+		return nil
+	}
+	return t.Check(isLinuxLVMPartition(root))
+}
+
 // selectEncryptedRoot picks the partition and checks that it is the last.
 func selectEncryptedRoot(parts []sfdiskPartition, number int) (sfdiskPartition, error) {
-	root, err := selectSourceRootPartition(parts, "", number)
+	candidates := parts
+	if number == 0 {
+		// A physical volume is never a root partition, also with a root label;
+		// only the guarded fallback below picks one.
+		candidates = slices.DeleteFunc(slices.Clone(parts), isLinuxLVMPartition)
+	}
+	root, err := selectSourceRootPartition(candidates, "", number)
+	if err != nil && number == 0 && !slices.ContainsFunc(parts, isLinuxRootTypePartition) {
+		// No root partition (no Linux filesystem or Discoverable Partitions
+		// root type): the root is on LVM, in the single physical volume.
+		if pv, pvErr := selectSingleSourceRootCandidate(parts, isLinuxLVMPartition, "Linux LVM partition"); pvErr == nil {
+			root, err = pv, nil
+		}
+	}
 	if err != nil {
 		return sfdiskPartition{}, err
 	}
@@ -109,4 +140,25 @@ func selectEncryptedRoot(parts []sfdiskPartition, number int) (sfdiskPartition, 
 		}
 	}
 	return root, nil
+}
+
+// linuxLVMGUID is the GPT type of an LVM physical volume.
+const linuxLVMGUID = "E6D6D379-F507-44C2-A23C-238F2A3DF928"
+
+// Discoverable Partitions Specification root types (as in pkg/disk, which
+// imports this package through pkg/config).
+const (
+	linuxRootX86_64GUID = "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709"
+	linuxRootARM64GUID  = "B921B045-1DF0-41C3-AF44-4C6F280D3FAE"
+)
+
+// isLinuxRootTypePartition matches the types of disk.IsLinuxRootPartitionType.
+func isLinuxRootTypePartition(part sfdiskPartition) bool {
+	return isLinuxFilesystemPartition(part) ||
+		strings.EqualFold(part.Type, linuxRootX86_64GUID) ||
+		strings.EqualFold(part.Type, linuxRootARM64GUID)
+}
+
+func isLinuxLVMPartition(part sfdiskPartition) bool {
+	return strings.EqualFold(part.Type, linuxLVMGUID)
 }
