@@ -249,7 +249,8 @@ show one line per stage and per notable result:
 - Boot handoff: EFI boot entries, GRUB and kernel command line, kexec load
   and execute, reboot and power off, the watchdog handoff.
 - Kernel module signing: the signed out-of-tree modules and the certificate
-  (path, SHA-256), and how it is enrolled (`mok-enroll.efi` staged,
+  (path, SHA-256), the module system extension they go into (or that there
+  are none), and how the certificate is enrolled (`mok-enroll.efi` staged,
   MokManager queued, or left for the provisioner).
 - Time, firmware and reports: clock synchronization and skew, NIC firmware
   versions (`NIC_FIRMWARE_LOG`), SR-IOV settings and compliance, check
@@ -904,7 +905,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `progress resumed, petting the watchdog again`
 - `watchdog keepalive failed`
 
-### INFO (482 messages)
+### INFO (484 messages)
 
 #### INFO `.`
 
@@ -1347,6 +1348,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `no image signature URL configured, skipping verification`
 - `no machine commands directory found`
 - `no matching disk pair, provisioning a single disk`
+- `no out-of-tree kernel modules, no module sysext`
 - `no provisioner files to apply to the ramdisk`
 - `non-EFI system detected, skipping efivarfs mount`
 - `non-EFI system, skipping EFI boot entry removal`
@@ -1393,6 +1395,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `shared data partition already has content, skipping seed`
 - `shared data partition already mounted`
 - `signed out-of-tree kernel modules`
+- `signed out-of-tree kernel modules into a system extension`
 - `skipping EFI fallback loader installation; no boot partition detected`
 - `skipping boot partition mount; no boot partition detected`
 - `skipping completed step`
