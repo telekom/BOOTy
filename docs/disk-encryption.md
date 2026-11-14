@@ -177,7 +177,8 @@ Provisioning time in the KVM scenario (Ubuntu 26.04 cloud image, 6 GiB
 disk, same runner type), from `report-init` to `report-success`: in place
 (an earlier version of this change: write the image, then `cryptsetup
 reencrypt` of the grown 5.4 GiB partition) 82.5 s, of which the reencrypt
-took 25.8 s; format first: see the pull request. The reencrypt time grows
+took 25.8 s; format first 71.2 s, of which writing the image with the
+format took 45.7 s; without encryption 34.0 s. The reencrypt time grows
 with the disk size (about 15 h for 8 TB at 150 MB/s); format first does
 not.
 
