@@ -1,9 +1,12 @@
 package logging
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
 	"slices"
 	"strings"
 )
@@ -65,6 +68,9 @@ func redactAttr(groups []string, a slog.Attr) slog.Attr {
 	if (len(groups) > 0 || a.Key != slog.MessageKey) && (isSensitiveLogKey(a.Key) || slices.ContainsFunc(groups, isSensitiveLogKey)) {
 		return slog.String(a.Key, redactedLogValue)
 	}
+	if v, ok := redactComposite(a.Value); ok {
+		return slog.Any(a.Key, v)
+	}
 	switch a.Value.Kind() {
 	case slog.KindString, slog.KindAny:
 		s := a.Value.String()
@@ -73,4 +79,73 @@ func redactAttr(groups []string, a slog.Attr) slog.Attr {
 		}
 	}
 	return a
+}
+
+// redactComposite redacts a map, struct, slice or array value: RedactText on
+// its rendered form misses secrets that follow a map key or a struct field
+// name ("map[text:password=x]", {"password":"x"}). It walks the JSON form,
+// which is what the JSON handler writes: a sensitive key gets
+// [REDACTED], a string gets RedactText. ok is false when nothing changed,
+// so the handler renders the original value.
+func redactComposite(v slog.Value) (any, bool) {
+	if v.Kind() != slog.KindAny {
+		return nil, false
+	}
+	x := v.Any()
+	if _, isErr := x.(error); isErr {
+		return nil, false
+	}
+	rv := reflect.ValueOf(x)
+	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface {
+		rv = rv.Elem()
+	}
+	switch rv.Kind() {
+	case reflect.Map, reflect.Struct, reflect.Slice, reflect.Array:
+	default:
+		return nil, false
+	}
+	b, err := json.Marshal(x)
+	if err != nil {
+		// The handler can not render it as JSON either; redact the text.
+		s := fmt.Sprintf("%+v", x)
+		if r := RedactText(s); r != s {
+			return r, true
+		}
+		return nil, false
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var tree any
+	if dec.Decode(&tree) != nil {
+		return nil, false
+	}
+	return redactTree(tree)
+}
+
+// redactTree redacts a decoded JSON value and reports whether it changed.
+func redactTree(v any) (any, bool) {
+	changed := false
+	switch t := v.(type) {
+	case map[string]any:
+		for k, e := range t {
+			if isSensitiveLogKey(k) {
+				t[k], changed = redactedLogValue, true
+				continue
+			}
+			if r, ok := redactTree(e); ok {
+				t[k], changed = r, true
+			}
+		}
+	case []any:
+		for i, e := range t {
+			if r, ok := redactTree(e); ok {
+				t[i], changed = r, true
+			}
+		}
+	case string:
+		if r := RedactText(t); r != t {
+			return r, true
+		}
+	}
+	return v, changed
 }

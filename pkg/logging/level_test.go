@@ -83,3 +83,30 @@ func TestNewHandlerRedacts(t *testing.T) {
 		}
 	}
 }
+
+// A map, struct or slice value is redacted by its keys and strings, not only
+// by its rendered text, in both formats.
+func TestNewHandlerRedactsComposites(t *testing.T) {
+	type creds struct {
+		User     string `json:"user"`
+		Password string `json:"password"`
+	}
+	plain := map[string]int{"disks": 2}
+	for _, format := range []string{FormatText, FormatJSON} {
+		var buf bytes.Buffer
+		slog.New(NewHandler(&buf, format, slog.LevelDebug)).Info("composite",
+			"detail", map[string]string{"text": "password=hunter2"},
+			"nested", map[string]any{"list": []string{"ok", "token=s3cr3t"}},
+			"creds", &creds{User: "admin", Password: "pw-value"},
+			"plain", plain)
+		out := buf.String()
+		for _, secret := range []string{"hunter2", "s3cr3t", "pw-value"} {
+			if strings.Contains(out, secret) {
+				t.Errorf("%s: %q not redacted in %q", format, secret, out)
+			}
+		}
+		if !strings.Contains(out, "admin") || !strings.Contains(out, "disks") {
+			t.Errorf("%s: plain values lost in %q", format, out)
+		}
+	}
+}
