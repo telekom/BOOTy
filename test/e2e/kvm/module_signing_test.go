@@ -42,6 +42,7 @@ echo "PACKAGES=$(dpkg-query -W -f='${Package}=${Version} ' shim-signed shim 2>/d
 echo "MOKTRUSTED=$(od -An -tu1 -j4 /sys/firmware/efi/efivars/MokListTrustedRT-605dab50-e046-4300-abb6-3dd810dd8b23 2>/dev/null | tr -d ' ')"
 echo "LOCKDOWN=$(cat /sys/kernel/security/lockdown 2>/dev/null)"
 grep -i 'BOOTy module signing' /proc/keys | sed 's/^/KEY /'
+grep -E ' \.(machine|platform|secondary_trusted_keys|builtin_trusted_keys): ' /proc/keys | sed 's/^/KEYRING /'
 echo "PCR7=$(cat /sys/class/tpm/tpm0/pcr-sha256/7 2>/dev/null)"
 echo "PCR14=$(cat /sys/class/tpm/tpm0/pcr-sha256/14 2>/dev/null)"
 try() {

@@ -129,6 +129,17 @@ func TestModuleSigningSysextVM(t *testing.T) {
 
 	report := check("secure boot on")
 	requireLine(t, report, "SECUREBOOT=1")
+	if os.Getenv("BOOTY_SYSEXT_ROOTHASH_SIG") == "unsupported" {
+		// The kernel refuses the root hash signature (Ubuntu 24.04, 6.8):
+		// the extension stays out, the module stays unsigned and refused,
+		// and the boot goes on.
+		requireLine(t, report, "SYSEXT_MERGED=0")
+		requireLine(t, report, "SIGNED_MODULE=refused")
+		if !strings.Contains(report, "Root hash verification failed") {
+			t.Fatalf("no root hash verification error:\n%s", report)
+		}
+		return
+	}
 	requireLine(t, report, "SYSEXT_MERGED=1")
 	requireLine(t, report, "SIGNED_MODULE=loaded")
 	requireLine(t, report, "SIGNED_SIGNER=BOOTy module signing modsysext-e2e")

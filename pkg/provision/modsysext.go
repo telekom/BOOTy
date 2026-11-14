@@ -37,8 +37,11 @@ const (
 )
 
 const moduleSysextDropInUnit = `# BOOTy (MODULE_SIGNING_TARGET=sysext): merge only system extensions whose
-# dm-verity root hash signature the kernel accepts.
+# dm-verity root hash signature the kernel accepts. systemd 255 asks for a
+# passphrase when the kernel refuses the signature; the timeout keeps that
+# from blocking the boot.
 [Service]
+TimeoutStartSec=90s
 ExecStart=
 ExecStart=/usr/bin/systemd-sysext refresh --image-policy=` + moduleSysextPolicy + "\n"
 
