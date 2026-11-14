@@ -5,14 +5,16 @@ package provision
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,13 +24,14 @@ import (
 	"github.com/telekom/BOOTy/pkg/config"
 )
 
-// testPE builds a minimal PE32+ image with the named sections. signed sets
+// testPE builds a minimal PE32+ image with the named sections, laid out
+// as ukify writes it, with room for two more section headers. signed sets
 // the size of the security data directory, as an Authenticode signature
 // does.
 func testPE(t *testing.T, signed bool, sections ...[2]string) []byte {
 	t.Helper()
 	const lfanew, align = 0x40, 0x200
-	hdrs := lfanew + 4 + 20 + 240 + 40*len(sections)
+	hdrs := lfanew + 4 + 20 + 240 + 40*(len(sections)+2)
 	off := (hdrs + align - 1) / align * align
 	var b bytes.Buffer
 	b.Write([]byte("MZ"))
@@ -42,7 +45,10 @@ func testPE(t *testing.T, signed bool, sections ...[2]string) []byte {
 	}{0x8664, uint16(len(sections)), 0, 0, 0, 240, 0x22})
 	oh := make([]byte, 240)
 	binary.LittleEndian.PutUint16(oh[0:], 0x20b)
-	binary.LittleEndian.PutUint32(oh[108:], 16) // NumberOfRvaAndSizes
+	binary.LittleEndian.PutUint32(oh[32:], align)       // SectionAlignment
+	binary.LittleEndian.PutUint32(oh[36:], align)       // FileAlignment
+	binary.LittleEndian.PutUint32(oh[60:], uint32(off)) // SizeOfHeaders
+	binary.LittleEndian.PutUint32(oh[108:], 16)         // NumberOfRvaAndSizes
 	if signed {
 		binary.LittleEndian.PutUint32(oh[112+8*4+4:], 0x100) // security directory size
 	}
@@ -109,7 +115,7 @@ func TestUKISections(t *testing.T) {
 func ukiTestHost(t *testing.T, signing string, uki []byte) (*Orchestrator, *mockCommander, string, string) {
 	t.Helper()
 	root := encryptionTargetRoot(t)
-	for _, rel := range append(append([]string(nil), ukiTargetTools...), ukiPerHostTools...) {
+	for _, rel := range ukiTargetTools {
 		p := filepath.Join(root, rel)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
@@ -125,10 +131,9 @@ func ukiTestHost(t *testing.T, signing string, uki []byte) (*Orchestrator, *mock
 	if err := os.WriteFile(filepath.Join(esp, "EFI/Linux/ubuntu-6.8.efi"), uki, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	old, oldWork := isMountPoint, ukiWorkDir
+	old := isMountPoint
 	isMountPoint = func(string) bool { return true }
-	ukiWorkDir = filepath.Join(t.TempDir(), "work")
-	t.Cleanup(func() { isMountPoint, ukiWorkDir = old, oldWork })
+	t.Cleanup(func() { isMountPoint = old })
 	cfg := &config.MachineConfig{}
 	cfg.Provision.DiskEncryption = config.DiskEncryptionConfig{Mode: config.DiskEncryptionLUKS2TPM2UKI, RecoveryKeyURL: "https://x"}
 	cfg.Provision.SecureBoot.Signing = signing
@@ -160,7 +165,7 @@ func TestPrepareUKICIMakesNoKey(t *testing.T) {
 	countKeyGeneration(t, true)
 	pub := testPublicKeyPEM(t)
 	sig := `{"sha256":[{"pcrs":[11],"sig":"x"}]}`
-	uki := testPE(t, true, [2]string{".linux", "k"}, [2]string{".pcrpkey", string(pub)}, [2]string{".pcrsig", sig})
+	uki := testPE(t, true, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}, [2]string{".pcrpkey", string(pub)}, [2]string{".pcrsig", sig})
 	o, cmd, root, esp := ukiTestHost(t, config.SigningCI, uki)
 
 	pinned := filepath.Join(t.TempDir(), "pcr.pem")
@@ -168,7 +173,7 @@ func TestPrepareUKICIMakesNoKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	o.cfg.Provision.DiskEncryption.PCRPublicKeyFile = pinned
-	st, err := o.prepareUKI(context.Background(), root, esp)
+	st, err := o.prepareUKI(root, esp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,104 +189,202 @@ func TestPrepareUKICIMakesNoKey(t *testing.T) {
 		t.Fatal("ci mode changed the UKI")
 	}
 
-	// Another pinned key, an unsigned UKI, a UKI without .pcrsig, or a
-	// digest that the manifest does not name all fail.
+	// Another pinned key, an unsigned UKI, a UKI without .pcrsig or
+	// without a command line, or a digest that the manifest does not name
+	// all fail.
 	if err := os.WriteFile(pinned, testPublicKeyPEM(t), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := o.prepareUKI(context.Background(), root, esp); err == nil || !strings.Contains(err.Error(), "not the key in") {
+	if _, err := o.prepareUKI(root, esp); err == nil || !strings.Contains(err.Error(), "not the key in") {
 		t.Fatalf("other pinned key: %v", err)
 	}
 	o.cfg.Provision.DiskEncryption.PCRPublicKeyFile = ""
 	for name, bad := range map[string][]byte{
-		"unsigned":  testPE(t, false, [2]string{".linux", "k"}, [2]string{".pcrpkey", string(pub)}, [2]string{".pcrsig", sig}),
-		"no pcrsig": testPE(t, true, [2]string{".linux", "k"}, [2]string{".pcrpkey", string(pub)}),
+		"unsigned":  testPE(t, false, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}, [2]string{".pcrpkey", string(pub)}, [2]string{".pcrsig", sig}),
+		"no pcrsig": testPE(t, true, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}, [2]string{".pcrpkey", string(pub)}),
 	} {
 		o, _, root, esp := ukiTestHost(t, config.SigningCI, bad)
-		if _, err := o.prepareUKI(context.Background(), root, esp); err == nil {
+		if _, err := o.prepareUKI(root, esp); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+	// systemd-stub takes the command line of the boot entry, measured into
+	// the unbound PCR 12, when the UKI has none.
+	for name, cmdline := range map[string][]string{"no cmdline": nil, "blank cmdline": {".cmdline", " \n\x00"}} {
+		secs := [][2]string{{".linux", "k"}, {".pcrpkey", string(pub)}, {".pcrsig", sig}}
+		if cmdline != nil {
+			secs = append(secs, [2]string{cmdline[0], cmdline[1]})
+		}
+		o, _, root, esp := ukiTestHost(t, config.SigningCI, testPE(t, true, secs...))
+		if _, err := o.prepareUKI(root, esp); err == nil || !strings.Contains(err.Error(), "no .cmdline") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
 	o.ukiDigest = strings.Repeat("0", 64)
-	if _, err := o.prepareUKI(context.Background(), root, esp); err == nil || !strings.Contains(err.Error(), "signed image manifest says") {
+	if _, err := o.prepareUKI(root, esp); err == nil || !strings.Contains(err.Error(), "signed image manifest says") {
 		t.Fatalf("wrong digest: %v", err)
 	}
 	o.ukiDigest = ""
-	if _, err := o.prepareUKI(context.Background(), root, esp); err == nil || !strings.Contains(err.Error(), UKIDigestAnnotation) {
+	if _, err := o.prepareUKI(root, esp); err == nil || !strings.Contains(err.Error(), UKIDigestAnnotation) {
 		t.Fatalf("no digest: %v", err)
 	}
 }
 
-// TestPrepareUKIPerHost: per-host signing makes two keys and hands them to
-// the target tools as /proc fd paths; a failure leaves the ESP unchanged
-// and removes the work dir.
+// TestPrepareUKIPerHost: per-host signing makes two keys, signs in BOOTy
+// and runs no program of the image, which could read the keys (#944
+// review; #935 for mokutil). The signed UKI carries the PCR policy key and
+// signature that go to the target, and the original sections unchanged.
 func TestPrepareUKIPerHost(t *testing.T) {
 	n := countKeyGeneration(t, false)
 	uki := testPE(t, false, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}, [2]string{".osrel", "ID=x"})
 	o, cmd, root, esp := ukiTestHost(t, config.SigningPerHost, uki)
-	cmd.setResult("chroot "+root, []byte("sbsign: failed"), errors.New("exit 1"))
-	_, err := o.prepareUKI(context.Background(), root, esp)
-	if err == nil || !strings.Contains(err.Error(), "sign the UKI") {
-		t.Fatalf("err = %v", err)
+	st, err := o.prepareUKI(root, esp)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if *n != 2 {
 		t.Fatalf("%d keys generated, want the PCR policy key and the Secure Boot key", *n)
 	}
-	script := strings.Join(cmd.calls[0].args, " ")
-	for _, want := range []string{"ukify build", "--linux=", "--cmdline=@", "--os-release=@", "--pcr-private-key=/proc/",
-		"--secureboot-private-key=/proc/", "--pcr-banks=sha256"} {
-		if !strings.Contains(script, want) {
-			t.Errorf("signing command lacks %q: %s", want, script)
-		}
+	if len(cmd.calls) != 0 {
+		t.Fatalf("per-host signing ran %v while the private keys existed", cmd.calls)
 	}
-	if strings.Contains(script, "PRIVATE KEY") {
-		t.Fatal("a private key is in the command line")
+	signed, err := os.ReadFile(filepath.Join(esp, "EFI/Linux/ubuntu-6.8.efi"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(ukiWorkDir); !os.IsNotExist(err) {
-		t.Fatalf("work dir left: %v", err)
+	secs, ok, err := ukiSections(signed)
+	if err != nil || !ok {
+		t.Fatalf("signed UKI: signed=%v err=%v", ok, err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(esp, "EFI/Linux/ubuntu-6.8.efi")); !bytes.Equal(got, uki) {
-		t.Fatal("a failed signing changed the ESP")
+	pub, _ := os.ReadFile(filepath.Join(root, ukiPCRPublicKeyPath))
+	sig, _ := os.ReadFile(filepath.Join(root, ukiPCRSignaturePath))
+	if !bytes.Equal(secs["pcrpkey"], pub) || !bytes.Equal(secs["pcrsig"], sig) || string(secs["cmdline"]) != "root=x" || string(secs["linux"]) != "k" {
+		t.Fatalf("sections %q", secs)
+	}
+	if sum := sha256.Sum256(signed); hex.EncodeToString(sum[:]) != st.sha256 || st.cert == nil {
+		t.Fatalf("state %+v", st)
+	}
+	cert, _ := os.ReadFile(filepath.Join(esp, ukiCertESPPath))
+	if b, _ := pem.Decode(cert); b == nil || !bytes.Equal(b.Bytes, st.cert) || bytes.Contains(signed, []byte("PRIVATE KEY")) {
+		t.Fatal("the ESP lacks the certificate, or a private key is in the UKI")
 	}
 
-	// An already signed UKI is refused before any key is made.
+	// An already signed UKI or one with .pcrpkey is refused before any key
+	// is made.
 	*n = 0
-	o, _, root, esp = ukiTestHost(t, config.SigningPerHost, testPE(t, true, [2]string{".linux", "k"}))
-	if _, err := o.prepareUKI(context.Background(), root, esp); err == nil || *n != 0 {
-		t.Fatalf("signed UKI: err=%v keys=%d", err, *n)
+	for _, bad := range [][]byte{
+		testPE(t, true, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}),
+		testPE(t, false, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}, [2]string{".pcrpkey", "x"}),
+	} {
+		o, _, root, esp = ukiTestHost(t, config.SigningPerHost, bad)
+		if _, err := o.prepareUKI(root, esp); err == nil || *n != 0 {
+			t.Fatalf("err=%v keys=%d", err, *n)
+		}
+	}
+}
+
+// TestUKIPCRSignature: the .pcrsig is what systemd-measure 259 signs for
+// the same sections (pol from `systemd-measure sign --linux=... --bank=sha256`
+// with these contents), and each signature verifies with the key.
+func TestUKIPCRSignature(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 1024) //nolint:gosec // test key
+	if err != nil {
+		t.Fatal(err)
+	}
+	secs := map[string][]byte{"linux": []byte("kernel"), "osrel": []byte("ID=x\n"), "cmdline": []byte("root=x"), "initrd": []byte("initrd"),
+		"uname": []byte("6.8.0"), "sbat": []byte("sbat,1\n"), "pcrpkey": []byte("pub")}
+	js, err := ukiPCRSignature(secs, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		SHA256 []struct {
+			PCRs           []int
+			PKFP, Pol, Sig string
+		}
+	}
+	if err := json.Unmarshal(js, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"1c53432fc329c90e3160c9d70ff9795a1abed2fbe929cfa27b414dc989ce3c26", "3dedf9886465189d0237f4446e0319df02017f92a26492362e7b27afddd272b4",
+		"2b6b476105112e199e95436a0ef28440bece58b8b63888e5aac708677a63b032", "02db9ba9a17757dc5df9a1720af59b30ea8b9a8df22e59a26df89ae79a3b4ce0"}
+	fp := sha256.Sum256(x509.MarshalPKCS1PublicKey(&key.PublicKey))
+	if len(got.SHA256) != len(want) {
+		t.Fatalf("%s", js)
+	}
+	for i, e := range got.SHA256 {
+		pol, _ := hex.DecodeString(e.Pol)
+		sig, _ := base64.StdEncoding.DecodeString(e.Sig)
+		h := sha256.Sum256(pol)
+		if e.Pol != want[i] || e.PKFP != hex.EncodeToString(fp[:]) || len(e.PCRs) != 1 || e.PCRs[0] != 11 ||
+			rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA256, h[:], sig) != nil {
+			t.Errorf("phase %d: %+v", i, e)
+		}
+	}
+}
+
+// TestAuthenticodeSign: the hash is the one osslsigncode 2.x calculates for
+// this file, the result is signed, and layouts that the hash would not
+// cover are refused.
+func TestAuthenticodeSign(t *testing.T) {
+	uki := testPE(t, false, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"})
+	out, err := appendPESections(uki, [2][]byte{[]byte(".pcrpkey"), []byte("pub")}, [2][]byte{[]byte(".pcrsig"), []byte("{}")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := parsePELayout(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := authenticodeDigest(out, l); hex.EncodeToString(d[:]) != "cfe7f03e19f6940e8c3488bef575d8f90348a44390ef0cda95d87895d66975e9" {
+		t.Errorf("Authenticode digest %x", d)
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 1024) //nolint:gosec // test key
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := ukiCertificate(key, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, _ := x509.ParseCertificate(der)
+	signed, err := authenticodeSign(out, key, cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secs, ok, err := ukiSections(signed)
+	if err != nil || !ok || string(secs["pcrpkey"]) != "pub" || string(secs["pcrsig"]) != "{}" || !bytes.HasPrefix(signed, out[:0x80]) {
+		t.Fatalf("signed=%v err=%v sections %q", ok, err, secs)
+	}
+	if _, err := authenticodeSign(signed, key, cert); err == nil {
+		t.Error("signed twice")
+	}
+	if _, err := appendPESections(append(slices.Clone(uki), 1), [2][]byte{[]byte(".x"), nil}); err == nil {
+		t.Error("trailing data accepted")
 	}
 }
 
 func TestPrepareUKINeedsOneUKI(t *testing.T) {
-	o, _, root, esp := ukiTestHost(t, config.SigningCI, testPE(t, true, [2]string{".linux", "k"}))
+	o, _, root, esp := ukiTestHost(t, config.SigningCI, testPE(t, true, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}))
 	if err := os.WriteFile(filepath.Join(esp, "EFI/Linux/other.efi"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := o.prepareUKI(context.Background(), root, esp); err == nil || !strings.Contains(err.Error(), "exactly one UKI") {
+	if _, err := o.prepareUKI(root, esp); err == nil || !strings.Contains(err.Error(), "exactly one UKI") {
 		t.Fatalf("err = %v", err)
 	}
 	if err := os.Remove(filepath.Join(root, "usr/bin/systemd-cryptenroll")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := o.prepareUKI(context.Background(), root, esp); err == nil || !strings.Contains(err.Error(), "systemd-cryptenroll") {
+	if _, err := o.prepareUKI(root, esp); err == nil || !strings.Contains(err.Error(), "systemd-cryptenroll") {
 		t.Fatalf("missing tool: %v", err)
 	}
 }
 
-func TestPrivateKeyMemfdWiped(t *testing.T) {
+func TestDestroyRSAKey(t *testing.T) {
 	k, err := rsa.GenerateKey(rand.Reader, 1024) //nolint:gosec // test key
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := privateKeyMemfd(k)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(procFD(f))
-	if err != nil || !bytes.Contains(got, []byte("PRIVATE KEY")) {
-		t.Fatalf("memfd via /proc: %v", err)
-	}
-	wipeMemfd(f)
 	destroyRSAKey(k)
 	if k.D.Sign() != 0 || k.Primes[0].Sign() != 0 {
 		t.Fatal("the key was not zeroed")
@@ -304,14 +407,20 @@ func TestUKIEnrollScript(t *testing.T) {
 	if !strings.Contains(string(unit), "ConditionPathExists="+ukiPCRSignaturePath) {
 		t.Errorf("unit: %s", unit)
 	}
-	// The empty passphrase is wiped only after the checked enrollment.
+	// The empty passphrase is wiped only after the checked enrollment. A
+	// rerun after the wipe (interrupted before the unit was disabled) finds
+	// the TPM2 token and finishes without the empty passphrase.
 	last := -1
-	for _, s := range []string{"--tpm2-public-key-pcrs=11", "--tpm2-signature=", "--tpm2-pcrs=", "luksKillSlot", "systemctl disable"} {
+	for _, s := range []string{"grep -q systemd-tpm2", "systemctl disable", "--unlock-key-file=/dev/null", "--tpm2-public-key-pcrs=11",
+		"--tpm2-signature=", "--tpm2-pcrs=", "luksKillSlot"} {
 		i := strings.Index(ukiEnrollScript, s)
 		if i <= last {
 			t.Fatalf("%q missing or out of order", s)
 		}
 		last = i
+	}
+	if strings.LastIndex(ukiEnrollScript, "systemctl disable") < last {
+		t.Fatal("the unit is not disabled after the wipe")
 	}
 	for _, f := range []string{"etc/crypttab", luksDracutConf, luksDracutKeyConf, luksEnrollKeyPath} {
 		if _, err := os.Stat(filepath.Join(root, f)); err == nil {
@@ -367,7 +476,15 @@ func TestUKIBootEntryStep(t *testing.T) {
 func TestCreateUKIBootEntry(t *testing.T) {
 	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
 	o.targetDisk, o.bootPartition = "/dev/vda", "/dev/vda15"
-	o.encryption = &encryptionState{uki: &ukiState{loader: `\EFI\Linux\u.efi`}}
+	esp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(esp, "EFI/Linux"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(esp, "EFI/Linux/u.efi"), []byte("uki"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte("uki"))
+	o.encryption = &encryptionState{uki: &ukiState{loader: `\EFI\Linux\u.efi`, esp: esp, rel: "EFI/Linux/u.efi", sha256: hex.EncodeToString(sum[:])}}
 	cmd.setResult("efibootmgr", []byte("BootOrder: 0003,0001\nBoot0001* ubuntu\tHD()\nBoot0003* booty-uki\tHD()\n"), nil)
 	if err := o.createUKIBootEntry(context.Background()); err != nil {
 		t.Fatal(err)
@@ -379,5 +496,42 @@ func TestCreateUKIBootEntry(t *testing.T) {
 	want := []string{"", "-b 0003 -B", `-c -d /dev/vda -p 15 -L booty-uki -l \EFI\Linux\u.efi`}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("efibootmgr calls %q, want %q", got, want)
+	}
+
+	// Image code ran in the chroot after prepare-disk-encryption: a UKI
+	// that changed since is not booted.
+	if err := os.WriteFile(filepath.Join(esp, "EFI/Linux/u.efi"), []byte("other"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd.calls = nil
+	if err := o.createUKIBootEntry(context.Background()); err == nil || !strings.Contains(err.Error(), "changed after") || len(cmd.calls) != 0 {
+		t.Fatalf("changed UKI: err=%v calls=%v", err, cmd.calls)
+	}
+}
+
+// TestLoadUKIDigest: verify-image, before wipe-disks, fails on a missing
+// or malformed annotation unless DISK_ENCRYPTION_ALLOW_FAILURE leaves the
+// fallback to the stream-image preflight.
+func TestLoadUKIDigest(t *testing.T) {
+	value := ""
+	old := ociManifestAnnotation
+	ociManifestAnnotation = func(context.Context, string, string) (string, error) { return value, nil }
+	t.Cleanup(func() { ociManifestAnnotation = old })
+	cfg := &config.MachineConfig{}
+	cfg.Provision.DiskEncryption.Mode = config.DiskEncryptionLUKS2TPM2UKI
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	for _, v := range []string{"", strings.Repeat("g", 64), strings.Repeat("a", 63)} {
+		value = v
+		if err := o.loadUKIDigest(context.Background(), "oci://r/i"); err == nil || o.ukiDigest != "" {
+			t.Errorf("annotation %q: err=%v digest=%q", v, err, o.ukiDigest)
+		}
+	}
+	cfg.Provision.DiskEncryption.AllowFailure = true
+	if err := o.loadUKIDigest(context.Background(), "oci://r/i"); err != nil || o.ukiDigest != "" {
+		t.Errorf("allow failure: err=%v digest=%q", err, o.ukiDigest)
+	}
+	value = " " + strings.Repeat("A", 64) + "\n"
+	if err := o.loadUKIDigest(context.Background(), "oci://r/i"); err != nil || o.ukiDigest != strings.Repeat("a", 64) {
+		t.Errorf("valid: err=%v digest=%q", err, o.ukiDigest)
 	}
 }

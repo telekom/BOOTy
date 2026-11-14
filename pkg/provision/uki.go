@@ -21,13 +21,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
-	"slices"
-	"strconv"
 	"strings"
 	"time"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/image"
@@ -40,10 +35,11 @@ import (
 // UKIDigestAnnotation, which the cosign signature of the image covers.
 //
 //   - SECUREBOOT_SIGNING=per-host: the UKI is unsigned. BOOTy makes a PCR
-//     policy key and a Secure Boot key for this host, signs the expected
-//     PCR 11 values into .pcrsig (systemd-measure, ukify --join-pcrsig),
-//     signs the UKI (sbsign), and wipes both private keys. The certificate
-//     goes to the report and to the ESP; the provisioner enrolls it in db.
+//     policy key and a Secure Boot key for this host, adds .pcrpkey and the
+//     signed expected PCR 11 values (.pcrsig), signs the UKI for Secure
+//     Boot, all in Go (uki_sign.go), and wipes both private keys. The
+//     certificate goes to the report and to the ESP; the provisioner
+//     enrolls it in db.
 //   - SECUREBOOT_SIGNING=ci: the UKI is signed and carries .pcrsig and
 //     .pcrpkey from the image pipeline. BOOTy makes no key; it only
 //     verifies the UKI and installs its public policy key.
@@ -69,24 +65,10 @@ const (
 	maxUKISize  = 512 << 20
 )
 
-// ukiRebuildArgs maps the UKI sections that per-host signing carries over
-// to the ukify build options. ukify makes .sbat, .pcrpkey and .pcrsig
-// itself and takes the stub (.text and the other code sections) from the
-// image. A UKI with any other UKI section is refused.
-var ukiRebuildArgs = map[string]string{
-	"linux": "--linux=", "initrd": "--initrd=", "cmdline": "--cmdline=@", "osrel": "--os-release=@",
-	"ucode": "--microcode=", "splash": "--splash=", "dtb": "--devicetree=",
-}
-
-// ukiOtherSections are UKI sections that a rebuild would drop.
-var ukiOtherSections = []string{"dtbauto", "hwids", "efifw", "profile", "pcrsig"}
-
-// The uname that goes into the ukify command line.
-var ukiUnamePattern = regexp.MustCompile(`^[A-Za-z0-9._+-]{1,128}$`)
-
-// The extra binaries that per-host signing runs in the target.
-var ukiPerHostTools = []string{"usr/bin/ukify", "usr/lib/systemd/systemd-measure", "usr/bin/sbsign",
-	"usr/lib/systemd/boot/efi/linuxx64.efi.stub"}
+// ukiPerHostRefused are UKI sections that per-host signing refuses: the
+// ones that it adds, and the ones whose PCR 11 measurement
+// ukiPCRSignature does not model.
+var ukiPerHostRefused = []string{"pcrsig", "pcrpkey", "dtbauto", "hwids", "efifw"}
 
 // The binaries that the installed system needs to bind the volume.
 var ukiTargetTools = []string{"usr/bin/systemd-cryptenroll", "usr/sbin/cryptsetup"}
@@ -95,6 +77,7 @@ var ukiTargetTools = []string{"usr/bin/systemd-cryptenroll", "usr/sbin/cryptsetu
 type ukiState struct {
 	signing    string
 	loader     string // firmware path, \EFI\Linux\<name>.efi
+	esp, rel   string // the ESP mount point and the UKI below it
 	sha256     string // of the installed UKI
 	certSHA256 string // per-host Secure Boot certificate
 	cert       []byte // DER
@@ -112,8 +95,6 @@ type ReportUKI struct {
 
 // uki functions and paths that tests replace.
 var (
-	// ukiWorkDir is in the ramdisk /run, which the chroot shares.
-	ukiWorkDir            = "/run/booty-uki"
 	ociManifestAnnotation = image.OCIManifestAnnotation
 	// newUKISigningKey generates a per-host key. SECUREBOOT_SIGNING=ci must
 	// never call it (TestPrepareUKICIMakesNoKey).
@@ -121,9 +102,9 @@ var (
 )
 
 // loadUKIDigest reads the UKI digest from the manifest of the verified
-// image. A missing annotation fails the encryption preflight in
-// stream-image, before the first disk write, where
-// DISK_ENCRYPTION_ALLOW_FAILURE applies.
+// image. A missing or malformed annotation fails verify-image, before
+// wipe-disks; with DISK_ENCRYPTION_ALLOW_FAILURE the encryption preflight
+// in stream-image falls back to an unencrypted install instead.
 func (o *Orchestrator) loadUKIDigest(ctx context.Context, imageURL string) error {
 	if !o.cfg.Provision.DiskEncryption.UKI() {
 		return nil
@@ -132,7 +113,14 @@ func (o *Orchestrator) loadUKIDigest(ctx context.Context, imageURL string) error
 	if err != nil {
 		return fmt.Errorf("read the UKI digest annotation: %w", err)
 	}
-	o.ukiDigest = strings.ToLower(strings.TrimSpace(v))
+	v = strings.ToLower(strings.TrimSpace(v))
+	if _, err := hex.DecodeString(v); err != nil || len(v) != 2*sha256.Size {
+		if o.cfg.Provision.DiskEncryption.AllowFailure {
+			return nil
+		}
+		return fmt.Errorf("no UKI digest: the image manifest has no hex SHA-256 in the annotation %s", UKIDigestAnnotation)
+	}
+	o.ukiDigest = v
 	return nil
 }
 
@@ -147,19 +135,19 @@ type imageUKI struct {
 // prepareUKI verifies the UKI of the image against the signed digest,
 // signs it with per-host keys if asked, and installs the public PCR policy
 // key and signature for the first-boot enrollment.
-func (o *Orchestrator) prepareUKI(ctx context.Context, root, esp string) (*ukiState, error) {
+func (o *Orchestrator) prepareUKI(root, esp string) (*ukiState, error) {
 	signing := o.cfg.Provision.SecureBoot.SigningMode()
-	u, err := o.loadImageUKI(root, esp, signing)
+	u, err := o.loadImageUKI(root, esp)
 	if err != nil {
 		return nil, err
 	}
-	st := &ukiState{signing: signing, loader: `\` + strings.ReplaceAll(u.rel, "/", `\`)}
+	st := &ukiState{signing: signing, loader: `\` + strings.ReplaceAll(u.rel, "/", `\`), esp: esp, rel: u.rel}
 	var pubPEM, sigJSON []byte
 	switch signing {
 	case config.SigningCI:
 		pubPEM, sigJSON, err = o.checkCIUKI(u.sections, u.signed)
 	case config.SigningPerHost:
-		pubPEM, sigJSON, err = o.installPerHostUKI(ctx, root, esp, st, u)
+		pubPEM, sigJSON, err = o.installPerHostUKI(esp, st, u)
 	default:
 		err = fmt.Errorf("SECUREBOOT_SIGNING %q cannot sign a UKI", signing)
 	}
@@ -179,8 +167,8 @@ func (o *Orchestrator) prepareUKI(ctx context.Context, root, esp string) (*ukiSt
 
 // loadImageUKI checks the target tools and reads the UKI from the ESP; its
 // SHA-256 must be the one of the signed image manifest.
-func (o *Orchestrator) loadImageUKI(root, esp, signing string) (*imageUKI, error) {
-	if err := checkUKITarget(root, signing); err != nil {
+func (o *Orchestrator) loadImageUKI(root, esp string) (*imageUKI, error) {
+	if err := checkTargetFiles(root, ukiTargetTools, "Ubuntu: systemd-cryptsetup, libtss2-rc0t64"); err != nil {
 		return nil, err
 	}
 	if len(o.ukiDigest) != sha256.Size*2 {
@@ -204,17 +192,23 @@ func (o *Orchestrator) loadImageUKI(root, esp, signing string) (*imageUKI, error
 	if u.sections, u.signed, err = ukiSections(u.data); err != nil {
 		return nil, fmt.Errorf("%s: %w", u.rel, err)
 	}
+	// Without an embedded command line systemd-stub takes the one of the
+	// boot entry, also with Secure Boot on, and measures it into PCR 12,
+	// which the volume is not bound to.
+	if len(bytes.Trim(u.sections["cmdline"], "\x00 \t\n")) == 0 {
+		return nil, fmt.Errorf("%s has no .cmdline: systemd-stub would accept a command line from the boot entry", u.rel)
+	}
 	return u, nil
 }
 
 // installPerHostUKI signs the unsigned UKI with per-host keys and replaces
 // it on the ESP, in place: the ESP may not fit two copies. u.data becomes
 // the signed UKI.
-func (o *Orchestrator) installPerHostUKI(ctx context.Context, root, esp string, st *ukiState, u *imageUKI) (pubPEM, sigJSON []byte, err error) {
-	if u.signed || u.sections["pcrsig"] != nil {
+func (o *Orchestrator) installPerHostUKI(esp string, st *ukiState, u *imageUKI) (pubPEM, sigJSON []byte, err error) {
+	if u.signed {
 		return nil, nil, errors.New("already signed; SECUREBOOT_SIGNING=per-host needs the unsigned UKI")
 	}
-	signed, pubPEM, sigJSON, err := o.signUKIPerHost(ctx, root, st, u.data, u.sections)
+	signed, pubPEM, sigJSON, err := o.signUKIPerHost(st, u.data, u.sections)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -232,14 +226,6 @@ func (o *Orchestrator) installPerHostUKI(ctx context.Context, root, esp string, 
 		return nil, nil, fmt.Errorf("write the UKI signing certificate: %w", err)
 	}
 	return pubPEM, sigJSON, nil
-}
-
-func checkUKITarget(root, signing string) error {
-	tools := ukiTargetTools
-	if signing == config.SigningPerHost {
-		tools = append(append([]string(nil), tools...), ukiPerHostTools...)
-	}
-	return checkTargetFiles(root, tools, "Ubuntu: systemd-cryptsetup, libtss2-rc0t64; per-host signing also systemd-ukify, sbsigntool")
 }
 
 // readImageUKI returns the one UKI below /EFI/Linux of the ESP.
@@ -342,56 +328,47 @@ func parsePublicKeyPEM(data []byte) ([]byte, error) {
 	return block.Bytes, nil
 }
 
-// signUKIPerHost signs the expected PCR 11 values and the UKI with two new
-// keys and wipes them. The private keys reach systemd-measure and sbsign
-// as /proc/<pid>/fd paths of memfds, never as files.
-func (o *Orchestrator) signUKIPerHost(ctx context.Context, root string, st *ukiState, data []byte, sections map[string][]byte) (signed, pubPEM, sigJSON []byte, err error) {
-	if err := os.MkdirAll(ukiWorkDir, 0o700); err != nil {
-		return nil, nil, nil, fmt.Errorf("UKI work dir: %w", err)
+// signUKIPerHost adds the .pcrpkey and .pcrsig of two new keys to the
+// unsigned UKI, signs it for Secure Boot and wipes the keys. It runs no
+// program: the private keys never leave BOOTy (uki_sign.go).
+func (o *Orchestrator) signUKIPerHost(st *ukiState, data []byte, sections map[string][]byte) (signed, pubPEM, sigJSON []byte, err error) {
+	for _, name := range ukiPerHostRefused {
+		if sections[name] != nil {
+			return nil, nil, nil, fmt.Errorf("SECUREBOOT_SIGNING=per-host cannot sign a UKI with a .%s section", name)
+		}
 	}
-	defer os.RemoveAll(ukiWorkDir) //nolint:errcheck // ramdisk scratch, public data only
 	pcrKey, sbKey, pubPEM, err := o.newPerHostKeys(st)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	defer destroyRSAKey(pcrKey)
 	defer destroyRSAKey(sbKey)
-	pcrKeyFile, err := privateKeyMemfd(pcrKey)
-	if err != nil {
+	measured := maps.Clone(sections)
+	measured["pcrpkey"] = pubPEM
+	if sigJSON, err = ukiPCRSignature(measured, pcrKey); err != nil {
 		return nil, nil, nil, err
 	}
-	defer wipeMemfd(pcrKeyFile)
-	sbKeyFile, err := privateKeyMemfd(sbKey)
+	unsigned, err := appendPESections(data, [2][]byte{[]byte(".pcrpkey"), pubPEM}, [2][]byte{[]byte(".pcrsig"), sigJSON})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, fmt.Errorf("add .pcrpkey and .pcrsig: %w", err)
 	}
-	defer wipeMemfd(sbKeyFile)
-
-	files := map[string][]byte{"pcr.pub": pubPEM, "sb.crt": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: st.cert})}
-	args, err := ukiRebuildCommand(sections, files)
+	cert, err := x509.ParseCertificate(st.cert)
 	if err != nil {
+		return nil, nil, nil, fmt.Errorf("the UKI signing certificate: %w", err)
+	}
+	if signed, err = authenticodeSign(unsigned, sbKey, cert); err != nil {
 		return nil, nil, nil, err
-	}
-	w := ukiWorkDir
-	args = append(args, "--pcr-private-key="+procFD(pcrKeyFile), "--pcr-public-key="+w+"/pcr.pub", "--pcr-banks=sha256",
-		"--secureboot-private-key="+procFD(sbKeyFile), "--secureboot-certificate="+w+"/sb.crt", "--output="+w+"/signed.efi")
-	for name, b := range files {
-		if err := os.WriteFile(filepath.Join(w, name), b, 0o600); err != nil {
-			return nil, nil, nil, fmt.Errorf("write %s: %w", name, err)
-		}
-	}
-	if out, err := o.disk.ChrootRun(ctx, root, strings.Join(args, " ")); err != nil {
-		return nil, nil, nil, fmt.Errorf("sign the UKI: %s: %w", strings.TrimSpace(string(out)), err)
-	}
-	if signed, err = os.ReadFile(filepath.Join(w, "signed.efi")); err != nil {
-		return nil, nil, nil, fmt.Errorf("read the signed UKI: %w", err)
 	}
 	secs, ok, err := ukiSections(signed)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("the signed UKI: %w", err)
 	}
-	sigJSON = bytes.TrimRight(secs["pcrsig"], "\x00")
-	if !ok || len(sigJSON) == 0 || !bytes.Equal(bytes.TrimRight(secs["pcrpkey"], "\x00"), pubPEM) {
+	for name, b := range sections {
+		if !bytes.Equal(secs[name], b) {
+			return nil, nil, nil, fmt.Errorf("the signed UKI changed the .%s section", name)
+		}
+	}
+	if !ok || !bytes.Equal(secs["pcrsig"], sigJSON) || !bytes.Equal(secs["pcrpkey"], pubPEM) {
 		return nil, nil, nil, errors.New("the signed UKI lacks the Secure Boot signature, the .pcrsig or the .pcrpkey of this run")
 	}
 	o.log.Info("UKI signed with per-host keys; the private keys are wiped", "certSHA256", st.certSHA256)
@@ -423,32 +400,6 @@ func (o *Orchestrator) newPerHostKeys(st *ukiState) (pcrKey, sbKey *rsa.PrivateK
 	return pcrKey, sbKey, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}), nil
 }
 
-// ukiRebuildCommand returns the ukify build command that rebuilds the UKI
-// from its sections, which it adds to files (written to ukiWorkDir).
-func ukiRebuildCommand(sections, files map[string][]byte) ([]string, error) {
-	for _, name := range ukiOtherSections {
-		if sections[name] != nil {
-			return nil, fmt.Errorf("per-host signing cannot rebuild a UKI with a .%s section", name)
-		}
-	}
-	// ukify writes the unsigned UKI to TMPDIR first.
-	args := []string{"TMPDIR=" + ukiWorkDir, "ukify", "build"}
-	for _, name := range slices.Sorted(maps.Keys(ukiRebuildArgs)) {
-		if b, ok := sections[name]; ok {
-			files["sec-"+name] = b
-			args = append(args, ukiRebuildArgs[name]+ukiWorkDir+"/sec-"+name)
-		}
-	}
-	if u, ok := sections["uname"]; ok {
-		uname := strings.TrimRight(string(u), "\x00\n")
-		if !ukiUnamePattern.MatchString(uname) {
-			return nil, fmt.Errorf("unexpected .uname %q", uname)
-		}
-		args = append(args, "--uname="+uname)
-	}
-	return args, nil
-}
-
 func ukiCertificate(key *rsa.PrivateKey, cn string) ([]byte, error) {
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 127))
 	if err != nil {
@@ -468,42 +419,6 @@ func ukiCertificate(key *rsa.PrivateKey, cn string) ([]byte, error) {
 		return nil, fmt.Errorf("create the UKI signing certificate: %w", err)
 	}
 	return der, nil
-}
-
-// privateKeyMemfd writes key as PKCS#8 PEM into a memfd and zeroes the
-// encodings.
-func privateKeyMemfd(key *rsa.PrivateKey) (*os.File, error) {
-	der, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("encode key: %w", err)
-	}
-	defer clear(der)
-	buf := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-	defer clear(buf)
-	fd, err := unix.MemfdCreate("booty-uki-key", unix.MFD_CLOEXEC)
-	if err != nil {
-		return nil, fmt.Errorf("memfd for a signing key: %w", err)
-	}
-	f := os.NewFile(uintptr(fd), "booty-uki-key")
-	if _, err := f.Write(buf); err != nil {
-		wipeMemfd(f)
-		return nil, fmt.Errorf("write a signing key to its memfd: %w", err)
-	}
-	return f, nil
-}
-
-// procFD is the path under which the chroot (which shares /proc) opens f.
-func procFD(f *os.File) string {
-	return "/proc/" + strconv.Itoa(os.Getpid()) + "/fd/" + strconv.Itoa(int(f.Fd()))
-}
-
-// wipeMemfd overwrites and truncates the memfd before it is closed.
-func wipeMemfd(f *os.File) {
-	if fi, err := f.Stat(); err == nil && fi.Size() > 0 {
-		_, _ = f.WriteAt(make([]byte, fi.Size()), 0)
-	}
-	_ = f.Truncate(0)
-	_ = f.Close()
 }
 
 // destroyRSAKey zeroes the private parts of key (best effort: math/big may
@@ -530,6 +445,9 @@ func (o *Orchestrator) createUKIBootEntry(ctx context.Context) error {
 	if o.encryption == nil || o.encryption.uki == nil {
 		return nil
 	}
+	if err := o.encryption.uki.checkInstalled(); err != nil {
+		return err
+	}
 	if out, err := o.disk.Run(ctx, "efibootmgr"); err == nil {
 		for line := range strings.Lines(string(out)) {
 			if len(line) > 8 && strings.HasPrefix(line, "Boot") && efiBootEntryLineLabel(line) == ukiBootLabel {
@@ -545,6 +463,25 @@ func (o *Orchestrator) createUKIBootEntry(ctx context.Context) error {
 		return fmt.Errorf("efibootmgr create %s: %s: %w", ukiBootLabel, strings.TrimSpace(string(out)), err)
 	}
 	o.log.Info("UKI boot entry created", "loader", o.encryption.uki.loader)
+	return nil
+}
+
+// checkInstalled checks that the UKI on the ESP is still the one that
+// prepare-disk-encryption checked and signed: image code ran in the chroot
+// since (sign-kernel-modules, post-provision commands).
+func (u *ukiState) checkInstalled() error {
+	espRoot, err := os.OpenRoot(u.esp)
+	if err != nil {
+		return fmt.Errorf("open the ESP: %w", err)
+	}
+	defer espRoot.Close() //nolint:errcheck // read-only handle
+	data, err := espRoot.ReadFile(u.rel)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", u.rel, err)
+	}
+	if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != u.sha256 {
+		return fmt.Errorf("%s changed after prepare-disk-encryption: SHA-256 %x, want %s", u.rel, sum, u.sha256)
+	}
 	return nil
 }
 

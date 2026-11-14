@@ -436,7 +436,7 @@ func (o *Orchestrator) prepareUKIEncryption(ctx context.Context, st *encryptionS
 	if st.lvm {
 		return errors.New("DISK_ENCRYPTION=luks2-tpm2-uki does not support an LVM physical volume yet")
 	}
-	uki, err := o.prepareUKI(ctx, newroot, bootEFIMountPoint())
+	uki, err := o.prepareUKI(newroot, bootEFIMountPoint())
 	if err != nil {
 		return fmt.Errorf("prepare the UKI: %w", err)
 	}
@@ -1152,6 +1152,14 @@ say() { echo "booty-luks-tpm2-enroll: $*"; }
 efivar() { od -An -tu1 -j4 -N1 "/sys/firmware/efi/efivars/$1-` + efiGlobalGUID + `" 2>/dev/null | tr -d ' '; }
 if [ "$(efivar SecureBoot)" != 1 ] || [ "$(efivar SetupMode)" != 0 ]; then
 	say "Secure Boot is not on in user mode, the enrollment waits"
+	exit 0
+fi
+if ! cryptsetup luksDump "$dev" | grep -q "^  $LUKS_ENROLL_SLOT: luks2"; then
+	# An earlier run wiped key slot $LUKS_ENROLL_SLOT after the enrollment
+	# and stopped before it disabled the unit; the TPM2 opened this boot.
+	cryptsetup luksDump "$dev" | grep -q systemd-tpm2
+	systemctl disable ` + luksUnitName + `
+	say "done: key slot $LUKS_ENROLL_SLOT is already gone"
 	exit 0
 fi
 # --wipe-slot=tpm2 replaces the TPM2 slot of an earlier failed run.

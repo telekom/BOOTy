@@ -8,5 +8,7 @@ section: Upgrade notes for CAPRF
   cosign-verified `oci://` image with one UKI at `/EFI/Linux/*.efi` on the
   ESP and the manifest annotation `com.github.telekom.booty.uki.sha256`.
   With `per-host` the provisioner must enroll the reported certificate
-  (`secureBoot.uki.cert`) in `db` before it turns Secure Boot on. Nothing
-  changes with the defaults (#944).
+  (`secureBoot.uki.cert`) in `db` before it turns Secure Boot on. The UKI
+  mode needs `MODULE_SIGNING_ENROLLMENT=external`: the UKI boots without
+  shim, so no `MokList` reaches the kernel. Nothing changes with the
+  defaults (#944).
