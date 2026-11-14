@@ -16,7 +16,6 @@ import (
 	"github.com/telekom/BOOTy/pkg/disk"
 	"github.com/telekom/BOOTy/pkg/health"
 	"github.com/telekom/BOOTy/pkg/image"
-	"github.com/telekom/BOOTy/pkg/network"
 )
 
 var (
@@ -139,7 +138,7 @@ func (o *Orchestrator) dryRunImageReachability(ctx context.Context) DryRunResult
 		return DryRunResult{Status: DryRunFail, Message: "no image URLs configured"}
 	}
 
-	httpClient := network.NewHTTPClient(10 * time.Second)
+	httpClient := image.NewRedirectPolicyClient(10 * time.Second)
 	validated := 0
 	for _, imgURL := range o.cfg.Provision.Image.URLs {
 		scheme, redactedURL, invalidResult := validateDryRunImageURL(imgURL)

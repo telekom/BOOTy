@@ -75,6 +75,7 @@ func TestMergeCommandVarsRejectsRuntimeSettings(t *testing.T) {
 		"LOG_URL=https://x.example.com/log":          "transport",
 		"SUCCESS_ACTION=later":                       "payload keys SUCCESS_ACTION do not parse or validate",
 		"LUKS_DEVICE=/dev/sda":                       "LUKS_DEVICE",
+		"IMAGE_FOLLOW_REDIRECTS=false":               "IMAGE_FOLLOW_REDIRECTS",
 	} {
 		_, _, err := MergeCommandVars([]byte(commandBaseVars), []byte(payload))
 		if err == nil || !strings.Contains(err.Error(), want) {
