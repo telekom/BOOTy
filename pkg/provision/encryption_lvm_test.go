@@ -1,0 +1,175 @@
+//go:build linux
+
+package provision
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/telekom/BOOTy/pkg/config"
+)
+
+func stubRootFilesystem(t *testing.T, roots ...string) {
+	t.Helper()
+	old := isRootFilesystem
+	isRootFilesystem = func(_ context.Context, _ *Orchestrator, device string) (bool, error) {
+		for _, r := range roots {
+			if r == device {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	t.Cleanup(func() { isRootFilesystem = old })
+}
+
+func lvmTestOrchestrator(t *testing.T, vg string) (*Orchestrator, *mockCommander) {
+	t.Helper()
+	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
+	cmd.setResult("lvm pvs", []byte("  "+vg+"\n"), nil)
+	cmd.setResult("lvm lvs", []byte("  /dev/mapper/tcaas-swap\n  /dev/mapper/tcaas-root\n"), nil)
+	return o, cmd
+}
+
+func commandLines(cmd *mockCommander) []string {
+	got := make([]string, 0, len(cmd.calls))
+	for _, c := range cmd.calls {
+		got = append(got, c.name+" "+strings.Join(c.args, " "))
+	}
+	return got
+}
+
+func TestOpenEncryptedVG(t *testing.T) {
+	stubRootFilesystem(t, "/dev/mapper/tcaas-root")
+	o, cmd := lvmTestOrchestrator(t, "tcaas")
+	st := &encryptionState{device: "/dev/vda1", lvm: true, isRoot: true}
+	if err := o.openEncryptedVG(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	if st.rootLV != "/dev/mapper/tcaas-root" || !st.isRoot {
+		t.Fatalf("root LV %q isRoot %v", st.rootLV, st.isRoot)
+	}
+	want := []string{
+		"lvm pvs --devices /dev/mapper/booty_crypt --noheadings -o vg_name /dev/mapper/booty_crypt",
+		"lvm pvresize --devices /dev/mapper/booty_crypt /dev/mapper/booty_crypt",
+		"lvm vgchange --devices /dev/mapper/booty_crypt -ay tcaas",
+		"lvm lvs --devices /dev/mapper/booty_crypt --noheadings -o lv_dm_path tcaas",
+	}
+	if got := commandLines(cmd); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("commands:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestOpenEncryptedVGRefusesOtherVG(t *testing.T) {
+	stubRootFilesystem(t, "/dev/mapper/tcaas-root")
+	o, cmd := lvmTestOrchestrator(t, "other")
+	err := o.openEncryptedVG(context.Background(), &encryptionState{device: "/dev/vda1", lvm: true, isRoot: true})
+	if err == nil || !strings.Contains(err.Error(), `VG "other"`) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(cmd.calls) != 1 {
+		t.Fatalf("LVM changed after the VG check failed: %v", commandLines(cmd))
+	}
+}
+
+func TestOpenEncryptedVGWithoutRoot(t *testing.T) {
+	stubRootFilesystem(t)
+	o, _ := lvmTestOrchestrator(t, "tcaas")
+	if err := o.openEncryptedVG(context.Background(), &encryptionState{device: "/dev/vda1", lvm: true, isRoot: true}); err == nil {
+		t.Fatal("DISK_ENCRYPTION_TARGET=root accepted a VG without a root")
+	}
+	// Selected by number: a data VG.
+	st := &encryptionState{device: "/dev/vda3", lvm: true}
+	if err := o.openEncryptedVG(context.Background(), st); err != nil || st.isRoot || st.rootLV != "" {
+		t.Fatalf("data VG: isRoot %v rootLV %q err %v", st.isRoot, st.rootLV, err)
+	}
+}
+
+func TestOpenEncryptedVGProbeError(t *testing.T) {
+	old := isRootFilesystem
+	isRootFilesystem = func(context.Context, *Orchestrator, string) (bool, error) { return false, errors.New("busy") }
+	t.Cleanup(func() { isRootFilesystem = old })
+	o, _ := lvmTestOrchestrator(t, "tcaas")
+	if err := o.openEncryptedVG(context.Background(), &encryptionState{lvm: true, isRoot: true}); err == nil || !strings.Contains(err.Error(), "busy") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// Without LVM the dracut and GRUB files are those of #939, byte for byte.
+func TestEncryptionFilesWithoutLVMUnchanged(t *testing.T) {
+	libs := []string{"/usr/lib/a.so", "/usr/lib/b.so"}
+	if got := luksDracutConfText(libs, false); got != "# Written by BOOTy: unlock the LUKS2 volume in the initramfs (docs/disk-encryption.md).\n"+
+		"hostonly=\"no\"\nadd_dracutmodules+=\" crypt systemd-cryptsetup \"\ninstall_items+=\" /etc/crypttab /usr/lib/a.so /usr/lib/b.so \"\n" {
+		t.Fatalf("dracut conf:\n%s", got)
+	}
+	if got := luksGrubDefaultsText(&encryptionState{luksUUID: "u"}); got != "# Written by BOOTy (docs/disk-encryption.md).\nGRUB_FORCE_PARTUUID=\nGRUB_DISABLE_RECOVERY=true\n" {
+		t.Fatalf("GRUB defaults:\n%s", got)
+	}
+}
+
+func TestEncryptionFilesLVM(t *testing.T) {
+	root := encryptionTargetRoot(t)
+	st := &encryptionState{luksUUID: "11111111-2222-4333-8444-555555555555", enrollKey: []byte("k"), lvm: true, isRoot: true}
+	if err := writeEncryptionFiles(root, st, &encryptionExtras{libs: luksTargetLibs(root), grubHash: "h"}); err != nil {
+		t.Fatal(err)
+	}
+	read := func(rel string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	if d := read(luksDracutConf); !strings.Contains(d, "add_dracutmodules+=\" crypt systemd-cryptsetup lvm \"\n") {
+		t.Errorf("dracut conf without the lvm module:\n%s", d)
+	}
+	if g := read(luksGrubConf); !strings.HasSuffix(g, "GRUB_CMDLINE_LINUX=\"$GRUB_CMDLINE_LINUX rd.luks.uuid=11111111-2222-4333-8444-555555555555 rd.lvm.vg=tcaas\"\n") {
+		t.Errorf("GRUB defaults:\n%s", g)
+	}
+	// The volume, its key and the PCR binding are those of a partition.
+	if c := read("etc/crypttab"); c != "booty_crypt UUID=11111111-2222-4333-8444-555555555555 /etc/booty/luks-enroll.key luks,x-initrd.attach\n" {
+		t.Errorf("crypttab:\n%s", c)
+	}
+	if !strings.Contains(read(luksEnvPath), "TPM2_PCRS='7+14'\n") || read(luksScriptPath) != luksEnrollScript {
+		t.Error("the enrollment differs with LVM")
+	}
+	if err := checkEncryptionTarget(root, false, true); err == nil || !strings.Contains(err.Error(), "/usr/sbin/lvm") {
+		t.Fatalf("image without lvm: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "usr/sbin/lvm"), nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkEncryptionTarget(root, false, true); err != nil {
+		t.Fatalf("image with lvm: %v", err)
+	}
+}
+
+// close-encrypted-disk deactivates VG tcaas on the mapping before it closes
+// the mapping, and never runs a file system tool on the physical volume.
+func TestCloseEncryptedDiskLVM(t *testing.T) {
+	calls := stubCryptsetup(t, "")
+	o, cmd := newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
+	o.encryption = &encryptionState{device: "/dev/vda1", lvm: true, isRoot: true, rootLV: "/dev/mapper/tcaas-root"}
+	if err := o.closeEncryptedDisk(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := commandLines(cmd); len(got) != 1 || got[0] != "lvm vgchange -an --devices /dev/mapper/booty_crypt tcaas" {
+		t.Fatalf("commands %v", got)
+	}
+	if len(*calls) != 1 || strings.Join((*calls)[0].args, " ") != "close booty_crypt" {
+		t.Fatalf("cryptsetup calls %v", *calls)
+	}
+
+	calls = stubCryptsetup(t, "")
+	o, cmd = newTestOrchestratorWithCommander(t, &config.MachineConfig{}, &mockProvider{})
+	cmd.setResult("lvm vgchange", []byte("in use"), errors.New("exit status 5"))
+	o.encryption = &encryptionState{device: "/dev/vda1", lvm: true}
+	if err := o.closeEncryptedDisk(context.Background()); err == nil || len(*calls) != 0 {
+		t.Fatalf("failed deactivation: err=%v cryptsetup=%v", err, *calls)
+	}
+}

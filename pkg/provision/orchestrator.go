@@ -2575,6 +2575,10 @@ func (o *Orchestrator) parsePartitions(ctx context.Context) error {
 		o.bootPartition = boot.Node
 	}
 
+	if o.encryption != nil && o.encryption.rootLV != "" {
+		o.rootPartition = o.encryption.rootLV // the root is on LVM in the LUKS2 volume
+		return nil
+	}
 	root, err := o.findRootPartition(ctx, parts)
 	if err != nil {
 		return err

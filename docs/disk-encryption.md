@@ -5,7 +5,9 @@ runs the same steps as before: the encryption steps are not in the step
 list. BOOTy formats one partition of the image with LUKS2 while it writes
 the image, and writes that partition into the opened volume. The installed
 system binds the volume to the TPM2 (PCR 7+14) once Secure Boot is on. A
-random recovery key goes to the provisioner. Keys are in
+root on LVM is supported: BOOTy then encrypts the physical volume of VG
+`tcaas` ([LVM-on-LUKS](#root-on-lvm-vg-tcaas)). A random recovery key goes
+to the provisioner. Keys are in
 [configuration.md](configuration.md#disk-encryption). Read the
 [threat model](#threat-model) before you rely on it.
 
@@ -30,8 +32,11 @@ Provisioning (BOOTy, Secure Boot off):
      `/dev/mapper/booty_crypt` and streams the partition content of the
      image into the mapping. No byte of the partition reaches the disk in
      plain text. The rest of the image (its backup GPT) is not written.
+   - with an [LVM physical volume](#root-on-lvm-vg-tcaas): checks the VG,
+     grows the physical volume and activates VG `tcaas` on the mapping.
 2. `parse-partitions` checks that the root it finds is the encrypted
-   partition; from then on the root is the mapping. `grow-partition` is
+   partition; from then on the root is the mapping (on LVM: the logical
+   volume of VG `tcaas` that holds the root). `grow-partition` is
    skipped (the partition is grown), `resize-filesystem` grows the file
    system in the mapping.
 3. `prepare-disk-encryption` (before `configure-grub`, target mounted)
@@ -59,7 +64,8 @@ Provisioning (BOOTy, Secure Boot off):
      `CA_BUNDLE_FILE` as `/etc/booty/luks-status-ca.pem`;
    - and runs `dracut --force --regenerate-all` in the target.
 4. `close-encrypted-disk` (after `teardown-chroot`) grows the file system of
-   an encrypted data partition and closes the mapping. BOOTy reboots
+   an encrypted data partition (on LVM: deactivates VG `tcaas`) and closes
+   the mapping. BOOTy reboots
    through the firmware; disk encryption turns kexec off.
 
 Installed system, `booty-luks-tpm2-enroll.service`:
@@ -92,6 +98,52 @@ Installed system, `booty-luks-tpm2-enroll.service`:
 - Later boots: `systemd-cryptsetup` in the initramfs unseals the key with
   the TPM2. When the PCRs differ it asks on the console; the recovery key
   works there.
+
+## Root on LVM (VG tcaas)
+
+Images that put the root file system on a logical volume of VG `tcaas`
+(LVM-on-LUKS) are encrypted at the physical volume. Nothing else changes:
+the same key slots, escrow, enrollment unit, PCR 7+14 binding, GRUB lock
+and locked configuration keys apply.
+
+- The encrypted partition is an LVM physical volume when its GPT type is
+  Linux LVM (`E6D6D379-F507-44C2-A23C-238F2A3DF928`). With
+  `DISK_ENCRYPTION_TARGET=root` BOOTy takes it when the image has no Linux
+  filesystem partition and exactly one LVM partition; a partition number
+  selects it directly. It must be the last partition, like a root
+  partition.
+- `stream-image` writes the physical volume as it is in the image (LVM
+  label, metadata, all logical volumes) into the opened mapping, so no
+  byte of it reaches the disk in plain text. Then, with LVM limited to the
+  mapping (`--devices /dev/mapper/booty_crypt`, so a VG `tcaas` on another
+  disk is not touched):
+  1. `lvm pvs` checks that the volume belongs to VG `tcaas`; another VG
+     fails the run;
+  2. `lvm pvresize` grows it to the mapping. The logical volumes keep the
+     sizes of the image; the space of the grown disk stays free in the VG;
+  3. `lvm vgchange -ay tcaas` activates it, and BOOTy mounts each logical
+     volume read-only to find the root (`/etc/os-release`, or `/etc` and
+     `/usr`). With `DISK_ENCRYPTION_TARGET=root` a VG without a root fails
+     the run; with a partition number the VG may hold data only.
+- The root is that logical volume (`/dev/mapper/tcaas-<lv>`) for the
+  later steps; `grow-partition` is skipped and `resize-filesystem` finds
+  nothing to grow.
+- `prepare-disk-encryption` also needs `/usr/sbin/lvm` in the image
+  (Ubuntu: `lvm2`), adds the dracut `lvm` module to
+  `90-booty-luks.conf`, and appends to the kernel command line in
+  `99-booty-luks.cfg`:
+  `GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX rd.luks.uuid=<luks uuid> rd.lvm.vg=tcaas"`.
+  The initramfs opens `booty_crypt` from crypttab and activates VG
+  `tcaas` on it. The kernel command line is in neither PCR 7 nor 14, so
+  the binding is the same.
+- `close-encrypted-disk` deactivates VG `tcaas` before it closes the
+  mapping.
+- The ramdisk needs `lvm`. It is checked when the stream reaches the
+  physical volume: after the partitions before it are written, before the
+  format; `DISK_ENCRYPTION_ALLOW_FAILURE` does not cover it.
+
+Without `DISK_ENCRYPTION`, or with a partition that is not an LVM physical
+volume, BOOTy writes the same files and runs the same commands as before.
 
 ## Threat model
 
@@ -291,7 +343,8 @@ follow-up.
 
 - A TPM2 and UEFI Secure Boot in user mode.
 - A whole-disk raw GPT image; the encrypted partition is the last one and
-  not the ESP. Not with disk mirroring, RAID, `PARTITION_LAYOUT`, A/B,
+  not the ESP. A root on LVM: the physical volume of VG `tcaas`, with
+  `lvm2` in the image and `lvm` in the ramdisk. Not with disk mirroring, RAID, `PARTITION_LAYOUT`, A/B,
   `SKIP_TLS_VERIFY` or `CAPRF_LEGACY_COMPAT` (its preset turns on
   `SKIP_TLS_VERIFY`).
 - The root needs a separate `/boot` partition; a data partition must be
@@ -339,6 +392,15 @@ KVM scenarios (`.github/workflows/kvm-matrix.yml`):
   `DISK_ENCRYPTION_TARGET=2` the root stays plain, `/data` mounts through
   the mapping (fstab rewritten), its file system has grown to the disk end
   inside LUKS, and the enrollment key unlocks it.
+- `disk-encryption-lvm-ubuntu-26.04` (`TestDiskEncryptionLVMTPM2VM`): the
+  same cloud image with the root moved into LV `root` of VG `tcaas` on
+  partition 1 (Linux LVM type). BOOTy formats partition 1, writes the
+  physical volume into the mapping and finds the root LV; the escrowed
+  recovery key opens the volume; no LVM label is on the disk in plain text.
+  The installed system boots from the LV (`rd.luks.uuid`,
+  `rd.lvm.vg=tcaas`) with the enrollment key, binds to PCR 7+14 with Secure
+  Boot on (phase 1) and unlocks with the TPM2 without a prompt (phase 2),
+  slot 1 gone.
 - `disk-encryption-off-ubuntu-26.04` (`TestDiskEncryptionOffVM`): the same
   image without the keys: no encryption step runs, the partition table is
   the image's with the root grown, the root is plain ext4, and no BOOTy
@@ -347,7 +409,7 @@ KVM scenarios (`.github/workflows/kvm-matrix.yml`):
 Run them locally on an x86-64 Linux host with KVM, as root:
 
 ```sh
-sudo apt-get install -y qemu-system-x86 ovmf swtpm cryptsetup-bin python3-virt-firmware
+sudo apt-get install -y qemu-system-x86 ovmf swtpm cryptsetup-bin lvm2 python3-virt-firmware
 curl -LO https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img
 curl -LO https://launchpad.net/ubuntu/+archive/primary/+files/libtss2-rc0t64_4.1.3-6_amd64.deb
 sudo env MIRROR_OS_IMAGE=$PWD/ubuntu-26.04-server-cloudimg-amd64.img \
