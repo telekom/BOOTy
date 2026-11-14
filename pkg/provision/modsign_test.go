@@ -168,7 +168,7 @@ func TestNeedsFirmwareReboot(t *testing.T) {
 		{config.SecureBootConfig{Signing: config.SigningCI}, true},
 		{config.SecureBootConfig{Signing: config.SigningPerHost, ModuleSigning: config.ModuleSigningConfig{Enrollment: config.ModuleSigningEnrollEFIHelper}}, true},
 		{config.SecureBootConfig{Signing: config.SigningPerHost, ModuleSigning: config.ModuleSigningConfig{Enrollment: "mokutil"}}, true},
-		{config.SecureBootConfig{Signing: config.SigningPerHost, ModuleSigning: config.ModuleSigningConfig{Enrollment: "external"}}, false},
+		{config.SecureBootConfig{Signing: config.SigningPerHost, ModuleSigning: config.ModuleSigningConfig{Enrollment: "external"}}, true},
 	} {
 		if got := tc.sb.NeedsFirmwareReboot(); got != tc.want {
 			t.Errorf("%+v: got %v", tc.sb, got)

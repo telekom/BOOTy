@@ -52,15 +52,13 @@ func (m *MOKEnroller) Enroll(ctx context.Context) error {
 	}
 
 	slog.Info("enrolling mok certificate", "cert", m.certPath)
-	args := []string{"--import", m.certPath}
-	if m.password != "" {
-		args = append(args, "--root-pw", "--simple-hash")
+	if m.password == "" {
+		return fmt.Errorf("mok enrollment needs a one-time password for MokManager")
 	}
-	cmd := mokutilCommand(ctx, m.chroot, args...)
-	if m.password != "" {
-		// mokutil reads the password from stdin when --root-pw is used.
-		cmd.Stdin = strings.NewReader(m.password + "\n" + m.password + "\n")
-	}
+	// mokutil asks for the one-time password twice; it reads it from stdin
+	// when stdin is not a terminal.
+	cmd := mokutilCommand(ctx, m.chroot, "--import", m.certPath)
+	cmd.Stdin = strings.NewReader(m.password + "\n" + m.password + "\n")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("mokutil enroll: %s: %w", strings.TrimSpace(string(out)), err)

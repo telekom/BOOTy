@@ -75,10 +75,12 @@ func TestValidateModuleSigning(t *testing.T) {
 		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{CertDir: "relative"}}, "", true},
 		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{CertDir: "/a/../b"}}, "", true},
 		{SecureBootConfig{Signing: "per-host"}, ImageModeAB, true},
-		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Enrollment: "external"}}, ImageModeAB, false},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Enrollment: "external"}}, ImageModeAB, true},
 		// Secure Boot back on before the enrollment boot refuses the helper.
 		{SecureBootConfig{Signing: "per-host", ReEnable: true}, "", true},
-		{SecureBootConfig{Signing: "per-host", ReEnable: true, ModuleSigning: m{Enrollment: "mokutil"}}, "", false},
+		{SecureBootConfig{Signing: "per-host", ReEnable: true, MOKPassword: "pw", ModuleSigning: m{Enrollment: "mokutil"}}, "", false},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Enrollment: "mokutil"}}, "", true},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{CertDir: "/run/keys"}}, "", true},
 		{SecureBootConfig{Signing: "per-host", ReEnable: true, ModuleSigning: m{Enrollment: "external"}}, "", false},
 		// ci enrolls the certificate of the image.
 		{SecureBootConfig{Signing: "ci", MOKCertPath: "/usr/share/ci/mok.der"}, "", false},
