@@ -76,6 +76,30 @@ func TestSignKernelModules(t *testing.T) {
 	}
 }
 
+// With disk encryption the rebuild keeps the dracut initramfs that
+// prepare-disk-encryption built with the LUKS unlock.
+func TestSignKernelModulesKeepsDracutWithEncryption(t *testing.T) {
+	o, cmd := newTestOrchestratorWithCommander(t, moduleSigningConfig(config.SigningPerHost, config.ModuleSigningConfig{}), &mockProvider{})
+	o.encryption = &encryptionState{device: "/dev/sda3", isRoot: true}
+	root := o.config.rootDir
+	mod := filepath.Join(root, "lib/modules/6.8.0-1/updates/dkms/x.ko")
+	if err := os.MkdirAll(filepath.Dir(mod), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mod, []byte("\x7fELF"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.signKernelModules(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !hasProvisionCall(cmd.calls, "chroot", root, "/bin/bash", "-c", dracutRegenerateCmd) {
+		t.Fatalf("missing chroot %q in %v", dracutRegenerateCmd, cmd.calls)
+	}
+	if hasProvisionCall(cmd.calls, "chroot", root, "/bin/bash", "-c", initramfsUpdateCmd) {
+		t.Fatalf("update-initramfs may replace the LUKS unlock initramfs: %v", cmd.calls)
+	}
+}
+
 func TestSignKernelModulesFailsClosed(t *testing.T) {
 	for _, allow := range []bool{false, true} {
 		o, cmd := newTestOrchestratorWithCommander(t,

@@ -289,7 +289,7 @@ func (o *Orchestrator) prepareDiskEncryption(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if out, err := o.disk.ChrootRun(ctx, newroot, "dracut --force --regenerate-all"); err != nil {
+	if out, err := o.disk.ChrootRun(ctx, newroot, dracutRegenerateCmd); err != nil {
 		return fmt.Errorf("rebuild initramfs with the LUKS unlock: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	o.log.Info("disk encryption prepared", "device", st.device, "luksUUID", st.luksUUID, "tpm2PCRs", luksTPM2PCRs)
