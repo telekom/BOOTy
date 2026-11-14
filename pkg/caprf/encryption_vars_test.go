@@ -27,6 +27,21 @@ func TestParseVarsDiskEncryption(t *testing.T) {
 	}
 }
 
+func TestParseVarsUKISigning(t *testing.T) {
+	cfg, err := ParseVars(strings.NewReader("export DISK_ENCRYPTION=\"luks2-tpm2-uki\"\nexport SECUREBOOT_SIGNING=\" CI \"\n" +
+		"export DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE=\"/deploy/pcr.pem\"\nexport DISK_ENCRYPTION_RECOVERY_KEY_URL=\"https://p/key\"\n" +
+		"export IMAGE_COSIGN_PUBKEYS=\"/deploy/cosign.pub\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := cfg.Provision.DiskEncryption; d.Mode != "luks2-tpm2-uki" || d.PCRPublicKeyFile != "/deploy/pcr.pem" || !d.UKI() {
+		t.Fatalf("disk encryption %+v", d)
+	}
+	if got := cfg.Provision.SecureBoot.SigningMode(); got != "ci" {
+		t.Fatalf("signing %q, want ci", got)
+	}
+}
+
 func TestEscrowRecoveryKey(t *testing.T) {
 	var got, auth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

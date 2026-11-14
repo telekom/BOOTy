@@ -1325,9 +1325,9 @@ func TestProvisionStepsContainEFIVars(t *testing.T) {
 	// disk mirroring steps (mirror-root, configure-mdadm, install-esp-sync, mirror EFI entry)
 	// configure-sriov and the partition layout sources (fetch-partition-layout,
 	// load-image-partition-layout), write-provision-report and disk
-	// encryption (prepare-disk-encryption, encrypt-disk).
-	if len(steps) != 57 {
-		t.Errorf("expected 57 provisioning steps, got %d", len(steps))
+	// encryption (prepare-disk-encryption, encrypt-disk, create-uki-boot-entry).
+	if len(steps) != 58 {
+		t.Errorf("expected 58 provisioning steps, got %d", len(steps))
 	}
 }
 

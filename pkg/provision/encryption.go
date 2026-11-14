@@ -68,6 +68,7 @@ type encryptionState struct {
 	device    string
 	luksUUID  string
 	enrollKey []byte
+	uki       *ukiState // DISK_ENCRYPTION=luks2-tpm2-uki
 }
 
 func (o *Orchestrator) encryptionEnabled() bool {
@@ -78,7 +79,7 @@ func (o *Orchestrator) encryptionEnabled() bool {
 // configuration into the target root. With DISK_ENCRYPTION_ALLOW_FAILURE a
 // failed check provisions without encryption; nothing has changed then.
 func (o *Orchestrator) prepareDiskEncryption(ctx context.Context) error {
-	o.encryption = nil
+	o.encryption, o.ukiTouched = nil, false
 	if !o.encryptionEnabled() {
 		return nil
 	}
@@ -89,6 +90,9 @@ func (o *Orchestrator) prepareDiskEncryption(ctx context.Context) error {
 			return nil
 		}
 		return fmt.Errorf("disk encryption preflight: %w", err)
+	}
+	if o.cfg.Provision.DiskEncryption.UKI() {
+		return o.prepareUKIEncryption(ctx, device)
 	}
 	st := &encryptionState{device: device, enrollKey: make([]byte, 64)}
 	if st.luksUUID, err = randomUUID(); err != nil {
@@ -107,6 +111,32 @@ func (o *Orchestrator) prepareDiskEncryption(ctx context.Context) error {
 	}
 	o.encryption = st
 	o.log.Info("disk encryption prepared", "device", device, "luksUUID", st.luksUUID, "tpm2PCRs", luksTPM2PCRs)
+	return nil
+}
+
+// prepareUKIEncryption prepares the UKI and the first-boot enrollment. The
+// initramfs in the UKI comes from the image and unlocks the volume with an
+// empty passphrase (crypttab try-empty-password) until the first Secure
+// Boot boot binds it to the TPM2 and wipes that key slot. A failed UKI
+// check honors DISK_ENCRYPTION_ALLOW_FAILURE like the preflight.
+func (o *Orchestrator) prepareUKIEncryption(ctx context.Context, device string) error {
+	uki, err := o.prepareUKI(ctx, newroot, bootEFIMountPoint())
+	if err != nil {
+		if o.cfg.Provision.DiskEncryption.AllowFailure && !o.ukiTouched {
+			o.log.Warn("the UKI cannot be prepared, provisioning without disk encryption (DISK_ENCRYPTION_ALLOW_FAILURE)", "error", err)
+			return nil
+		}
+		return fmt.Errorf("prepare the UKI: %w", err)
+	}
+	st := &encryptionState{device: device, enrollKey: []byte{}, uki: uki}
+	if st.luksUUID, err = randomUUID(); err != nil {
+		return err
+	}
+	if err := writeUKIEnrollFiles(newroot, st); err != nil {
+		return err
+	}
+	o.encryption = st
+	o.log.Info("disk encryption prepared", "device", device, "luksUUID", st.luksUUID, "tpm2PCRs", ukiTPM2PCRs, "tpm2PublicKeyPCRs", "11")
 	return nil
 }
 
@@ -148,14 +178,22 @@ func (o *Orchestrator) encryptionPreflight(ctx context.Context) (string, error) 
 			return "", fmt.Errorf("ramdisk: %w", err)
 		}
 	}
-	return device, checkEncryptionTarget(newroot)
+	return device, o.checkEncryptionTarget(newroot)
 }
 
 // checkEncryptionTarget checks that the image can unlock the volume with
 // dracut and systemd-cryptsetup and bind it with systemd-cryptenroll.
-func checkEncryptionTarget(root string) error {
+func (o *Orchestrator) checkEncryptionTarget(root string) error {
+	if o.cfg.Provision.DiskEncryption.UKI() {
+		return nil // prepareUKI checks the target
+	}
+	return checkTargetFiles(root, luksTargetTools, "Ubuntu: dracut, systemd-cryptsetup, libtss2-rc0t64")
+}
+
+// checkTargetFiles checks that the image has tools and the TPM2 libraries.
+func checkTargetFiles(root string, tools []string, hint string) error {
 	var missing []string
-	for _, rel := range luksTargetTools {
+	for _, rel := range tools {
 		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
 			missing = append(missing, "/"+rel)
 		}
@@ -167,7 +205,7 @@ func checkEncryptionTarget(root string) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("the image lacks %s (Ubuntu: dracut, systemd-cryptsetup, libtss2-rc0t64; see docs/disk-encryption.md)", strings.Join(missing, ", "))
+		return fmt.Errorf("the image lacks %s (%s; see docs/disk-encryption.md)", strings.Join(missing, ", "), hint)
 	}
 	return nil
 }
@@ -214,13 +252,38 @@ func writeEncryptionFiles(root string, st *encryptionState, libs []string) error
 		// first, which cannot open the volume.
 		{luksGrubConf, []byte("# Written by BOOTy: the root needs the initramfs to unlock LUKS.\nGRUB_FORCE_PARTUUID=\n"), 0o644},
 		{luksScriptPath, []byte(luksEnrollScript), 0o755},
-		{"/etc/systemd/system/" + luksUnitName, []byte(luksEnrollUnit), 0o644},
+		{"/etc/systemd/system/" + luksUnitName, []byte(luksEnrollUnit(luksEnrollKeyPath)), 0o644},
 	}
 	for _, f := range files {
 		if err := writeTargetRootFileMode(root, filepath.Join(root, f.path), f.data, f.mode); err != nil {
 			return fmt.Errorf("write %s: %w", f.path, err)
 		}
 	}
+	return enableLUKSEnrollUnit(root)
+}
+
+// writeUKIEnrollFiles writes the first-boot enrollment for the UKI mode.
+// crypttab and the initramfs belong to the UKI of the image.
+func writeUKIEnrollFiles(root string, st *encryptionState) error {
+	files := []struct {
+		path string
+		data []byte
+		mode os.FileMode
+	}{
+		{luksEnvPath, []byte(fmt.Sprintf("LUKS_UUID=%s\nLUKS_NAME=%s\nLUKS_ENROLL_SLOT=%d\nTPM2_PCRS=%s\nTPM2_PUBLIC_KEY=%s\nTPM2_SIGNATURE=%s\n",
+			st.luksUUID, luksMapperName, luksEnrollSlot, ukiTPM2PCRs, ukiPCRPublicKeyPath, ukiPCRSignaturePath)), 0o644},
+		{luksScriptPath, []byte(ukiEnrollScript), 0o755},
+		{"/etc/systemd/system/" + luksUnitName, []byte(luksEnrollUnit(ukiPCRSignaturePath)), 0o644},
+	}
+	for _, f := range files {
+		if err := writeTargetRootFileMode(root, filepath.Join(root, f.path), f.data, f.mode); err != nil {
+			return fmt.Errorf("write %s: %w", f.path, err)
+		}
+	}
+	return enableLUKSEnrollUnit(root)
+}
+
+func enableLUKSEnrollUnit(root string) error {
 	wants := filepath.Join(root, "etc", "systemd", "system", "multi-user.target.wants")
 	if err := ensureTargetParentWithinRoot(root, wants); err != nil {
 		return err
@@ -432,11 +495,13 @@ func randomUUID() (string, error) {
 
 // luksEnrollUnit runs the enrollment once Secure Boot is on, so PCR 7 and
 // PCR 14 have their final values (also after a MOK enrollment boot).
-const luksEnrollUnit = `# Written by BOOTy (docs/disk-encryption.md).
+// The unit runs while condition exists; the script disables it when done.
+func luksEnrollUnit(condition string) string {
+	return `# Written by BOOTy (docs/disk-encryption.md).
 [Unit]
 Description=Bind the BOOTy LUKS2 volume to the TPM2
 ConditionSecurity=uefi-secureboot
-ConditionPathExists=` + luksEnrollKeyPath + `
+ConditionPathExists=` + condition + `
 After=local-fs.target cryptsetup.target
 
 [Service]
@@ -446,6 +511,7 @@ ExecStart=` + luksScriptPath + `
 [Install]
 WantedBy=multi-user.target
 `
+}
 
 // luksEnrollScript binds the volume to the TPM2, proves that the TPM2
 // unlocks it, rebuilds every initramfs without the enrollment key and
@@ -497,4 +563,26 @@ shred -u "$key"
 rm -f /etc/booty/crypttab.enroll
 systemctl disable ` + luksUnitName + `
 say "done: key slot $LUKS_ENROLL_SLOT and the enrollment key are gone, the TPM2 (PCR $TPM2_PCRS) and the recovery key unlock $dev"
+`
+
+// ukiEnrollScript binds the volume to PCR 7 and the signed PCR 11 policy.
+// The enrollment key is the empty passphrase in slot LUKS_ENROLL_SLOT.
+// --tpm2-signature makes systemd-cryptenroll check that the new policy
+// unseals with the current PCR values before it writes the slot (the
+// signature must cover the phase of the booted system). Only then the
+// empty passphrase is wiped. Nothing in the UKI changes.
+const ukiEnrollScript = `#!/bin/sh
+# Written by BOOTy (docs/disk-encryption.md).
+set -eu
+. ` + luksEnvPath + `
+dev=/dev/disk/by-uuid/$LUKS_UUID
+say() { echo "booty-luks-tpm2-enroll: $*"; }
+systemd-cryptenroll --unlock-key-file=/dev/null --wipe-slot=tpm2 --tpm2-device=auto \
+	--tpm2-public-key="$TPM2_PUBLIC_KEY" --tpm2-public-key-pcrs=11 --tpm2-signature="$TPM2_SIGNATURE" \
+	--tpm2-pcrs="$TPM2_PCRS" "$dev"
+say "the TPM2 unseals with PCR $TPM2_PCRS and the signed PCR 11 policy"
+cryptsetup open --test-passphrase --key-slot "$LUKS_ENROLL_SLOT" --key-file /dev/null "$dev"
+cryptsetup -q luksKillSlot "$dev" "$LUKS_ENROLL_SLOT"
+systemctl disable ` + luksUnitName + `
+say "done: the empty passphrase in key slot $LUKS_ENROLL_SLOT is gone, the TPM2 (PCR $TPM2_PCRS + signed PCR 11) and the recovery key unlock $dev"
 `

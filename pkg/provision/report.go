@@ -127,6 +127,8 @@ type ReportEncryption struct {
 type ReportSecureBoot struct {
 	State    string `json:"state"`
 	ReEnable bool   `json:"reEnable,omitempty"`
+	// UKI is the signed UKI of DISK_ENCRYPTION=luks2-tpm2-uki.
+	UKI *ReportUKI `json:"uki,omitempty"`
 }
 
 // ReportSysext is one system extension that apply-sysexts installed.
@@ -161,7 +163,7 @@ func (o *Orchestrator) buildReport(ctx context.Context) *ProvisionReport {
 		},
 		Disk:       ReportDisk{Device: o.targetDisk, RootPartition: o.rootPartition, Layout: o.reportLayout(ctx)},
 		Encryption: reportEncryption(o.config.rootDir),
-		SecureBoot: ReportSecureBoot{State: reportSecureBootState(), ReEnable: cfg.SecureBoot.ReEnable},
+		SecureBoot: ReportSecureBoot{State: reportSecureBootState(), ReEnable: cfg.SecureBoot.ReEnable, UKI: o.reportUKI()},
 		Sysexts:    reportSysexts(&cfg.Sysext),
 	}
 	if strings.TrimSpace(cfg.Image.Checksum) != "" {

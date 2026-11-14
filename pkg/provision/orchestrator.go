@@ -132,6 +132,10 @@ type Orchestrator struct {
 	disksSettled bool
 	// encryption is set by prepare-disk-encryption for encrypt-disk.
 	encryption *encryptionState
+	// ukiDigest is the UKI SHA-256 from the verified image manifest;
+	// ukiTouched is set once per-host signing changed the ESP.
+	ukiDigest  string
+	ukiTouched bool
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -218,6 +222,8 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"run-post-provision-cmds", o.runPostProvisionCmds},
 		{"create-efi-boot-entry", o.createEFIBootEntry},
 		{"create-mirror-efi-boot-entry", o.createMirrorEFIBootEntry},
+		// After the GRUB entry, so the UKI comes first in BootOrder.
+		{"create-uki-boot-entry", o.createUKIBootEntry},
 		{"teardown-chroot", o.teardownChroot},
 		// Needs the target unmounted, so after teardown-chroot.
 		{"encrypt-disk", o.encryptDisk},
@@ -2376,6 +2382,7 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 // which go-containerregistry checks, so they get the signed bytes. An HTTP
 // image source needs IMAGE_CHECKSUM instead.
 func (o *Orchestrator) verifyCosignSignatures(ctx context.Context, imageURL string) error {
+	o.ukiDigest = ""
 	if err := o.checkCosignSources([]string{imageURL}); err != nil {
 		return err
 	}
@@ -2384,6 +2391,9 @@ func (o *Orchestrator) verifyCosignSignatures(ctx context.Context, imageURL stri
 			return fmt.Errorf("verifying image signature: %w", err)
 		}
 		o.log.Info("image cosign signature verified", "url", image.RedactURL(imageURL))
+		if err := o.loadUKIDigest(ctx, imageURL); err != nil {
+			return err
+		}
 	}
 	sysext := &o.cfg.Provision.Sysext
 	if !sysext.Enabled || len(sysext.CosignPublicKeys) == 0 {

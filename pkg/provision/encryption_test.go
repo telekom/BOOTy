@@ -68,7 +68,8 @@ func encryptionTargetRoot(t *testing.T) string {
 
 func TestCheckEncryptionTarget(t *testing.T) {
 	root := encryptionTargetRoot(t)
-	if err := checkEncryptionTarget(root); err != nil {
+	o := newTestOrchestrator(t, &config.MachineConfig{}, &mockProvider{})
+	if err := o.checkEncryptionTarget(root); err != nil {
 		t.Fatalf("complete image: %v", err)
 	}
 	if err := os.Remove(filepath.Join(root, "usr/lib/x86_64-linux-gnu/libtss2-rc.so.0")); err != nil {
@@ -77,7 +78,7 @@ func TestCheckEncryptionTarget(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "usr/bin/dracut")); err != nil {
 		t.Fatal(err)
 	}
-	err := checkEncryptionTarget(root)
+	err := o.checkEncryptionTarget(root)
 	if err == nil || !strings.Contains(err.Error(), "libtss2-rc.so.0") || !strings.Contains(err.Error(), "/usr/bin/dracut") {
 		t.Fatalf("missing libtss2-rc and dracut: %v", err)
 	}
@@ -148,7 +149,7 @@ func TestWriteEncryptionFiles(t *testing.T) {
 
 func TestEnrollUnitAndScript(t *testing.T) {
 	for _, want := range []string{"ConditionSecurity=uefi-secureboot", "ConditionPathExists=" + luksEnrollKeyPath} {
-		if !strings.Contains(luksEnrollUnit, want) {
+		if !strings.Contains(luksEnrollUnit(luksEnrollKeyPath), want) {
 			t.Errorf("unit lacks %q", want)
 		}
 	}

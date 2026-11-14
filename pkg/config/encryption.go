@@ -11,12 +11,19 @@ import (
 // the TPM2 on the first boot with Secure Boot on (docs/disk-encryption.md).
 const DiskEncryptionLUKS2TPM2 = "luks2-tpm2"
 
+// DiskEncryptionLUKS2TPM2UKI boots a signed unified kernel image (UKI) and
+// binds the volume to PCR 7 and a signed PCR 11 policy on the first boot
+// with Secure Boot on. SecureBootConfig.Signing selects who signs the UKI
+// (docs/disk-encryption.md#signed-uki-and-pcr-11).
+const DiskEncryptionLUKS2TPM2UKI = "luks2-tpm2-uki"
+
 // DiskEncryptionTargetRoot selects the root partition of the image.
 const DiskEncryptionTargetRoot = "root"
 
 // DiskEncryptionConfig controls disk encryption of the installed system.
 type DiskEncryptionConfig struct {
-	// Mode turns encryption on. Valid values: "" (off), "luks2-tpm2".
+	// Mode turns encryption on. Valid values: "" (off), "luks2-tpm2",
+	// "luks2-tpm2-uki".
 	// Default: ""
 	Mode string `yaml:"mode" json:"mode"`
 
@@ -35,11 +42,22 @@ type DiskEncryptionConfig struct {
 	// unsupported layout). Errors after that always fail the run.
 	// Default: false
 	AllowFailure bool `yaml:"allowFailure" json:"allowFailure"`
+
+	// PCRPublicKeyFile pins the PCR 11 policy key with luks2-tpm2-uki and
+	// SECUREBOOT_SIGNING=ci: a PEM public key file in the ramdisk that
+	// must equal the .pcrpkey section of the UKI.
+	// Default: "" (the .pcrpkey of the verified UKI is used as is)
+	PCRPublicKeyFile string `yaml:"pcrPublicKeyFile" json:"pcrPublicKeyFile"`
 }
 
 // Enabled reports whether disk encryption is requested.
 func (d *DiskEncryptionConfig) Enabled() bool {
 	return d.Mode != ""
+}
+
+// UKI reports whether the installed system boots a signed UKI.
+func (d *DiskEncryptionConfig) UKI() bool {
+	return d.Mode == DiskEncryptionLUKS2TPM2UKI
 }
 
 // TargetPartition returns 0 for the root partition or the partition number.
@@ -58,12 +76,13 @@ func (d *DiskEncryptionConfig) TargetPartition() (int, error) {
 func (c *Config) validateDiskEncryption() []string {
 	d := &c.Provision.DiskEncryption
 	if !d.Enabled() {
-		return nil
+		return c.validateUKISigning()
 	}
 	var errs []string
-	if d.Mode != DiskEncryptionLUKS2TPM2 {
-		errs = append(errs, fmt.Sprintf("provision.diskEncryption.mode %q: want %q", d.Mode, DiskEncryptionLUKS2TPM2))
+	if d.Mode != DiskEncryptionLUKS2TPM2 && !d.UKI() {
+		errs = append(errs, fmt.Sprintf("provision.diskEncryption.mode %q: want %q or %q", d.Mode, DiskEncryptionLUKS2TPM2, DiskEncryptionLUKS2TPM2UKI))
 	}
+	errs = append(errs, c.validateUKISigning()...)
 	if _, err := d.TargetPartition(); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -77,6 +96,42 @@ func (c *Config) validateDiskEncryption() []string {
 	if (mirror != "" && mirror != "none") || len(c.Provision.Disk.RAID) > 0 || c.Provision.Disk.PartitionLayout != nil ||
 		(mode != "" && mode != ImageModeWholeDisk) {
 		errs = append(errs, "provision.diskEncryption works with a whole-disk image only, not with disk mirroring, RAID, a partition layout or an image mode")
+	}
+	return errs
+}
+
+// validateUKISigning checks SECUREBOOT_SIGNING against the disk encryption
+// mode: the UKI mode needs a signer, and the signer is used only by it.
+// The UKI digest comes from the signed image manifest, so the image must
+// be cosign-verified.
+func (c *Config) validateUKISigning() []string {
+	d := &c.Provision.DiskEncryption
+	signing := c.Provision.SecureBoot.SigningMode()
+	var errs []string
+	switch signing {
+	case SecureBootSigningOff, SecureBootSigningPerHost, SecureBootSigningCI:
+	default:
+		return []string{fmt.Sprintf("provision.secureBoot.signing %q: want %q, %q or %q",
+			c.Provision.SecureBoot.Signing, SecureBootSigningOff, SecureBootSigningPerHost, SecureBootSigningCI)}
+	}
+	if !d.UKI() {
+		if signing != SecureBootSigningOff {
+			errs = append(errs, fmt.Sprintf("provision.secureBoot.signing %q needs provision.diskEncryption.mode %q", signing, DiskEncryptionLUKS2TPM2UKI))
+		}
+		if d.PCRPublicKeyFile != "" {
+			errs = append(errs, fmt.Sprintf("provision.diskEncryption.pcrPublicKeyFile needs provision.diskEncryption.mode %q", DiskEncryptionLUKS2TPM2UKI))
+		}
+		return errs
+	}
+	if signing == SecureBootSigningOff {
+		errs = append(errs, fmt.Sprintf("provision.diskEncryption.mode %q needs provision.secureBoot.signing %q or %q",
+			DiskEncryptionLUKS2TPM2UKI, SecureBootSigningPerHost, SecureBootSigningCI))
+	}
+	if d.PCRPublicKeyFile != "" && signing != SecureBootSigningCI {
+		errs = append(errs, fmt.Sprintf("provision.diskEncryption.pcrPublicKeyFile needs provision.secureBoot.signing %q: with %q BOOTy makes the key", SecureBootSigningCI, signing))
+	}
+	if len(c.Provision.Image.CosignPublicKeys) == 0 {
+		errs = append(errs, fmt.Sprintf("provision.diskEncryption.mode %q needs provision.image.cosignPublicKeys: the UKI digest comes from the signed image manifest", DiskEncryptionLUKS2TPM2UKI))
 	}
 	return errs
 }

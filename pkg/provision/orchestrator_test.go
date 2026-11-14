@@ -246,8 +246,8 @@ func TestProvisionStepCount(t *testing.T) {
 
 	// Use the shared provisionSteps() method from orchestrator.go.
 	steps := o.provisionSteps()
-	if len(steps) != 57 {
-		t.Fatalf("expected 57 provisioning steps, got %d", len(steps))
+	if len(steps) != 58 {
+		t.Fatalf("expected 58 provisioning steps, got %d", len(steps))
 	}
 }
 
@@ -5200,7 +5200,9 @@ func TestNoHostWriterRunsAfterCopyMachineFiles(t *testing.T) {
 		// /boot/efi through mountBoot, which refuses a mountpoint that
 		// resolves outside the target root.
 		"create-mirror-efi-boot-entry": true,
-		"teardown-chroot":              true,
+		// Writes a firmware boot entry only.
+		"create-uki-boot-entry": true,
+		"teardown-chroot":       true,
 		// Encrypts the unmounted partition; writes nothing into the root.
 		"encrypt-disk":   true,
 		"report-success": true,
