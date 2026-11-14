@@ -198,9 +198,9 @@ type damagedHeaderError struct{ err error }
 func (e *damagedHeaderError) Error() string { return e.err.Error() }
 func (e *damagedHeaderError) Unwrap() error { return e.err }
 
-// scanLUKS2 tries every header copy offset.
+// scanLUKS2 tries every header copy offset, also after a read error.
 func scanLUKS2(r io.ReaderAt) (LUKS2Device, error) {
-	var damaged error
+	var damaged, readErr error
 	for off := int64(0); off <= luks2MaxHeader; off = max(2*off, luks2MinHeader) {
 		dev, err := parseLUKS2Header(r, off)
 		switch {
@@ -209,14 +209,17 @@ func scanLUKS2(r io.ReaderAt) (LUKS2Device, error) {
 		case errors.Is(err, errBadLUKS2Header):
 			damaged = &damagedHeaderError{err}
 		case errors.Is(err, errNoLUKS2):
-		case damaged != nil:
-			return LUKS2Device{}, errors.Join(damaged, err)
 		default:
-			return LUKS2Device{}, err
+			// A bad sector under one copy does not hide another copy,
+			// which cryptsetup still opens.
+			readErr = errors.Join(readErr, err)
 		}
 	}
-	if damaged != nil {
-		return LUKS2Device{}, damaged
+	switch {
+	case damaged != nil:
+		return LUKS2Device{}, errors.Join(damaged, readErr)
+	case readErr != nil:
+		return LUKS2Device{}, readErr
 	}
 	return LUKS2Device{}, errNoLUKS2
 }

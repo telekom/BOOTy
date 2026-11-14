@@ -278,7 +278,8 @@ look at the provisioning layout. `soft-deprovision` wipes nothing and does not r
    every partition (from sysfs) are checked for a LUKS2 header: the primary
    copy at 0 (`LUKS\xba\xbe`, version 2) or a secondary copy at 16 KiB to
    4 MiB (`SKUL\xba\xbe`) whose `hdr_offset` names that offset, so a header
-   whose primary copy was lost is found too. A secondary copy at its
+   whose primary copy was lost is found too, also behind a read error at
+   another copy. A secondary copy at its
    `hdr_offset` with another version or an `hdr_size` that does not match
    is damaged, not foreign: it fails the run, also when a later read of
    the device fails. Every LUKS2 header there counts as

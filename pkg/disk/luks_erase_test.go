@@ -361,3 +361,18 @@ func TestScanLUKS2DamagedPrimaryThenReadError(t *testing.T) {
 		t.Fatalf("scanLUKS2() = %v, want a damaged header", err)
 	}
 }
+
+// A read error at the primary offset must not hide a secondary copy that
+// still reads: cryptsetup opens the device from it with the recovery key.
+func TestScanLUKS2ReadErrorThenSecondary(t *testing.T) {
+	data := make([]byte, 8<<20)
+	copy(data[16<<10:], luks2Header(true, 16<<10, 4096, ""))
+	dev, err := scanLUKS2(failingReader{data: data, failAt: 0})
+	if err != nil || dev.UUID != testLUKSUUID {
+		t.Fatalf("scanLUKS2() = %+v, %v; want the secondary header", dev, err)
+	}
+	// Without a header the read error stays: the device is unreadable.
+	if _, err := scanLUKS2(failingReader{data: make([]byte, 8<<20), failAt: 0}); err == nil || errors.Is(err, errNoLUKS2) {
+		t.Fatalf("scanLUKS2() = %v, want the read error", err)
+	}
+}
