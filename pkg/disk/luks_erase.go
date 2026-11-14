@@ -177,20 +177,48 @@ func readLUKS2(path string) (LUKS2Device, error) {
 	// Drop cached blocks: another path to the same disk (dual-ported SAS
 	// without dm-multipath) may have changed them. Fails on a regular file.
 	_ = unix.IoctlSetInt(int(f.Fd()), unix.BLKFLSBUF, 0) //nolint:gosec // fd fits in int
-	result := errNoLUKS2
+	dev, err := scanLUKS2(f)
+	var damaged *damagedHeaderError
+	switch {
+	case err == nil:
+		dev.Device = path
+	case errors.As(err, &damaged), errors.Is(err, errNoLUKS2):
+		err = fmt.Errorf("%s: %w", path, err)
+	default:
+		err = &unreadableDeviceError{path, err}
+	}
+	return dev, err
+}
+
+// damagedHeaderError is a header copy whose magic was found but that does
+// not parse. A later read error does not hide it: the device holds LUKS2
+// metadata, so it must not be skipped as unreadable.
+type damagedHeaderError struct{ err error }
+
+func (e *damagedHeaderError) Error() string { return e.err.Error() }
+func (e *damagedHeaderError) Unwrap() error { return e.err }
+
+// scanLUKS2 tries every header copy offset.
+func scanLUKS2(r io.ReaderAt) (LUKS2Device, error) {
+	var damaged error
 	for off := int64(0); off <= luks2MaxHeader; off = max(2*off, luks2MinHeader) {
-		dev, err := parseLUKS2Header(f, off)
+		dev, err := parseLUKS2Header(r, off)
 		switch {
 		case err == nil:
-			dev.Device = path
 			return dev, nil
 		case errors.Is(err, errBadLUKS2Header):
-			result = fmt.Errorf("%s: %w", path, err)
-		case !errors.Is(err, errNoLUKS2):
-			return LUKS2Device{}, &unreadableDeviceError{path, err}
+			damaged = &damagedHeaderError{err}
+		case errors.Is(err, errNoLUKS2):
+		case damaged != nil:
+			return LUKS2Device{}, errors.Join(damaged, err)
+		default:
+			return LUKS2Device{}, err
 		}
 	}
-	return LUKS2Device{}, result
+	if damaged != nil {
+		return LUKS2Device{}, damaged
+	}
+	return LUKS2Device{}, errNoLUKS2
 }
 
 // parseLUKS2Header reads the header copy at off, or returns errNoLUKS2.
@@ -201,16 +229,8 @@ func parseLUKS2Header(r io.ReaderAt, off int64) (LUKS2Device, error) {
 	} else if err != nil {
 		return LUKS2Device{}, fmt.Errorf("read offset %d: %w", off, err)
 	}
-	magic := luks2Magic
-	if off > 0 {
-		magic = luks2SecondaryMagic
-	}
-	// hdr_offset (byte 256) is where the copy says it is. A secondary
-	// copy that is not at its own hdr_offset belongs to a header that
-	// starts elsewhere, such as a partition seen from its disk.
-	hdrOffset := binary.BigEndian.Uint64(bin[256:264])
-	if !bytes.Equal(bin[:6], magic) || binary.BigEndian.Uint16(bin[6:8]) != 2 || (off > 0 && hdrOffset != uint64(off)) {
-		return LUKS2Device{}, errNoLUKS2
+	if err := luks2CopyAt(bin, off); err != nil {
+		return LUKS2Device{}, err
 	}
 	hdrSize := int64(binary.BigEndian.Uint64(bin[8:16])) //nolint:gosec // checked below
 	if hdrSize < luks2MinHeader || hdrSize > luks2MaxHeader || hdrSize&(hdrSize-1) != 0 || (off > 0 && off != hdrSize) {
@@ -226,6 +246,28 @@ func parseLUKS2Header(r io.ReaderAt, off int64) (LUKS2Device, error) {
 	}
 	// uuid: char[40] at byte 168 of the binary header.
 	return LUKS2Device{UUID: string(bytes.TrimRight(bin[168:208], "\x00")), Area: 2*hdrSize + keyslots}, nil
+}
+
+// luks2CopyAt checks that bin is a LUKS2 header copy that belongs at off:
+// errNoLUKS2 for no magic, a LUKS1 header or a foreign copy, and
+// errBadLUKS2Header for a genuine copy with another version.
+func luks2CopyAt(bin []byte, off int64) error {
+	magic := luks2Magic
+	if off > 0 {
+		magic = luks2SecondaryMagic
+	}
+	// hdr_offset (byte 256) is where the copy says it is. A secondary
+	// copy that is not at its own hdr_offset belongs to a header that
+	// starts elsewhere, such as a partition seen from its disk.
+	hdrOffset := binary.BigEndian.Uint64(bin[256:264])
+	version := binary.BigEndian.Uint16(bin[6:8])
+	if !bytes.Equal(bin[:6], magic) || (off == 0 && version == 1) || (off > 0 && hdrOffset != uint64(off)) {
+		return errNoLUKS2
+	}
+	if version != 2 {
+		return fmt.Errorf("%w: version %d at offset %d", errBadLUKS2Header, version, off)
+	}
+	return nil
 }
 
 // luks2KeyslotsSize returns config.keyslots_size of the JSON area.

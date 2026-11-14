@@ -279,8 +279,9 @@ look at the provisioning layout. `soft-deprovision` wipes nothing and does not r
    copy at 0 (`LUKS\xba\xbe`, version 2) or a secondary copy at 16 KiB to
    4 MiB (`SKUL\xba\xbe`) whose `hdr_offset` names that offset, so a header
    whose primary copy was lost is found too. A secondary copy at its
-   `hdr_offset` with an `hdr_size` that does not match is damaged, not
-   foreign: it fails the run. Every LUKS2 header there counts as
+   `hdr_offset` with another version or an `hdr_size` that does not match
+   is damaged, not foreign: it fails the run, also when a later read of
+   the device fails. Every LUKS2 header there counts as
    BOOTy-managed: the LUKS2 format has no field that tells the header of
    #939 from another one (random UUID, no label), and the disks are wiped
    next anyway, so the step never writes to a disk that the run would leave

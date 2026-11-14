@@ -303,3 +303,61 @@ func TestFindLUKS2DamagedSecondaryOnlyFails(t *testing.T) {
 		t.Fatalf("FindLUKS2() = %v, want errBadLUKS2Header", err)
 	}
 }
+
+// A genuine secondary copy with a broken version is damaged; a LUKS1
+// primary (version 1) is not LUKS2.
+func TestFindLUKS2Versions(t *testing.T) {
+	f := newLUKSFixture(t, map[string]int64{"sda": 64 << 20, "sda1": 8 << 20, "sda2": 8 << 20})
+	f.writeLUKS2(t, "sda1", false, 16<<10, 1<<20)
+	f.writeLUKS2(t, "sda2", true, 16<<10, 1<<20)
+	for name, off := range map[string]int64{"sda1": 16 << 10, "sda2": 0} {
+		dev, err := os.OpenFile(filepath.Join(f.dev, name), os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		version := map[string]byte{"sda1": 0, "sda2": 1}[name]
+		if _, err := dev.WriteAt([]byte{0, version}, off+6); err != nil {
+			t.Fatal(err)
+		}
+		if name == "sda2" { // a LUKS1 header has no secondary copy
+			if _, err := dev.WriteAt(make([]byte, 16<<10), 16<<10); err != nil {
+				t.Fatal(err)
+			}
+		}
+		dev.Close()
+	}
+	if _, _, err := f.m.FindLUKS2([]string{"/dev/sda"}); !errors.Is(err, errBadLUKS2Header) {
+		t.Fatalf("FindLUKS2() = %v, want errBadLUKS2Header for the sda1 secondary copy", err)
+	}
+	if err := os.WriteFile(filepath.Join(f.dev, "sda1"), make([]byte, 8<<20), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if found, _, err := f.m.FindLUKS2([]string{"/dev/sda"}); err != nil || len(found) != 0 {
+		t.Fatalf("FindLUKS2() = %+v, %v; want the LUKS1 header left alone", found, err)
+	}
+}
+
+// failingReader serves data and fails reads at failAt.
+type failingReader struct {
+	data   []byte
+	failAt int64
+}
+
+func (r failingReader) ReadAt(p []byte, off int64) (int, error) {
+	if off == r.failAt {
+		return 0, errors.New("input/output error")
+	}
+	return bytes.NewReader(r.data).ReadAt(p, off)
+}
+
+// A damaged primary followed by a read error at a secondary offset stays a
+// damaged header: the device must not be skipped as unreadable.
+func TestScanLUKS2DamagedPrimaryThenReadError(t *testing.T) {
+	data := make([]byte, 8<<20)
+	copy(data, luks2Header(false, 16<<10, 0, `{"config":`))
+	_, err := scanLUKS2(failingReader{data: data, failAt: 32 << 10})
+	var damaged *damagedHeaderError
+	if !errors.As(err, &damaged) || !errors.Is(err, errBadLUKS2Header) {
+		t.Fatalf("scanLUKS2() = %v, want a damaged header", err)
+	}
+}
