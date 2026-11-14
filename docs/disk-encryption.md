@@ -9,6 +9,12 @@ random recovery key goes to the provisioner. Keys are in
 [configuration.md](configuration.md#disk-encryption). Read the
 [threat model](#threat-model) before you rely on it.
 
+`DISK_ENCRYPTION=luks2-tpm2-uki` boots a signed unified kernel image (UKI)
+instead of GRUB and binds the volume to PCR 7 and a signed PCR 11 policy;
+see [Signed UKI and PCR 11](#signed-uki-and-pcr-11). The sections up to
+there describe `luks2-tpm2`; the format-first write, the recovery key
+hand-off and the requirements of the partition are the same for both modes.
+
 ## Flow
 
 Provisioning (BOOTy, Secure Boot off):
@@ -114,8 +120,9 @@ its console:
 - The [GRUB lock](#grub-lock) only stops edits at the GRUB console.
 
 Binding more PCRs (8, 9, 11, a UKI with `systemd-pcrlock`) or a TPM2 PIN
-closes some of these paths at the price of more re-enrollment; that is
-not part of this change.
+closes some of these paths at the price of more re-enrollment.
+`luks2-tpm2-uki` closes the `/boot` and command line paths with a signed
+UKI and a signed PCR 11 policy (see [UKI threat model](#uki-threat-model)).
 
 ### GRUB lock
 
@@ -354,3 +361,275 @@ sudo env MIRROR_OS_IMAGE=$PWD/ubuntu-26.04-server-cloudimg-amd64.img \
   DISK_ENCRYPTION_DEBS=$PWD/libtss2-rc0t64_4.1.3-6_amd64.deb \
   go test -tags e2e -run '^TestDiskEncryption' -v -timeout 90m ./test/e2e/kvm/
 ```
+
+## Signed UKI and PCR 11
+
+With `luks2-tpm2` the initramfs and the kernel command line live on the
+unencrypted `/boot` and are not measured into PCR 7 or 14: whoever can write
+`/boot` (or type at the GRUB prompt) can boot the right kernel with
+`init=/bin/sh` or a changed initramfs, and the TPM2 still unseals the disk.
+`DISK_ENCRYPTION=luks2-tpm2-uki` closes that gap:
+
+- the installed system boots one UKI (kernel, initramfs, command line,
+  os-release in one PE file) straight from a firmware boot entry;
+- the UKI is signed for Secure Boot, so the firmware runs no other code;
+  systemd-stub ignores a command line from the boot loader with Secure Boot
+  on;
+- systemd-stub measures the UKI sections into PCR 11. The volume is bound to
+  a *signed* PCR 11 policy (`systemd-cryptenroll --tpm2-public-key`
+  `--tpm2-public-key-pcrs=11`): the TPM2 unseals for any UKI whose expected
+  PCR 11 value is signed with the PCR policy key, and for nothing else.
+  Changing one byte of the initramfs or the command line changes PCR 11 and
+  the TPM2 refuses;
+- PCR 7 (Secure Boot state, `db`, and the `db` entry that verified the UKI)
+  is bound next to it, because anything that runs before the UKI could
+  extend PCR 11 to the expected value. PCR 14 is not bound: the firmware
+  boots the UKI directly, without shim, so `MokList` is not measured.
+
+### Who holds the keys
+
+Two keys matter: the PCR policy key (signs the expected PCR 11 values into
+the `.pcrsig` section) and the Secure Boot key (signs the UKI). The
+TPM2 binding holds only the public half of the PCR policy key, so whoever
+holds the private half decides which UKIs unlock the disk.
+`SECUREBOOT_SIGNING` selects the holder:
+
+| | `per-host` | `ci` |
+|---|---|---|
+| Image | unsigned UKI | UKI signed for Secure Boot, with `.pcrsig` and `.pcrpkey` |
+| PCR policy key | made by BOOTy for this host, used once, wiped | held by the image pipeline |
+| Secure Boot key | made by BOOTy for this host, used once, wiped; the certificate goes to the provisioner, which enrolls it in `db` | held by the image pipeline; its certificate is in `db` (provisioner, Redfish) |
+| Private keys in BOOTy | yes, in memory during `prepare-disk-encryption` | none |
+| Kernel or initramfs update | reprovision | the pipeline signs a new UKI with the same keys; no enrollment |
+| Blast radius of a leaked key | one host | every host with this key |
+
+`per-host` keeps no long-lived key anywhere: an attacker needs the keys of
+the very host, and they are gone after provisioning. The price is that
+nobody can sign a new UKI for the host: kernel and initramfs updates come as
+a new image that BOOTy provisions again. In-place or A/B updates without
+reprovisioning would need the keys again and are not supported in this mode.
+
+`ci` is the model for fleets that update in place: the pipeline that builds
+the image holds both keys (in an HSM or a KMS) and signs every UKI. The keys
+are long-lived and shared by all hosts of the image, so they need the
+protection of a release signing key; revoking a signed UKI needs PCR 11
+version policies (see [UKI threat model](#uki-threat-model)). A third option, a
+provisioner-held key that signs on request, is the same as `ci` from the
+host's view: BOOTy enrolls the public key and never sees the private one.
+
+With `per-host` BOOTy
+
+- generates two RSA-2048 keys with `crypto/rand`;
+- hands the private keys to `ukify` (which runs `systemd-measure` and
+  `sbsign` in the target) as `/proc/<pid>/fd/<n>` paths of memfds: they never have a path
+  on a file system and never appear in an argument, a log or the report;
+- zeroes the memfds and the key numbers after use (best effort, like the
+  module signing key of #935: copies inside the two tools and in freed Go
+  memory cannot be zeroed; BOOTy runs from RAM and the host reboots).
+
+The per-host certificate is in the provisioning report
+(`secureBoot.uki.cert`, DER, base64, with `certSHA256`) and on the ESP at
+`/EFI/BOOTy/uki-signing.crt` (PEM). The provisioner enrolls it in `db`
+(for example over Redfish) before it turns Secure Boot on.
+
+### Image contract
+
+The UKI image flavour (built by the image pipeline; existing images are
+unchanged):
+
+- exactly one UKI at `/EFI/Linux/<os-id>-<kernel release>.efi` on the ESP
+  (UAPI Boot Loader Specification, type #2). BOOTy refuses zero or more than
+  one `.efi` file there. With `per-host` it replaces the file in place
+  with the signed one; with `ci` it does not change it;
+- the OCI manifest of the image carries the annotation
+  `com.github.telekom.booty.uki.sha256` with the hex SHA-256 of that file
+  as shipped. The cosign signature of the image covers the manifest, so the
+  digest is signed. BOOTy needs a cosign-verified `oci://` image
+  (`IMAGE_COSIGN_PUBKEYS`); with an HTTP image, no annotation or another
+  digest, `prepare-disk-encryption` fails;
+- the initramfs in the UKI unlocks the root by its GPT `PARTUUID`, which the
+  image fixes and BOOTy keeps:
+
+  ```
+  booty_crypt PARTUUID=<root PARTUUID> none luks,x-initrd.attach,tpm2-device=auto,try-empty-password=yes
+  ```
+
+  and holds the dracut modules `crypt`, `systemd-cryptsetup` and
+  `systemd-pcrextend` (which extends the `enter-initrd` phase into PCR 11
+  before the unlock), the TPM2
+  libraries and the libcryptsetup token plugin (see
+  [Requirements](#requirements); `hostonly="no"`, without `tpm2-tss`). The
+  command line names the root file system (`root=UUID=<ext4 UUID>`), which
+  is the same inside the LUKS volume;
+- with `ci`: the UKI is signed for Secure Boot and has `.pcrsig` and
+  `.pcrpkey` (`ukify build --pcr-private-key=... --secureboot-private-key=...`).
+  The `.pcrsig` must cover the phases of the booted system too (the ukify
+  default does): the first-boot unit checks the policy against the PCR 11
+  of the running system before it enrolls;
+- with `per-host`: the UKI is unsigned, has no `.pcrsig` and only the
+  sections `.linux`, `.initrd`, `.cmdline`, `.osrel`, `.uname`, `.ucode`,
+  `.splash`, `.dtb` (plus the stub and `.sbat`); the image has `ukify`,
+  `systemd-measure`, the systemd-stub and `sbsign` (Ubuntu:
+  `systemd-ukify`, `systemd-boot-efi`, `sbsigntool`);
+- `systemd-cryptenroll`, `cryptsetup` and the TPM2 libraries.
+
+`DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE` pins the PCR policy key with `ci`, as
+`IMAGE_COSIGN_PUBKEYS` pins the image key: the `.pcrpkey` of the UKI must be
+the key in that file.
+
+### Flow
+
+Provisioning (BOOTy, Secure Boot off):
+
+1. `verify-image` verifies the cosign signature of the image and reads the
+   UKI digest annotation.
+2. `stream-image` checks as for `luks2-tpm2` and that the digest is there
+   (before the first disk write, so `DISK_ENCRYPTION_ALLOW_FAILURE`
+   applies), then formats and writes as for `luks2-tpm2`, with the empty
+   passphrase in key slot 1 instead of an enrollment key.
+3. `prepare-disk-encryption` checks the tools and the UKI: exactly one file, its SHA-256 equals the annotation,
+   it is a PE with a `.linux` section, not a multi-profile UKI.
+   - `per-host`: refuses a signed UKI or one with `.pcrsig`; makes the keys;
+     rebuilds the UKI from its sections with `ukify build` in the target
+     (the image's systemd-stub, a new `.sbat`, `.pcrpkey` with the per-host
+     public key), which runs `systemd-measure sign` for the expected PCR 11
+     values of all boot phases (SHA-256 bank) into `.pcrsig` and `sbsign`;
+     BOOTy checks the result (Secure Boot signature, `.pcrsig`, its
+     `.pcrpkey`), writes it over the UKI and wipes the keys. ukify fills
+     `.pcrsig` only into an existing placeholder (`--join-pcrsig`), so a
+     plain unsigned UKI is rebuilt rather than extended.
+   - `ci`: needs a Secure Boot signature, `.pcrsig` and `.pcrpkey`; checks
+     the pinned key; makes no key.
+   - writes the PCR public key and signature to
+     `/etc/booty/tpm2-pcr-public-key.pem` and `/etc/booty/tpm2-pcr-signature.json`,
+     and the first-boot unit `booty-luks-tpm2-enroll.service`. crypttab,
+     dracut and GRUB are not touched; the initramfs is the one in the UKI.
+   The disk is encrypted then, so a failed check fails the run. The root
+   needs no separate `/boot`.
+4. `create-uki-boot-entry` (after `create-mirror-efi-boot-entry`) adds the firmware boot entry `booty-uki` for
+   `\EFI\Linux\<name>.efi`, first in `BootOrder`. The GRUB entry stays.
+
+Installed system:
+
+- Until the enrollment: no TPM2 token; the initramfs opens the volume with
+  the empty passphrase (`try-empty-password`).
+- First boot with Secure Boot on in user mode: the unit runs
+  `systemd-cryptenroll --unlock-key-file=/dev/null --tpm2-device=auto
+  --tpm2-public-key=... --tpm2-public-key-pcrs=11 --tpm2-signature=...
+  --tpm2-pcrs=7`. With `--tpm2-signature` systemd-cryptenroll checks that the
+  new policy unseals with the current PCR values before it writes the slot.
+  Then the unit wipes key slot 1 and disables itself. One phase is enough:
+  unlike `luks2-tpm2` nothing in the boot chain changes (the UKI and its
+  initramfs ran this boot), and the slot is proven before it is written.
+- Later boots: systemd-stub passes `.pcrsig` to the initramfs, where
+  systemd-cryptsetup unseals with PCR 7 and the signed PCR 11. A changed
+  UKI, another PCR 11 key, or a changed Secure Boot state ends at the
+  passphrase prompt; the recovery key works there.
+
+The empty passphrase has the exposure of the enrollment key of `luks2-tpm2`
+(a key on the unencrypted `/boot`): until the first Secure Boot boot,
+anyone with the disk opens the volume. The provisioner turns Secure Boot on
+and checks the result (`cryptsetup luksDump`: one `systemd-tpm2` token with
+`tpm2-pubkey-pcrs: 11` and `tpm2-hash-pcrs: 7`, no key slot 1).
+
+### Boot path
+
+The UKI boots directly from a firmware boot entry, verified against `db`.
+Shim and systemd-boot are not used: shim would accept anything signed by
+the distribution vendor's key and adds `MokList` (PCR 14) to the policy;
+systemd-boot adds a second loader that the policy has to cover. Direct boot
+needs the certificate in `db`: the per-host certificate (provisioner,
+Redfish) or the pipeline certificate. Machines that allow no `db` change
+need the shim path with the MOK enrollment of #935 (`mok-enroll.efi`
+boots, shim loads `\EFI\Linux\<name>.efi` with the per-host key in
+`MokList`, PCR 14 bound). That is a follow-up once #935 is merged; the
+per-host key of this mode and the module signing key of #935 then become
+one key with one enrollment.
+
+### UKI threat model
+
+Closed by `luks2-tpm2-uki`, compared with `luks2-tpm2`:
+
+- changed initramfs or kernel on the ESP or `/boot`: PCR 11 differs (with
+  Secure Boot on the firmware refuses a UKI without a valid signature
+  anyway);
+- a changed kernel command line (`init=/bin/sh`, `rd.break`) from the
+  console, a BMC or the boot loader: it is in `.cmdline`, measured and
+  signed; systemd-stub ignores overrides with Secure Boot on;
+- booting another signed OS (a distribution live image) and extending PCR
+  11 from there: PCR 7 differs (another `db` entry verified it);
+- booting with Secure Boot off: PCR 7 differs.
+
+Remaining:
+
+- **Rollback.** Every UKI ever signed with the PCR policy key unlocks. A BMC
+  or console attacker who has an older, validly signed UKI with a known
+  vulnerability can boot it (the KVM test shows this). Countermeasures,
+  not in this change: a PCR 11 policy reference per release (ukify
+  `--policyref`, systemd 262), PCR 11 phase/version policies with
+  systemd-pcrlock and an NV index, adding old UKIs to `dbx`, or rotating the
+  PCR policy key (re-enrollment). `per-host` limits this to the UKIs signed
+  for this host, which is one per provisioning.
+- **Firmware and `db`.** A `db`/`dbx` or firmware update changes PCR 7; the
+  recovery key unlocks, and the volume must be bound again
+  (`systemd-cryptenroll --wipe-slot=tpm2 --tpm2-device=auto
+  --tpm2-public-key=/etc/booty/tpm2-pcr-public-key.pem
+  --tpm2-public-key-pcrs=11 --tpm2-pcrs=7 <device>`).
+- **Before the first Secure Boot boot** the empty passphrase opens the
+  volume (see above).
+- **Runtime.** Root on the running system can read the volume key; the
+  signed policy covers the booted phases, so it can also unseal the TPM2
+  secret. Restricting the `.pcrsig` to the `enter-initrd` phase would stop
+  the second, but then the first-boot unit cannot check the policy before
+  it wipes the empty passphrase.
+- **TPM bus and memory attacks** (sniffing the LPC/SPI bus, cold boot): not
+  addressed; a TPM2 session encryption (`tpm2-salt`) is not set.
+- **ci keys.** A leaked pipeline key unlocks every host of the image together
+  with physical access. Keep it in an HSM.
+
+### Configuration
+
+| Key | Value |
+|---|---|
+| `DISK_ENCRYPTION` | `luks2-tpm2-uki` |
+| `SECUREBOOT_SIGNING` | `per-host` or `ci` (default `off`; other values are refused) |
+| `IMAGE_COSIGN_PUBKEYS` | required: the UKI digest comes from the signed manifest |
+| `DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE` | optional with `ci`: the pinned PCR policy key |
+| `DISK_ENCRYPTION_RECOVERY_KEY_URL`, `DISK_ENCRYPTION_TARGET`, `DISK_ENCRYPTION_ALLOW_FAILURE`, `DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK` | as for `luks2-tpm2` |
+| `DISK_ENCRYPTION_STATUS_URL` | not supported with the UKI mode yet (refused) |
+
+Without `DISK_ENCRYPTION=luks2-tpm2-uki` nothing of this runs: no
+annotation is read, no key is made, no boot entry is added.
+`SECUREBOOT_SIGNING` is the setting of per-host module signing (#935) too;
+once both are in, one per-host key could sign the modules and the UKI with
+one enrollment.
+
+### Limitations
+
+- Per-host: kernel and initramfs updates need reprovisioning (see above).
+- No status callback from the first-boot unit yet.
+- One UKI, no multi-profile UKIs, no devicetree selection.
+- x86-64 with the SHA-256 PCR bank.
+
+### Test
+
+KVM scenarios `disk-encryption-uki-per-host` (`TestDiskEncryptionUKIPerHostVM`)
+and `disk-encryption-uki-ci` (`TestDiskEncryptionUKICIVM`): the Ubuntu 26.04
+cloud image, made into the UKI flavour by the test (systemd-ukify and
+sbsigntool installed, the crypttab above, a generic dracut initramfs),
+pushed to a local registry with the digest annotation and a cosign
+signature; OVMF with the Microsoft keys and swtpm.
+
+- per-host: BOOTy signs; the test enrolls the reported certificate in `db`;
+  the first Secure Boot boot binds (one token, `tpm2-pubkey-pcrs: 11`,
+  `tpm2-hash-pcrs: 7`, no key slot 1); the next unlocks with the TPM2; with
+  Secure Boot off the recovery key unlocks.
+- ci: BOOTy leaves the UKI as it is; the first Secure Boot boot binds; an
+  updated UKI signed with the same keys unlocks with the same token; a UKI
+  signed for Secure Boot whose PCR 11 policy is signed by another key gets
+  the passphrase prompt and the recovery key; the older UKI still unlocks
+  (rollback, see above).
+- No recovery key and no private key in any console log.
+
+Unit tests assert that `ci` never generates a key and that nothing of this
+runs with the defaults.

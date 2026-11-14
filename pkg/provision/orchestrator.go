@@ -134,6 +134,8 @@ type Orchestrator struct {
 	encryption *encryptionState
 	// encryptionSkipped: DISK_ENCRYPTION_ALLOW_FAILURE provisioned without it.
 	encryptionSkipped bool
+	// ukiDigest is the UKI SHA-256 from the verified image manifest.
+	ukiDigest string
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -2379,6 +2381,7 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 // which go-containerregistry checks, so they get the signed bytes. An HTTP
 // image source needs IMAGE_CHECKSUM instead.
 func (o *Orchestrator) verifyCosignSignatures(ctx context.Context, imageURL string) error {
+	o.ukiDigest = ""
 	if err := o.checkCosignSources([]string{imageURL}); err != nil {
 		return err
 	}
@@ -2387,6 +2390,9 @@ func (o *Orchestrator) verifyCosignSignatures(ctx context.Context, imageURL stri
 			return fmt.Errorf("verifying image signature: %w", err)
 		}
 		o.log.Info("image cosign signature verified", "url", image.RedactURL(imageURL))
+		if err := o.loadUKIDigest(ctx, imageURL); err != nil {
+			return err
+		}
 	}
 	sysext := &o.cfg.Provision.Sysext
 	if !sysext.Enabled || len(sysext.CosignPublicKeys) == 0 {

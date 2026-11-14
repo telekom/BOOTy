@@ -22,6 +22,10 @@ func applyDiskEncryptionVar(cfg *config.MachineConfig, key, value string) (bool,
 		d.Target = strings.ToLower(strings.TrimSpace(value))
 	case "DISK_ENCRYPTION_RECOVERY_KEY_URL":
 		d.RecoveryKeyURL = strings.TrimSpace(value)
+	case "DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE":
+		d.PCRPublicKeyFile = strings.TrimSpace(value)
+	case "SECUREBOOT_SIGNING":
+		cfg.Provision.SecureBoot.Signing = strings.ToLower(strings.TrimSpace(value))
 	case "DISK_ENCRYPTION_STATUS_URL":
 		d.StatusURL = strings.TrimSpace(value)
 	case "DISK_ENCRYPTION_ALLOW_FAILURE":
@@ -41,9 +45,10 @@ func applyDiskEncryptionVar(cfg *config.MachineConfig, key, value string) (bool,
 // lockedDiskEncryption is the disk encryption config without Target: a
 // standby payload or deploy archive may pick another partition, but never
 // turn encryption off, weaken it or send the key or the token elsewhere.
-func lockedDiskEncryption(d config.DiskEncryptionConfig) config.DiskEncryptionConfig {
-	d.Target = ""
-	return d
+func lockedDiskEncryption(d *config.DiskEncryptionConfig) config.DiskEncryptionConfig {
+	c := *d
+	c.Target = ""
+	return c
 }
 
 // EscrowRecoveryKey posts body, which holds the LUKS recovery key, to

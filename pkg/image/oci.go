@@ -302,3 +302,24 @@ func ociTransport() http.RoundTripper {
 	}
 	return ociTransportCache.t
 }
+
+// OCIManifestAnnotation returns the value of annotation key in the manifest
+// of the image that reference names, or "" when the manifest has none. For
+// a digest-pinned reference whose cosign signature was verified, the
+// annotation is covered by that signature.
+func OCIManifestAnnotation(ctx context.Context, reference, key string) (string, error) {
+	redactedRef := RedactOCIRef(reference)
+	ref, err := name.ParseReference(TrimOCIScheme(reference))
+	if err != nil {
+		return "", fmt.Errorf("parse OCI reference %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
+	}
+	img, err := remote.Image(ref, RemoteOptions(ctx)...)
+	if err != nil {
+		return "", fmt.Errorf("pull OCI image %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
+	}
+	m, err := img.Manifest()
+	if err != nil {
+		return "", fmt.Errorf("read manifest of %q: %w", redactedRef, wrapRedactedOCIRefError(err, reference))
+	}
+	return m.Annotations[key], nil
+}

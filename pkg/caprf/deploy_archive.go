@@ -108,6 +108,7 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 	target := cfg.Provision.DiskEncryption.Target
 	cfg.Provision.DiskEncryption = ref.Provision.DiskEncryption
 	cfg.Provision.DiskEncryption.Target = target
+	cfg.Provision.SecureBoot.Signing = ref.Provision.SecureBoot.Signing
 	// The restored settings can conflict with the archive (an archive
 	// without DISK_ENCRYPTION and with a PARTITION_LAYOUT): check the final
 	// config, like ParseVars checked the archive alone.

@@ -78,7 +78,8 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 			[]string{cfg.Provision.CrashArtifacts.PrepareURL, cfg.Provision.CrashArtifacts.UploadURL}},
 		// The recovery key and the token go to these URLs; turning
 		// encryption off or allowing a failure would downgrade silently.
-		{"disk encryption", lockedDiskEncryption(ref.Provision.DiskEncryption), lockedDiskEncryption(cfg.Provision.DiskEncryption)},
+		{"disk encryption", lockedDiskEncryption(&ref.Provision.DiskEncryption), lockedDiskEncryption(&cfg.Provision.DiskEncryption)},
+		{"disk encryption signer (SECUREBOOT_SIGNING)", ref.Provision.SecureBoot.Signing, cfg.Provision.SecureBoot.Signing},
 	} {
 		if !reflect.DeepEqual(s.ref, s.cand) {
 			fixed = append(fixed, s.name)
