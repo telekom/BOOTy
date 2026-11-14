@@ -53,7 +53,8 @@ func encryptionTargetRoot(t *testing.T) string {
 	root := t.TempDir()
 	for _, rel := range append(luksTargetTools, "usr/lib/x86_64-linux-gnu/libtss2-esys.so.0",
 		"usr/lib/x86_64-linux-gnu/libtss2-rc.so.0", "usr/lib/x86_64-linux-gnu/libtss2-mu.so.0",
-		"usr/lib/x86_64-linux-gnu/libtss2-tcti-device.so.0") {
+		"usr/lib/x86_64-linux-gnu/libtss2-tcti-device.so.0",
+		"usr/lib/x86_64-linux-gnu/cryptsetup/libcryptsetup-token-systemd-tpm2.so") {
 		p := filepath.Join(root, rel)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
@@ -114,7 +115,8 @@ func TestWriteEncryptionFiles(t *testing.T) {
 		t.Fatal("enrollment key content")
 	}
 	dracut := read(luksDracutConf)
-	for _, want := range []string{"hostonly=\"no\"", "crypt systemd-cryptsetup", "/etc/crypttab", "/usr/lib/x86_64-linux-gnu/libtss2-rc.so.0", "/usr/lib/x86_64-linux-gnu/libtss2-tcti-device.so.0"} {
+	for _, want := range []string{"hostonly=\"no\"", "crypt systemd-cryptsetup", "/etc/crypttab", "/usr/lib/x86_64-linux-gnu/libtss2-rc.so.0", "/usr/lib/x86_64-linux-gnu/libtss2-tcti-device.so.0",
+		"/usr/lib/x86_64-linux-gnu/cryptsetup/libcryptsetup-token-systemd-tpm2.so"} {
 		if !strings.Contains(dracut, want) {
 			t.Errorf("dracut conf lacks %q:\n%s", want, dracut)
 		}

@@ -18,8 +18,10 @@ Provisioning (BOOTy, Secure Boot off):
      - `/etc/booty/luks-enroll.key` (mode 0400), the enrollment key;
      - `/etc/crypttab`: `booty_crypt UUID=<luks uuid> /etc/booty/luks-enroll.key luks,x-initrd.attach`;
      - `/etc/dracut.conf.d/90-booty-luks.conf`: the `crypt` and
-       `systemd-cryptsetup` modules, `/etc/crypttab` and the TPM2 libraries
-       that systemd loads with `dlopen` (dracut does not see them), and
+       `systemd-cryptsetup` modules, `/etc/crypttab`, the TPM2 libraries
+       that systemd loads with `dlopen` and the libcryptsetup TPM2 token
+       plugin (dracut does not see them; without the plugin the initramfs
+       silently falls back to the passphrase prompt), and
        `hostonly="no"`: for `tpm2-device=` in crypttab a host-only build
        pulls in the dracut `tpm2-tss` module, which needs `tpm2-tools`, and
        drops `systemd-cryptsetup` without it. Generic is the Ubuntu default;
@@ -155,7 +157,9 @@ disk has changed then. Errors after the checks always fail the run.
 - The image has `dracut` and `lsinitrd`, `systemd-cryptsetup` and
   `systemd-cryptenroll`, `cryptsetup`, `shred` and the TPM2 libraries
   `libtss2-esys.so.0`, `libtss2-rc.so.0`, `libtss2-mu.so.0`,
-  `libtss2-tcti-device.so.0`. BOOTy checks them before it changes anything.
+  `libtss2-tcti-device.so.0`, and the token plugin
+  `libcryptsetup-token-systemd-tpm2.so` (package `systemd-cryptsetup`).
+  BOOTy checks them before it changes anything.
   - Ubuntu 26.04 cloud image: add `libtss2-rc0t64`. dracut and
     `systemd-cryptsetup` are installed.
   - Ubuntu 24.04 cloud image: add `dracut`, `systemd-cryptsetup` and
