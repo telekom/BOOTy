@@ -376,3 +376,19 @@ func TestScanLUKS2ReadErrorThenSecondary(t *testing.T) {
 		t.Fatalf("scanLUKS2() = %v, want the read error", err)
 	}
 }
+
+// The UUID comes from the disk, which the previous tenant wrote, and goes
+// into the success status that CAPRF parses (handoff=…): only a UUID is
+// reported.
+func TestParseLUKS2HeaderRejectsForeignUUIDText(t *testing.T) {
+	h := luks2Header(false, 16<<10, 4096, "")
+	copy(h[168:208], make([]byte, 40))
+	copy(h[168:], " handoff=standby\nX")
+	dev, err := parseLUKS2Header(bytes.NewReader(h), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dev.UUID != "invalid" {
+		t.Fatalf("UUID = %q, want invalid", dev.UUID)
+	}
+}

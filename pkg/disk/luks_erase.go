@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -32,6 +33,9 @@ const (
 var (
 	luks2Magic          = []byte("LUKS\xba\xbe")
 	luks2SecondaryMagic = []byte("SKUL\xba\xbe")
+	// luks2UUIDRE is the UUID that the status may name. The header is
+	// written by the previous tenant, and the status is parsed (handoff=).
+	luks2UUIDRE = regexp.MustCompile(`^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$`)
 	// devicePath is the device node of a kernel block device name. A
 	// variable for tests.
 	devicePath = func(name string) string { return "/dev/" + name }
@@ -248,7 +252,11 @@ func parseLUKS2Header(r io.ReaderAt, off int64) (LUKS2Device, error) {
 		return LUKS2Device{}, fmt.Errorf("%w: offset %d: %w", errBadLUKS2Header, off, err)
 	}
 	// uuid: char[40] at byte 168 of the binary header.
-	return LUKS2Device{UUID: string(bytes.TrimRight(bin[168:208], "\x00")), Area: 2*hdrSize + keyslots}, nil
+	uuid := string(bytes.TrimRight(bin[168:208], "\x00"))
+	if !luks2UUIDRE.MatchString(uuid) {
+		uuid = "invalid"
+	}
+	return LUKS2Device{UUID: uuid, Area: 2*hdrSize + keyslots}, nil
 }
 
 // luks2CopyAt checks that bin is a LUKS2 header copy that belongs at off:

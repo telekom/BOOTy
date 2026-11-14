@@ -300,7 +300,8 @@ look at the provisioning layout. `soft-deprovision` wipes nothing and does not r
    dual-ported SAS disk without dm-multipath) counts as erased.
 4. **Report.** The success status names each device and its LUKS UUID:
    `deprovisioning complete handoff=… ; crypto-erased: /dev/sda2
-   luksUUID=…`. A device that cannot be read (no media, I/O error) is
+   luksUUID=…`. The header comes from the disk, so a UUID field that is
+   not a UUID is reported as `luksUUID=invalid`. A device that cannot be read (no media, I/O error) is
    skipped and named (`; crypto-erase could not read: /dev/sdb`); BOOTy
    cannot erase it, and the wipe after it handles it as before. With
    `DEPROVISION_CRYPTO_ERASE=false` the status says `; crypto-erase off`.
@@ -317,7 +318,8 @@ new recovery key. There is no call that marks a key invalid, so BOOTy sends
 nothing to it at deprovision and does not invent one. After a successful
 crypto-erase the escrowed key opens nothing; the consumer that serves the
 URL can drop it by the `luksUUID` in the deprovision status, which is the
-`luksUUID` of the escrow body.
+`luksUUID` of the escrow body. Match it together with the host: whoever
+used the disk can write any UUID into its header.
 
 **Not in standby payloads.** A standby command payload cannot change
 `DEPROVISION_CRYPTO_ERASE` (the payload is refused), and a deploy archive
