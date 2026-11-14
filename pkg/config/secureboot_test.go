@@ -98,3 +98,27 @@ func TestValidateModuleSigning(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateModuleSigningMirror(t *testing.T) {
+	for _, tc := range []struct {
+		signing, enrollment, mirror, device string
+		wantErr                             bool
+	}{
+		{"per-host", "", "raid-1", "", true},
+		{"ci", "efi-helper", "auto", "", true},
+		{"per-host", "mokutil", "raid-1", "", false},
+		{"per-host", "external", "auto", "", false},
+		{"per-host", "", "none", "", false},
+		{"per-host", "", "raid-1", "/dev/sda", false}, // the mirroring mode is ignored
+		{"", "", "raid-1", "", false},
+	} {
+		c := &Config{}
+		c.Provision.SecureBoot.Signing = tc.signing
+		c.Provision.SecureBoot.ModuleSigning.Enrollment = tc.enrollment
+		c.Provision.Disk.MirroringMode = tc.mirror
+		c.Provision.Disk.Device = tc.device
+		if errs := c.validateModuleSigningMirror(); (len(errs) > 0) != tc.wantErr {
+			t.Errorf("%+v: errs=%v", tc, errs)
+		}
+	}
+}

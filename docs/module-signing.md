@@ -50,7 +50,8 @@ After the image is written and the target root is mounted:
      `<MODULE_SIGNING_CERT_DIR>/booty-module-signing.der`
      (default `/usr/share/booty/secureboot`);
    - run `depmod -a <kernel>` and `update-initramfs -u -k all` (or
-     `dracut --force --regenerate-all`) in the target chroot.
+     `dracut --force --regenerate-all`; always dracut with disk encryption,
+     whose unlock is in a dracut initramfs) in the target chroot.
 2. `enroll-module-signing-key` (after the firmware boot entries) enrolls the
    certificate created in step 1 of this run, never a file read from the
    image (on a resume, `sign-kernel-modules` runs again):
@@ -60,7 +61,10 @@ After the image is written and the target root is mounted:
      set `BootNext` to it. The entry is inactive and not in `BootOrder`, so
      it can run only through `BootNext`. OVMF boots it; firmware that skips
      inactive `BootNext` entries needs an active one (not tested on
-     hardware);
+     hardware). Config validation rejects it with disk mirroring
+     (`DISK_MIRRORING_MODE`): the helper and `BootNext` are on the primary
+     disk only, so a host that boots from the mirror could not enroll the
+     key; use `mokutil` or `external` there;
    - `mokutil`: BOOTy writes `MokNew` and `MokAuth` (SHA-256 over `MokNew`
      and the UCS-2 `MOK_PASSWORD`) itself, as `mokutil --import
      --simple-hash` does; no binary of the image runs with the password.
@@ -95,7 +99,10 @@ new certificate. A report file that the interrupted run already installed is
 kept, so it may name the earlier certificate.
 
 Any signing or enrollment error fails provisioning (`BOOTY-EFI-010`,
-`BOOTY-EFI-011`) unless `MODULE_SIGNING_ALLOW_FAILURE=true`.
+`BOOTY-EFI-011`) unless `MODULE_SIGNING_ALLOW_FAILURE=true`. An error after
+the first module was rewritten (a write that fails, or a certificate that
+cannot be installed) fails provisioning even then: those modules carry the
+signature of a key that nothing enrolls, and Secure Boot would refuse them.
 
 `mok-enroll.efi` is built from [hack/mok-enroll](../hack/mok-enroll) with
 gnu-efi. It is not in the production initramfs yet; the KVM scenario adds it

@@ -187,6 +187,23 @@ func TestMOKSignatureList(t *testing.T) {
 
 // SignModulesInto leaves the target unchanged, writes signed copies below
 // usr/ of the stage, and signs the seal data with the same key.
+// The target of SignModulesInto is read-only: its preflight must not open
+// the modules for writing.
+func TestSignModulesIntoReadOnlyTarget(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root opens a read-only file for writing")
+	}
+	root, stage := t.TempDir(), t.TempDir()
+	for name := range writeModules(t, root) {
+		if err := os.Chmod(filepath.Join(root, name), 0o444); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := SignModulesInto(root, stage, "BOOTy test", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSignModulesInto(t *testing.T) {
 	root, stage := t.TempDir(), t.TempDir()
 	plain := writeModules(t, root)

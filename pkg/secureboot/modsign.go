@@ -70,6 +70,11 @@ func IsModuleSigningOnly(cert *x509.Certificate) bool {
 	return slices.ContainsFunc(cert.UnknownExtKeyUsage, OIDModuleSigningOnly.Equal)
 }
 
+// ErrModulesModified marks a module signing error after the first module
+// write: modules may carry signatures of a key that is destroyed and never
+// enrolled, so the caller must not continue as if nothing had changed.
+var ErrModulesModified = errors.New("modules were rewritten")
+
 // SignResult is the outcome of SignModuleTree. It holds no key material.
 type SignResult struct {
 	// CertDER is the DER certificate of the per-host signing key.
@@ -122,7 +127,7 @@ func signModules(rootDir string, stage *os.Root, commonName string, seal func([]
 	// Check every module before the first write: a module that fails later
 	// would leave the earlier ones without their original signatures.
 	for _, m := range modules {
-		if err := checkModule(root, m); err != nil {
+		if err := checkModule(root, m, stage); err != nil {
 			return nil, fmt.Errorf("module %s: %w", m, err)
 		}
 	}
@@ -134,7 +139,10 @@ func signModules(rootDir string, stage *os.Root, commonName string, seal func([]
 	res := &SignResult{CertDER: s.cert.Raw}
 	for _, m := range modules {
 		if err := s.signFile(root, m, stage); err != nil {
-			return nil, fmt.Errorf("sign module %s: %w", m, err)
+			if stage != nil { // the target is unchanged
+				return nil, fmt.Errorf("sign module %s: %w", m, err)
+			}
+			return nil, fmt.Errorf("sign module %s: %w: %w", m, ErrModulesModified, err)
 		}
 		res.Modules = append(res.Modules, m)
 		// lib/modules/<kernel>/...
@@ -309,12 +317,20 @@ func readModule(root *os.Root, name string, flag int) (*os.File, []byte, error) 
 	return f, raw, nil
 }
 
+// moduleOpenFlag opens a module for writing when it is signed in place.
+func moduleOpenFlag(stage *os.Root) int {
+	if stage != nil {
+		return os.O_RDONLY
+	}
+	return os.O_RDWR
+}
+
 // checkModule reports whether signFile would accept the module, without
-// changing it. It opens the module for writing like signFile, so a module
-// that cannot be rewritten (immutable, read-only) fails before the first
-// module is re-signed.
-func checkModule(root *os.Root, name string) error {
-	f, _, err := readModule(root, name, os.O_RDWR)
+// changing it. It opens the module like signFile (for writing when signing
+// in place), so a module that cannot be rewritten (immutable, read-only)
+// fails before the first module is re-signed.
+func checkModule(root *os.Root, name string, stage *os.Root) error {
+	f, _, err := readModule(root, name, moduleOpenFlag(stage))
 	if err == nil {
 		_ = f.Close()
 	}
@@ -326,11 +342,7 @@ func checkModule(root *os.Root, name string) error {
 // rewritten, not replaced, so its owner, mode and extended attributes (the
 // SELinux label modules_object_t on RHEL-like images) stay.
 func (s *moduleSigner) signFile(root *os.Root, name string, stage *os.Root) error {
-	flag := os.O_RDWR
-	if stage != nil {
-		flag = os.O_RDONLY
-	}
-	f, raw, err := readModule(root, name, flag)
+	f, raw, err := readModule(root, name, moduleOpenFlag(stage))
 	if err != nil {
 		return err
 	}
