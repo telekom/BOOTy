@@ -71,6 +71,17 @@ const (
 	ModuleSigningEnrollExternal = "external"
 )
 
+// Module signing targets.
+const (
+	// ModuleSigningTargetInPlace signs the modules in the target root.
+	ModuleSigningTargetInPlace = "in-place"
+	// ModuleSigningTargetSysext leaves the target root unchanged and installs
+	// the signed modules as a per-host system extension with a dm-verity
+	// root hash signed by the same key, for read-only (dm-verity) roots.
+	// Experimental.
+	ModuleSigningTargetSysext = "sysext"
+)
+
 // DefaultModuleSigningCertDir is where the certificate is installed in the
 // target.
 const DefaultModuleSigningCertDir = "/usr/share/booty/secureboot"
@@ -79,6 +90,8 @@ const DefaultModuleSigningCertDir = "/usr/share/booty/secureboot"
 type ModuleSigningConfig struct {
 	// Enrollment is efi-helper (default), mokutil or external.
 	Enrollment string `yaml:"enrollment" json:"enrollment"`
+	// Target is in-place (default) or sysext (experimental).
+	Target string `yaml:"target" json:"target"`
 	// CertDir is the absolute target directory for the DER certificate.
 	// Default: /usr/share/booty/secureboot
 	CertDir string `yaml:"certDir" json:"certDir"`
@@ -93,6 +106,14 @@ func (m ModuleSigningConfig) EnrollmentMethod() string {
 		return ModuleSigningEnrollEFIHelper
 	}
 	return m.Enrollment
+}
+
+// TargetOrDefault returns Target or the default.
+func (m ModuleSigningConfig) TargetOrDefault() string {
+	if m.Target == "" {
+		return ModuleSigningTargetInPlace
+	}
+	return m.Target
 }
 
 // CertDirOrDefault returns CertDir or the default.

@@ -86,6 +86,11 @@ func TestValidateModuleSigning(t *testing.T) {
 		{SecureBootConfig{Signing: "ci", MOKCertPath: "/usr/share/ci/mok.der"}, "", false},
 		{SecureBootConfig{Signing: "ci"}, "", true},
 		{SecureBootConfig{Signing: "ci", MOKCertPath: "ci/mok.der"}, "", true},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Target: "sysext"}}, "", false},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Target: "sysext", CertDir: "/etc/keys"}}, "", true},
+		{SecureBootConfig{Signing: "per-host", ModuleSigning: m{Target: "bogus"}}, "", true},
+		// A sysext needs the per-host key to sign its root hash.
+		{SecureBootConfig{Signing: "ci", MOKCertPath: "/usr/share/ci/mok.der", ModuleSigning: m{Target: "sysext"}}, "", true},
 	} {
 		errs := validateModuleSigning(tc.mode, &tc.sb, ab)
 		if (len(errs) > 0) != tc.wantErr {

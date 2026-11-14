@@ -574,6 +574,46 @@ jobs:
               gcc -Q --help=target | grep -E "^ +-march="
               sh hack/mok-enroll/build.sh mok-enroll.efi
               echo "BOOTY_MOK_ENROLL_EFI=${PWD}/mok-enroll.efi" >> "${GITHUB_ENV}"
+          # Experimental MODULE_SIGNING_TARGET=sysext (docs/module-signing.md,
+          # dm-verity roots): /usr of the image stays unchanged, the signed
+          # module loads from a per-host sysext with a signed dm-verity root
+          # hash with Secure Boot on, and a changed sysext is refused.
+          - scenario: module-sysext-ubuntu-24.04
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestModuleSigningSysextVM$"
+            go_timeout: 50m
+            timeout_minutes: 70
+            privileged: true
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+            mirror_os_image: ubuntu-24.04-server-cloudimg-amd64.img
+            mirror_os_image_url: https://cloud-images.ubuntu.com/releases/noble/release-20260911/ubuntu-24.04-server-cloudimg-amd64.img
+            mirror_os_image_sha256: 612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354
+            setup: |
+              sudo apt-get install -y --no-install-recommends gcc binutils gnu-efi efibootmgr zstd
+              sudo apt-get install -y --no-install-recommends python3-virt-firmware || sudo pip3 install --break-system-packages virt-firmware
+              gcc -Q --help=target | grep -E "^ +-march="
+              sh hack/mok-enroll/build.sh mok-enroll.efi
+              echo "BOOTY_MOK_ENROLL_EFI=${PWD}/mok-enroll.efi" >> "${GITHUB_ENV}"
+              # Kernel 6.8 refuses the root hash signature (docs/module-signing.md).
+              echo "BOOTY_SYSEXT_ROOTHASH_SIG=unsupported" >> "${GITHUB_ENV}"
+          - scenario: module-sysext-ubuntu-26.04
+            qemu_extra: ""
+            test_tag: e2e
+            test_regex: "^TestModuleSigningSysextVM$"
+            go_timeout: 50m
+            timeout_minutes: 70
+            privileged: true
+            ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+            mirror_os_image: ubuntu-26.04-server-cloudimg-amd64.img
+            mirror_os_image_url: https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img
+            mirror_os_image_sha256: 8800651811af9a85465ad1d552add729947bb16488dddb4a9b5305a3d97332b2
+            setup: |
+              sudo apt-get install -y --no-install-recommends gcc binutils gnu-efi efibootmgr zstd
+              sudo apt-get install -y --no-install-recommends python3-virt-firmware || sudo pip3 install --break-system-packages virt-firmware
+              gcc -Q --help=target | grep -E "^ +-march="
+              sh hack/mok-enroll/build.sh mok-enroll.efi
+              echo "BOOTY_MOK_ENROLL_EFI=${PWD}/mok-enroll.efi" >> "${GITHUB_ENV}"
           # SECUREBOOT_SIGNING=ci: the image arrives with a CI-signed module and
           # the CI certificate; BOOTy holds no key and only enrolls it.
           - scenario: module-signing-ci-ubuntu-26.04
