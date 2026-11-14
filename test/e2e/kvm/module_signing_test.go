@@ -160,6 +160,12 @@ func (m *modSignVM) provision(phase string) string {
 	if !strings.Contains(out, "step=report-success") || strings.Contains(out, "provisioning step failed") {
 		m.t.Fatalf("%s did not succeed", phase)
 	}
+	// Provisioning leaves gigabytes of the disk image in the host page cache.
+	// Writing them back here keeps the writeback from stalling the next QEMU
+	// (its pflash writes) for minutes.
+	start := time.Now()
+	run(m.t, "sync after "+phase, "sync")
+	m.t.Logf("sync after %s took %s", phase, time.Since(start).Round(time.Second))
 	return out
 }
 
