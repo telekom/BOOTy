@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -167,9 +168,69 @@ func (m *modSignVM) provision(phase string) string {
 // enroll boots the firmware once: BootNext runs mok-enroll.efi.
 func (m *modSignVM) enroll(phase string) {
 	m.t.Helper()
-	out := runMirrorQEMU(m.t, phase, m.args("-net", "none"), 3*time.Minute)
+	out := runQEMUUntilReset(m.t, phase, m.args("-net", "none"), 3*time.Minute, "BOOTy mok-enroll: MokList updated")
 	if !strings.Contains(string(out), "BOOTy mok-enroll: MokList updated") {
 		m.t.Fatalf("%s: mok-enroll.efi did not run:\n%s", phase, tail(out, 4000))
+	}
+}
+
+// syncBuffer is a bytes.Buffer that QEMU writes and the test reads.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p) //nolint:wrapcheck // bytes.Buffer
+}
+
+func (b *syncBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return bytes.Clone(b.buf.Bytes())
+}
+
+// runQEMUUntilReset is runMirrorQEMU for a boot that ends with a firmware
+// reset after the guest printed done. On the CI runners QEMU sometimes does
+// not exit on that reset (-no-reboot) within minutes, although the variable
+// store is already written: pflash writes go to the file at once. Thirty
+// seconds after done, the test stops QEMU and goes on.
+func runQEMUUntilReset(t *testing.T, phase string, args []string, timeout time.Duration, done string) []byte {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	var out syncBuffer
+	cmd := exec.CommandContext(ctx, "qemu-system-x86_64", args...)
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("QEMU %s: %v", phase, err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	var doneAt time.Time
+	for tick := time.NewTicker(time.Second); ; {
+		select {
+		case err := <-exited:
+			tick.Stop()
+			if ctx.Err() != nil {
+				t.Fatalf("QEMU %s timed out after %s. output:\n%s", phase, timeout, readableSerial(out.Bytes()))
+			}
+			t.Logf("QEMU %s exited (%v). output:\n%s", phase, err, readableSerial(out.Bytes()))
+			return out.Bytes()
+		case <-tick.C:
+			if doneAt.IsZero() && bytes.Contains(out.Bytes(), []byte(done)) {
+				doneAt = time.Now()
+			}
+			if !doneAt.IsZero() && time.Since(doneAt) > 30*time.Second {
+				t.Logf("QEMU %s did not exit on the reset after %q; stopping it", phase, done)
+				_ = cmd.Process.Kill()
+				<-exited
+				tick.Stop()
+				return out.Bytes()
+			}
+		}
 	}
 }
 
