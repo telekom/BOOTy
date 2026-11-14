@@ -1314,6 +1314,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 func applyMOKStringVar(cfg *config.MachineConfig, key, value string) bool {
 	sb := &cfg.Provision.SecureBoot
 	switch key {
+	case "SECUREBOOT_SIGNING":
+		sb.Signing = value
 	case "MOK_CERT_PATH":
 		sb.MOKCertPath = value
 	case "MOK_PASSWORD":
@@ -1788,8 +1790,6 @@ func applyCrashArtifactsBoolVar(cfg *config.MachineConfig, key, value string) bo
 
 func applyModuleSigningBoolVar(cfg *config.MachineConfig, key, value string) bool {
 	switch key {
-	case "MODULE_SIGNING_ENABLED":
-		cfg.Provision.SecureBoot.ModuleSigning.Enabled = parseBoolVar(value)
 	case "MODULE_SIGNING_ALLOW_FAILURE":
 		cfg.Provision.SecureBoot.ModuleSigning.AllowFailure = parseBoolVar(value)
 	default:

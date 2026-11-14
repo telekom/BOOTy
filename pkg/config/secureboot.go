@@ -14,9 +14,15 @@ type SecureBootConfig struct {
 	// Default: {} (digest enforcement disabled)
 	PinnedDigests map[string]string `yaml:"pinnedDigests" json:"pinnedDigests"`
 
-	// MOKCertPath is the path to a DER-encoded MOK certificate for enrollment.
-	// The certificate is enrolled via mokutil so the installed OS trusts
-	// custom-signed kernel modules.
+	// Signing selects who signs the out-of-tree kernel modules of the
+	// target: per-host (BOOTy, with a key that exists only while
+	// provisioning), ci (the image arrives signed; BOOTy only enrolls
+	// MOKCertPath) or off. See docs/module-signing.md.
+	// Default: off
+	Signing string `yaml:"signing" json:"signing"`
+
+	// MOKCertPath is the absolute path in the target of the DER certificate
+	// that signed the modules, for Signing ci.
 	// Default: ""
 	MOKCertPath string `yaml:"mokCertPath" json:"mokCertPath"`
 
@@ -24,9 +30,30 @@ type SecureBootConfig struct {
 	// Default: ""
 	MOKPassword string `yaml:"mokPassword" json:"mokPassword"`
 
-	// ModuleSigning signs out-of-tree kernel modules of the target with a
-	// per-host key and enrolls its certificate. See docs/module-signing.md.
+	// ModuleSigning configures Signing per-host and ci: enrollment,
+	// certificate directory and failure handling.
 	ModuleSigning ModuleSigningConfig `yaml:"moduleSigning" json:"moduleSigning"`
+}
+
+// Secure Boot signing modes (SecureBootConfig.Signing).
+const (
+	// SigningOff signs and enrolls nothing: provisioning as without the
+	// feature.
+	SigningOff = "off"
+	// SigningPerHost signs the modules with a new per-host key and enrolls
+	// its certificate.
+	SigningPerHost = "per-host"
+	// SigningCI enrolls MOKCertPath, the certificate of the CI key that
+	// signed the modules of the image. BOOTy holds no private key.
+	SigningCI = "ci"
+)
+
+// SigningMode returns Signing or the default, off.
+func (s *SecureBootConfig) SigningMode() string {
+	if s.Signing == "" {
+		return SigningOff
+	}
+	return s.Signing
 }
 
 // Module signing enrollment methods.
@@ -50,9 +77,6 @@ const DefaultModuleSigningCertDir = "/usr/share/booty/secureboot"
 
 // ModuleSigningConfig controls per-host signing of out-of-tree modules.
 type ModuleSigningConfig struct {
-	// Enabled signs every module below /lib/modules/*/{updates,extra}.
-	// Default: false
-	Enabled bool `yaml:"enabled" json:"enabled"`
 	// Enrollment is efi-helper (default), mokutil or external.
 	Enrollment string `yaml:"enrollment" json:"enrollment"`
 	// CertDir is the absolute target directory for the DER certificate.
@@ -84,5 +108,5 @@ func (m ModuleSigningConfig) CertDirOrDefault() string {
 // runs at the next firmware boot.
 func (s *SecureBootConfig) NeedsFirmwareReboot() bool {
 	m := s.ModuleSigning
-	return s.ReEnable || (m.Enabled && m.EnrollmentMethod() != ModuleSigningEnrollExternal)
+	return s.ReEnable || (s.SigningMode() != SigningOff && m.EnrollmentMethod() != ModuleSigningEnrollExternal)
 }

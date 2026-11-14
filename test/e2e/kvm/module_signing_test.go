@@ -41,7 +41,8 @@ echo "KERNEL=$(uname -r)"
 echo "PACKAGES=$(dpkg-query -W -f='${Package}=${Version} ' shim-signed shim 2>/dev/null)"
 echo "MOKTRUSTED=$(od -An -tu1 -j4 /sys/firmware/efi/efivars/MokListTrustedRT-605dab50-e046-4300-abb6-3dd810dd8b23 2>/dev/null | tr -d ' ')"
 echo "LOCKDOWN=$(cat /sys/kernel/security/lockdown 2>/dev/null)"
-grep -i 'BOOTy module signing' /proc/keys | sed 's/^/KEY /'
+grep -i -e 'BOOTy module signing' -e 'CI module signing' /proc/keys | sed 's/^/KEY /'
+grep -E ' \.(machine|platform|secondary_trusted_keys|builtin_trusted_keys): ' /proc/keys | sed 's/^/KEYRING /'
 echo "PCR7=$(cat /sys/class/tpm/tpm0/pcr-sha256/7 2>/dev/null)"
 echo "PCR14=$(cat /sys/class/tpm/tpm0/pcr-sha256/14 2>/dev/null)"
 try() {
@@ -69,89 +70,130 @@ ExecStart=/bin/sh /usr/local/lib/booty-modsign-check.sh
 WantedBy=multi-user.target
 `
 
-// TestModuleSigningSecureBootVM provisions an Ubuntu cloud image with
-// MODULE_SIGNING_ENABLED=true under OVMF with the Microsoft keys enrolled
-// and Secure Boot off, lets mok-enroll.efi write MokList on the next boot,
-// turns Secure Boot on (as a BMC would) and boots the installed system
-// through shim. The BOOTy signed module must load; an unsigned module and
-// one signed by another host's key must be refused. With Secure Boot off
-// again the system must still boot. A second provisioning must replace the
-// certificate in MokList instead of adding one.
-func TestModuleSigningSecureBootVM(t *testing.T) {
+// modSignVM is the KVM setup of the module signing scenarios: an Ubuntu
+// cloud image (MIRROR_OS_IMAGE) with the distribution shim and kernel, OVMF
+// with the Microsoft keys and Secure Boot off, swtpm, a raw disk, and a
+// provisioning ramdisk with mok-enroll.efi (BOOTY_MOK_ENROLL_EFI) at the
+// path of the release ramdisks.
+type modSignVM struct {
+	t                                     *testing.T
+	dir, code, vars, disk, kernel, initrd string
+	boots                                 int
+}
+
+// requireModSignHost returns MIRROR_OS_IMAGE after checking the assets and
+// tools of the module signing scenarios.
+func requireModSignHost(t *testing.T) string {
+	t.Helper()
 	requireRoot(t)
 	qemuAvailable(t)
 	requireProvisionTools(t)
 	osImage := os.Getenv("MIRROR_OS_IMAGE")
-	helper := os.Getenv("BOOTY_MOK_ENROLL_EFI")
-	code := envOrDefault("OVMF_CODE", "/usr/share/OVMF/OVMF_CODE_4M.secboot.fd")
-	varsTemplate := envOrDefault("OVMF_VARS_MS", "/usr/share/OVMF/OVMF_VARS_4M.ms.fd")
-	for _, f := range []string{osImage, helper, code, varsTemplate} {
+	for _, f := range []string{osImage, os.Getenv("BOOTY_MOK_ENROLL_EFI"),
+		envOrDefault("OVMF_CODE", "/usr/share/OVMF/OVMF_CODE_4M.secboot.fd"),
+		envOrDefault("OVMF_VARS_MS", "/usr/share/OVMF/OVMF_VARS_4M.ms.fd")} {
 		if _, err := os.Stat(f); f == "" || err != nil {
 			failOrSkipUnsupportedHost(t, "module signing asset missing (MIRROR_OS_IMAGE, BOOTY_MOK_ENROLL_EFI, OVMF): %q %v", f, err)
 		}
 	}
-	for _, tool := range []string{"virt-fw-vars", "swtpm", "zstd"} {
+	for _, tool := range []string{"virt-fw-vars", "swtpm", "zstd", "depmod"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			failOrSkipUnsupportedHost(t, "%s not available", tool)
 		}
 	}
+	return osImage
+}
 
-	dir := t.TempDir()
-	gzImage := prepareModuleImage(t, osImage, dir)
-	baseURL := startImageServer(t, gzImage)
-	helperEFI, err := os.ReadFile(helper)
+func newModSignVM(t *testing.T, dir, gzImage string, vars map[string]string) *modSignVM {
+	t.Helper()
+	helperEFI, err := os.ReadFile(os.Getenv("BOOTY_MOK_ENROLL_EFI"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	initramfs := buildProvisionInitramfsWithFiles(t, map[string]string{
-		"HOSTNAME":                  "modsign-e2e",
+	all := map[string]string{
 		"IMAGE_ALLOW_INSECURE_HTTP": "true",
-		"IMAGE":                     baseURL + "/image.gz",
+		"IMAGE":                     startImageServer(t, gzImage) + "/image.gz",
 		"MODE":                      "provision",
 		"MIN_DISK_SIZE_GB":          "1",
-		"MODULE_SIGNING_ENABLED":    "true",
-	}, map[string]string{"usr/lib/booty/mok-enroll.efi": string(helperEFI)})
-	kernel := findKernel(t)
+	}
+	for k, v := range vars {
+		all[k] = v
+	}
+	m := &modSignVM{
+		t: t, dir: dir,
+		code:   envOrDefault("OVMF_CODE", "/usr/share/OVMF/OVMF_CODE_4M.secboot.fd"),
+		vars:   filepath.Join(dir, "OVMF_VARS.fd"),
+		disk:   filepath.Join(dir, "disk.raw"),
+		kernel: findKernel(t),
+		initrd: buildProvisionInitramfsWithFiles(t, all, map[string]string{"usr/lib/booty/mok-enroll.efi": string(helperEFI)}),
+	}
+	copyBinary(t, envOrDefault("OVMF_VARS_MS", "/usr/share/OVMF/OVMF_VARS_4M.ms.fd"), m.vars)
+	setSecureBoot(t, m.vars, false)
+	// Raw, so a test can mount the provisioned disk between boots.
+	run(t, "create disk", "qemu-img", "create", "-f", "raw", m.disk, "6G")
+	return m
+}
 
-	vars := filepath.Join(dir, "OVMF_VARS.fd")
-	copyBinary(t, varsTemplate, vars)
-	setSecureBoot(t, vars, false)
-	disk := filepath.Join(dir, "disk.qcow2")
-	run(t, "create disk", "qemu-img", "create", "-f", "qcow2", disk, "6G")
-	// swtpm exits when QEMU disconnects, so every boot gets a new one.
-	boots := 0
-	vm := func(extra ...string) []string {
-		boots++
-		tpm := startSWTPM(t, filepath.Join(dir, fmt.Sprintf("tpm%d", boots)))
-		return append([]string{
-			"-machine", "q35,smm=on,accel=kvm:tcg", "-cpu", mirrorQEMUCPUModel(), "-m", "2048", "-smp", "2",
-			"-nographic", "-no-reboot",
-			"-global", "driver=cfi.pflash01,property=secure,value=on",
-			"-drive", "if=pflash,format=raw,unit=0,readonly=on,file=" + code,
-			"-drive", "if=pflash,format=raw,unit=1,file=" + vars,
-			"-drive", "file=" + disk + ",format=qcow2,if=virtio",
-			"-chardev", "socket,id=chrtpm,path=" + tpm,
-			"-tpmdev", "emulator,id=tpm0,chardev=chrtpm", "-device", "tpm-tis,tpmdev=tpm0",
-		}, extra...)
+// args returns the QEMU arguments of the next boot; swtpm exits when QEMU
+// disconnects, so every boot gets a new one.
+func (m *modSignVM) args(extra ...string) []string {
+	m.boots++
+	tpm := startSWTPM(m.t, filepath.Join(m.dir, fmt.Sprintf("tpm%d", m.boots)))
+	return append([]string{
+		"-machine", "q35,smm=on,accel=kvm:tcg", "-cpu", mirrorQEMUCPUModel(), "-m", "2048", "-smp", "2",
+		"-nographic", "-no-reboot",
+		"-global", "driver=cfi.pflash01,property=secure,value=on",
+		"-drive", "if=pflash,format=raw,unit=0,readonly=on,file=" + m.code,
+		"-drive", "if=pflash,format=raw,unit=1,file=" + m.vars,
+		"-drive", "file=" + m.disk + ",format=raw,if=virtio",
+		"-chardev", "socket,id=chrtpm,path=" + tpm,
+		"-tpmdev", "emulator,id=tpm0,chardev=chrtpm", "-device", "tpm-tis,tpmdev=tpm0",
+	}, extra...)
+}
+
+// provision runs the BOOTy ramdisk and returns its console output.
+func (m *modSignVM) provision(phase string) string {
+	m.t.Helper()
+	out := string(runMirrorQEMU(m.t, phase, m.args("-kernel", m.kernel, "-initrd", m.initrd,
+		"-append", runnerKernelCmdline+" net.ifnames=0", "-net", "nic,model=virtio", "-net", "user"), 10*time.Minute))
+	if !strings.Contains(out, "step=report-success") || strings.Contains(out, "provisioning step failed") {
+		m.t.Fatalf("%s did not succeed", phase)
 	}
-	provision := func(phase string) {
-		out := runMirrorQEMU(t, phase, vm("-kernel", kernel, "-initrd", initramfs,
-			"-append", runnerKernelCmdline+" net.ifnames=0", "-net", "nic,model=virtio", "-net", "user"), 10*time.Minute)
-		if !strings.Contains(string(out), "step=report-success") || strings.Contains(string(out), "provisioning step failed") {
-			t.Fatalf("%s did not succeed", phase)
-		}
+	return out
+}
+
+// enroll boots the firmware once: BootNext runs mok-enroll.efi.
+func (m *modSignVM) enroll(phase string) {
+	m.t.Helper()
+	out := runMirrorQEMU(m.t, phase, m.args("-net", "none"), 3*time.Minute)
+	if !strings.Contains(string(out), "BOOTy mok-enroll: MokList updated") {
+		m.t.Fatalf("%s: mok-enroll.efi did not run:\n%s", phase, tail(out, 4000))
 	}
-	enroll := func(phase string) string {
-		out := runMirrorQEMU(t, phase, vm("-net", "none"), 3*time.Minute)
-		if !strings.Contains(string(out), "BOOTy mok-enroll: MokList updated") {
-			t.Fatalf("%s: mok-enroll.efi did not run:\n%s", phase, tail(out, 4000))
-		}
-		return string(out)
-	}
+}
+
+// check boots the installed system and returns the report of the check
+// service.
+func (m *modSignVM) check(phase string) string {
+	m.t.Helper()
+	return modCheckReport(m.t, phase, runMirrorQEMU(m.t, phase, m.args("-net", "none"), 8*time.Minute))
+}
+
+// TestModuleSigningSecureBootVM provisions with SECUREBOOT_SIGNING=per-host,
+// lets mok-enroll.efi write MokList on the next boot, turns Secure Boot on
+// (as a BMC would) and boots the installed system through shim. The BOOTy
+// signed module must load; an unsigned module and one signed by another
+// host's key must be refused. With Secure Boot off again the system must
+// still boot. A second provisioning must replace the certificate in MokList
+// instead of adding one.
+func TestModuleSigningSecureBootVM(t *testing.T) {
+	dir := t.TempDir()
+	gzImage, _ := prepareModuleImage(t, requireModSignHost(t), dir)
+	m := newModSignVM(t, dir, gzImage, map[string]string{"HOSTNAME": "modsign-e2e", "SECUREBOOT_SIGNING": "per-host"})
+	vars := m.vars
 
 	// Provisioning with Secure Boot off, then the BootNext boot of the helper.
-	provision("provision")
-	enroll("mok-enroll")
+	m.provision("provision")
+	m.enroll("mok-enroll")
 	certs := bootyMOKCerts(t, vars)
 	if len(certs) != 1 {
 		t.Fatalf("MokList holds %d BOOTy certificates, want 1", len(certs))
@@ -159,7 +201,7 @@ func TestModuleSigningSecureBootVM(t *testing.T) {
 
 	// Secure Boot on: shim mirrors MokList, the kernel trusts the key.
 	setSecureBoot(t, vars, true)
-	report := modCheckReport(t, "secure boot on", runMirrorQEMU(t, "secure boot on", vm("-net", "none"), 8*time.Minute))
+	report := m.check("secure boot on")
 	requireLine(t, report, "SECUREBOOT=1")
 	requireLine(t, report, "SIGNED_MODULE=loaded")
 	requireLine(t, report, "SIGNED_SIGNER=BOOTy module signing modsign-e2e")
@@ -169,7 +211,7 @@ func TestModuleSigningSecureBootVM(t *testing.T) {
 
 	// Secure Boot off: the system still boots, unsigned modules load.
 	setSecureBoot(t, vars, false)
-	report = modCheckReport(t, "secure boot off", runMirrorQEMU(t, "secure boot off", vm("-net", "none"), 8*time.Minute))
+	report = m.check("secure boot off")
 	requireLine(t, report, "SECUREBOOT=0")
 	requireLine(t, report, "SIGNED_MODULE=loaded")
 	requireLine(t, report, "UNSIGNED_MODULE=loaded")
@@ -178,8 +220,8 @@ func TestModuleSigningSecureBootVM(t *testing.T) {
 	}
 
 	// Reprovisioning replaces the old certificate.
-	provision("reprovision")
-	enroll("mok-enroll after reprovision")
+	m.provision("reprovision")
+	m.enroll("mok-enroll after reprovision")
 	again := bootyMOKCerts(t, vars)
 	if len(again) != 1 || again[0] == certs[0] {
 		t.Fatalf("after reprovisioning MokList holds %d BOOTy certificates (same as before: %v), want one new", len(again), len(again) == 1)
@@ -202,19 +244,164 @@ func TestModuleSigningSecureBootVM(t *testing.T) {
 	if left := bootyMOKCerts(t, vars); len(left) != 0 {
 		t.Fatalf("MokList still holds %d BOOTy certificates", len(left))
 	}
-	report = modCheckReport(t, "db only", runMirrorQEMU(t, "db only", vm("-net", "none"), 8*time.Minute))
+	report = m.check("db only")
 	requireLine(t, report, "SECUREBOOT=1")
 	requireLine(t, report, "UNSIGNED_MODULE=refused")
 	if field(report, "SIGNED_MODULE") == "loaded" {
 		t.Log("db only: the kernel accepts modules signed by a db certificate (distribution patch)")
 	} else {
-		t.Log("db only: the kernel refuses modules signed by a db certificate (upstream behaviour)")
+		t.Log("db only: the kernel refuses modules signed by a db certificate (upstream behavior)")
 	}
 }
 
+// TestModuleSigningCIVM provisions an image whose module CI signed, with
+// SECUREBOOT_SIGNING=ci and the CI certificate in MOK_CERT_PATH. BOOTy must
+// not sign anything or hold a key; it enrolls the CI certificate, and with
+// Secure Boot on the CI-signed module loads.
+func TestModuleSigningCIVM(t *testing.T) {
+	dir := t.TempDir()
+	const ciCert = "/usr/share/booty-e2e/ci-mok.der"
+	var ci *secureboot.SignResult
+	gzImage, mods := prepareModuleImage(t, requireModSignHost(t), dir, func(mnt, kernel string) {
+		var err error
+		// CI signs the module in the image build and ships its certificate.
+		if ci, err = secureboot.SignModuleTree(mnt, "CI module signing e2e"); err != nil {
+			t.Fatal(err)
+		}
+		writeImageFile(t, mnt, strings.TrimPrefix(ciCert, "/"), ci.CertDER)
+		run(t, "depmod in the image", "depmod", "-b", mnt, kernel)
+	})
+	m := newModSignVM(t, dir, gzImage, map[string]string{
+		"HOSTNAME": "modci-e2e", "SECUREBOOT_SIGNING": "ci", "MOK_CERT_PATH": ciCert,
+	})
+	out := m.provision("provision")
+	if !strings.Contains(out, "CI module signing certificate to enroll") || strings.Contains(out, "signed out-of-tree kernel modules") {
+		t.Fatal("signing ci did not just read the CI certificate")
+	}
+	m.enroll("mok-enroll")
+	if certs := bootyMOKCerts(t, m.vars); len(certs) != 1 || certs[0] != hex.EncodeToString(ci.CertDER) {
+		t.Fatalf("MokList holds %d BOOTy certificates, want the CI certificate", len(certs))
+	}
+	setSecureBoot(t, m.vars, true)
+	report := m.check("secure boot on")
+	requireLine(t, report, "SECUREBOOT=1")
+	requireLine(t, report, "SIGNED_MODULE=loaded")
+	requireLine(t, report, "SIGNED_SIGNER=CI module signing e2e")
+	requireLine(t, report, "UNSIGNED_MODULE=refused")
+	requireLine(t, report, "OTHERKEY_MODULE=refused")
+	t.Logf("CI-signed module %s loads with the CI certificate enrolled", mods[0].name)
+}
+
+// TestModuleSigningOffVM is the regression case for the default: without
+// SECUREBOOT_SIGNING, with mok-enroll.efi in the ramdisk and Secure Boot
+// off, provisioning must leave the module, the ESP and the EFI variables as
+// without the feature, and the installed system boots.
+func TestModuleSigningOffVM(t *testing.T) {
+	dir := t.TempDir()
+	var modPath string
+	var modBefore []byte
+	gzImage, mods := prepareModuleImage(t, requireModSignHost(t), dir, func(mnt, kernel string) {
+		run(t, "depmod in the image", "depmod", "-b", mnt, kernel)
+		modPath = filepath.Join("usr/lib/modules", kernel, "updates/booty-e2e")
+	})
+	modPath = filepath.Join(modPath, mods[0].name+".ko")
+	modBefore = mods[0].raw
+	m := newModSignVM(t, dir, gzImage, map[string]string{"HOSTNAME": "modoff-e2e"})
+	out := m.provision("provision")
+	for _, s := range []string{"signed out-of-tree kernel modules", "MOK enrollment staged", "CI module signing certificate"} {
+		if strings.Contains(out, s) {
+			t.Fatalf("signing off logged %q", s)
+		}
+	}
+	withDiskPartition(t, m.disk, dir, "ext4", func(mnt string) {
+		if got, err := os.ReadFile(filepath.Join(mnt, modPath)); err != nil || !bytes.Equal(got, modBefore) {
+			t.Fatalf("the module changed: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(mnt, "usr/share/booty/secureboot")); err == nil {
+			t.Fatal("a module signing certificate was installed")
+		}
+	})
+	withDiskPartition(t, m.disk, dir, "vfat", func(mnt string) {
+		if _, err := os.Stat(filepath.Join(mnt, "EFI/BOOTy/mok-enroll.efi")); err == nil {
+			t.Fatal("mok-enroll.efi was copied to the ESP")
+		}
+	})
+	for _, v := range efiVariables(t, m.vars) {
+		data, _ := hex.DecodeString(v.Data)
+		if v.Name == "BootNext" || v.Name == "BOOTyMokEnroll" || v.Name == "MokList" ||
+			bytes.Contains(data, utf16le("booty-mok-enroll")) {
+			t.Fatalf("signing off left EFI variable %s", v.Name)
+		}
+	}
+	report := m.check("installed system")
+	requireLine(t, report, "SECUREBOOT=0")
+	requireLine(t, report, "SIGNED_MODULE=loaded")
+}
+
+type efiVariable struct {
+	Name string `json:"name"`
+	GUID string `json:"guid"`
+	Attr int    `json:"attr"`
+	Data string `json:"data"`
+}
+
+func efiVariables(t *testing.T, vars string) []efiVariable {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "vars.json")
+	run(t, "dump variables", "virt-fw-vars", "-i", vars, "--output-json", out)
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dump struct {
+		Variables []efiVariable `json:"variables"`
+	}
+	if err := json.Unmarshal(data, &dump); err != nil {
+		t.Fatal(err)
+	}
+	return dump.Variables
+}
+
+func utf16le(s string) []byte {
+	out := make([]byte, 0, 2*len(s))
+	for _, r := range s {
+		out = append(out, byte(r), 0)
+	}
+	return out
+}
+
+// withDiskPartition mounts the first partition of the raw disk with file
+// system fstype while f runs.
+func withDiskPartition(t *testing.T, disk, dir, fstype string, f func(mnt string)) {
+	t.Helper()
+	loop := strings.TrimSpace(string(runOutput(t, "attach disk", "losetup", "-P", "--show", "-f", disk)))
+	defer func() { _ = exec.CommandContext(context.Background(), "losetup", "-d", loop).Run() }()
+	parts, _ := filepath.Glob(loop + "p*")
+	part := ""
+	for _, p := range parts {
+		if typ, err := exec.CommandContext(t.Context(), "blkid", "-o", "value", "-s", "TYPE", p).Output(); err == nil && strings.TrimSpace(string(typ)) == fstype {
+			part = p
+			break
+		}
+	}
+	if part == "" {
+		t.Fatalf("no %s partition on %s (%v)", fstype, disk, parts)
+	}
+	mnt := filepath.Join(dir, "mnt-"+fstype)
+	if err := os.MkdirAll(mnt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(t, "mount "+part, "mount", part, mnt)
+	defer func() { _ = exec.CommandContext(context.Background(), "umount", mnt).Run() }()
+	f(mnt)
+	run(t, "unmount "+part, "umount", mnt)
+}
+
 // prepareModuleImage installs the check service and three test modules into
-// the root file system of the cloud image and returns the gzipped raw image.
-func prepareModuleImage(t *testing.T, osImage, dir string) string {
+// the root file system of the cloud image and returns the gzipped raw image
+// and the test modules (signed, unsigned, other key). extra runs with the
+// image root mounted at mnt.
+func prepareModuleImage(t *testing.T, osImage, dir string, extra ...func(mnt, kernel string)) (string, []testModule) {
 	t.Helper()
 	raw := filepath.Join(dir, "os.raw")
 	run(t, "convert OS image to raw", "qemu-img", "convert", "-O", "raw", osImage, raw)
@@ -246,13 +433,16 @@ func prepareModuleImage(t *testing.T, osImage, dir string) string {
 		t.Fatal(err)
 	}
 	t.Logf("test modules: signed=%s unsigned=%s other-key=%s", signed.name, unsigned.name, otherKey.name)
+	for _, f := range extra {
+		f(mnt, filepath.Base(kernels[0]))
+	}
 	run(t, "unmount image root", "umount", mnt)
 	run(t, "detach image", "losetup", "-d", loop)
 	gz := compressGzip(t, raw)
 	if err := os.Remove(raw); err != nil {
 		t.Fatal(err)
 	}
-	return gz
+	return gz, names
 }
 
 type testModule struct {
