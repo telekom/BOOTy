@@ -358,6 +358,34 @@ func TestDiskEncryptionTPM2DataPartitionVM(t *testing.T) {
 	}
 }
 
+// addDataPartition grows the image by 2.5 GiB: 2 GiB more for the root
+// (partition 1, last in Ubuntu cloud images) and a 512 MiB partition 2
+// behind it. sfdisk keeps the partition UUIDs of the dump.
+func addDataPartition(t *testing.T, raw string) {
+	t.Helper()
+	run(t, "extend image", "truncate", "-s", "+2560M", raw)
+	run(t, "move backup GPT", "sgdisk", "-e", raw)
+	var dump strings.Builder
+	for line := range strings.Lines(string(runOutput(t, "dump partition table", "sfdisk", "--dump", raw))) {
+		if strings.HasPrefix(line, "last-lba:") {
+			continue
+		}
+		if f := strings.Fields(line); len(f) > 0 && strings.HasSuffix(f[0], "1") && strings.Contains(line, "size=") {
+			re := regexp.MustCompile(`size=\s*(\d+)`)
+			var size int64
+			fmt.Sscan(re.FindStringSubmatch(line)[1], &size)
+			line = re.ReplaceAllString(line, fmt.Sprintf("size=%d", size+2*1024*1024*2))
+		}
+		dump.WriteString(line)
+	}
+	dump.WriteString(raw + "2 : type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, name=\"booty-data\"\n")
+	cmd := exec.CommandContext(t.Context(), "sfdisk", "--no-reread", "--no-tell-kernel", raw)
+	cmd.Stdin = strings.NewReader(dump.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sfdisk: %v\n%s\n%s", err, out, dump.String())
+	}
+}
+
 // prepareLUKSImage installs debs (DISK_ENCRYPTION_DEBS, for example
 // libtss2-rc0t64 on Ubuntu 26.04), the check service and a DHCP netplan
 // into the root file system of the cloud image, saves the partition table
@@ -367,9 +395,7 @@ func prepareLUKSImage(t *testing.T, osImage, dir string, debs []string, dataPart
 	raw := filepath.Join(dir, "os.raw")
 	run(t, "convert OS image to raw", "qemu-img", "convert", "-O", "raw", osImage, raw)
 	if dataPartition {
-		run(t, "extend image", "truncate", "-s", "+512M", raw)
-		run(t, "move backup GPT", "sgdisk", "-e", raw)
-		run(t, "add data partition", "sgdisk", "-n", "2:0:0", "-t", "2:8300", "-c", "2:booty-data", raw)
+		addDataPartition(t, raw)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "os.part.json"), runOutput(t, "image partition table", "sfdisk", "-J", raw), 0o600); err != nil {
 		t.Fatal(err)
@@ -383,6 +409,10 @@ func prepareLUKSImage(t *testing.T, osImage, dir string, debs []string, dataPart
 		t.Fatal(err)
 	}
 	if dataPartition {
+		// The root does not grow when the data partition is last: give it
+		// the room that grow-partition would.
+		run(t, "check image root", "e2fsck", "-f", "-p", loop+"p1")
+		run(t, "grow image root", "resize2fs", loop+"p1")
 		run(t, "format data partition", "mkfs.ext4", "-q", "-L", "bootydata", loop+"p2")
 		data := filepath.Join(dir, "data")
 		if err := os.Mkdir(data, 0o755); err != nil {
