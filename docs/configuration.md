@@ -512,7 +512,7 @@ These keys apply to the provision and deprovision modes.
 | `SECUREBOOT_SIGNING` | `off` | `per-host`, `ci`, `off` | Who signs the out-of-tree kernel modules of the target (`/lib/modules/*/{updates,extra}`). `per-host`: BOOTy signs them with a new per-host key, which exists only in memory, runs depmod and rebuilds the initramfs. `ci`: the image arrives signed by CI, and BOOTy holds no key and only enrolls `MOK_CERT_PATH`. `off`: nothing is signed or enrolled, and provisioning runs as without the feature. See [module signing](module-signing.md). |
 | `MOK_CERT_PATH` | (unset) | absolute path in the target | With `SECUREBOOT_SIGNING=ci`: the DER certificate of the CI key that signed the modules, enrolled like the per-host one. |
 | `MODULE_SIGNING_ENROLLMENT` | `efi-helper` | `efi-helper`, `mokutil`, `external` | How the firmware learns the certificate: `efi-helper` boots `mok-enroll.efi` once to write MokList (Secure Boot must be off while provisioning and at the next boot, so not with `SECUREBOOT_REENABLE=true`; not in the micro ramdisk); `mokutil` queues it for one MokManager confirmation with `MOK_PASSWORD`; `external` leaves it to the provisioner (for example Redfish db enrollment). |
-| `MODULE_SIGNING_CERT_DIR` | `/usr/share/booty/secureboot` | absolute path | Target directory of `booty-module-signing.der`. |
+| `MODULE_SIGNING_CERT_DIR` | `/usr/share/booty/secureboot` | absolute path outside `/run`, `/proc`, `/sys`, `/dev` | Target directory of `booty-module-signing.der`. |
 | `MODULE_SIGNING_ALLOW_FAILURE` | `false` | boolean | Continue provisioning when signing or enrollment fails. By default provisioning fails. |
 | `SECUREBOOT_PINNED_DIGESTS` | (unset) | JSON object with keys `shim`, `grub`, `kernel` | All pins in one key. A single-component key wins over its entry here. |
 
@@ -638,6 +638,7 @@ of waiting for the CAPRF provision timeout.
   | `stream-image` | 1 h | Image modes that write with `dd`; the HTTP download reports every written byte |
   | `mirror-root`, `check-filesystem`, `resize-filesystem` | 1 h | Copies and file system checks of large file systems |
   | `run-machine-commands`, `run-post-provision-cmds` | 1 h | Operator commands |
+  | `sign-kernel-modules` | 1 h | Module signing and initramfs rebuilds (`SECUREBOOT_SIGNING=per-host`) |
   | every other step | `WATCHDOG_TIMEOUT_SEC` (300 s) | |
 
 - Handoff: before kexec and reboot BOOTy disarms the watchdog with the magic

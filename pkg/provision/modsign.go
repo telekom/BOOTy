@@ -9,11 +9,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/efi"
@@ -37,6 +39,57 @@ const initramfsUpdateCmd = "if command -v update-initramfs >/dev/null 2>&1; then
 	"else dracut --force --regenerate-all; fi"
 
 var kernelReleasePattern = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
+
+// maxCertSize caps a certificate read from the image; X.509 certificates
+// are a few KiB.
+const maxCertSize = 64 << 10
+
+// readSmallRegularFile reads name in root if it is a regular file of at
+// most limit bytes: the image is only semi-trusted, and a link to a device
+// (the chroot binds /dev) or a huge file must not exhaust PID 1.
+func readSmallRegularFile(root *os.Root, name string, limit int64) ([]byte, error) {
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // the caller names the file
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err //nolint:wrapcheck // the caller names the file
+	}
+	if !info.Mode().IsRegular() || info.Size() > limit {
+		return nil, fmt.Errorf("not a regular file of at most %d bytes", limit)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err == nil && int64(len(data)) > limit {
+		err = fmt.Errorf("larger than %d bytes", limit)
+	}
+	return data, err
+}
+
+// onChrootBind reports whether file is on a file system that the chroot
+// binds from the ramdisk (/run, /proc, /sys, /dev), through the configured
+// path or a link in the image: it would vanish at teardown.
+func onChrootBind(root, file string) bool {
+	dev := func(p string) (uint64, bool) {
+		var st syscall.Stat_t
+		if syscall.Stat(p, &st) != nil {
+			return 0, false
+		}
+		return uint64(st.Dev), true //nolint:unconvert // Dev is uint32 on some architectures
+	}
+	fileDev, ok := dev(file)
+	rootDev, ok2 := dev(root)
+	if !ok || !ok2 || fileDev == rootDev {
+		return false
+	}
+	for _, d := range []string{"run", "proc", "sys", "dev"} {
+		if bindDev, ok := dev(filepath.Join(root, d)); ok && bindDev != rootDev && bindDev == fileDev {
+			return true
+		}
+	}
+	return false
+}
 
 // ReportModuleSigning is the module signing result. Cert (DER, base64 in
 // JSON) lets the provisioner enroll the certificate itself, for example into
@@ -91,7 +144,7 @@ func (o *Orchestrator) readCISigningCert(sb *config.SecureBootConfig) error {
 		return fmt.Errorf("open target root: %w", err)
 	}
 	defer func() { _ = root.Close() }()
-	der, err := root.ReadFile(strings.TrimPrefix(sb.MOKCertPath, "/"))
+	der, err := readSmallRegularFile(root, strings.TrimPrefix(sb.MOKCertPath, "/"), maxCertSize)
 	if err != nil {
 		return fmt.Errorf("read CI module signing certificate: %w", err)
 	}
@@ -116,6 +169,9 @@ func (o *Orchestrator) doSignKernelModules(ctx context.Context, ms config.Module
 	certPath := path.Join(ms.CertDirOrDefault(), moduleCertFile)
 	if err := writeTargetRootFile(root, filepath.Join(root, certPath), res.CertDER); err != nil {
 		return fmt.Errorf("install module signing certificate: %w", err)
+	}
+	if onChrootBind(root, filepath.Join(root, certPath)) {
+		return fmt.Errorf("install module signing certificate: %s resolves to a ramdisk file system bound into the chroot", certPath)
 	}
 	sum := sha256.Sum256(res.CertDER)
 	o.moduleSigning = &ReportModuleSigning{

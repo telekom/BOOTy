@@ -61,6 +61,8 @@ var DefaultStepBudgets = map[string]time.Duration{
 	"resize-filesystem":       time.Hour,
 	"run-machine-commands":    time.Hour,
 	"run-post-provision-cmds": time.Hour,
+	// Signs every out-of-tree module and rebuilds every initramfs.
+	"sign-kernel-modules": time.Hour,
 }
 
 // Supervisor pets a Device while the active step makes progress. Outside a

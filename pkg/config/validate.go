@@ -789,28 +789,44 @@ func validateModuleSigning(imageMode string, sb *SecureBootConfig, ab *ABConfig)
 	if mode := sb.SigningMode(); mode != SigningPerHost && mode != SigningCI {
 		return errs // off, or an unknown mode
 	}
-	m, reEnable := &sb.ModuleSigning, sb.ReEnable
+	m := &sb.ModuleSigning
 	switch m.EnrollmentMethod() {
-	case ModuleSigningEnrollEFIHelper, ModuleSigningEnrollMokutil:
+	case ModuleSigningEnrollEFIHelper:
 		// The provisioner re-enables Secure Boot when BOOTy reports success,
 		// before the enrollment boot; the firmware would then refuse the
 		// unsigned helper and the enrollment would be lost silently.
-		if reEnable && m.EnrollmentMethod() == ModuleSigningEnrollEFIHelper {
+		if sb.ReEnable {
 			errs = append(errs, "provision.secureBoot.moduleSigning.enrollment efi-helper needs Secure Boot off at the next boot, "+
 				"but provision.secureBoot.reEnable turns it on before; turn it on after the enrollment boot instead")
 		}
-		if ab != nil && strings.EqualFold(strings.TrimSpace(imageMode), ImageModeAB) && ab.PreserveExisting {
-			errs = append(errs, "provision.secureBoot.moduleSigning.enrollment "+m.EnrollmentMethod()+
-				" needs a firmware reboot, but provision.ab.preserveExisting uses kexec")
+	case ModuleSigningEnrollMokutil:
+		if sb.MOKPassword == "" {
+			errs = append(errs, "provision.secureBoot.moduleSigning.enrollment mokutil needs provision.secureBoot.mokPassword (MOK_PASSWORD)")
 		}
 	case ModuleSigningEnrollExternal:
 	default:
 		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.enrollment %q: want efi-helper, mokutil or external", m.Enrollment))
 	}
-	if dir := m.CertDirOrDefault(); !path.IsAbs(dir) || path.Clean(dir) != dir {
-		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.certDir %q: must be a clean absolute path", m.CertDir))
+	// Every enrollment takes effect at a firmware boot, db over Redfish too.
+	if ab != nil && strings.EqualFold(strings.TrimSpace(imageMode), ImageModeAB) && ab.PreserveExisting {
+		errs = append(errs, "provision.secureBoot.signing "+sb.SigningMode()+
+			" needs a firmware reboot, but provision.ab.preserveExisting uses kexec")
+	}
+	if dir := m.CertDirOrDefault(); !path.IsAbs(dir) || path.Clean(dir) != dir || underChrootBind(dir) {
+		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.certDir %q: must be a clean absolute path outside /run, /proc, /sys and /dev", m.CertDir))
 	}
 	return errs
+}
+
+// underChrootBind reports whether dir is below a directory that the chroot
+// binds from the ramdisk.
+func underChrootBind(dir string) bool {
+	for _, d := range []string{"/run", "/proc", "/sys", "/dev"} {
+		if dir == d || strings.HasPrefix(dir, d+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func validateSecureBootConfig(imageMode string, secureBoot *SecureBootConfig, ab *ABConfig) error {
