@@ -65,6 +65,14 @@ After the image is written and the target root is mounted:
      and the UCS-2 `MOK_PASSWORD`) itself, as `mokutil --import
      --simple-hash` does; no binary of the image runs with the password.
      MokManager asks for the password once at the console;
+     - `MokAuth` is an unsalted SHA-256, the format MokManager reads, and
+       the OS can read it until MokManager consumes it. Use a random
+       `MOK_PASSWORD` per host and run, not a fleet secret.
+     - MokManager adds the certificate to `MokList` and removes nothing,
+       unlike `efi-helper`, which replaces the earlier BOOTy certificate.
+       After a reprovisioning or a CI key rotation the earlier certificate
+       stays trusted until `mokutil --delete` removes it; BOOTy cannot list
+       `MokList` (boot service only) to queue that itself;
    - `external`: nothing; the provisioner enrolls the certificate.
 3. The provisioning report (`secureBoot.moduleSigning`) carries the
    certificate, its SHA-256 and the number of signed modules, so the
