@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"strings"
 	"testing"
 )
@@ -121,5 +122,33 @@ func TestNewHandlerKeepsNilComposites(t *testing.T) {
 	slog.New(NewHandler(&buf, FormatText, slog.LevelInfo)).Info("nil", "list", none, "map", empty, "set", []string{})
 	if out := buf.String(); !strings.Contains(out, "list=[]") || !strings.Contains(out, "map=map[]") || !strings.Contains(out, "set=[]") {
 		t.Fatalf("text output = %q", out)
+	}
+}
+
+// A string behind a pointer, a value without a JSON form and a Stringer
+// composite: secrets stay hidden, Stringers keep their text form.
+func TestNewHandlerRedactsPointersAndFallbacks(t *testing.T) {
+	type unmarshalable struct {
+		Password string
+		C        chan int
+	}
+	detail := "password=hunter2"
+	mac, _ := net.ParseMAC("aa:bb:cc:dd:ee:ff")
+	_, cidr, _ := net.ParseCIDR("10.0.0.0/24")
+	for _, format := range []string{FormatText, FormatJSON} {
+		var buf bytes.Buffer
+		slog.New(NewHandler(&buf, format, slog.LevelDebug)).Info("values",
+			"detail", &detail,
+			"obj", unmarshalable{Password: "s3cr3t", C: make(chan int)},
+			"mac", mac, "net", cidr)
+		out := buf.String()
+		for _, secret := range []string{"hunter2", "s3cr3t"} {
+			if strings.Contains(out, secret) {
+				t.Errorf("%s: %q not redacted in %q", format, secret, out)
+			}
+		}
+		if !strings.Contains(out, "aa:bb:cc:dd:ee:ff") || !strings.Contains(out, "10.0.0.0/24") {
+			t.Errorf("%s: Stringer text form lost in %q", format, out)
+		}
 	}
 }

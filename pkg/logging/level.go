@@ -101,6 +101,9 @@ func redactComposite(v slog.Value) (any, bool) {
 		rv = rv.Elem()
 	}
 	switch rv.Kind() {
+	case reflect.String:
+		// A *string prints as its address in text but as the string in JSON.
+		return RedactText(rv.String()), true
 	case reflect.Map, reflect.Slice:
 		if rv.IsNil() {
 			// Nothing to hide; the JSON null would print as <nil>, not [].
@@ -110,10 +113,15 @@ func redactComposite(v slog.Value) (any, bool) {
 	default:
 		return nil, false
 	}
+	if s, ok := x.(fmt.Stringer); ok {
+		// Keep the own text form (net.HardwareAddr, *net.IPNet), redacted.
+		return RedactText(s.String()), true
+	}
 	b, err := json.Marshal(x)
 	if err != nil {
-		// No JSON form: only the redacted text, never the value itself.
-		return RedactText(fmt.Sprintf("%+v", x)), true
+		// No JSON form to walk, and the %+v text hides field values from
+		// RedactText ({Password:x}): never render the value.
+		return redactedLogValue, true
 	}
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.UseNumber()
