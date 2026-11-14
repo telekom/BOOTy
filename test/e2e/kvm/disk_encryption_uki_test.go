@@ -404,6 +404,8 @@ func (vm *ukiVM) espFile(espPart int, rel string, data []byte) []byte {
 	defer cleanup()
 	p := filepath.Join(mnt, rel)
 	if data != nil {
+		// mountQcow2Partition mounts read-only; qemu-nbd itself is writable.
+		run(vm.t, "remount the ESP read-write", "mount", "-o", "remount,rw", mnt)
 		if err := os.WriteFile(p, data, 0o644); err != nil {
 			vm.t.Fatal(err)
 		}
