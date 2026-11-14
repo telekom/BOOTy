@@ -203,7 +203,10 @@ debug dumps.
   agent of Intel NICs that could not be stopped.
 - Disk: wipe and discard steps that failed (the wipe goes on), block devices
   that are still changing at the settle timeout, failed secure erases with
-  `SECURE_ERASE_FALLBACK=wipe`, duplicate filesystem UUIDs.
+  `SECURE_ERASE_FALLBACK=wipe`, duplicate filesystem UUIDs, disk encryption
+  that is skipped (`DISK_ENCRYPTION_ALLOW_FAILURE`), crypto-erase turned off
+  (`DEPROVISION_CRYPTO_ERASE=false`) and devices that the LUKS2 header scan
+  can not read.
 - Boot and Secure Boot: EFI boot entry problems that do not stop the run
   (`EFI_BOOT_ENTRY_REQUIRED=false`, missing EFI variables), shim and
   PE/COFF candidates that fail validation, a Secure Boot state that can not
@@ -236,7 +239,9 @@ show one line per stage and per notable result:
   announced, BFD session state changes, LLDP neighbors (new, changed, left)
   and what BOOTy sends, connectivity results.
 - Disk: the selected disk, RAID arrays, wipes and secure erases, partitions
-  that are grown, the `/dev/disk` links, LUKS volumes.
+  that are grown, the `/dev/disk` links, LUKS volumes, LUKS2 + TPM2 disk
+  encryption (format, enrollment, recovery key handover, the encrypted
+  image stream) and the crypto-erase of LUKS2 headers at deprovision.
 - Image: the source, the download and write progress, checksum and GPG
   signature results, qcow2 conversion, A/B slot streaming, the memory peak
   of the image step.
@@ -417,7 +422,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 - `step made no progress within its budget, stopping the watchdog keepalive; the hardware resets the host`
 
-### WARN (375 messages)
+### WARN (380 messages)
 
 #### WARN `.`
 
@@ -510,8 +515,10 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `block devices still changing, continuing`
 - `cannot list disks for discard`
 - `cannot list partitions and holders, wiping the disk only`
+- `cannot list the partitions to look for LUKS2 headers`
 - `cannot parse lsblk output, wiping the disk only`
 - `cannot read removable attribute; treating as removable`
+- `cannot read the device to look for a LUKS2 header`
 - `cannot read the disk vendor for the secure erase method`
 - `cannot remove the member label, wipefs clears it`
 - `cannot unmount, leaving it`
@@ -784,12 +791,14 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `cannot resolve the /boot fstab source on the target disk, keeping /boot on the root filesystem`
 - `create EFI boot entry failed, continuing because EFI_BOOT_ENTRY_REQUIRED=false`
 - `create mirror EFI boot entry failed, continuing because EFI_BOOT_ENTRY_REQUIRED=false`
+- `crypto-erase is off (DEPROVISION_CRYPTO_ERASE=false); LUKS2 keyslots stay until the wipe, which may leave them`
 - `debug`
 - `debug command failed`
 - `debug env`
 - `decommission: disabling LVM failed, continuing`
 - `decommission: mounting efivarfs failed, continuing`
 - `decommission: stopping RAID arrays failed, continuing`
+- `disk encryption is not possible, provisioning without it (DISK_ENCRYPTION_ALLOW_FAILURE)`
 - `disk wipe failed, continuing`
 - `efibootmgr list failed (non-EFI system?)`
 - `failed to remove EFI entry`
@@ -826,6 +835,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `skipping symlink in copy tree`
 - `skipping unsupported shared data seed entry`
 - `target root still mounted from an earlier attempt, unmounting`
+- `the image layout cannot be encrypted, provisioning without it (DISK_ENCRYPTION_ALLOW_FAILURE)`
 
 #### WARN `pkg/realm`
 
@@ -887,7 +897,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `progress resumed, petting the watchdog again`
 - `watchdog keepalive failed`
 
-### INFO (465 messages)
+### INFO (477 messages)
 
 #### INFO `.`
 
@@ -970,6 +980,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 #### INFO `pkg/disk`
 
 - `ATA secure erase`
+- `LUKS2 header already gone`
 - `NVMe secure erase`
 - `RAID array created`
 - `SCSI FORMAT UNIT complete`
@@ -1090,6 +1101,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `source image has no partition table; copying as root filesystem`
 - `source image is not loop-mountable as a disk image; copying as root filesystem`
 - `streaming image`
+- `streaming image with an encrypted partition`
 - `streaming raw image to device`
 - `streaming source image to A/B root target`
 - `streaming source partition to A/B target`
@@ -1255,6 +1267,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `A/B preserveExisting enabled, preserving existing EFI fallback loader`
 - `A/B preserveExisting enabled, reusing existing partition layout`
 - `A/B preserveExisting enabled, skipping whole-disk wipe`
+- `A/B preserveExisting keeps the disks, skipping crypto-erase`
 - `DISK_LINKS=false, not creating /dev/disk links`
 - `EFI boot entry created`
 - `Firmware reporting disabled, skipping`
@@ -1263,6 +1276,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `Hardware inventory collection disabled, skipping`
 - `Health check result`
 - `Health checks disabled, skipping`
+- `LUKS2 keyslots and header destroyed`
 - `No SR-IOV profiles, skipping`
 - `SR-IOV profiles set the ConnectX VFs, skipping setup-mellanox (NUM_VFS)`
 - `Streaming image`
@@ -1281,14 +1295,17 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `configuring Mellanox SR-IOV`
 - `copying files`
 - `creating EFI boot entry`
+- `crypto-erasing LUKS2 device`
 - `custom partition layout applied`
 - `decommission: disk wipe complete`
 - `deprovisioning step`
+- `disk encryption prepared`
 - `dry-run check`
 - `efivarfs already mounted`
 - `enabled serial getty unit`
 - `folded operator console parameters into serial console resolution`
 - `fstab entry now valid from both mirror disks`
+- `fstab: the encrypted partition mounts through its mapping`
 - `generated fstab for custom layout`
 - `growing the last Linux partition, not the root`
 - `grub.cfg already renamed`
@@ -1323,6 +1340,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `non-EFI system detected, skipping efivarfs mount`
 - `non-EFI system, skipping EFI boot entry removal`
 - `oci pre-pulls enabled with no images`
+- `partition formatted with LUKS2`
 - `partition layout from URL`
 - `partition layout from image`
 - `persisted target network configuration`
@@ -1334,6 +1352,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `provisioning step requests a reboot into the ramdisk`
 - `pulling OCI sysext layer`
 - `pulling oci pre-pull image`
+- `recovery key handed over`
 - `removed conflicting serial getty unit`
 - `removing EFI boot entry`
 - `removing old EFI boot entries`
@@ -1367,9 +1386,12 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `skipping completed step`
 - `skipping grow-partition for declarative partition layout`
 - `skipping grow-partition, mirror-root grew the root partition before creating the array`
+- `skipping grow-partition, stream-image grew the encrypted partition; close-encrypted-disk grows its file system`
+- `skipping grow-partition, stream-image grew the encrypted root partition`
 - `skipping the removal of every EFI boot entry`
 - `starting deprovisioning`
 - `starting dry-run - no destructive changes will be made`
+- `streaming image into a LUKS2 partition`
 - `streaming image into partition layout root`
 - `sysext cosign signature verified`
 - `sysext layer loaded`
@@ -1450,7 +1472,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `disarming the watchdog`
 - `leaving the watchdog armed for the target OS`
 
-### DEBUG (100 messages)
+### DEBUG (101 messages)
 
 #### DEBUG `.`
 
@@ -1598,6 +1620,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 #### DEBUG `pkg/provision`
 
+- `no LUKS2 header on the disks to wipe`
 - `post-provision command output`
 - `retrying step immediately`
 
