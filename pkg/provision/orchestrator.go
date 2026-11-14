@@ -1894,6 +1894,9 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	}
 	defer startMemoryPeak(o.log)()
 
+	if o.encryptionEnabled() {
+		return o.streamEncryptedImage(ctx, bestURL, opts)
+	}
 	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
 		return o.streamPartitionLayoutRootImage(ctx, bestURL, opts)
 	}
@@ -1913,10 +1916,6 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 
 	if o.isABImageMode() {
 		return o.streamABImage(ctx, bestURL, opts)
-	}
-
-	if o.encryptionEnabled() {
-		return o.streamEncryptedImage(ctx, bestURL, opts)
 	}
 
 	// Default whole-disk mode.
@@ -3352,6 +3351,10 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if o.encryptionActive() && target == o.encryption.device {
+		o.log.Info("skipping grow-partition, stream-image grew the encrypted partition; close-encrypted-disk grows its file system")
+		return nil
+	}
 	partNum, err := disk.PartitionNumberChecked(target, o.targetDisk)
 	if err != nil {
 		return fmt.Errorf("determine partition number of %s: %w", target, err)
@@ -3421,6 +3424,9 @@ func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
 	target, err := o.growTarget(ctx)
 	if err != nil {
 		return err
+	}
+	if o.encryptionActive() && target == o.encryption.device {
+		return nil // close-encrypted-disk resizes it through the mapping
 	}
 	if target != o.rootPartition {
 		// The grown partition is not mounted. grow-partition checked it

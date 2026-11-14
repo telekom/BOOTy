@@ -420,3 +420,57 @@ func TestEncryptionPreflightFailsWithoutEscrow(t *testing.T) {
 		t.Fatal("bad target accepted")
 	}
 }
+
+func TestRewriteFstabSources(t *testing.T) {
+	in := "# /dev/vda3 comment\nLABEL=cloudimg-rootfs / ext4 defaults 0 1\n/dev/vda3 /data ext4 defaults 0 2\nPARTUUID=abc /srv ext4 defaults 0 2\nUUID=fs /x ext4 defaults 0 2\n"
+	enc := map[string]bool{"/dev/vda3": true, "PARTUUID=abc": true, "UUID=fs": true}
+	out, changed := rewriteFstabSources(in, func(s string) bool { return enc[s] })
+	want := "# /dev/vda3 comment\nLABEL=cloudimg-rootfs / ext4 defaults 0 1\n/dev/mapper/booty_crypt /data ext4 defaults 0 2\n" +
+		"/dev/mapper/booty_crypt /srv ext4 defaults 0 2\nUUID=fs /x ext4 defaults 0 2\n"
+	if !changed || out != want {
+		t.Fatalf("fstab:\n%s", out)
+	}
+}
+
+func TestEncryptionPreflightNeedsTPM2(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.DiskEncryption = config.DiskEncryptionConfig{Mode: config.DiskEncryptionLUKS2TPM2}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.provider = &escrowProvider{}
+	dir := t.TempDir()
+	old := sysTPMDir
+	sysTPMDir = dir
+	t.Cleanup(func() { sysTPMDir = old })
+	if err := os.WriteFile(filepath.Join(dir, "tpm_version_major"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.encryptionPreflight(); !errors.Is(err, errNoTPM2) {
+		t.Fatalf("TPM 1.2: err = %v", err)
+	}
+	if err := os.Remove(filepath.Join(dir, "tpm_version_major")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.encryptionPreflight(); !errors.Is(err, errNoTPM2) {
+		t.Fatalf("no TPM: err = %v", err)
+	}
+}
+
+func TestUseEncryptedRootByNumber(t *testing.T) {
+	cfg := &config.MachineConfig{}
+	cfg.Provision.DiskEncryption = config.DiskEncryptionConfig{Mode: config.DiskEncryptionLUKS2TPM2, Target: "1"}
+	o := newTestOrchestrator(t, cfg, &mockProvider{})
+	o.encryption = &encryptionState{device: "/dev/vda1"}
+	o.rootPartition = "/dev/vda1"
+	if err := o.useEncryptedRoot(); err != nil || !o.encryption.isRoot || o.rootPartition != "/dev/mapper/booty_crypt" {
+		t.Fatalf("numbered root: root %q isRoot %v err %v", o.rootPartition, o.encryption.isRoot, err)
+	}
+}
+
+func TestEnrollScriptKeepsOriginalImagesUntilCommit(t *testing.T) {
+	p1 := luksEnrollScript[strings.Index(luksEnrollScript, "step=start"):]
+	inOrder(t, p1, "restore() {", `cp -p "$img" "$img.booty-old"`, `mv "$img.booty-new" "$img"`, "trap - EXIT", "rm -f /boot/initrd.img-*.booty-old")
+	restore := p1[strings.Index(p1, "restore() {"):strings.Index(p1, "trap restore EXIT")]
+	if !strings.Contains(restore, `mv "$old" "${old%.booty-old}"`) {
+		t.Fatal("restore does not bring the original images back")
+	}
+}

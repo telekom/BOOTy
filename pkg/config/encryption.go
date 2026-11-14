@@ -92,7 +92,7 @@ func (c *Config) validateDiskEncryption() []string {
 	// that put the root on md, LVM or a declared layout are not supported.
 	mirror := strings.ToLower(strings.TrimSpace(c.Provision.Disk.MirroringMode))
 	mode := strings.ToLower(strings.TrimSpace(c.Provision.Image.Mode))
-	if (mirror != "" && mirror != "none") || len(c.Provision.Disk.RAID) > 0 || c.Provision.Disk.PartitionLayout != nil ||
+	if (mirror != "" && mirror != "none") || len(c.Provision.Disk.RAID) > 0 || c.Provision.Disk.PartitionLayoutRequested() ||
 		(mode != "" && mode != ImageModeWholeDisk) {
 		errs = append(errs, "provision.diskEncryption works with a whole-disk image only, not with disk mirroring, RAID, a partition layout or an image mode")
 	}

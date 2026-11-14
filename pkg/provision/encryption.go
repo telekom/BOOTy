@@ -77,8 +77,12 @@ var luksTargetTools = []string{
 	"usr/sbin/cryptsetup", "usr/bin/dracut", "usr/bin/lsinitrd", "usr/bin/shred",
 }
 
-// efivarsDir and the global EFI variable GUID; variables for tests.
-var efivarsDir = "/sys/firmware/efi/efivars"
+// efivarsDir and sysTPMDir; variables for tests.
+var (
+	efivarsDir = "/sys/firmware/efi/efivars"
+	sysTPMDir  = "/sys/class/tpm/tpm0"
+	errNoTPM2  = errors.New("systemd-cryptenroll needs a TPM 2.0")
+)
 
 const efiGlobalGUID = "8be4df61-93ca-11d2-aa0d-00e098032b8c"
 
@@ -136,6 +140,10 @@ func (o *Orchestrator) encryptionActive() bool {
 // DISK_ENCRYPTION_ALLOW_FAILURE.
 func (o *Orchestrator) streamEncryptedImage(ctx context.Context, url string, opts []image.StreamOpts) error {
 	o.encryption = nil
+	// Config validation rejects these; never write a layout in plain text.
+	if o.cfg.Provision.Disk.PartitionLayout != nil || o.isABImageMode() || strings.EqualFold(o.cfg.Provision.Image.Mode, "partition") {
+		return &PermanentError{Err: fmt.Errorf("%w: only whole-disk images can be encrypted", errDiskEncryption)}
+	}
 	num, err := o.encryptionPreflight()
 	if err != nil {
 		if o.cfg.Provision.DiskEncryption.AllowFailure {
@@ -235,6 +243,9 @@ func (o *Orchestrator) useEncryptedRoot() error {
 		}
 		return nil
 	}
+	if o.rootPartition == o.encryption.device {
+		o.encryption.isRoot = true // also when selected by number
+	}
 	if !o.encryption.isRoot {
 		return nil
 	}
@@ -265,6 +276,9 @@ func (o *Orchestrator) prepareDiskEncryption(ctx context.Context) error {
 	if err == nil {
 		err = writeEncryptionFiles(newroot, st, extras)
 	}
+	if err == nil {
+		err = o.rewriteEncryptedFstab(ctx)
+	}
 	clear(st.enrollKey) // on disk in the encrypted root now
 	if err != nil {
 		return err
@@ -274,6 +288,48 @@ func (o *Orchestrator) prepareDiskEncryption(ctx context.Context) error {
 	}
 	o.log.Info("disk encryption prepared", "device", st.device, "luksUUID", st.luksUUID, "tpm2PCRs", luksTPM2PCRs)
 	return nil
+}
+
+// rewriteEncryptedFstab points fstab entries that name the encrypted
+// partition itself (device path, PARTUUID, PARTLABEL) at the mapping. A
+// UUID= or LABEL= of the file system keeps working through the mapping.
+func (o *Orchestrator) rewriteEncryptedFstab(ctx context.Context) error {
+	path := filepath.Join(newroot, "etc", "fstab")
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return nil //nolint:nilerr // no fstab to rewrite
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // regular file below the target root
+	if err != nil {
+		return fmt.Errorf("read fstab: %w", err)
+	}
+	out, changed := rewriteFstabSources(string(data), func(src string) bool {
+		return o.resolveFstabSource(ctx, src) == o.encryption.device
+	})
+	if !changed {
+		return nil
+	}
+	o.log.Info("fstab: the encrypted partition mounts through its mapping")
+	if err := writeTargetRootFile(newroot, path, []byte(out)); err != nil {
+		return fmt.Errorf("write fstab: %w", err)
+	}
+	return nil
+}
+
+// rewriteFstabSources replaces partition sources (device path, PARTUUID,
+// PARTLABEL) for which isEncrypted is true with the mapping.
+func rewriteFstabSources(fstab string, isEncrypted func(string) bool) (string, bool) {
+	var b strings.Builder
+	changed := false
+	for line := range strings.Lines(fstab) {
+		f := strings.Fields(line)
+		if len(f) > 1 && !strings.HasPrefix(f[0], "#") && namesPartition(f[0]) && isEncrypted(f[0]) {
+			line = strings.Replace(line, f[0], luks.MappedPath(luksMapperName), 1)
+			changed = true
+		}
+		b.WriteString(line)
+	}
+	return b.String(), changed
 }
 
 // closeEncryptedDisk closes the mapping after teardown-chroot. A data
@@ -305,8 +361,8 @@ func (o *Orchestrator) encryptionPreflight() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if _, err := os.Stat("/sys/class/tpm/tpm0"); err != nil {
-		return 0, fmt.Errorf("no TPM: %w", err)
+	if v, err := os.ReadFile(filepath.Join(sysTPMDir, "tpm_version_major")); err != nil || strings.TrimSpace(string(v)) != "2" {
+		return 0, fmt.Errorf("no TPM 2.0 (%s/tpm_version_major %q): %w", sysTPMDir, strings.TrimSpace(string(v)), errors.Join(err, errNoTPM2))
 	}
 	if !o.cfg.Provision.DiskEncryption.SkipSecureBootCheck {
 		if err := secureBootUserMode(efivarsDir); err != nil {
@@ -744,7 +800,7 @@ if [ -e "$bound" ]; then
 		say "key slot $LUKS_ENROLL_SLOT is already gone"
 	fi
 	shred -u "$key"
-	rm -f "$bound"
+	rm -f "$bound" /boot/initrd.img-*.booty-old
 	systemctl disable ` + luksUnitName + `
 	status slot1-removed "key slot $LUKS_ENROLL_SLOT and the enrollment key are gone; the TPM2 (PCR $TPM2_PCRS) and the recovery key unlock"
 	rm -f ` + luksStatusAuth + `
@@ -753,7 +809,15 @@ if [ -e "$bound" ]; then
 fi
 
 step=start
+# An interrupted earlier phase 1 left originals behind: restore them first.
+for old in /boot/initrd.img-*.booty-old; do
+	[ -e "$old" ] && mv "$old" "${old%.booty-old}"
+done
 restore() {
+	# Images that a failed or interrupted swap replaced come back.
+	for old in /boot/initrd.img-*.booty-old; do
+		[ -e "$old" ] && mv "$old" "${old%.booty-old}"
+	done
 	crypttab_line "$key luks,x-initrd.attach"
 	printf '%s\ninstall_items+=" %s "\n' "# Written by BOOTy: removed by ` + luksUnitName + ` after the TPM2 enrollment." "$key" >"$keyconf"
 	rm -f /boot/initrd.img-*.booty-new
@@ -772,7 +836,7 @@ crypttab_line "none luks,x-initrd.attach,tpm2-device=auto"
 rm -f "$keyconf"
 built=""
 for img in /boot/initrd.img-*; do
-	case $img in *.booty-new) continue ;; esac
+	case $img in *.booty-new | *.booty-old) continue ;; esac
 	[ -e "$img" ] || continue
 	kver=${img#/boot/initrd.img-}
 	[ -d "/usr/lib/modules/$kver" ] || continue
@@ -787,10 +851,14 @@ for img in /boot/initrd.img-*; do
 done
 step="no initramfs"
 [ -n "$built" ]
+step="initramfs swap"
+for img in $built; do cp -p "$img" "$img.booty-old"; done
+sync
 for img in $built; do mv "$img.booty-new" "$img"; done
 sync
 : >"$bound"
 trap - EXIT
+rm -f /boot/initrd.img-*.booty-old
 status tpm2-bound "bound to PCR $TPM2_PCRS; key slot $LUKS_ENROLL_SLOT goes after a boot that the TPM2 unlocked"
 say "bound to PCR $TPM2_PCRS; key slot $LUKS_ENROLL_SLOT goes on the next boot that the TPM2 unlocks"
 `
