@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"syscall"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -136,6 +137,21 @@ func TestSignKernelModulesCI(t *testing.T) {
 		t.Fatalf("report %+v", o.moduleSigning)
 	}
 	if err := o.enrollModuleSigningKey(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// A FIFO must not block the read.
+	fifo := filepath.Join(root, "usr/share/ci/mok.der")
+	if err := os.Remove(fifo); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.signKernelModules(context.Background()); err == nil {
+		t.Fatal("a FIFO was accepted as the CI certificate")
+	}
+	if err := os.Remove(fifo); err != nil {
 		t.Fatal(err)
 	}
 
