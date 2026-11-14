@@ -48,7 +48,8 @@ const maxCertSize = 64 << 10
 // most limit bytes: the image is only semi-trusted, and a link to a device
 // (the chroot binds /dev) or a huge file must not exhaust PID 1.
 func readSmallRegularFile(root *os.Root, name string, limit int64) ([]byte, error) {
-	f, err := root.Open(name)
+	// O_NONBLOCK: opening a FIFO without a writer must not block.
+	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // the caller names the file
 	}
