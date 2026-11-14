@@ -238,7 +238,7 @@ dracut --force --no-hostonly --tmpdir /run --add "crypt systemd-cryptsetup syste
 			s := inImage(*sb)
 			args = append(args, "--secureboot-private-key="+s.sbKey, "--secureboot-certificate="+s.sbCert)
 		}
-		chroot("build "+out, strings.Join(args, " "))
+		chroot("build "+out, "mkdir -p \"$(dirname "+out+")\"; "+strings.Join(args, " "))
 	}
 	img.ukiName = "ubuntu-" + kver + ".efi"
 	build("/boot/efi/EFI/Linux/"+img.ukiName, "booty.uki=v1", ci, ci)
