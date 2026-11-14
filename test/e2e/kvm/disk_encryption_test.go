@@ -326,11 +326,11 @@ func TestDiskEncryptionOffVM(t *testing.T) {
 	comparePartitionTables(t, v.osRaw, v.disk)
 }
 
-// TestDiskEncryptionDataPartitionVM encrypts a data partition by number
+// TestDiskEncryptionTPM2DataPartitionVM encrypts a data partition by number
 // (the last partition, mounted by PARTUUID) and leaves the root plain: the
 // file system grows inside the mapping, fstab mounts it through the
 // mapping, the enrollment key unlocks it until the binding.
-func TestDiskEncryptionDataPartitionVM(t *testing.T) {
+func TestDiskEncryptionTPM2DataPartitionVM(t *testing.T) {
 	v := newLUKSVMWith(t, true)
 	escrow := startEscrowServer(t)
 	v.provision(map[string]string{

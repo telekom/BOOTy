@@ -334,7 +334,7 @@ KVM scenarios (`.github/workflows/kvm-matrix.yml`):
   6. Secure Boot off: PCR 7 differs, the TPM2 refuses, the recovery key
      typed at the prompt unlocks;
   7. the recovery key is in none of the serial console logs.
-- `TestDiskEncryptionDataPartitionVM` (same scenario): the image gets a
+- `TestDiskEncryptionTPM2DataPartitionVM` (same scenario): the image gets a
   last ext4 partition 2 mounted at `/data` by PARTUUID; with
   `DISK_ENCRYPTION_TARGET=2` the root stays plain, `/data` mounts through
   the mapping (fstab rewritten), its file system has grown to the disk end

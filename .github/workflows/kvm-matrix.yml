@@ -526,7 +526,7 @@ jobs:
           - scenario: disk-encryption-ubuntu-26.04
             qemu_extra: ""
             test_tag: e2e
-            test_regex: "^TestDiskEncryption(TPM2|DataPartition)VM$"
+            test_regex: "^TestDiskEncryptionTPM2"
             go_timeout: 60m
             timeout_minutes: 80
             privileged: true
