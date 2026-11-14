@@ -33,10 +33,13 @@ const (
 	mokEnrollLabel = "booty-mok-enroll"
 )
 
+// dracutRegenerateCmd rebuilds every initramfs of the target with dracut.
+const dracutRegenerateCmd = "dracut --force --regenerate-all"
+
 // initramfsUpdateCmd rebuilds every initramfs of the target with
 // update-initramfs, or dracut where that is missing.
 const initramfsUpdateCmd = "if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u -k all; " +
-	"else dracut --force --regenerate-all; fi"
+	"else " + dracutRegenerateCmd + "; fi"
 
 var kernelReleasePattern = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
 
@@ -222,7 +225,13 @@ func (o *Orchestrator) doSignKernelModules(ctx context.Context, ms config.Module
 			return fmt.Errorf("depmod %s: %s: %w", k, strings.TrimSpace(string(out)), err)
 		}
 	}
-	if out, err := o.disk.ChrootRun(ctx, root, initramfsUpdateCmd); err != nil {
+	// prepare-disk-encryption built a dracut initramfs with the LUKS unlock;
+	// update-initramfs would replace it with one that cannot unlock the root.
+	rebuild := initramfsUpdateCmd
+	if o.encryptionActive() {
+		rebuild = dracutRegenerateCmd
+	}
+	if out, err := o.disk.ChrootRun(ctx, root, rebuild); err != nil {
 		return fmt.Errorf("rebuild initramfs: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
