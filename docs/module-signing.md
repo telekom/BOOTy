@@ -266,9 +266,11 @@ With `MODULE_SIGNING_TARGET=sysext`, `sign-kernel-modules`:
    with a signed root hash merge.
 
 At boot, `systemd-sysext` opens the image with dm-verity and passes the
-signature to the kernel, which checks it against the secondary keyring. The
-`.machine` keyring with the enrolled MOK is linked to it (Linux 5.18+), and
-the kernel needs `CONFIG_DM_VERITY_VERIFY_ROOTHASH_SIG_SECONDARY_KEYRING`.
+signature to the kernel. The kernel checks it against the secondary keyring
+(`CONFIG_DM_VERITY_VERIFY_ROOTHASH_SIG_SECONDARY_KEYRING`, which includes
+`.machine`), then against `.platform`
+(`CONFIG_DM_VERITY_VERIFY_ROOTHASH_SIG_PLATFORM_KEYRING`, Linux 6.11+). The
+signature verifies only where the keyring that holds the MOK is in that list.
 The overlay then shadows the unsigned modules of the base `/usr` with the
 signed copies at the same paths, so `modprobe` and the `modules.dep` of the
 image find them. The report carries the root hash
@@ -292,6 +294,32 @@ signing.
   whose `/etc` is read-only too, they belong in the image or a confext.
 - The image signature uses the module signing certificate: the kernel
   ignores the module-signing-only EKU, so the same key verifies both.
+- systemd 255 (Ubuntu 24.04) asks for a passphrase after the kernel refuses a
+  signature. The drop-in limits `systemd-sysext.service` to 90 s
+  (`TimeoutStartSec`), so the boot goes on without the extension.
+
+### Results
+
+KVM scenario `module-sysext-ubuntu-24.04` and `-26.04`
+(`TestModuleSigningSysextVM`). The setup is the one of the in-place scenario:
+OVMF with the Microsoft keys, the distribution shim and kernel, swtpm, and the
+MOK written by `mok-enroll.efi`.
+
+| | Ubuntu 26.04 (7.0.0-34, systemd 259) | Ubuntu 24.04 (6.8.0-139, systemd 255) |
+|---|---|---|
+| `/usr` of the image after provisioning | byte-identical | byte-identical |
+| keyring with the MOK | `.platform` (`.machine` empty) | `.platform` (`.machine` empty) |
+| Secure Boot on: extension | merged | refused, `Root hash verification failed (-ENOKEY)` |
+| Secure Boot on: module | signed copy loads | refused (the unsigned module of the image) |
+| root hash signed by another host's key | not merged (`-ENOKEY`), module refused | (same as above) |
+| one byte changed in the module data | `data block … is corrupted`, not merged, module refused | (same as above) |
+
+Ubuntu 24.04 cannot use the prototype. Its kernel keeps the MOK in
+`.platform`, and 6.8 checks root hash signatures against the secondary
+keyring only. The failure is safe: the extension stays out and the module is
+refused. Kernels that put the MOK into `.machine` (upstream with
+`MokListTrustedRT`) should verify it through the secondary keyring. That
+case is not tested.
 
 ### Per-host sysext and extra partition compared
 
