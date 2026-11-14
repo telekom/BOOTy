@@ -1941,7 +1941,7 @@ func classifyImageStreamError(imageURL string, err error) error {
 		msg: fmt.Sprintf("streaming %s: %s", image.RedactURL(imageURL), image.RedactSourceError(err, imageURL)),
 		err: err,
 	}
-	if errors.Is(err, image.ErrStagingForbidden) || errors.Is(err, image.ErrStagingFull) || strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
+	if errors.Is(err, image.ErrStagingForbidden) || errors.Is(err, image.ErrStagingFull) || errors.Is(err, image.ErrRedirectRefused) || strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
 		return &PermanentError{Err: wrapped}
 	}
 	return wrapped

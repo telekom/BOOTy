@@ -25,6 +25,7 @@ func RedactSourceError(err error, rawSource string) string {
 	if err == nil {
 		return ""
 	}
+	err = withoutRedirectURL(err)
 	if rawSource == "" {
 		return err.Error()
 	}
