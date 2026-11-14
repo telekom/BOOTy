@@ -212,13 +212,13 @@ makes such a change break automatic unlock.
 Without reprovisioning, `mokutil --delete` (one MokManager confirmation) or
 `MokListX` removes it.
 
-## LUKS2 + TPM2 (follow-up)
+## LUKS2 + TPM2
 
-The key must be sealed to the final state. With `efi-helper`, BOOTy runs
-with Secure Boot off and before `MokList` changes, so PCR 7 (Secure Boot
-state, PK, KEK, db, dbx, and the authorities shim used) and PCR 14 (MOK)
-during provisioning differ from the first Secure Boot boot. Measured in the
-KVM scenario (OVMF with the Microsoft keys):
+[Disk encryption](disk-encryption.md) (`DISK_ENCRYPTION=luks2-tpm2`) binds
+the volume to PCR 7+14 on the first boot with Secure Boot on, not while
+BOOTy runs: Secure Boot is off then, and `MokList` changes at the
+enrollment boot. Measured in the KVM scenario (OVMF with the Microsoft
+keys):
 
 | | PCR 7 | PCR 14 |
 |---|---|---|
@@ -231,23 +231,11 @@ although their MOKs differ: module signatures are checked by the kernel and
 are not measured, and shim measures `MokList` into PCR 14. A policy on PCR 7
 alone does not notice an extra MOK; PCR 7+14 does.
 
-Proposed order:
-
-1. BOOTy (after `sign-kernel-modules`): `cryptsetup reencrypt --encrypt
-   --type luks2 --reduce-device-size 32M` on the root partition after
-   shrinking the file system by 32 MiB; slot 0 gets a random recovery key,
-   slot 1 a one-time enrollment key in `/etc/booty/luks-enroll.key` on the
-   encrypted root; crypttab gets `tpm2-device=auto`.
-2. The recovery key goes to the provisioner over a new
-   `LUKS_RECOVERY_KEY_URL` (same token and TLS as the status callback). It is
-   never logged or put in the report. Escrow is the provisioner's choice.
-3. First Secure Boot boot (in the target, after the enrollment boot and the
-   switch to Secure Boot on): a one-shot unit runs `systemd-cryptenroll
-   --tpm2-device=auto --tpm2-pcrs=7+14 --unlock-key-file=...`, then wipes
-   slot 1 and the key file. Until then the root unlocks with the recovery
-   key only, so the first boot needs the key once (BMC console or network
-   unlock), or the provisioner predicts PCR 7 and 14 with
-   `systemd-pcrlock` from the expected variables.
+With `efi-helper` the enrollment boot runs with Secure Boot off, so the
+binding sees the final `MokList`. With `mokutil` the binding waits while a
+MOK request is pending in MokManager. With `external`, a `db` update after
+the binding changes PCR 7; see
+[Module signing](disk-encryption.md#module-signing) there.
 
 ## dm-verity roots
 
