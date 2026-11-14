@@ -113,9 +113,10 @@ type Config struct {
 }
 
 // KexecDisabled reports whether BOOTy must not kexec into the installed
-// kernel after provisioning.
+// kernel after provisioning. Disk encryption needs the target root unmounted
+// and the PCRs of a firmware boot, so it disables kexec too.
 func (c *Config) KexecDisabled() bool {
-	return c.Provision.DisableKexec || c.PowerOffOnSuccess()
+	return c.Provision.DisableKexec || c.PowerOffOnSuccess() || c.Provision.DiskEncryption.Enabled()
 }
 
 // PowerOffOnSuccess reports whether BOOTy powers off after a successful run.

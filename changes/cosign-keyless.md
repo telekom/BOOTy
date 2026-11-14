@@ -1,0 +1,41 @@
+---
+section: Upgrade notes for CAPRF
+---
+
+- Keyless cosign verification: `IMAGE_COSIGN_TRUSTED_ROOT`,
+  `IMAGE_COSIGN_IDENTITY_REGEXP` and `IMAGE_COSIGN_OIDC_ISSUER` (and the same
+  `SYSEXT_COSIGN_*` options) check a Fulcio/Rekor signature of `oci://`
+  sources offline against a Sigstore `trusted_root.json` in the ramdisk,
+  before the wipe. With keys as well, either kind of signature is accepted.
+  All are unset by default. BOOTy reads bundles v0.1 to v0.3 (the DSSE statement of
+  `cosign sign`; as in cosign, a message signature bundle does not sign an
+  image) attached as OCI referrers and the cosign 2 `.sig` tag, with Rekor
+  v1 entries (SET, inclusion proof) or Rekor v2 entries (`hashedrekord` 0.0.2,
+  checkpoint) and RFC 3161 timestamps of the trusted root's timestamp
+  authorities. A Rekor v2 signature needs a timestamp: the certificate is
+  checked at every verified time and needs at least one.
+- A standby command payload can no longer change `IMAGE_COSIGN_PUBKEYS`,
+  `SYSEXT_COSIGN_PUBKEYS` or the new keyless options; such a payload is
+  refused like one that changes the transport. Under a cosign policy of the
+  vars file (keys or keyless, also since #921) it can no longer add an image
+  or sysext source that is not `oci://` or change the checksum
+  (`IMAGE_CHECKSUM*`, the layer `sha256`) of such a source, which would have
+  replaced the signed image with one checked only by the payload's checksum.
+  Dropping such a source, or switching to another `oci://` source, which is
+  verified, still works.
+- A deploy archive payload is held to the same rules: its `deploy/vars` must
+  keep the cosign options of `/deploy/vars` (an archive without them was
+  able to clear the policy), and an archive that writes a configured cosign
+  key or trusted root path is refused. Standby reads the cosign keys and
+  trusted roots once at start and verifies only against these copies, so a
+  command can not swap the trust material; a key or root path that was not
+  configured at start fails. Trust paths are compared with their symlinks
+  resolved.
+- Under a cosign policy, with `PROVISIONER_FILES_TARGET=ramdisk`, the copy of
+  an archive's `deploy/file-system` over the ramdisk is limited to
+  `etc/hosts`, `etc/resolv.conf`, `CA_BUNDLE_FILE` and `etc/ssl`/`etc/pki`;
+  an archive with other files there is refused (they could replace a tool
+  or BOOTy itself, or a docker credential helper, and so run code in the
+  verifying process). Without a policy the copy is unrestricted as before.
+  With `INSECURE_TRANSPORT` or `SKIP_TLS_VERIFY`, an archive `etc/hosts` can
+  redirect the bearer token; do not combine them.

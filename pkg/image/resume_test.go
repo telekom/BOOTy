@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -392,6 +393,63 @@ func TestRangesDoNotFollowRedirects(t *testing.T) {
 		}
 		if bytes.Contains(got, v2[:1024]) {
 			t.Errorf("%+v: bytes of /v2 were mixed into /v1", opts)
+		}
+	}
+}
+
+// TestRangesRefusedRedirectIsFinal: with IMAGE_FOLLOW_REDIRECTS=false a
+// ranged GET that gets a redirect fails at once. IMAGE_RESUME sends one
+// ranged GET; IMAGE_PARALLEL_RANGES sends each range once, without retries.
+func TestRangesRefusedRedirectIsFinal(t *testing.T) {
+	origChunk := rangeChunkSize
+	rangeChunkSize = 64 << 10
+	t.Cleanup(func() {
+		rangeChunkSize = origChunk
+		SetFollowRedirects(true)
+		RefreshHTTPClients()
+	})
+	SetFollowRedirects(false)
+	RefreshHTTPClients()
+	data := testPayload(1 << 20)
+	for _, opts := range []DownloadOptions{{Resume: true}, {ParallelRanges: 3}} {
+		withDownloadOptions(t, opts)
+		var mu sync.Mutex
+		ranges := map[string]int{}
+		var first atomic.Bool
+		srv1 := &faultServer{data: data}
+		srv1.cuts.Store(1) // the first GET breaks, so Resume requests a range
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if first.CompareAndSwap(false, true) {
+				srv1.ServeHTTP(w, r)
+				return
+			}
+			mu.Lock()
+			ranges[r.Header.Get("Range")]++
+			mu.Unlock()
+			http.Redirect(w, r, "/elsewhere", http.StatusFound)
+		}))
+		body, err := httpGetWithRetry(t.Context(), srv.URL+"/v1")
+		if err != nil {
+			srv.Close()
+			t.Fatalf("%+v: httpGetWithRetry() = %v", opts, err)
+		}
+		_, err = io.ReadAll(body)
+		_ = body.Close()
+		srv.Close()
+		if !errors.Is(err, ErrRedirectRefused) {
+			t.Errorf("%+v: ReadAll() = %v, want ErrRedirectRefused", opts, err)
+		}
+		mu.Lock()
+		total := 0
+		for spec, n := range ranges {
+			total += n
+			if n != 1 {
+				t.Errorf("%+v: range %q sent %d times, want 1", opts, spec, n)
+			}
+		}
+		mu.Unlock()
+		if opts.Resume && total != 1 {
+			t.Errorf("%+v: redirector got %d ranged GETs, want 1", opts, total)
 		}
 	}
 }

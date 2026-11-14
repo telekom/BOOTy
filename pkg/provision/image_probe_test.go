@@ -6,7 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -135,6 +139,37 @@ func TestStreamImageRetries(t *testing.T) {
 		if err == nil || attempts != tt.attempts {
 			t.Fatalf("%v: %d attempts (err %v), want %d", tt.err, attempts, err, tt.attempts)
 		}
+	}
+}
+
+// A refused redirect fails the stream-image step without a retry: the
+// redirecting source gets exactly one request.
+func TestStreamImageRefusedRedirectIsPermanent(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Redirect(w, r, "/elsewhere.qcow2", http.StatusFound)
+	}))
+	defer srv.Close()
+	t.Cleanup(func() {
+		image.SetFollowRedirects(true)
+		image.RefreshHTTPClients()
+	})
+	image.SetFollowRedirects(false)
+	image.RefreshHTTPClients()
+
+	policy := DefaultPolicies["stream-image"]
+	policy.InitialDelay, policy.MaxDelay = 0, 0
+	src := srv.URL + "/os.qcow2"
+	device := filepath.Join(t.TempDir(), "disk")
+	err := WithRetry(context.Background(), "stream-image", policy, func(ctx context.Context) error {
+		return classifyImageStreamError(src, image.Stream(ctx, src, device))
+	})
+	if !errors.Is(err, image.ErrRedirectRefused) {
+		t.Fatalf("err = %v, want ErrRedirectRefused", err)
+	}
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("redirecting source got %d requests, want 1", n)
 	}
 }
 

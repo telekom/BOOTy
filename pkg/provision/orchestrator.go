@@ -5,6 +5,7 @@ package provision
 import (
 	"bufio"
 	"context"
+	"crypto"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,14 +49,19 @@ var readProcCmdline = func() ([]byte, error) {
 
 const ociPreflightProbeTimeout = 10 * time.Second
 
+// cosignKeylessTimeout bounds the keyless check, which reads the referrers
+// and the .sig tag of a source.
+const cosignKeylessTimeout = 30 * time.Second
+
 var (
 	evalRootSymlinks   = filepath.EvalSymlinks
 	collectFirmwareFn  = firmware.Collect
 	validateFirmwareFn = firmware.Validate
 	loadCheckpointFn   = LoadCheckpoint
 	probeOCIReference  = image.ResolveOCIReference
-	// verifyCosignSignature is replaced by tests.
+	// verifyCosignSignature and verifyCosignKeyless are replaced by tests.
 	verifyCosignSignature = image.VerifyCosignSignature
+	verifyCosignKeyless   = image.VerifyCosignKeyless
 	secureBootRoot        = newroot
 	mountBootPart         = func(ctx context.Context, mgr *disk.Manager, device, mountpoint string) error {
 		return mgr.MountPartition(ctx, device, mountpoint)
@@ -130,6 +136,10 @@ type Orchestrator struct {
 	separateBootMounted bool
 	// disksSettled is true after waitForDisks ran.
 	disksSettled bool
+	// encryption is set by stream-image when it encrypted a partition.
+	encryption *encryptionState
+	// encryptionSkipped: DISK_ENCRYPTION_ALLOW_FAILURE provisioned without it.
+	encryptionSkipped bool
 }
 
 // NewOrchestrator creates an Orchestrator with the given dependencies.
@@ -156,7 +166,7 @@ func NewOrchestrator(cfg *config.MachineConfig, provider config.Provider, diskMg
 
 // provisionSteps returns the ordered list of provisioning steps.
 func (o *Orchestrator) provisionSteps() []Step {
-	return []Step{
+	steps := []Step{
 		{"report-init", o.reportInit},
 		{"release-stale-mounts", o.releaseStaleTargetMounts},
 		{"collect-inventory", o.collectInventory},
@@ -217,6 +227,10 @@ func (o *Orchestrator) provisionSteps() []Step {
 		{"teardown-chroot", o.teardownChroot},
 		{"report-success", o.reportSuccess},
 	}
+	if o.encryptionEnabled() {
+		steps = o.withEncryptionSteps(steps)
+	}
+	return steps
 }
 
 // Provision runs all provisioning steps sequentially.
@@ -1886,6 +1900,9 @@ func (o *Orchestrator) streamImage(ctx context.Context) error {
 	}
 	defer startMemoryPeak(o.log)()
 
+	if o.encryptionEnabled() {
+		return o.streamEncryptedImage(ctx, bestURL, opts)
+	}
 	if o.cfg.Provision.Disk.PartitionLayout != nil && !o.isABImageMode() {
 		return o.streamPartitionLayoutRootImage(ctx, bestURL, opts)
 	}
@@ -1941,7 +1958,7 @@ func classifyImageStreamError(imageURL string, err error) error {
 		msg: fmt.Sprintf("streaming %s: %s", image.RedactURL(imageURL), image.RedactSourceError(err, imageURL)),
 		err: err,
 	}
-	if errors.Is(err, image.ErrStagingForbidden) || errors.Is(err, image.ErrStagingFull) || strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
+	if errors.Is(err, image.ErrStagingForbidden) || errors.Is(err, image.ErrStagingFull) || errors.Is(err, image.ErrRedirectRefused) || strings.Contains(strings.ToLower(err.Error()), "checksum mismatch") {
 		return &PermanentError{Err: wrapped}
 	}
 	return wrapped
@@ -2362,23 +2379,25 @@ func (o *Orchestrator) verifyImageSignature(ctx context.Context) error {
 	return image.VerifyGPGSignature(ctx, bestURL, o.cfg.Provision.Image.SignatureURL, o.cfg.Provision.Image.GPGPubKey)
 }
 
-// verifyCosignSignatures checks, when cosign keys are configured, the
-// signature of an oci:// image source and of every oci:// sysext source
-// before the disk is wiped. The later pulls use the same digest references,
-// which go-containerregistry checks, so they get the signed bytes. An HTTP
-// image source needs IMAGE_CHECKSUM instead.
+// verifyCosignSignatures checks, when a cosign policy (keys or keyless) is
+// configured, the signature of an oci:// image source and of every oci://
+// sysext source before the disk is wiped. The later pulls use the same
+// digest references, which go-containerregistry checks, so they get the
+// signed bytes. An HTTP image source needs IMAGE_CHECKSUM instead.
 func (o *Orchestrator) verifyCosignSignatures(ctx context.Context, imageURL string) error {
 	if err := o.checkCosignSources([]string{imageURL}); err != nil {
 		return err
 	}
-	if keys := o.cfg.Provision.Image.CosignPublicKeys; len(keys) > 0 && image.IsOCIReference(imageURL) {
-		if err := verifyCosignSource(ctx, imageURL, keys); err != nil {
+	if p := imageCosignPolicy(&o.cfg.Provision.Image); p.enabled() && image.IsOCIReference(imageURL) {
+		method, err := verifyCosignSource(ctx, imageURL, p)
+		if err != nil {
 			return fmt.Errorf("verifying image signature: %w", err)
 		}
-		o.log.Info("image cosign signature verified", "url", image.RedactURL(imageURL))
+		o.log.Info("image cosign signature verified", "url", image.RedactURL(imageURL), "method", method)
 	}
 	sysext := &o.cfg.Provision.Sysext
-	if !sysext.Enabled || len(sysext.CosignPublicKeys) == 0 {
+	p := sysextCosignPolicy(sysext)
+	if !sysext.Enabled || !p.enabled() {
 		return nil
 	}
 	for i := range sysext.Layers {
@@ -2386,20 +2405,25 @@ func (o *Orchestrator) verifyCosignSignatures(ctx context.Context, imageURL stri
 		if !image.IsOCIReference(source) {
 			continue // checked by its sha256
 		}
-		if err := verifyCosignSource(ctx, source, sysext.CosignPublicKeys); err != nil {
+		method, err := verifyCosignSource(ctx, source, p)
+		if err != nil {
 			return fmt.Errorf("verifying sysext %q signature: %w", sysext.Layers[i].Name, err)
 		}
-		o.log.Info("sysext cosign signature verified", "name", sysext.Layers[i].Name, "url", image.RedactURL(source))
+		o.log.Info("sysext cosign signature verified", "name", sysext.Layers[i].Name, "url", image.RedactURL(source), "method", method)
 	}
 	return nil
 }
 
 // checkCosignSources runs the offline checks of verifyCosignSignatures on
-// the image sources and the sysext sources: with cosign keys, an oci://
-// source must be pinned by digest, and an HTTP image source needs
-// IMAGE_CHECKSUM. Dry-run calls it with every configured image source.
+// the image sources and the sysext sources: a keyless policy needs all
+// three options, and with a policy an oci:// source must be pinned by
+// digest and an HTTP image source needs IMAGE_CHECKSUM. Dry-run calls it
+// with every configured image source.
 func (o *Orchestrator) checkCosignSources(imageURLs []string) error {
-	if len(o.cfg.Provision.Image.CosignPublicKeys) > 0 {
+	if p := imageCosignPolicy(&o.cfg.Provision.Image); p.enabled() {
+		if err := p.checkKeyless("IMAGE"); err != nil {
+			return fmt.Errorf("verifying image signature: %w", err)
+		}
 		for _, u := range imageURLs {
 			u = strings.TrimSpace(u)
 			switch {
@@ -2408,13 +2432,17 @@ func (o *Orchestrator) checkCosignSources(imageURLs []string) error {
 					return fmt.Errorf("verifying image signature: %w", err)
 				}
 			case strings.TrimSpace(o.cfg.Provision.Image.Checksum) == "":
-				return fmt.Errorf("verifying image signature: cosign keys are configured but the image source %s is not oci:// and has no IMAGE_CHECKSUM", image.RedactURL(u))
+				return fmt.Errorf("verifying image signature: cosign verification is configured but the image source %s is not oci:// and has no IMAGE_CHECKSUM", image.RedactURL(u))
 			}
 		}
 	}
 	sysext := &o.cfg.Provision.Sysext
-	if !sysext.Enabled || len(sysext.CosignPublicKeys) == 0 {
+	p := sysextCosignPolicy(sysext)
+	if !sysext.Enabled || !p.enabled() {
 		return nil
+	}
+	if err := p.checkKeyless("SYSEXT"); err != nil {
+		return fmt.Errorf("verifying sysext signatures: %w", err)
 	}
 	for i := range sysext.Layers {
 		source := strings.TrimSpace(sysext.Layers[i].Source)
@@ -2439,14 +2467,83 @@ func requireOCIDigest(source string) error {
 	return nil
 }
 
-func verifyCosignSource(ctx context.Context, source string, keyPaths []string) error {
-	keys, err := image.LoadCosignPublicKeys(keyPaths)
-	if err != nil {
-		return err
+// cosignPolicy is the cosign verification configuration of the image or of
+// the sysexts: public keys, a keyless policy, or both. With both, a
+// signature of either kind is accepted.
+type cosignPolicy struct {
+	keys                          []string
+	trustedRoot, identity, issuer string
+}
+
+func imageCosignPolicy(c *config.ImageConfig) cosignPolicy {
+	return cosignPolicy{c.CosignPublicKeys, c.CosignTrustedRoot, c.CosignIdentityRegexp, c.CosignOIDCIssuer}
+}
+
+func sysextCosignPolicy(c *config.SysextConfig) cosignPolicy {
+	return cosignPolicy{c.CosignPublicKeys, c.CosignTrustedRoot, c.CosignIdentityRegexp, c.CosignOIDCIssuer}
+}
+
+func (p cosignPolicy) enabled() bool { return len(p.keys) > 0 || p.keyless() }
+
+func (p cosignPolicy) keyless() bool {
+	return p.trustedRoot != "" || p.identity != "" || p.issuer != ""
+}
+
+// checkKeyless refuses a keyless policy with a missing option, so a typo
+// can not leave a source unchecked.
+func (p cosignPolicy) checkKeyless(prefix string) error {
+	if p.keyless() && (p.trustedRoot == "" || p.identity == "" || p.issuer == "") {
+		return fmt.Errorf("%w: keyless verification needs %s_COSIGN_TRUSTED_ROOT, %s_COSIGN_IDENTITY_REGEXP and %s_COSIGN_OIDC_ISSUER",
+			image.ErrCosignVerification, prefix, prefix, prefix)
 	}
-	ctx, cancel := context.WithTimeout(ctx, ociPreflightProbeTimeout)
-	defer cancel()
-	return verifyCosignSignature(ctx, source, keys)
+	return nil
+}
+
+// load reads the keys and the trusted root of the policy.
+func (p cosignPolicy) load() ([]crypto.PublicKey, *image.CosignKeyless, error) {
+	var keys []crypto.PublicKey
+	var keyless *image.CosignKeyless
+	var err error
+	if len(p.keys) > 0 {
+		if keys, err = image.LoadCosignPublicKeys(p.keys); err != nil {
+			return nil, nil, err
+		}
+	}
+	if p.keyless() {
+		if keyless, err = image.LoadCosignKeyless(p.trustedRoot, p.identity, p.issuer); err != nil {
+			return nil, nil, err
+		}
+	}
+	return keys, keyless, nil
+}
+
+// verifyCosignSource accepts a signature by one of the keys or one that
+// satisfies the keyless policy and returns which ("key" or "keyless").
+func verifyCosignSource(ctx context.Context, source string, p cosignPolicy) (string, error) {
+	keys, keyless, err := p.load()
+	if err != nil {
+		return "", err
+	}
+	var errs []error
+	if keys != nil {
+		keyCtx, cancel := context.WithTimeout(ctx, ociPreflightProbeTimeout)
+		err := verifyCosignSignature(keyCtx, source, keys)
+		cancel()
+		if err == nil {
+			return "key", nil
+		}
+		errs = append(errs, err)
+	}
+	if keyless != nil {
+		keylessCtx, cancel := context.WithTimeout(ctx, cosignKeylessTimeout)
+		err := verifyCosignKeyless(keylessCtx, source, keyless)
+		cancel()
+		if err == nil {
+			return "keyless", nil
+		}
+		errs = append(errs, err)
+	}
+	return "", errors.Join(errs...)
 }
 
 func (o *Orchestrator) partprobe(ctx context.Context) error {
@@ -2483,7 +2580,7 @@ func (o *Orchestrator) parsePartitions(ctx context.Context) error {
 		return err
 	}
 	o.rootPartition = root.Node
-	return nil
+	return o.useEncryptedRoot()
 }
 
 func (o *Orchestrator) findRootPartition(ctx context.Context, parts []disk.Partition) (*disk.Partition, error) {
@@ -3331,10 +3428,18 @@ func (o *Orchestrator) growPartition(ctx context.Context) error {
 		o.log.Info("skipping grow-partition, mirror-root grew the root partition before creating the array")
 		return nil
 	}
+	if o.encryptionActive() && o.encryption.isRoot {
+		o.log.Info("skipping grow-partition, stream-image grew the encrypted root partition")
+		return nil
+	}
 
 	target, err := o.growTarget(ctx)
 	if err != nil {
 		return err
+	}
+	if o.encryptionActive() && target == o.encryption.device {
+		o.log.Info("skipping grow-partition, stream-image grew the encrypted partition; close-encrypted-disk grows its file system")
+		return nil
 	}
 	partNum, err := disk.PartitionNumberChecked(target, o.targetDisk)
 	if err != nil {
@@ -3399,9 +3504,15 @@ func (o *Orchestrator) resizeFilesystem(ctx context.Context) error {
 	if o.mirrorDisk != "" {
 		return o.disk.ResizeFilesystem(ctx, disk.MirrorRootArray, newroot)
 	}
+	if o.encryptionActive() && o.encryption.isRoot {
+		return o.disk.ResizeFilesystem(ctx, o.rootPartition, newroot)
+	}
 	target, err := o.growTarget(ctx)
 	if err != nil {
 		return err
+	}
+	if o.encryptionActive() && target == o.encryption.device {
+		return nil // close-encrypted-disk resizes it through the mapping
 	}
 	if target != o.rootPartition {
 		// The grown partition is not mounted. grow-partition checked it

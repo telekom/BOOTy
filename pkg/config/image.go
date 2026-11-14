@@ -31,6 +31,14 @@ type ImageConfig struct {
 	// Default: nil (false, requires HTTPS or OCI)
 	AllowInsecureHTTP *bool `yaml:"allowInsecureHTTP,omitempty" json:"allowInsecureHTTP,omitempty"`
 
+	// FollowRedirects lets the HTTP image requests (the source probe, the
+	// download and the signature download) follow redirects. false fails
+	// the request on the first redirect, like curl without --location in
+	// the CAPRF legacy provisioner. oci:// pulls are not affected.
+	// Preset by legacyCompat: false.
+	// Default: nil (true)
+	FollowRedirects *bool `yaml:"followRedirects,omitempty" json:"followRedirects,omitempty"`
+
 	// Checksum is the expected hex digest of the image. ChecksumScope
 	// selects the bytes it covers. Verified after streaming completes.
 	// Default: "" (no verification)
@@ -134,4 +142,35 @@ type ImageConfig struct {
 	// Checksum and SignatureURL.
 	// Default: none (no cosign verification)
 	CosignPublicKeys []string `yaml:"cosignPublicKeys,omitempty" json:"cosignPublicKeys,omitempty"`
+
+	// CosignTrustedRoot is the path of a Sigstore trusted_root.json in the
+	// ramdisk (never fetched). With CosignIdentityRegexp and
+	// CosignOIDCIssuer it enables keyless verification: an oci:// image source, pinned by digest, must carry a
+	// keyless cosign signature whose Fulcio certificate, SCT and Rekor entry
+	// verify against it. With CosignPublicKeys too, either kind of
+	// signature is accepted.
+	// Default: "" (no keyless verification)
+	CosignTrustedRoot string `yaml:"cosignTrustedRoot,omitempty" json:"cosignTrustedRoot,omitempty"`
+
+	// CosignIdentityRegexp must match the whole SAN of the signing
+	// certificate (Go regexp, implicitly anchored).
+	CosignIdentityRegexp string `yaml:"cosignIdentityRegexp,omitempty" json:"cosignIdentityRegexp,omitempty"`
+
+	// CosignOIDCIssuer must equal the OIDC issuer extension of the signing
+	// certificate.
+	CosignOIDCIssuer string `yaml:"cosignOIDCIssuer,omitempty" json:"cosignOIDCIssuer,omitempty"`
+}
+
+// CosignTrustFiles returns the cosign public key and trusted root paths of
+// the image and the sysexts: the trust material that standby pins at start
+// (image.PinCosignFiles).
+func (c *MachineConfig) CosignTrustFiles() []string {
+	im, sx := &c.Provision.Image, &c.Provision.Sysext
+	out := append(append([]string(nil), im.CosignPublicKeys...), sx.CosignPublicKeys...)
+	for _, p := range []string{im.CosignTrustedRoot, sx.CosignTrustedRoot} {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
