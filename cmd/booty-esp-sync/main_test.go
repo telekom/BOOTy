@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -98,5 +99,28 @@ func TestSetupLogging(t *testing.T) {
 	}
 	if err := setupLogging(&buf, "info", "console"); err == nil {
 		t.Error("setupLogging accepted format console")
+	}
+}
+
+// An invalid setting is reported with --log-level=error as well, in the
+// text format of the service.
+func TestSetupLoggingWarnsAboveLevel(t *testing.T) {
+	origLogger, origOut, origFlags := slog.Default(), log.Writer(), log.Flags()
+	t.Cleanup(func() {
+		slog.SetDefault(origLogger)
+		slog.SetLogLoggerLevel(slog.LevelInfo)
+		log.SetOutput(origOut)
+		log.SetFlags(origFlags)
+	})
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	if err := setupLogging(&buf, "error", "bogus"); err == nil {
+		t.Fatal("setupLogging accepted format bogus")
+	}
+	if out := buf.String(); !strings.Contains(out, "WARN ignoring log setting") || !strings.Contains(out, "bogus") {
+		t.Fatalf("no warning for --log-format=bogus with --log-level=error: %q", out)
+	}
+	if slog.Default().Enabled(t.Context(), slog.LevelWarn) {
+		t.Fatal("the warning left the level below error")
 	}
 }

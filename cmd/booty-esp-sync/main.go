@@ -34,10 +34,9 @@ func main() {
 	logLevel := flag.String("log-level", cmp.Or(os.Getenv("LOG_LEVEL"), "info"), "log level: debug, info, warn or error (env LOG_LEVEL)")
 	logFormat := flag.String("log-format", cmp.Or(os.Getenv("LOG_FORMAT"), logging.FormatText), "log format: text or json (env LOG_FORMAT)")
 	flag.Parse()
-	if err := setupLogging(os.Stderr, *logLevel, *logFormat); err != nil {
-		// Not fatal: systemd would restart the service in a loop.
-		slog.Warn("ignoring log setting", "error", err)
-	}
+	// An invalid setting is not fatal: systemd would restart the service in
+	// a loop. setupLogging logs it.
+	_ = setupLogging(os.Stderr, *logLevel, *logFormat)
 	if (*firstPartUUID == "") != (*secondPartUUID == "") {
 		fatal(errors.New("partuuid-a and partuuid-b must be provided together"))
 	}
@@ -206,12 +205,22 @@ func mountpointOrDestination(mounted bool, mountpoint, destination string) strin
 func setupLogging(w io.Writer, level, format string) error {
 	l, levelErr := logging.ParseLevel(level)
 	f, formatErr := logging.ParseFormat(format)
+	err := errors.Join(levelErr, formatErr)
+	// The warning about an invalid setting bypasses the minimum level: with
+	// --log-level=error a bad --log-format would otherwise go unnoticed.
 	if f == logging.FormatJSON {
 		slog.SetDefault(slog.New(logging.NewHandler(w, f, l)))
+		if err != nil {
+			slog.New(logging.NewHandler(w, f, slog.LevelWarn)).Warn("ignoring log setting", "error", err)
+		}
 	} else {
+		slog.SetLogLoggerLevel(min(l, slog.LevelWarn))
+		if err != nil {
+			slog.Warn("ignoring log setting", "error", err)
+		}
 		slog.SetLogLoggerLevel(l)
 	}
-	return errors.Join(levelErr, formatErr)
+	return err
 }
 
 // fatal logs err at error level and exits with 1. systemd restarts the
