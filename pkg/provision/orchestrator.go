@@ -2591,6 +2591,10 @@ func (o *Orchestrator) parsePartitions(ctx context.Context) error {
 		o.bootPartition = boot.Node
 	}
 
+	if o.encryption != nil && o.encryption.rootLV != "" {
+		o.rootPartition = o.encryption.rootLV // the root is on LVM in the LUKS2 volume
+		return nil
+	}
 	root, err := o.findRootPartition(ctx, parts)
 	if err != nil {
 		return err
@@ -2735,6 +2739,12 @@ func (o *Orchestrator) checkFilesystem(ctx context.Context) error {
 }
 
 func (o *Orchestrator) enableLVM(ctx context.Context) error {
+	if o.encryptionActive() && o.encryption.lvm {
+		// stream-image activated VG tcaas on the mapping only; an unscoped
+		// vgchange would also activate a VG tcaas of another disk.
+		o.log.Info("skipping enable-lvm, stream-image activated VG tcaas in the LUKS2 volume")
+		return nil
+	}
 	return o.disk.EnableLVM(ctx)
 }
 

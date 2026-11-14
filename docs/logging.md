@@ -242,7 +242,9 @@ show one line per stage and per notable result:
 - Disk: the selected disk, RAID arrays, wipes and secure erases, partitions
   that are grown, the `/dev/disk` links, LUKS volumes, LUKS2 + TPM2 disk
   encryption (format, enrollment, recovery key handover, the encrypted
-  image stream) and the crypto-erase of LUKS2 headers at deprovision.
+  image stream, the LVM physical volume of VG `tcaas` in the mapping and
+  the skipped `enable-lvm`) and the crypto-erase of LUKS2 headers at
+  deprovision.
 - Image: the source, the download and write progress, checksum and GPG
   signature results, qcow2 conversion, A/B slot streaming, the memory peak
   of the image step.
@@ -904,7 +906,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `progress resumed, petting the watchdog again`
 - `watchdog keepalive failed`
 
-### INFO (482 messages)
+### INFO (484 messages)
 
 #### INFO `.`
 
@@ -1285,6 +1287,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `Health check result`
 - `Health checks disabled, skipping`
 - `LUKS2 keyslots and header destroyed`
+- `LVM physical volume opened in the LUKS2 mapping`
 - `MOK enrollment queued: MokManager asks for MOK_PASSWORD at the next boot`
 - `MOK enrollment staged: the next firmware boot runs mok-enroll.efi`
 - `No SR-IOV profiles, skipping`
@@ -1396,6 +1399,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `skipping EFI fallback loader installation; no boot partition detected`
 - `skipping boot partition mount; no boot partition detected`
 - `skipping completed step`
+- `skipping enable-lvm, stream-image activated VG tcaas in the LUKS2 volume`
 - `skipping grow-partition for declarative partition layout`
 - `skipping grow-partition, mirror-root grew the root partition before creating the array`
 - `skipping grow-partition, stream-image grew the encrypted partition; close-encrypted-disk grows its file system`
