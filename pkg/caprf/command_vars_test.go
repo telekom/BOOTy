@@ -81,6 +81,7 @@ func TestMergeCommandVarsRejectsRuntimeSettings(t *testing.T) {
 		"SYSEXT_COSIGN_TRUSTED_ROOT=/deploy/tr.json": "cosign",
 		"SYSEXT_COSIGN_IDENTITY_REGEXP=.*":           "cosign",
 		"SYSEXT_COSIGN_OIDC_ISSUER=https://x":        "cosign",
+		"IMAGE_FOLLOW_REDIRECTS=false":               "IMAGE_FOLLOW_REDIRECTS",
 	} {
 		_, _, err := MergeCommandVars([]byte(commandBaseVars), []byte(payload))
 		if err == nil || !strings.Contains(err.Error(), want) {

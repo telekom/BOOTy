@@ -397,6 +397,7 @@ to the legacy value; an explicit option wins.
 | TLS certificate check for callbacks, the connectivity check and image downloads | Verified against the system roots plus `CA_BUNDLE_FILE` | Not verified, like `curl --insecure`. BOOTy logs a warning. | `SKIP_TLS_VERIFY=true` |
 | TLS certificate check for the crash artifact upload | Verified | Verified | None, always verified |
 | `http://` image URLs | Refused | Allowed | `IMAGE_ALLOW_INSECURE_HTTP=true` |
+| Redirects of the HTTP image requests (probe, download, signature) | Followed | Not followed (`curl` without `--location`): the request fails | `IMAGE_FOLLOW_REDIRECTS=false` |
 | `TOKEN_URL` | HTTPS required (plain HTTP only for loopback). TLS verified. No proxy. | Same | None, `SKIP_TLS_VERIFY` and the exported proxy never apply |
 | Proxy (`https_proxy`, `http_proxy`, `no_proxy`) | Read from the process environment. `/deploy/vars` entries do not reach the environment. | Every `/deploy/vars` entry is exported, so proxy entries apply. | `EXPORT_VARS=true` |
 

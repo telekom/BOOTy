@@ -64,8 +64,8 @@ var errArchiveVars = errors.New("deploy archive vars do not parse or validate")
 // change yet: ApplyCommandFiles swaps the staged directories in once every
 // check of the command passed, DiscardCommandFiles drops them. The settings
 // that the running ramdisk uses (transport, agent, network, MODE, DRY_RUN,
-// CAPRF_LEGACY_COMPAT and the bearer-token URLs) keep the values of the base
-// vars: the agent keeps its token and network.
+// CAPRF_LEGACY_COMPAT, IMAGE_FOLLOW_REDIRECTS and the bearer-token URLs) keep
+// the values of the base vars: the agent keeps its token and network.
 func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, keys []string, err error) {
 	ref, err := ParseVars(bytes.NewReader(c.vars))
 	if err != nil {
@@ -89,26 +89,8 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 	if err != nil {
 		return nil, nil, err
 	}
-	if fixed := cosignLockViolations(ref, cfg); len(fixed) > 0 {
-		return nil, nil, fmt.Errorf("deploy archive changes %s settings, which can not change in a running ramdisk",
-			strings.Join(fixed, ", "))
-	}
-	p, err := archiveReplacesTrustFile(tree, ref.CosignTrustFiles())
-	if err != nil {
+	if err := checkArchiveCosign(tree, ref, cfg); err != nil {
 		return nil, nil, err
-	}
-	if p != "" {
-		return nil, nil, fmt.Errorf("deploy archive replaces the cosign trust material %s", p)
-	}
-	if cosignPolicySet(ref) && (ref.ProvisionerFilesInRamdisk() || cfg.ProvisionerFilesInRamdisk()) {
-		bad, err := ramdiskCopyViolation(tree, ref.Transport.CABundleFile)
-		if err != nil {
-			return nil, nil, err
-		}
-		if bad != "" {
-			return nil, nil, fmt.Errorf("deploy archive file-system/%s would be copied over the ramdisk; under a cosign policy only %s and the %s trees are allowed",
-				bad, strings.Join(append(slices.Clone(ramdiskCopyFiles), "CA_BUNDLE_FILE"), ", "), strings.Join(ramdiskCopyTrees, " and "))
-		}
 	}
 	if len(keys) == 0 {
 		// Standby would run such a command with the base config, and the
@@ -118,13 +100,53 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 	c.stagedDeploy = staging
 	cfg.Transport, cfg.Agent, cfg.Network = ref.Transport, ref.Agent, ref.Network
 	cfg.Mode, cfg.DryRun, cfg.LegacyCompat = ref.Mode, ref.DryRun, ref.LegacyCompat
+	// main.go applies it once, before the first image client.
+	cfg.Provision.Image.FollowRedirects = ref.Provision.Image.FollowRedirects
 	cfg.Provision.Inventory.URL = ref.Provision.Inventory.URL
 	cfg.Provision.Firmware.URL = ref.Provision.Firmware.URL
 	cfg.Health.ReportURL = ref.Health.ReportURL
 	cfg.Telemetry.URL, cfg.Telemetry.MetricsURL, cfg.Telemetry.EventURL = ref.Telemetry.URL, ref.Telemetry.MetricsURL, ref.Telemetry.EventURL
 	cfg.Provision.CrashArtifacts.PrepareURL = ref.Provision.CrashArtifacts.PrepareURL
 	cfg.Provision.CrashArtifacts.UploadURL = ref.Provision.CrashArtifacts.UploadURL
+	// Only the target partition of the disk encryption may change.
+	target := cfg.Provision.DiskEncryption.Target
+	cfg.Provision.DiskEncryption = ref.Provision.DiskEncryption
+	cfg.Provision.DiskEncryption.Target = target
+	// The restored settings can conflict with the archive (an archive
+	// without DISK_ENCRYPTION and with a PARTITION_LAYOUT): check the final
+	// config, like ParseVars checked the archive alone.
+	if err := cfg.Validate(); err != nil {
+		return nil, nil, errArchiveVars
+	}
 	return cfg, keys, nil
+}
+
+// checkArchiveCosign refuses a deploy archive that changes the cosign
+// policy of the base vars, replaces its trust material or, under a cosign
+// policy, copies files outside the allowlist over the ramdisk.
+func checkArchiveCosign(tree string, ref, cfg *config.MachineConfig) error {
+	if fixed := cosignLockViolations(ref, cfg); len(fixed) > 0 {
+		return fmt.Errorf("deploy archive changes %s settings, which can not change in a running ramdisk",
+			strings.Join(fixed, ", "))
+	}
+	p, err := archiveReplacesTrustFile(tree, ref.CosignTrustFiles())
+	if err != nil {
+		return err
+	}
+	if p != "" {
+		return fmt.Errorf("deploy archive replaces the cosign trust material %s", p)
+	}
+	if cosignPolicySet(ref) && (ref.ProvisionerFilesInRamdisk() || cfg.ProvisionerFilesInRamdisk()) {
+		bad, err := ramdiskCopyViolation(tree, ref.Transport.CABundleFile)
+		if err != nil {
+			return err
+		}
+		if bad != "" {
+			return fmt.Errorf("deploy archive file-system/%s would be copied over the ramdisk; under a cosign policy only %s and the %s trees are allowed",
+				bad, strings.Join(append(slices.Clone(ramdiskCopyFiles), "CA_BUNDLE_FILE"), ", "), strings.Join(ramdiskCopyTrees, " and "))
+		}
+	}
+	return nil
 }
 
 // ramdiskRoot is where PROVISIONER_FILES_TARGET=ramdisk copies

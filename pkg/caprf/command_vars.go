@@ -25,7 +25,8 @@ import (
 // so only checked by a checksum) or change the checksum of one; it can drop
 // such a source. It can not change a URL
 // that BOOTy posts to with the bearer token (inventory, firmware, health,
-// telemetry, crash artifacts). Unknown keys are rejected too. A payload
+// telemetry, crash artifacts) and the disk encryption settings except the
+// target partition. Unknown keys are rejected too. A payload
 // with only blank and comment lines returns no keys.
 //
 // The base is the vars file that BOOTy read at start; MergeCommandVars does
@@ -69,6 +70,8 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 		{"MODE", ref.Mode, cfg.Mode},
 		{"DRY_RUN", ref.DryRun, cfg.DryRun},
 		{"CAPRF_LEGACY_COMPAT", ref.LegacyCompat, cfg.LegacyCompat},
+		// main.go applies it once, before the first image client.
+		{"IMAGE_FOLLOW_REDIRECTS", ref.Provision.Image.FollowRedirects, cfg.Provision.Image.FollowRedirects},
 		// URLs that receive bearer-token POSTs.
 		{"INVENTORY_URL", ref.Provision.Inventory.URL, cfg.Provision.Inventory.URL},
 		{"FIRMWARE_URL", ref.Provision.Firmware.URL, cfg.Provision.Firmware.URL},
@@ -77,6 +80,9 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 			[]string{cfg.Telemetry.URL, cfg.Telemetry.MetricsURL, cfg.Telemetry.EventURL}},
 		{"crash artifact", []string{ref.Provision.CrashArtifacts.PrepareURL, ref.Provision.CrashArtifacts.UploadURL},
 			[]string{cfg.Provision.CrashArtifacts.PrepareURL, cfg.Provision.CrashArtifacts.UploadURL}},
+		// The recovery key and the token go to these URLs; turning
+		// encryption off or allowing a failure would downgrade silently.
+		{"disk encryption", lockedDiskEncryption(ref.Provision.DiskEncryption), lockedDiskEncryption(cfg.Provision.DiskEncryption)},
 	} {
 		if !reflect.DeepEqual(s.ref, s.cand) {
 			fixed = append(fixed, s.name)
