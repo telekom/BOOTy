@@ -118,6 +118,9 @@ func TestDiskEncryptionUbuntu2404VM(t *testing.T) {
 		t.Fatal("the initramfs-tools initramfs has no cryptroot entry for the root")
 	}
 	pcr7, pcr14 := luksField(report, "PCR7"), luksField(report, "PCR14")
+	if pcr7 == "" || pcr14 == "" {
+		t.Fatalf("no PCR 7 or 14 reading: %q %q", pcr7, pcr14)
+	}
 
 	// 4. Same Secure Boot state, TPM2 token and PCRs, initramfs-tools: the
 	// expected failure, a passphrase prompt. The recovery key opens it.
