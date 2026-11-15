@@ -251,6 +251,8 @@ show one line per stage and per notable result:
 - Image: the source, the download and write progress, checksum and GPG
   signature results, qcow2 conversion, A/B slot streaming, the memory peak
   of the image step.
+- Rescue SSH: with `RESCUE_SSH_HARDENED=false`, that the dropbear build has
+  no RSA support for an RSA host key.
 - Boot handoff: EFI boot entries, GRUB and kernel command line, kexec load
   and execute, reboot and power off, the watchdog handoff.
 - Kernel module signing: the signed out-of-tree modules and the certificate
