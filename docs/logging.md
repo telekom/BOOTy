@@ -434,7 +434,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 - `step made no progress within its budget, stopping the watchdog keepalive; the hardware resets the host`
 
-### WARN (387 messages)
+### WARN (388 messages)
 
 #### WARN `.`
 
@@ -863,8 +863,8 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `ignoring malformed rescue SSH key`
 - `rescue SSH allows password login: a password hash is set and no SSH key`
 - `rescue SSH hardening disabled (RESCUE_SSH_HARDENED=false): password login and port forwarding allowed, no idle timeout`
-- `rescue SSH key is RSA, which the hardened dropbear build refuses`
 - `rescue SSH has no valid key in RESCUE_SSH_PUBKEY: SSH login is refused, also with a password hash`
+- `rescue SSH key is RSA, which the hardened dropbear build refuses`
 
 #### WARN `pkg/runmode`
 
