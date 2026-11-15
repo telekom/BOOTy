@@ -116,13 +116,13 @@ func (c *rescueConn) acceptForward(ln net.Listener, addr string, port uint32) {
 		}
 		go func() {
 			oh, op, _ := net.SplitHostPort(tc.RemoteAddr().String())
-			opn, _ := strconv.Atoi(op)
+			opn, _ := strconv.ParseUint(op, 10, 16)
 			ch, reqs, err := c.conn.OpenChannel("forwarded-tcpip", ssh.Marshal(struct {
 				Addr     string
 				Port     uint32
 				OrigAddr string
 				OrigPort uint32
-			}{addr, port, oh, uint32(opn)})) //nolint:gosec // a TCP port
+			}{addr, port, oh, uint32(opn)}))
 			if err != nil {
 				_ = tc.Close()
 				return
