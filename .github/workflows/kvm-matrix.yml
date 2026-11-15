@@ -380,7 +380,7 @@ jobs:
           - scenario: rescue-ssh
             qemu_extra: ""
             test_tag: e2e
-            test_regex: "^TestRescueSSH(OPK)?LoginQEMU$"
+            test_regex: "^TestRescueSSH.*LoginQEMU$"
             privileged: false
             setup: |
               docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --output type=local,dest=out-flavor -f initrd.Dockerfile .

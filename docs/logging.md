@@ -224,7 +224,7 @@ debug dumps.
   `RESCUE_SSH_HARDENED=false`. With the opkssh settings: malformed
   `RESCUE_SSH_OPK_PROVIDERS` and `RESCUE_SSH_OPK_POLICY` rows (by position),
   static keys the server skips, no valid provider, a build without opkssh
-  support, and every refused login (`rescue SSH login refused`: `method`
+  support, a session whose shell did not start, and every refused login (`rescue SSH login refused`: `method`
   `opkssh` or `publickey`, `principal`, `remote`, the `issuer` and
   `subject` that the PK Token claims or the `key` fingerprint, and the
   `reason`; never the token).
@@ -450,7 +450,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 - `step made no progress within its budget, stopping the watchdog keepalive; the hardware resets the host`
 
-### WARN (396 messages)
+### WARN (397 messages)
 
 #### WARN `.`
 
@@ -889,6 +889,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `rescue SSH key is RSA, which the hardened dropbear build refuses`
 - `rescue SSH login refused`
 - `rescue SSH server stopped`
+- `rescue SSH session did not start`
 
 #### WARN `pkg/runmode`
 

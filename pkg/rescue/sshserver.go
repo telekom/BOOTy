@@ -261,7 +261,13 @@ func serveSession(ctx context.Context, ch ssh.Channel, reqs <-chan *ssh.Request)
 		case "window-change":
 			ok = s.pty != nil && setWinsize(s.pty, req.Payload) == nil
 		case "shell", "exec":
-			ok = !s.started && s.start(req) == nil
+			if !s.started {
+				err := s.start(req)
+				if err != nil {
+					slog.Warn("rescue SSH session did not start", "error", err)
+				}
+				ok = err == nil
+			}
 		}
 		// Refused: env, subsystem (sftp), x11-req, auth-agent-req and the rest.
 		if req.WantReply {
@@ -336,7 +342,7 @@ func (s *session) start(req *ssh.Request) error {
 	}
 	cmd := exec.CommandContext(s.ctx, args[0], args[1:]...)
 	cmd.Dir = "/"
-	if st, err := os.Stat("/root"); err == nil && st.IsDir() {
+	if unix.Access("/root", unix.X_OK) == nil {
 		cmd.Dir = "/root"
 	}
 	term := s.term
