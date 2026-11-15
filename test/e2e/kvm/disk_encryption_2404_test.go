@@ -131,6 +131,7 @@ func TestDiskEncryptionUbuntu2404VM(t *testing.T) {
 		"DISK_ENCRYPTION":                  "luks2-tpm2",
 		"DISK_ENCRYPTION_RECOVERY_KEY_URL": escrow.url + "/recovery-key",
 		"DISK_ENCRYPTION_STATUS_URL":       escrow.url + "/status",
+		"DISK_ENCRYPTION_STATUS_TOKEN":     luksStatusToken,
 	}, map[string]string{luksCAPath: escrow.caPEM}))
 	key := escrow.recoveryKey(t)
 

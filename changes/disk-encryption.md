@@ -9,7 +9,12 @@ section: Upgrade notes for CAPRF
   with the bearer token before it formats the partition, follows no
   redirect and fails the run on any answer other than 2xx. The endpoint
   stores (escrows) the key. Optional `DISK_ENCRYPTION_STATUS_URL` receives
-  `tpm2-bound`, `slot1-removed` or `failed` from the installed system.
+  `tpm2-bound`, `slot1-removed` or `failed` from the installed system with
+  the bearer token `DISK_ENCRYPTION_STATUS_TOKEN`, which is required with
+  the status URL: issue a token that can post this status only, as it stays
+  on the host until the enrollment ends.
+  `DISK_ENCRYPTION_STATUS_REUSE_PROVISIONING_TOKEN=true` sends the
+  provisioning token instead (transitional).
   BOOTy reboots through the firmware instead of kexec, refuses
   `SKIP_TLS_VERIFY` (also the `CAPRF_LEGACY_COMPAT` preset), needs Secure
   Boot in user mode, and the provisioner must turn Secure Boot on for the

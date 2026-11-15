@@ -15,11 +15,13 @@ import (
 
 func TestParseVarsDiskEncryption(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader("export DISK_ENCRYPTION=\"LUKS2-TPM2\"\nexport DISK_ENCRYPTION_TARGET=\"3\"\n" +
-		"export DISK_ENCRYPTION_RECOVERY_KEY_URL=\"https://p/key\"\nexport DISK_ENCRYPTION_ALLOW_FAILURE=\"true\"\n"))
+		"export DISK_ENCRYPTION_RECOVERY_KEY_URL=\"https://p/key\"\nexport DISK_ENCRYPTION_ALLOW_FAILURE=\"true\"\n" +
+		"export DISK_ENCRYPTION_STATUS_URL=\"https://p/s\"\nexport DISK_ENCRYPTION_STATUS_TOKEN=\" status-only \"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := config.DiskEncryptionConfig{Mode: "luks2-tpm2", Target: "3", RecoveryKeyURL: "https://p/key", AllowFailure: true}
+	want := config.DiskEncryptionConfig{Mode: "luks2-tpm2", Target: "3", RecoveryKeyURL: "https://p/key", AllowFailure: true,
+		StatusURL: "https://p/s", StatusToken: "status-only"}
 	if cfg.Provision.DiskEncryption != want {
 		t.Fatalf("got %+v, want %+v", cfg.Provision.DiskEncryption, want)
 	}
@@ -32,6 +34,9 @@ func TestParseVarsDiskEncryption(t *testing.T) {
 	}
 	if _, err := ParseVars(strings.NewReader("export DISK_ENCRYPTION_ALLOW_FAILURE=\"ture\"\n")); err == nil {
 		t.Fatal("a typo in DISK_ENCRYPTION_ALLOW_FAILURE was accepted")
+	}
+	if _, err := ParseVars(strings.NewReader("export DISK_ENCRYPTION_STATUS_REUSE_PROVISIONING_TOKEN=\"ture\"\n")); err == nil {
+		t.Fatal("a typo in DISK_ENCRYPTION_STATUS_REUSE_PROVISIONING_TOKEN was accepted")
 	}
 }
 
@@ -122,12 +127,15 @@ func TestEscrowRecoveryKeyFollowsNoRedirect(t *testing.T) {
 }
 
 func TestCommandPayloadCannotChangeDiskEncryption(t *testing.T) {
-	base := []byte(commandBaseVars + "\nDISK_ENCRYPTION=luks2-tpm2\nDISK_ENCRYPTION_RECOVERY_KEY_URL=https://caprf/key\n")
+	base := []byte(commandBaseVars + "\nDISK_ENCRYPTION=luks2-tpm2\nDISK_ENCRYPTION_RECOVERY_KEY_URL=https://caprf/key\n" +
+		"DISK_ENCRYPTION_STATUS_URL=https://caprf/s\nDISK_ENCRYPTION_STATUS_TOKEN=status-only\n")
 	for _, payload := range []string{
 		"DISK_ENCRYPTION_RECOVERY_KEY_URL=https://evil.example.com/key",
 		"DISK_ENCRYPTION=",
 		"DISK_ENCRYPTION_ALLOW_FAILURE=true",
 		"DISK_ENCRYPTION_STATUS_URL=https://evil.example.com/s",
+		"DISK_ENCRYPTION_STATUS_TOKEN=evil",
+		"DISK_ENCRYPTION_STATUS_TOKEN=\nDISK_ENCRYPTION_STATUS_REUSE_PROVISIONING_TOKEN=true",
 		"DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK=true",
 		"DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK=true",
 	} {
@@ -154,16 +162,19 @@ func TestCommandPayloadCannotChangeDiskEncryption(t *testing.T) {
 
 func TestDeployArchiveCannotChangeDiskEncryption(t *testing.T) {
 	useDeployRoot(t)
-	base := baseAgentVars + "DISK_ENCRYPTION=luks2-tpm2\nDISK_ENCRYPTION_RECOVERY_KEY_URL=https://caprf/key\n"
+	base := baseAgentVars + "DISK_ENCRYPTION=luks2-tpm2\nDISK_ENCRYPTION_RECOVERY_KEY_URL=https://caprf/key\n" +
+		"DISK_ENCRYPTION_STATUS_URL=https://caprf/s\nDISK_ENCRYPTION_STATUS_TOKEN=status-only\n"
 	c := &Client{vars: []byte(base)}
 	cfg, _, err := applyArchive(c, deployArchive(t, archiveEntry{name: "deploy/vars",
 		body: "HOSTNAME=w\nDISK_ENCRYPTION=\nDISK_ENCRYPTION_RECOVERY_KEY_URL=https://evil/key\nDISK_ENCRYPTION_ALLOW_FAILURE=true\nDISK_ENCRYPTION_TARGET=3\n" +
+			"DISK_ENCRYPTION_STATUS_TOKEN=evil\nDISK_ENCRYPTION_STATUS_REUSE_PROVISIONING_TOKEN=true\n" +
 			"DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK=true\n"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	d := cfg.Provision.DiskEncryption
-	if d.Mode != config.DiskEncryptionLUKS2TPM2 || d.RecoveryKeyURL != "https://caprf/key" || d.AllowFailure || d.Target != "3" || d.SkipInitrdUnlockCheck {
+	if d.Mode != config.DiskEncryptionLUKS2TPM2 || d.RecoveryKeyURL != "https://caprf/key" || d.AllowFailure || d.Target != "3" ||
+		d.StatusToken != "status-only" || d.StatusReuseProvisioningToken || d.SkipInitrdUnlockCheck {
 		t.Fatalf("archive changed disk encryption: %+v", d)
 	}
 }

@@ -465,6 +465,31 @@ func (p *escrowProvider) EscrowRecoveryKey(_ context.Context, body []byte) error
 
 func (p *escrowProvider) CurrentToken() string { return "tok" }
 
+// The status callback gets DISK_ENCRYPTION_STATUS_TOKEN, and the
+// provisioning token only with the opt-out.
+func TestEncryptionExtrasStatusToken(t *testing.T) {
+	for name, tc := range map[string]struct {
+		d    config.DiskEncryptionConfig
+		want string
+	}{
+		"status token":       {config.DiskEncryptionConfig{StatusURL: "https://p/s", StatusToken: "status-only"}, "status-only"},
+		"reuse provisioning": {config.DiskEncryptionConfig{StatusURL: "https://p/s", StatusReuseProvisioningToken: true}, "tok"},
+		"no status URL":      {config.DiskEncryptionConfig{StatusToken: "status-only"}, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o, _, _ := formatTestOrchestrator(t, &escrowProvider{})
+			o.cfg.Provision.DiskEncryption = tc.d
+			e, err := o.encryptionExtras()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if e.token != tc.want {
+				t.Fatalf("token = %q, want %q", e.token, tc.want)
+			}
+		})
+	}
+}
+
 type cryptsetupCall struct {
 	args  []string
 	stdin []byte

@@ -631,7 +631,8 @@ func (o *Orchestrator) encryptionExtras() (*encryptionExtras, error) {
 		mokWait:               sb.SigningMode() != config.SigningOff && sb.ModuleSigning.EnrollmentMethod() == config.ModuleSigningEnrollMokutil,
 		skipInitrdUnlockCheck: d.SkipInitrdUnlockCheck}
 	if e.statusURL != "" {
-		if escrow, ok := o.provider.(config.RecoveryKeyEscrow); ok {
+		e.token = d.StatusToken
+		if escrow, ok := o.provider.(config.RecoveryKeyEscrow); ok && d.StatusReuseProvisioningToken {
 			e.token = escrow.CurrentToken()
 		}
 		if f := o.cfg.Transport.CABundleFile; f != "" {
