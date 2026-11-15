@@ -1073,6 +1073,10 @@ if [ -e "$bound" ]; then
 		status tpm2-initrd-unlock-failed "the initramfs did not open the root with the TPM2 on this boot; key slot $LUKS_ENROLL_SLOT stays"
 		exit 1
 	fi
+	# headless allows any token that needs no prompt: the marker proves a
+	# TPM2 unlock only when the TPM2 token is the only one.
+	others=$(cryptsetup luksDump "$dev" | sed -n '/^Tokens:/,/^Digests:/p' | grep -E '^  [0-9]+: ' | grep -v ': systemd-tpm2$' || true)
+	[ -z "$others" ] || fail "the volume has a LUKS2 token other than systemd-tpm2 ($others)"
 	list=$(lsinitrd "/boot/initrd.img-$(uname -r)") || fail "lsinitrd of the booted initramfs"
 	case $list in *luks-enroll.key*) fail "the initramfs of this boot still has the enrollment key" ;; esac
 	case $list in *libcryptsetup-token-systemd-tpm2.so*) ;; *) fail "the initramfs of this boot lacks the TPM2 token plugin" ;; esac

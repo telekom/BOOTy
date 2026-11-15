@@ -110,6 +110,8 @@ Installed system, `booty-luks-tpm2-enroll.service`:
   key, posts `tpm2-initrd-unlock-failed`, fails the unit and tries again on
   the next boot: `cryptsetup --token-only` from the booted system proves
   only that the TPM2 unseals now, not that the initramfs can use it.
+  `headless` would let any token that needs no prompt open the volume, so
+  a LUKS2 token other than `systemd-tpm2` fails the check (`failed`).
   `DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK=true` skips this check
   (transitional escape hatch, will be removed). Then the initramfs of this
   boot has no key, and the TPM2 opens the volume with the PCRs of this

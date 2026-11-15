@@ -317,7 +317,7 @@ func TestEnrollScriptPhase2NeedsInitrdTPM2Unlock(t *testing.T) {
 	calls := filepath.Join(dir, "calls")
 	fakes := map[string]string{
 		// The TPM2 unseals from the booted system and slot 1 exists.
-		"cryptsetup": `echo "cryptsetup $*" >>` + calls + `; [ "$1" != luksDump ] || echo "  1: luks2"`,
+		"cryptsetup": `echo "cryptsetup $*" >>` + calls + `; [ "$1" != luksDump ] || printf 'Keyslots:\n  1: luks2\nTokens:\n  0: systemd-tpm2\n%s\nDigests:\n' "$(cat ` + filepath.Join(dir, "tokens") + ` 2>/dev/null)"`,
 		"curl":       `echo "curl $*" >>` + calls + `; echo 204`,
 		"lsinitrd":   `echo usr/lib/cryptsetup/libcryptsetup-token-systemd-tpm2.so`,
 		"systemctl":  `echo "systemctl $*" >>` + calls,
@@ -372,6 +372,16 @@ func TestEnrollScriptPhase2NeedsInitrdTPM2Unlock(t *testing.T) {
 	}
 	if out, c, err = run(""); err != nil || !strings.Contains(c, "luksKillSlot") || !strings.Contains(c, `"status":"slot1-removed"`) {
 		t.Fatalf("marker set: slot 1 stays: %v\n%s\n%s", err, out, c)
+	}
+	// Another token could have opened the volume headless: no proof.
+	if err := os.WriteFile(filepath.Join(dir, "tokens"), []byte("  1: systemd-fido2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, c, err = run(""); err == nil || strings.Contains(c, "luksKillSlot") || !strings.Contains(out, "systemd-fido2") {
+		t.Fatalf("second token: slot 1 removed: %v\n%s\n%s", err, out, c)
+	}
+	if err := os.Remove(filepath.Join(dir, "tokens")); err != nil {
+		t.Fatal(err)
 	}
 	// DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK: the old behavior.
 	if err := os.Remove(marker); err != nil {
