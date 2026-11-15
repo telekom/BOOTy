@@ -29,6 +29,10 @@ if [ -e /` + luksSwitchDebDir + `/switched ]; then
 	exit 0
 fi
 echo "INITRAMFS=dracut"
+# Diagnostics of the dracut unlock: what systemd-cryptsetup did in the
+# initramfs and which TPM2 pieces the initramfs has.
+journalctl -b -o cat -u 'systemd-cryptsetup@*' --no-pager 2>/dev/null | tail -n 20 | sed 's/^/CRYPTSETUP /'
+lsinitrd "/boot/initrd.img-$k" 2>/dev/null | grep -E 'tss2|tpm|cryptsetup|crypttab' | awk '{print "INITRD " $NF}'
 if [ -e /etc/booty/luks-enroll.key ] || systemctl is-enabled --quiet booty-luks-tpm2-enroll.service; then
 	exit 0
 fi
