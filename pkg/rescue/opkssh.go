@@ -144,6 +144,13 @@ type opkVerifier struct {
 
 // check is the certVerifier of v; its error is the log reason.
 func (v *opkVerifier) check(ctx context.Context, user string, cert *ssh.Certificate) (issuer, subject string, err error) {
+	// The PK Token comes from a client that has not logged in: a panic in
+	// the openpubkey parsers must refuse the login, not stop BOOTy (PID 1).
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("malformed PK Token (%v)", r)
+		}
+	}()
 	claims, err := v.verify(ctx, user, cert)
 	if err != nil {
 		err = errors.New(refusalReason(err))
@@ -222,6 +229,10 @@ func (v *opkVerifier) verify(ctx context.Context, user string, cert *ssh.Certifi
 	pkt, err := smuggler.GetPKToken()
 	if err != nil {
 		return claims, fmt.Errorf("PK Token: %w", err)
+	}
+	// openpubkey dereferences both signatures without a check.
+	if pkt.Op == nil || pkt.Cic == nil {
+		return claims, errors.New("PK Token: want an ID token and a CIC signature")
 	}
 	_ = json.Unmarshal(pkt.Payload, &claims)
 	_ = json.Unmarshal(pkt.Payload, &claims.All)

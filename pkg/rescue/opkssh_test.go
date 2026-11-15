@@ -4,6 +4,9 @@ package rescue
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"net"
 	"net/http"
@@ -212,4 +215,81 @@ func TestOPKVerifyRefusesHTTPJWKS(t *testing.T) {
 	if _, err := v.verify(ctx, "root", key.Cert); err == nil || !strings.Contains(err.Error(), "not https") {
 		t.Fatalf("err = %v, want the https refusal", err)
 	}
+}
+
+// selfSignedOPKCert returns a client key with a certificate that carries
+// pkt as its openpubkey-pkt extension, as anyone can make one.
+func selfSignedOPKCert(t testing.TB, signer ssh.Signer, pkt string) *ssh.Certificate {
+	t.Helper()
+	cert := &ssh.Certificate{Key: signer.PublicKey(), CertType: ssh.UserCert, ValidBefore: ssh.CertTimeInfinity,
+		Permissions: ssh.Permissions{Extensions: map[string]string{"openpubkey-pkt": pkt}}}
+	if err := cert.SignCert(rand.Reader, signer); err != nil {
+		t.Fatal(err)
+	}
+	return cert
+}
+
+// A PK Token without a CIC signature made openpubkey dereference nil while
+// the client had not logged in: the panic stopped BOOTy. The login must be
+// refused and the server keep serving.
+func TestRescueSSHOPKMalformedPKToken(t *testing.T) {
+	prov, httpClient := startMockOIDC(t, "booty")
+	v, err := newOPKVerifier(parseOPKProviders(prov.Issuer+" booty 24h"),
+		parseOPKPolicy("root alice@example.com "+prov.Issuer), httpClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staticSigner, staticLine := newTestKey(t)
+	addr := startTestServer(t, &Config{SSHKeys: []string{staticLine}, OPKPolicy: "x"}, v.check)
+	b64 := base64.RawURLEncoding.EncodeToString
+	opOnly := b64([]byte(`{"iss":"`+prov.Issuer+`"}`)) + ":" + b64([]byte(`{"alg":"RS256"}`)) + ":" + b64([]byte("sig"))
+	signer, _ := newTestKey(t)
+	certSigner, err := ssh.NewCertSigner(selfSignedOPKCert(t, signer, opOnly), signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ssh.Dial("tcp", addr, clientConfig("root", ssh.PublicKeys(certSigner))); err == nil {
+		t.Fatal("login with a PK Token without a CIC signature accepted")
+	}
+	if out := runRescue(t, dialRescue(t, addr, "root", staticSigner), "echo rescue-ok"); out != "rescue-ok\n" {
+		t.Errorf("static key after the refusal: output %q", out)
+	}
+}
+
+// FuzzOPKCheck feeds arbitrary openpubkey-pkt extensions, which a client
+// sends before it logs in, to the verifier: it must refuse without a
+// panic.
+func FuzzOPKCheck(f *testing.F) {
+	prov, err := opktest.NewProvider("https://idp.example", "booty")
+	if err != nil {
+		f.Fatal(err)
+	}
+	key, err := prov.NewKey(context.Background(), map[string]any{"email": "alice@example.com", "email_verified": true})
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(key.Cert.Extensions["openpubkey-pkt"])
+	f.Add("e30:e30:e30")
+	f.Add("e30:e30:e30:e30:e30.a.b.c")
+	// No JWKS: a token that gets that far fails at the fetch.
+	client := httpsOnly(&http.Client{Transport: http.NewFileTransport(http.Dir("/nonexistent"))})
+	v, err := newOPKVerifier(parseOPKProviders(prov.Issuer+" booty 24h"),
+		parseOPKPolicy("root alice@example.com "+prov.Issuer), client)
+	if err != nil {
+		f.Fatal(err)
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		f.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		f.Fatal(err)
+	}
+	// verify, not check: check turns a panic into a refusal.
+	f.Fuzz(func(t *testing.T, pkt string) {
+		if _, err := v.verify(context.Background(), "root", selfSignedOPKCert(t, signer, pkt)); err == nil {
+			t.Fatalf("PK Token %q accepted", pkt)
+		}
+	})
 }
