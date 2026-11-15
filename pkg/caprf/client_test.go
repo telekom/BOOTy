@@ -2214,6 +2214,24 @@ func TestParseVarsRescueMode(t *testing.T) {
 	if !cfg.Rescue.AutoMountDisks {
 		t.Error("RescueAutoMountDisks = false, want true")
 	}
+	if cfg.Rescue.SSHHardened != nil {
+		t.Errorf("RescueSSHHardened = %v, want unset", *cfg.Rescue.SSHHardened)
+	}
+}
+
+func TestParseVarsRescueSSHHardened(t *testing.T) {
+	for value, want := range map[string]bool{
+		"false": false, "0": false, "NO": false, " False ": false,
+		"true": true, "": true, "maybe": true,
+	} {
+		cfg, err := ParseVars(strings.NewReader("RESCUE_SSH_HARDENED=" + value + "\n"))
+		if err != nil {
+			t.Fatalf("ParseVars(%q) error: %v", value, err)
+		}
+		if cfg.Rescue.SSHHardened == nil || *cfg.Rescue.SSHHardened != want {
+			t.Errorf("RESCUE_SSH_HARDENED=%q: SSHHardened = %v, want %v", value, cfg.Rescue.SSHHardened, want)
+		}
+	}
 }
 
 func TestParseVarsCloudInitConfig(t *testing.T) {

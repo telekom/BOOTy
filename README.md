@@ -518,11 +518,12 @@ root is mounted.
 | `PARTITION_LAYOUT_URL` | — | HTTPS URL of the partition layout JSON; `PARTITION_LAYOUT` overrides it |
 | `PARTITION_LAYOUT_IMAGE_PATH` | — | Path (or pattern) of the partition layout JSON in the root of the image; `PARTITION_LAYOUT` and `PARTITION_LAYOUT_URL` override it |
 | `DISK_SERIAL` | — | Target specific disk by serial number |
-| `RESCUE_PASSWORD_HASH` | — | Password hash for rescue mode access |
+| `RESCUE_PASSWORD_HASH` | — | Password hash for rescue mode access; over SSH only without `RESCUE_SSH_PUBKEY` |
 | `POST_PROVISION_CMDS` | — | Semicolon-separated commands to run in chroot after provisioning |
 | `RESCUE_MODE` | `reboot` | Failure recovery strategy: `reboot`, `retry`, `shell`, `wait` |
 | `RESCUE_TIMEOUT` | `0` | *(Phase 2)* Rescue wait timeout in seconds (0 = indefinite) |
-| `RESCUE_SSH_PUBKEY` | — | *(Phase 2)* SSH public key for rescue shell access |
+| `RESCUE_SSH_PUBKEY` | — | SSH public keys for rescue shell access, separated by `;` |
+| `RESCUE_SSH_HARDENED` | `true` | `false` restores password login and port forwarding in the rescue SSH server (transitional) |
 | `RESCUE_AUTO_MOUNT` | `false` | *(Phase 2)* Auto-mount disks in rescue shell mode |
 | `EVPN_L2_ENABLED` | `false` | Enable EVPN L2 overlay (Type-2/3 route origination and handling) in GoBGP mode |
 | `EVPN_TYPE5_ONLY` | `false` | Explicitly select direct EVPN Type-5 routing without an L2 gateway; mutually exclusive with `EVPN_L2_ENABLED` |

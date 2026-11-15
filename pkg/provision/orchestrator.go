@@ -491,10 +491,9 @@ func (o *Orchestrator) RescueConfig() *rescue.Config {
 			cfg.Mode = mode
 		}
 	}
-	if o.cfg.Rescue.SSHPubKey != "" {
-		cfg.SSHKeys = []string{o.cfg.Rescue.SSHPubKey}
-	}
+	cfg.SSHKeys = rescue.ParseSSHKeys(o.cfg.Rescue.SSHPubKey)
 	cfg.PasswordHash = o.cfg.Rescue.PasswordHash
+	cfg.LegacySSH = !config.BoolOr(o.cfg.Rescue.SSHHardened, true)
 	if o.cfg.Rescue.Timeout > 0 {
 		cfg.ShellTimeout = time.Duration(o.cfg.Rescue.Timeout) * time.Second
 	}

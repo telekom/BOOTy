@@ -3042,7 +3042,9 @@ func TestExecuteStepReturnsCheckpointSaveErrorAfterSuccess(t *testing.T) {
 func TestRescueConfig_WiresAllFields(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Rescue.Mode = "shell"
-	cfg.Rescue.SSHPubKey = "ssh-ed25519 AAAA..."
+	keyA := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ8kKf8w6YJ6AW2D8KOa/ms2xcrTgfpgPfemuoTsXRYj a@ops"
+	keyB := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC2j7N8uzGst2VSpIi+UQNVlgq3MVUnL+upBub/+fmwK b@ops"
+	cfg.Rescue.SSHPubKey = keyA + ";not-a-key;" + keyB
 	cfg.Rescue.PasswordHash = "$6$rounds=4096$salt$hash"
 	cfg.Rescue.Timeout = 120
 	cfg.Rescue.AutoMountDisks = true
@@ -3053,8 +3055,16 @@ func TestRescueConfig_WiresAllFields(t *testing.T) {
 	if rc.Mode != "shell" {
 		t.Errorf("Mode = %q, want shell", rc.Mode)
 	}
-	if len(rc.SSHKeys) != 1 || rc.SSHKeys[0] != "ssh-ed25519 AAAA..." {
-		t.Errorf("SSHKeys = %v, want [ssh-ed25519 AAAA...]", rc.SSHKeys)
+	if len(rc.SSHKeys) != 2 || rc.SSHKeys[0] != keyA || rc.SSHKeys[1] != keyB {
+		t.Errorf("SSHKeys = %q, want [%q %q]", rc.SSHKeys, keyA, keyB)
+	}
+	if rc.LegacySSH {
+		t.Error("LegacySSH should default to false")
+	}
+	off := false
+	cfg.Rescue.SSHHardened = &off
+	if !o.RescueConfig().LegacySSH {
+		t.Error("SSHHardened=false should set LegacySSH")
 	}
 	if rc.PasswordHash != "$6$rounds=4096$salt$hash" {
 		t.Errorf("PasswordHash = %q", rc.PasswordHash)

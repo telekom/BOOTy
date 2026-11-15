@@ -650,10 +650,54 @@ does.
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
 | `RESCUE_MODE` | `reboot`, `wait` with `FAILURE_ACTION=wait` | `reboot`, `retry`, `shell`, `wait` | Action after a failed provisioning, also for a failed standby `provision` command. |
-| `RESCUE_SSH_PUBKEY` | (unset) | SSH public key | Authorized key for root in `shell` and `wait` modes. BOOTy starts `dropbear`. |
-| `RESCUE_PASSWORD_HASH` | (unset) | crypt(3) hash | Root password hash in `shell` and `wait` modes. |
+| `RESCUE_SSH_PUBKEY` | (unset) | SSH public keys, separated by `;` | Authorized keys for root in `shell` and `wait` modes. BOOTy starts `dropbear`. See [Rescue SSH server](#rescue-ssh-server). |
+| `RESCUE_PASSWORD_HASH` | (unset) | crypt(3) hash | Root password hash in `shell` and `wait` modes. SSH password login only without a `RESCUE_SSH_PUBKEY` key. |
+| `RESCUE_SSH_HARDENED` | `true` | boolean | `false` starts `dropbear` with password login and port forwarding and without the idle timeout, as before. Transitional escape hatch; only `false`, `0` or `no` turn the hardening off. YAML `rescue.sshHardened`. |
 | `RESCUE_AUTO_MOUNT` | `false` | boolean | Mount the found disks in `shell` and `wait` modes. |
 | `RESCUE_TIMEOUT` | `0` | integer, seconds | Parsed, but no code uses the value. |
+
+### Rescue SSH server
+
+`RESCUE_SSH_PUBKEY` takes one or more keys in `authorized_keys` form
+(`[options] type base64 [comment]`), separated by `;` (YAML `sshPubKey` may
+also use newlines). Several keys allow a key rotation without a window that
+has only the new key. Empty entries are skipped. A malformed entry (unknown
+key type, a blob that is not base64 or does not match its type) is logged
+with its position and skipped, so the other keys still work. A `;` inside a
+key comment or a `command="..."` option splits the entry; do not use one.
+
+BOOTy generates an Ed25519 host key on every boot and starts `dropbear`
+with `-r <host key> -s -j -k -I 900`:
+
+- Login is key-only (`-s`) once a key is set. `RESCUE_PASSWORD_HASH` then
+  sets the root password, but SSH refuses password login. Only when no key
+  is set and a password hash is, password login stays allowed, with a
+  warning in the log.
+- Local and remote port forwarding are refused (`-j -k`).
+- A session without traffic for 15 minutes is closed (`-I 900`).
+
+`RESCUE_SSH_HARDENED=false` drops `-s -j -k -I` (password login, port
+forwarding, no idle timeout), for the transition only.
+
+The ramdisk `dropbear` is built from the Debian trixie source
+(`DROPBEAR_VERSION` and `DROPBEAR_SHA256` in `initrd.Dockerfile`, bumped by
+hand) with the compile-time options of `hack/dropbear-localoptions.h`. It
+supports:
+
+| | Algorithms |
+|-|------------|
+| Key exchange | `mlkem768x25519-sha256`, `sntrup761x25519-sha512`, `curve25519-sha256`, `ecdh-sha2-nistp256/384/521` |
+| Host key | `ssh-ed25519` (the only key BOOTy generates) |
+| User keys | `ssh-ed25519`, `ecdsa-sha2-nistp256/384/521`, `sk-ssh-ed25519@openssh.com`, `sk-ecdsa-sha2-nistp256@openssh.com` |
+| Ciphers | `chacha20-poly1305@openssh.com`, `aes128-ctr`, `aes256-ctr` |
+| MACs | `hmac-sha2-256` |
+
+Not supported: `diffie-hellman-group14-sha256` and every other
+finite-field key exchange, RSA and DSA keys, SHA-1 MACs, the SFTP
+subsystem, agent and Unix socket forwarding. An RSA key in
+`RESCUE_SSH_PUBKEY` is logged as refused. Building with
+`--build-arg DROPBEAR_HARDENED=false` keeps the upstream defaults (RSA,
+group14) for old clients; the release ramdisks use the hardened build.
 
 ## Hardware watchdog
 

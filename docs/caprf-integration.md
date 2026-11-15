@@ -527,9 +527,10 @@ In the rescue shell, `booty lldp neighbors` and `booty lldp status` show
 the LLDP neighbors and what BOOTy sends, without `lldpcli`; see
 [LLDP diagnosis](networking.md#lldp-diagnosis-in-the-rescue-shell).
 
-For `shell` and `wait`, BOOTy installs `RESCUE_SSH_PUBKEY` for root, sets
-`RESCUE_PASSWORD_HASH`, starts `dropbear` if the ramdisk has it, and mounts
-the disks when `RESCUE_AUTO_MOUNT=true`.
+For `shell` and `wait`, BOOTy installs the `RESCUE_SSH_PUBKEY` keys for root,
+sets `RESCUE_PASSWORD_HASH`, starts `dropbear` if the ramdisk has it, and mounts
+the disks when `RESCUE_AUTO_MOUNT=true`. Once a key is set, SSH login is
+key-only; see [Rescue SSH server](configuration.md#rescue-ssh-server).
 
 ## Hardware watchdog
 
