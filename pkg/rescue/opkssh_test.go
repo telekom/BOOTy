@@ -217,7 +217,7 @@ func TestOPKVerifyRefusesHTTPJWKS(t *testing.T) {
 	}
 }
 
-// selfSignedOPKCert returns a client key with a certificate that carries
+// selfSignedOPKCert returns a certificate of signer that carries
 // pkt as its openpubkey-pkt extension, as anyone can make one.
 func selfSignedOPKCert(tb testing.TB, signer ssh.Signer, pkt string) *ssh.Certificate {
 	tb.Helper()
