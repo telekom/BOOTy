@@ -219,12 +219,12 @@ func TestOPKVerifyRefusesHTTPJWKS(t *testing.T) {
 
 // selfSignedOPKCert returns a client key with a certificate that carries
 // pkt as its openpubkey-pkt extension, as anyone can make one.
-func selfSignedOPKCert(t testing.TB, signer ssh.Signer, pkt string) *ssh.Certificate {
-	t.Helper()
+func selfSignedOPKCert(tb testing.TB, signer ssh.Signer, pkt string) *ssh.Certificate {
+	tb.Helper()
 	cert := &ssh.Certificate{Key: signer.PublicKey(), CertType: ssh.UserCert, ValidBefore: ssh.CertTimeInfinity,
 		Permissions: ssh.Permissions{Extensions: map[string]string{"openpubkey-pkt": pkt}}}
 	if err := cert.SignCert(rand.Reader, signer); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return cert
 }
