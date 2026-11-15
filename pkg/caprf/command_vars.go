@@ -26,8 +26,9 @@ import (
 // such a source. It can not change a URL
 // that BOOTy posts to with the bearer token (inventory, firmware, health,
 // telemetry, crash artifacts), the disk encryption settings except the
-// target partition, DEPROVISION_CRYPTO_ERASE and the opkssh rescue login
-// settings. Unknown keys are rejected too. A payload
+// target partition, DEPROVISION_CRYPTO_ERASE and the rescue login
+// (RESCUE_SSH_PUBKEY, RESCUE_PASSWORD_HASH, RESCUE_SSH_HARDENED and the
+// RESCUE_SSH_OPK_* opkssh settings). Unknown keys are rejected too. A payload
 // with only blank and comment lines returns no keys.
 //
 // The base is the vars file that BOOTy read at start; MergeCommandVars does
@@ -85,12 +86,11 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 		// encryption off or allowing a failure would downgrade silently.
 		{"disk encryption", lockedDiskEncryption(&ref.Provision.DiskEncryption), lockedDiskEncryption(&cfg.Provision.DiskEncryption)},
 		{"disk encryption signer (SECUREBOOT_SIGNING)", ref.Provision.SecureBoot.Signing, cfg.Provision.SecureBoot.Signing},
-		// A payload must not add its own identity provider or identity.
-		{"RESCUE_SSH_OPK_PROVIDERS and RESCUE_SSH_OPK_POLICY", []string{ref.Rescue.SSHOPKProviders, ref.Rescue.SSHOPKPolicy},
-			[]string{cfg.Rescue.SSHOPKProviders, cfg.Rescue.SSHOPKPolicy}},
 		// Turning it off would leave the LUKS2 keyslots of a deprovisioned
 		// disk to whoever holds the recovery key.
 		{"DEPROVISION_CRYPTO_ERASE", ref.Deprovision.CryptoErase, cfg.Deprovision.CryptoErase},
+		// Who may log in to the rescue shell of a failed command.
+		{"rescue SSH access", lockedRescueAccess(&ref.Rescue), lockedRescueAccess(&cfg.Rescue)},
 	} {
 		if !reflect.DeepEqual(s.ref, s.cand) {
 			fixed = append(fixed, s.name)
@@ -102,6 +102,12 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 			strings.Join(fixed, ", "))
 	}
 	return cfg, keys, nil
+}
+
+// lockedRescueAccess is what decides who can log in to the rescue shell,
+// also the opkssh identity providers and identities.
+func lockedRescueAccess(r *config.RescueConfig) []any {
+	return []any{r.SSHPubKey, r.PasswordHash, r.SSHHardened, r.SSHOPKProviders, r.SSHOPKPolicy}
 }
 
 // cosignLockViolations names what cfg, the config of a standby command,

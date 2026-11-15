@@ -650,7 +650,7 @@ does.
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
 | `RESCUE_MODE` | `reboot`, `wait` with `FAILURE_ACTION=wait` | `reboot`, `retry`, `shell`, `wait` | Action after a failed provisioning, also for a failed standby `provision` command. |
-| `RESCUE_SSH_PUBKEY` | (unset) | SSH public keys, separated by `;` | Authorized keys for root in `shell` and `wait` modes. BOOTy starts `dropbear`. See [Rescue SSH server](#rescue-ssh-server). |
+| `RESCUE_SSH_PUBKEY` | (unset) | SSH public keys, separated by `;` | Authorized keys for root in `shell` and `wait` modes. BOOTy starts `dropbear`. A standby command payload or deploy archive cannot change it, `RESCUE_PASSWORD_HASH` or `RESCUE_SSH_HARDENED`. See [Rescue SSH server](#rescue-ssh-server). |
 | `RESCUE_PASSWORD_HASH` | (unset) | crypt(3) hash | Root password hash in `shell` and `wait` modes. SSH password login only without a `RESCUE_SSH_PUBKEY` key. |
 | `RESCUE_SSH_OPK_PROVIDERS` | (unset) | rows `issuer client_id expiration`, separated by `;` | OpenID providers whose opkssh PK Tokens log in, in the format of opkssh's `/etc/opk/providers`. With this key or `RESCUE_SSH_OPK_POLICY` set, BOOTy serves rescue SSH itself instead of `dropbear`. A standby payload or deploy archive cannot change it. See [opkssh logins](#opkssh-logins). YAML `rescue.sshOpkProviders`. |
 | `RESCUE_SSH_OPK_POLICY` | (unset) | rows `principal identity issuer`, separated by `;` | Identities that log in, in the format of opkssh's `/etc/opk/auth_id`. Only principal `root` logs in. A standby payload or deploy archive cannot change it. YAML `rescue.sshOpkPolicy`. |
@@ -665,8 +665,8 @@ does.
 also use newlines). Several keys allow a key rotation without a window that
 has only the new key. Empty entries are skipped. A malformed entry (unknown
 key type, a blob that is not base64 or not a complete key of its type) is logged
-with its position and skipped, so the other keys still work. Options may contain quoted spaces. A `;` inside a key comment or a
-`command="..."` option splits the entry; do not use one.
+with its position and skipped, so the other keys still work. Options may contain quoted spaces and quoted `;`
+(`command="a; b"`). A `;` in a key comment splits the entry; do not use one.
 
 BOOTy generates an Ed25519 host key on every boot and starts `dropbear`
 with `-r <host key> -s -j -k -I 900`:
@@ -674,7 +674,9 @@ with `-r <host key> -s -j -k -I 900`:
 - Login is key-only (`-s`) once a key is set. `RESCUE_PASSWORD_HASH` then
   sets the root password, but SSH refuses password login. Only when no key
   is set and a password hash is, password login stays allowed, with a
-  warning in the log.
+  warning in the log. A `RESCUE_SSH_PUBKEY` with only malformed entries
+  counts as set: SSH then refuses every login rather than fall back to the
+  password.
 - Local and remote port forwarding are refused (`-j -k`).
 - A session without traffic for 15 minutes is closed (`-I 900`).
 

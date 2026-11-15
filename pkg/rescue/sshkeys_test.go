@@ -34,12 +34,29 @@ func TestParseSSHKeys(t *testing.T) {
 		{"trailing bytes", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ8kKf8w6YJ6AW2D8KOa/ms2xcrTgfpgPfemuoTsXRYjAA==", nil},
 		{"forced command with a key type", `command="echo ssh-ed25519 only",no-pty ` + testKeyA, []string{`command="echo ssh-ed25519 only",no-pty ` + testKeyA}},
 		{"escaped quote in options", `command="echo \" ssh-ed25519 x" ` + testKeyB, []string{`command="echo \" ssh-ed25519 x" ` + testKeyB}},
+		{"semicolon in a quoted option", `command="echo a; echo b",no-pty ` + testKeyA + ";" + testKeyB,
+			[]string{`command="echo a; echo b",no-pty ` + testKeyA, testKeyB}},
+		// Split at every ";", the entry after it would be key A without
+		// the forced command.
+		{"key inside a quoted option", `command="true; ` + testKeyA + `" ` + testKeyB,
+			[]string{`command="true; ` + testKeyA + `" ` + testKeyB}},
+		{"quote in a comment", testKeyA + `"laptop;` + testKeyB, []string{testKeyA + `"laptop`, testKeyB}},
+		{"newline ends a quoted option", `command="x` + "\n" + testKeyA, []string{testKeyA}},
+		{"escaped newline ends a quoted option", `command="x\` + "\n" + testKeyA, []string{testKeyA}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ParseSSHKeys(tc.value); !slices.Equal(got, tc.want) {
+			if got, _ := ParseSSHKeys(tc.value); !slices.Equal(got, tc.want) {
 				t.Errorf("ParseSSHKeys(%q) = %q, want %q", tc.value, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestParseSSHKeysCountsEntries(t *testing.T) {
+	for value, want := range map[string]int{"": 0, " ; ;\n": 0, "garbage": 1, testKeyA + ";bad;" + testKeyB: 3} {
+		if _, n := ParseSSHKeys(value); n != want {
+			t.Errorf("ParseSSHKeys(%q) entries = %d, want %d", value, n, want)
+		}
 	}
 }
 
@@ -63,6 +80,8 @@ func TestDropbearArgs(t *testing.T) {
 			[]string{"-r", hostKeyPath, "-s", "-j", "-k", "-I", "900", "-F", "-E", "-p", "22"}},
 		{"password hash without key", Config{PasswordHash: "$6$x$y"},
 			[]string{"-r", hostKeyPath, "-j", "-k", "-I", "900", "-F", "-E", "-p", "22"}},
+		{"password hash and only malformed keys", Config{SSHKeyConfigured: true, PasswordHash: "$6$x$y"},
+			[]string{"-r", hostKeyPath, "-s", "-j", "-k", "-I", "900", "-F", "-E", "-p", "22"}},
 		{"nothing configured", Config{},
 			[]string{"-r", hostKeyPath, "-s", "-j", "-k", "-I", "900", "-F", "-E", "-p", "22"}},
 		{"legacy", Config{SSHKeys: []string{testKeyA}, PasswordHash: "$6$x$y", LegacySSH: true},

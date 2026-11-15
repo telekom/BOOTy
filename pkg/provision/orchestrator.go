@@ -491,7 +491,9 @@ func (o *Orchestrator) RescueConfig() *rescue.Config {
 			cfg.Mode = mode
 		}
 	}
-	cfg.SSHKeys = rescue.ParseSSHKeys(o.cfg.Rescue.SSHPubKey)
+	var entries int
+	cfg.SSHKeys, entries = rescue.ParseSSHKeys(o.cfg.Rescue.SSHPubKey)
+	cfg.SSHKeyConfigured = entries > 0
 	cfg.PasswordHash = o.cfg.Rescue.PasswordHash
 	cfg.LegacySSH = !config.BoolOr(o.cfg.Rescue.SSHHardened, true)
 	cfg.OPKProviders, cfg.OPKPolicy = o.cfg.Rescue.SSHOPKProviders, o.cfg.Rescue.SSHOPKPolicy

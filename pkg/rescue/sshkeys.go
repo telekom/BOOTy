@@ -24,28 +24,56 @@ var sshKeyBlobs = map[string][]string{
 }
 
 // ParseSSHKeys splits a RESCUE_SSH_PUBKEY value into authorized_keys
-// entries. Entries are separated by ";" or newlines; empty entries are
-// skipped. An entry is "[options] type base64 [comment]" like an
-// authorized_keys line. Malformed entries are logged and dropped, so one bad
-// key does not lock out the others.
-func ParseSSHKeys(value string) []string {
-	var keys []string
-	for i, entry := range strings.FieldsFunc(value, func(r rune) bool { return r == ';' || r == '\n' || r == '\r' }) {
+// entries and returns the valid ones and the number of non-empty entries.
+// Entries are separated by newlines and by ";" outside double quotes, so a
+// command="a; b" option stays in its entry. An entry is
+// "[options] type base64 [comment]" like an authorized_keys line. Malformed
+// entries are logged and dropped, so one bad key does not lock out the
+// others.
+func ParseSSHKeys(value string) (keys []string, entries int) {
+	for _, entry := range splitSSHKeys(value) {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
 		}
+		entries++
 		keyType, ok := sshKeyType(entry)
 		if !ok {
-			slog.Warn("ignoring malformed rescue SSH key", "entry", i+1)
+			slog.Warn("ignoring malformed rescue SSH key", "entry", entries)
 			continue
 		}
 		if keyType == "ssh-rsa" {
-			slog.Warn("rescue SSH key is RSA, which the hardened dropbear build refuses", "entry", i+1)
+			slog.Warn("rescue SSH key is RSA, which the hardened dropbear build refuses", "entry", entries)
 		}
 		keys = append(keys, entry)
 	}
-	return keys
+	return keys, entries
+}
+
+// splitSSHKeys splits value at every newline and at each ";" outside the
+// double quotes of the first token of an entry (the options), quoted like
+// optionsEnd reads them. Quotes in the key or the comment are literal. A
+// newline always ends an entry, so no entry can add a second
+// authorized_keys line.
+func splitSSHKeys(value string) []string {
+	var out []string
+	start, quoted, first := 0, false, true
+	for i := 0; i < len(value); i++ {
+		switch c := value[i]; {
+		case c == '\n' || c == '\r' || (c == ';' && !quoted):
+			out = append(out, value[start:i])
+			start, quoted, first = i+1, false, true
+		case !first:
+		case (c == ' ' || c == '\t') && !quoted:
+			// Leading blanks come before the first token.
+			first = strings.TrimSpace(value[start:i]) == ""
+		case c == '\\' && quoted && i+1 < len(value) && value[i+1] != '\n' && value[i+1] != '\r':
+			i++
+		case c == '"':
+			quoted = !quoted
+		}
+	}
+	return append(out, value[start:])
 }
 
 // sshKeyType returns the key type of an authorized_keys entry

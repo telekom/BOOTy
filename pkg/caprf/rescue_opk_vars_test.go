@@ -29,7 +29,7 @@ func TestStandbyPayloadCannotChangeRescueOPK(t *testing.T) {
 		"RESCUE_SSH_OPK_PROVIDERS=",
 		"RESCUE_SSH_OPK_POLICY=\"root mallory@evil.example https://idp.example\"",
 	} {
-		if _, _, err := MergeCommandVars([]byte(base), []byte(payload)); err == nil || !strings.Contains(err.Error(), "RESCUE_SSH_OPK") {
+		if _, _, err := MergeCommandVars([]byte(base), []byte(payload)); err == nil || !strings.Contains(err.Error(), "rescue SSH access") {
 			t.Errorf("payload %q: err = %v, want the lock", payload, err)
 		}
 	}
