@@ -907,7 +907,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `progress resumed, petting the watchdog again`
 - `watchdog keepalive failed`
 
-### INFO (486 messages)
+### INFO (489 messages)
 
 #### INFO `.`
 
@@ -1296,6 +1296,9 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `Streaming image`
 - `Streaming image into A/B target slot`
 - `Streaming image partition-by-partition`
+- `UKI boot entry created`
+- `UKI prepared`
+- `UKI signed with per-host keys; the private keys are wiped`
 - `adding fstab entry for the /boot array`
 - `applying custom partition layout`
 - `applying provisioner files to the ramdisk`

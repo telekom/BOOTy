@@ -17,7 +17,9 @@ type SecureBootConfig struct {
 	// Signing selects who signs the out-of-tree kernel modules of the
 	// target: per-host (BOOTy, with a key that exists only while
 	// provisioning), ci (the image arrives signed; BOOTy only enrolls
-	// MOKCertPath) or off. See docs/module-signing.md.
+	// MOKCertPath) or off. See docs/module-signing.md. With
+	// DISK_ENCRYPTION=luks2-tpm2-uki it selects the signer of the UKI too
+	// (docs/disk-encryption.md#signed-uki-and-pcr-11).
 	// Default: off
 	Signing string `yaml:"signing" json:"signing"`
 
