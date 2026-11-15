@@ -14,10 +14,13 @@ import (
 // Size budgets in MiB, about 5% above main (default 36.1, gobgp 31.5,
 // slim 23.6, micro 10.3 MiB; micro is 11.3 MiB on main 8d840167, so its
 // budget is 5% above that). Every MB is up to 0.5 s of boot time on slow
-// BMC virtual media; see docs/size-optimization.md.
+// BMC virtual media; see docs/size-optimization.md. The BOOTy rescue SSH
+// server (#961) adds about 0.3 MB to micro (without opkssh) and 0.9 MB to
+// slim (with opkssh, which slim keeps by decision): micro 11.9, slim 25.6
+// MB on its CI; their budgets are 3% above that.
 const (
-	maxMicroInitramfsMB   = 11.9
-	maxSlimInitramfsMB    = 25.0
+	maxMicroInitramfsMB   = 12.3
+	maxSlimInitramfsMB    = 26.4
 	maxGoBGPInitramfsMB   = 33.5
 	maxDefaultInitramfsMB = 38.0
 )
