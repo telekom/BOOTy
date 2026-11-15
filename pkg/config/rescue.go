@@ -21,8 +21,8 @@ type RescueConfig struct {
 
 	// SSHOPKProviders allows OpenID Connect providers for opkssh logins: rows
 	// "issuer client_id expiration" in the opkssh /etc/opk/providers format,
-	// separated by ";" or newlines. With it or SSHOPKPolicy set, BOOTy serves
-	// rescue SSH from its own server instead of dropbear.
+	// separated by ";" or newlines. With it or SSHOPKPolicy set, rescue SSH
+	// login is key-only.
 	// Example: "https://accounts.google.com 206584157355-....apps.googleusercontent.com 24h"
 	// Default: ""
 	SSHOPKProviders string `yaml:"sshOpkProviders" json:"sshOpkProviders"`

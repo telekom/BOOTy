@@ -1756,8 +1756,8 @@ ldd /usr/sbin/your-binary
 The default flavor bundles, among others: `mdadm`, `wipefs`, `sfdisk`,
 `sgdisk`, `growpart`, `e2fsck`, `resize2fs`, `xfs_growfs`, `xfs_repair`,
 `btrfs`, `parted`, `kpartx`, `lvm`, `lsblk`, `blkid`, `hdparm`, `nvme`,
-`gpgv`, `mstconfig`, `mstflint`, `ethtool`, `dropbear`,
-`efibootmgr`. See `initrd.Dockerfile` for the full list per flavor. No flavor
+`gpgv`, `mstconfig`, `mstflint`, `ethtool`,
+`efibootmgr`; BOOTy itself serves rescue SSH. See `initrd.Dockerfile` for the full list per flavor. No flavor
 ships `lldpd` or `lldpcli`: `booty lldp neighbors` and `booty lldp status`
 show the LLDP state (docs/networking.md, LLDP diagnosis in the rescue shell).
 

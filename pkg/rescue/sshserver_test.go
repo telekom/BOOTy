@@ -366,7 +366,7 @@ func TestUnauthenticatedLimits(t *testing.T) {
 		t.Cleanup(func() { _ = a.Close(); _ = b.Close() })
 		return addrConn{a, &net.TCPAddr{IP: net.ParseIP(ip), Port: 1}}
 	}
-	var releases []func()
+	releases := make([]func(), 0, sshMaxUnauthPerIP)
 	for range sshMaxUnauthPerIP {
 		releases = append(releases, s.admit(conn("10.0.0.1")))
 	}

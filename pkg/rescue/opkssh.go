@@ -37,15 +37,6 @@ func newCertVerifier(cfg *Config) (certVerifier, error) {
 	return v.check, nil
 }
 
-// check is the certVerifier of v; its error is the log reason.
-func (v *opkVerifier) check(ctx context.Context, user string, cert *ssh.Certificate) (string, string, error) {
-	claims, err := v.verify(ctx, user, cert)
-	if err != nil {
-		err = errors.New(refusalReason(err))
-	}
-	return claims.Issuer, claims.Subject, err
-}
-
 // opkProvider is one row of RESCUE_SSH_OPK_PROVIDERS, the opkssh
 // /etc/opk/providers format: "issuer client_id expiration".
 type opkProvider struct {
@@ -149,6 +140,15 @@ type opkClaims struct {
 type opkVerifier struct {
 	pkt   *verifier.Verifier
 	rules []opkRule
+}
+
+// check is the certVerifier of v; its error is the log reason.
+func (v *opkVerifier) check(ctx context.Context, user string, cert *ssh.Certificate) (issuer, subject string, err error) {
+	claims, err := v.verify(ctx, user, cert)
+	if err != nil {
+		err = errors.New(refusalReason(err))
+	}
+	return claims.Issuer, claims.Subject, err
 }
 
 // newOPKVerifier returns the verifier of the providers. JWKS documents are

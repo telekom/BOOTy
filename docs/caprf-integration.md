@@ -534,13 +534,12 @@ In the rescue shell, `booty lldp neighbors` and `booty lldp status` show
 the LLDP neighbors and what BOOTy sends, without `lldpcli`; see
 [LLDP diagnosis](networking.md#lldp-diagnosis-in-the-rescue-shell).
 
-For `shell` and `wait`, BOOTy installs the `RESCUE_SSH_PUBKEY` keys for root,
-sets `RESCUE_PASSWORD_HASH`, starts `dropbear` if the ramdisk has it, and mounts
-the disks when `RESCUE_AUTO_MOUNT=true`. Once a key is set, SSH login is
-key-only; see [Rescue SSH server](configuration.md#rescue-ssh-server). With
-`RESCUE_SSH_OPK_PROVIDERS` or `RESCUE_SSH_OPK_POLICY`, BOOTy serves SSH
-itself and also accepts opkssh logins; see
-[opkssh logins](configuration.md#opkssh-logins).
+For `shell` and `wait`, BOOTy sets `RESCUE_PASSWORD_HASH`, starts its rescue
+SSH server with the `RESCUE_SSH_PUBKEY` keys for root, and mounts the disks
+when `RESCUE_AUTO_MOUNT=true`. Once a key is set, SSH login is key-only; see
+[Rescue SSH server](configuration.md#rescue-ssh-server). With
+`RESCUE_SSH_OPK_PROVIDERS` or `RESCUE_SSH_OPK_POLICY` the server also accepts
+opkssh logins; see [opkssh logins](configuration.md#opkssh-logins).
 
 ## Hardware watchdog
 

@@ -54,19 +54,25 @@ func parseAuthorizedKey(entry string) (authorizedKey, error) {
 	return ak, nil
 }
 
+// keyFlags are the options without a value. no-agent-forwarding and
+// no-X11-forwarding change nothing: neither is ever offered.
+var keyFlags = map[string]func(*keyOptions){
+	"no-port-forwarding":  func(k *keyOptions) { k.noPortForwarding = true },
+	"no-pty":              func(k *keyOptions) { k.noPTY = true },
+	"restrict":            func(k *keyOptions) { k.noPortForwarding, k.noPTY = true, true },
+	"no-agent-forwarding": func(*keyOptions) {},
+	"no-x11-forwarding":   func(*keyOptions) {},
+	"no-touch-required":   func(k *keyOptions) { k.noTouchRequired = true },
+}
+
 func (k *keyOptions) add(o string) error {
 	name, value, hasValue := strings.Cut(o, "=")
-	switch name = strings.ToLower(name); {
-	case !hasValue && name == "no-port-forwarding":
-		k.noPortForwarding = true
-	case !hasValue && name == "no-pty":
-		k.noPTY = true
-	case !hasValue && name == "restrict":
-		k.noPortForwarding, k.noPTY = true, true
-	case !hasValue && (name == "no-agent-forwarding" || name == "no-x11-forwarding"):
-		// Never offered.
-	case !hasValue && name == "no-touch-required":
-		k.noTouchRequired = true
+	name = strings.ToLower(name)
+	if set := keyFlags[name]; set != nil && !hasValue {
+		set(k)
+		return nil
+	}
+	switch {
 	case hasValue && name == "command":
 		cmd, ok := quotedOption(value)
 		if !ok || k.hasCommand {

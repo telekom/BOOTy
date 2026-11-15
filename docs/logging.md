@@ -220,14 +220,15 @@ debug dumps.
   BGP sessions), `SKIP_TLS_VERIFY` and plain HTTP transport, missing report
   URLs, and `ignoring log setting`.
 - Rescue SSH: malformed or RSA entries in `RESCUE_SSH_PUBKEY` (by position,
-  not the key), no valid key at all, password login without a key, and
-  `RESCUE_SSH_HARDENED=false`. With the opkssh settings: malformed
-  `RESCUE_SSH_OPK_PROVIDERS` and `RESCUE_SSH_OPK_POLICY` rows (by position),
-  static keys the server skips, no valid provider, a build without opkssh
-  support, a session whose shell did not start, and every refused login (`rescue SSH login refused`: `method`
-  `opkssh` or `publickey`, `principal`, `remote`, the `issuer` and
-  `subject` that the PK Token claims or the `key` fingerprint, and the
-  `reason`; never the token).
+  not the key), keys with unsupported options, no valid key at all, password
+  login without a key, `RESCUE_SSH_HARDENED=false`, too many connections
+  without a login, a failed remote forward, a session whose shell did not
+  start. With the opkssh settings: malformed `RESCUE_SSH_OPK_PROVIDERS` and
+  `RESCUE_SSH_OPK_POLICY` rows (by position), no valid provider, a build
+  without opkssh support. Every refused login (`rescue SSH login refused`:
+  `method` `publickey`, `password` or `opkssh`, `principal`, `remote`, the
+  `key` fingerprint or the `issuer` and `subject` that the PK Token claims,
+  and the `reason`; never a password or token).
 - `LOG_URL` itself: `remote log handler is dropping entries: buffer full` on
   the console; the server gets one `[WARN] remote log handler dropped lines
   code=BOOTY-LOG-001` line after a gap (written by the handler, not a log
@@ -258,10 +259,8 @@ show one line per stage and per notable result:
 - Image: the source, the download and write progress, checksum and GPG
   signature results, qcow2 conversion, A/B slot streaming, the memory peak
   of the image step.
-- Rescue SSH: with `RESCUE_SSH_HARDENED=false`, that the dropbear build has
-  no RSA support for an RSA host key. With the opkssh settings, the server
-  start (host key fingerprint, opkssh on or off, number of static keys) and
-  every login (`rescue SSH login accepted`: `method`, `principal`,
+- Rescue SSH: the server start (hardened or not, number of keys, password
+  login on or off, opkssh on or off, host key fingerprint) and every login (`rescue SSH login accepted`: `method`, `principal`,
   `remote`, the verified `issuer` and `subject` or the `key` fingerprint).
 - Boot handoff: EFI boot entries, GRUB and kernel command line, kexec load
   and execute, reboot and power off, the watchdog handoff.
@@ -307,7 +306,7 @@ counts. Use debug for a diagnosis run, not as the fleet default.
 - Agent internals: reaped orphan processes, kernel modules that are not
   there, skipped report URLs, unchanged UEFI variables, retried steps,
   post-provision command output, the LLDP link watch.
-- Rescue SSH (opkssh server): connections that end before a login, with
+- Rescue SSH: connections that end before a login, with
   the handshake error.
 
 ## Message catalog
@@ -450,7 +449,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 - `step made no progress within its budget, stopping the watchdog keepalive; the hardware resets the host`
 
-### WARN (397 messages)
+### WARN (398 messages)
 
 #### WARN `.`
 
@@ -879,15 +878,16 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `ignoring malformed RESCUE_SSH_OPK_POLICY row`
 - `ignoring malformed RESCUE_SSH_OPK_PROVIDERS row`
 - `ignoring malformed rescue SSH key`
-- `ignoring rescue SSH key of a type that the rescue server refuses`
-- `ignoring rescue SSH key with options, which the opkssh rescue server does not apply`
-- `ignoring the opkssh settings, starting dropbear with the static keys`
+- `ignoring rescue SSH key with unsupported options`
+- `ignoring the opkssh settings`
 - `rescue SSH accepts no opkssh login`
 - `rescue SSH allows password login: a password hash is set and no SSH key`
-- `rescue SSH hardening disabled (RESCUE_SSH_HARDENED=false): password login and port forwarding allowed, no idle timeout`
+- `rescue SSH connection refused: too many connections without a login`
+- `rescue SSH hardening disabled (RESCUE_SSH_HARDENED=false): password login, RSA keys and port forwarding allowed, no idle timeout`
 - `rescue SSH has no valid key in RESCUE_SSH_PUBKEY: SSH login is refused, also with a password hash`
-- `rescue SSH key is RSA, which the hardened dropbear build refuses`
+- `rescue SSH key is RSA, which only RESCUE_SSH_HARDENED=false accepts`
 - `rescue SSH login refused`
+- `rescue SSH remote forward failed`
 - `rescue SSH server stopped`
 - `rescue SSH session did not start`
 
@@ -942,7 +942,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `progress resumed, petting the watchdog again`
 - `watchdog keepalive failed`
 
-### INFO (492 messages)
+### INFO (491 messages)
 
 #### INFO `.`
 
@@ -1478,7 +1478,6 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 #### INFO `pkg/rescue`
 
-- `no RSA host key: this dropbear build has no RSA support`
 - `rescue SSH login accepted`
 - `rescue SSH server started`
 

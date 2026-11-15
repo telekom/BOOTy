@@ -375,8 +375,8 @@ jobs:
             setup: |
               docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --output type=local,dest=out-flavor -f initrd.Dockerfile .
               docker buildx build --platform linux/amd64 --build-arg "BOOTY_COMMIT_TIME=$(git log -1 --format=%cI)" --target kernel-image --output type=local,dest=out-flavor -f initrd.Dockerfile .
-          # Rescue shell over SSH in the default flavor: dropbear, and the
-          # BOOTy server of the opkssh settings with a mock OpenID provider.
+          # Rescue shell over SSH in the default flavor (the BOOTy server):
+          # keys, password, opkssh with a mock OpenID provider.
           - scenario: rescue-ssh
             qemu_extra: ""
             test_tag: e2e

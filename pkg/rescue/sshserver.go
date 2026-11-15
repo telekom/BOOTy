@@ -268,7 +268,8 @@ func (s *rescueSSH) admit(nc net.Conn) func() {
 		once.Do(func() {
 			s.unauthMu.Lock()
 			defer s.unauthMu.Unlock()
-			if s.unauth[ip]--; s.unauth[ip] == 0 {
+			s.unauth[ip]--
+			if s.unauth[ip] == 0 {
 				delete(s.unauth, ip)
 			}
 		})
