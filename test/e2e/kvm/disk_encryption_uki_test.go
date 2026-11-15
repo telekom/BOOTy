@@ -153,6 +153,9 @@ func prepareUKIImage(t *testing.T, osImage, dir string, debs []string, ci *ukiKe
 	t.Helper()
 	raw := filepath.Join(dir, "os.raw")
 	run(t, "convert OS image to raw", "qemu-img", "convert", "-O", "raw", osImage, raw)
+	if ci == nil {
+		reshapeUKIImage(t, raw, dir)
+	}
 	loop := strings.TrimSpace(string(runOutput(t, "attach image", "losetup", "-P", "--show", "-f", raw)))
 	defer func() { _ = exec.CommandContext(context.Background(), "losetup", "-d", loop).Run() }()
 	label := func(part string) string {
@@ -172,9 +175,6 @@ func prepareUKIImage(t *testing.T, osImage, dir string, debs []string, ci *ukiKe
 	}
 	if bootPart == "" || espPart == "" {
 		t.Fatalf("no BOOT or UEFI partition on %s", loop)
-	}
-	if ci == nil {
-		enlargeUKIESP(t, loop, bootPart, espPart, dir)
 	}
 	rootPartUUID := strings.TrimSpace(string(runOutput(t, "root PARTUUID", "blkid", "-o", "value", "-s", "PARTUUID", loop+"p1")))
 	rootFSUUID := strings.TrimSpace(string(runOutput(t, "root UUID", "blkid", "-o", "value", "-s", "UUID", loop+"p1")))
@@ -299,36 +299,51 @@ dracut --force --no-hostonly --tmpdir /run --add "crypt systemd-cryptsetup syste
 	return img
 }
 
-// ukiESPScript moves the ESP ($3, partition $5 of $1) into the last 320
-// MiB of the BOOT partition ($2, partition $4), which shrinks: the per-host
-// install needs room for a second copy of the UKI (about 90 MB with the
-// generic initramfs), more than the 106 MB ESP of the cloud image.
-// The ESP keeps its partition number, type, label and serial.
-const ukiESPScript = `loop=$1 boot=$2 esp=$3 bootn=$4 espn=$5 work=$6
-sectors() { cat "/sys/class/block/$(basename "$1")/$2"; }
-bstart=$(sectors "$boot" start) bsize=$(sectors "$boot" size) espsec=$((320 * 2048))
-newb=$(( (bsize - espsec - 2048) / 2048 * 2048 ))
-estart=$(( (bstart + newb + 2047) / 2048 * 2048 ))
+// ukiESPScript gives the raw image $1 the layout of the UKI image flavour:
+// a 512 MiB ESP (partition, type, label and volume ID kept), the /boot
+// partition after it as XBOOTLDR, and the partitions after the ESP (/boot,
+// the root last) moved right. The per-host install needs room for a second
+// copy of the UKI, more than the 106 MB ESP of the cloud image has.
+const ukiESPScript = `raw=$1 work=$2 new=$1.new
+attach() { l=$(losetup -P --show -f "$1"); udevadm settle || true; echo "$l"; }
+sec() { cat "/sys/class/block/$(basename "$1")/$2"; }
+old=$(attach "$raw")
+for p in "$old"p*; do
+	case "$(blkid -o value -s LABEL "$p")" in UEFI) esp=$p ;; BOOT) boot=$p ;; esac
+done
+espn=${esp##*p} estart=$(sec "$esp" start) want=$((512 * 2048))
+delta=$((want - $(sec "$esp" size)))
+[ "$delta" -gt 0 ] && [ $((delta % 2048)) -eq 0 ]
+truncate -s $(($(stat -c %s "$raw") + delta * 512)) "$new"
+sfdisk -d "$old" | grep -v -e '^last-lba' -e '^device:' | awk -v esp="$esp" -v boot="$boot" -v es="$estart" -v d="$delta" -v w="$want" -v old="${old}p" -v new="$new" '
+$1 ~ /^\/dev\// {
+	match($0, /start= *[0-9]+/); s = substr($0, RSTART + 6, RLENGTH - 6) + 0
+	if ($1 == esp) sub(/size= *[0-9]+/, "size=" w)
+	else if (s > es) sub(/start= *[0-9]+/, "start=" s + d)
+	if ($1 == boot) sub(/type=[0-9A-Fa-f-]+/, "type=BC13C2FF-59E6-4262-A352-B275FD6F7172")
+	sub("^" old, new)
+}
+{ print }' | sfdisk -q "$new"
+nl=$(attach "$new")
+for p in "$old"p*; do
+	n=${p##*p}
+	[ "$n" = "$espn" ] || dd if="$p" of="${nl}p$n" bs=4M conv=sparse status=none
+done
 serial=$(blkid -o value -s UUID "$esp" | tr -d -)
-mkdir -p "$work/mnt" "$work/files"
-mount -o ro "$esp" "$work/mnt"; cp -a "$work/mnt/." "$work/files/"; umount "$work/mnt"
-e2fsck -f -y "$boot" || [ $? -le 1 ]
-resize2fs "$boot" "${newb}s"
-echo "size=$newb" | sfdisk --no-reread -N "$bootn" "$loop"
-echo "start=$estart, size=$espsec" | sfdisk --no-reread -N "$espn" "$loop"
-partx -u "$loop"
-udevadm settle || true
-[ "$(sectors "$esp" start)" = "$estart" ]
-mkfs.vfat -F 32 -n UEFI -i "$serial" "$esp"
-mount "$esp" "$work/mnt"; cp -a "$work/files/." "$work/mnt/"; df -h "$work/mnt"; umount "$work/mnt"
-rm -rf "$work"`
+mkfs.vfat -F 32 -n UEFI -i "$serial" "${nl}p$espn"
+mkdir -p "$work/a" "$work/b"
+mount -o ro "$esp" "$work/a"; mount "${nl}p$espn" "$work/b"
+cp -a "$work/a/." "$work/b/"; df -h "$work/b"
+umount "$work/a" "$work/b"
+losetup -d "$old" "$nl"
+sfdisk -d "$new"
+mv "$new" "$raw"; rm -rf "$work"`
 
-// enlargeUKIESP runs ukiESPScript.
-func enlargeUKIESP(t *testing.T, loop, bootPart, espPart, dir string) {
+// reshapeUKIImage runs ukiESPScript on raw.
+func reshapeUKIImage(t *testing.T, raw, dir string) {
 	t.Helper()
-	num := func(p string) string { return p[strings.LastIndex(p, "p")+1:] }
-	out := runOutput(t, "enlarge the ESP", "sh", "-ec", ukiESPScript, "sh", loop, bootPart, espPart, num(bootPart), num(espPart), filepath.Join(dir, "esp-move"))
-	t.Logf("ESP enlarged:\n%s", out)
+	out := runOutput(t, "give the image a 512 MiB ESP", "sh", "-ec", ukiESPScript, "sh", raw, filepath.Join(dir, "esp-move"))
+	t.Logf("UKI image layout:\n%s", out)
 }
 
 // pushUKIImage pushes the image with the UKI digest annotation, signs it

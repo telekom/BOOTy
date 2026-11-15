@@ -657,10 +657,12 @@ unchanged):
   one `.efi` file there. With `per-host` it replaces the file with the
   signed one (see [Atomic install](#atomic-install)); with `ci` it does not
   change it;
-- with `per-host`, an ESP with free space for a second copy of the UKI plus
-  4 MiB, so at least twice the UKI size plus margin: an 86 MB UKI needs an
-  ESP of about 180 MB, more than the 106 MB ESP of the Ubuntu cloud images
-  (`UKI_INPLACE_WRITE=true` is the escape hatch);
+- with `per-host`, an ESP of at least twice the UKI size plus margin: BOOTy
+  needs free space for a second copy of the UKI plus 4 MiB. The UKI image
+  flavour ships a 512 MiB ESP (partition 15, label `UEFI`), the `/boot`
+  partition after it as XBOOTLDR and the root last, and guarantees the UKI
+  size plus 32 MiB free. The 106 MB ESP of the Ubuntu cloud images is too
+  small for an 86 MB UKI (`UKI_INPLACE_WRITE=true` is the escape hatch);
 - the OCI manifest of the image carries the annotation
   `com.github.telekom.booty.uki.sha256` with the hex SHA-256 of that file
   as shipped. The cosign signature of the image covers the manifest, so the
@@ -941,9 +943,10 @@ sbsigntool installed, the crypttab above, a generic dracut initramfs),
 pushed to a local registry with the digest annotation and a cosign
 signature; OVMF with the Microsoft keys and swtpm.
 
-- per-host: the test moves the ESP into a 320 MiB partition carved from
-  `/boot`, as the 106 MB ESP of the cloud image has no room for the atomic
-  install; BOOTy signs with `EXTRA_KERNEL_PARAMS=booty.perhost=1`; the
+- per-host: the test gives the image the layout of the UKI image flavour
+  (a 512 MiB ESP with the label and volume ID kept, `/boot` after it as
+  XBOOTLDR, the root last and moved right), as the 106 MB ESP of the cloud
+  image has no room for the atomic install; BOOTy signs with `EXTRA_KERNEL_PARAMS=booty.perhost=1`; the
   test enrolls the reported certificate in `db`; the first Secure Boot boot
   binds (one token, `tpm2-pubkey-pcrs: 11`, `tpm2-hash-pcrs: 7`, no key
   slot 1); the next unlocks with the TPM2 and has `booty.perhost=1` in
