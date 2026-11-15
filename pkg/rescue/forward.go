@@ -48,14 +48,17 @@ func (c *rescueConn) directTCPIP(nch ssh.NewChannel) {
 		_ = tc.Close()
 		return
 	}
-	go ssh.DiscardRequests(reqs)
-	go pipe(ch, tc)
+	go pipe(ch, reqs, tc)
 }
 
 // pipe copies both ways. An EOF of one side half-closes the other (TCP
 // CloseWrite, SSH EOF), so a service that answers after the end of its
-// request still can; both ends close when both directions are done.
-func pipe(ch ssh.Channel, tc net.Conn) {
+// request still can; both ends close when both directions are done. The
+// channel requests end when the channel closes, also on a disconnect: tc
+// closes then, so a destination that stays silent after the EOF does not
+// keep the copy and the socket.
+func pipe(ch ssh.Channel, reqs <-chan *ssh.Request, tc net.Conn) {
+	go func() { ssh.DiscardRequests(reqs); _ = tc.Close() }()
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -143,8 +146,7 @@ func (c *rescueConn) acceptForward(ln net.Listener, addr string, port uint32) {
 				_ = tc.Close()
 				return
 			}
-			go ssh.DiscardRequests(reqs)
-			pipe(ch, tc)
+			pipe(ch, reqs, tc)
 		}()
 	}
 }

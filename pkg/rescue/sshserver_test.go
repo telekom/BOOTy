@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -520,4 +521,46 @@ func TestRescueSSHForwardHalfClose(t *testing.T) {
 			t.Fatal("the remote forward still listens after the client left")
 		}
 	}
+}
+
+// A disconnect ends a local forward also when the destination keeps its
+// side open after the EOF and sends nothing: the relay used to wait for it
+// forever, with its socket.
+func TestRescueSSHForwardDisconnectSilentDestination(t *testing.T) {
+	var lc net.ListenConfig
+	svc, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		if conn, err := svc.Accept(); err == nil {
+			accepted <- conn // held open, silent
+		}
+	}()
+	a, line := newTestKey(t)
+	addr := startTestServer(t, &Config{LegacySSH: true, SSHKeys: []string{line}}, nil)
+	c := dialRescue(t, addr, "root", a)
+	if _, err := c.Dial("tcp", svc.Addr().String()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = (<-accepted).Close() })
+	for deadline := time.Now().Add(5 * time.Second); !relayRunning(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("no forward relay")
+		}
+	}
+	_ = c.Close()
+	for deadline := time.Now().Add(5 * time.Second); relayRunning(); time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the forward relay still runs after the client left")
+		}
+	}
+}
+
+// relayRunning reports whether a goroutine is in pipe.
+func relayRunning() bool {
+	buf := make([]byte, 1<<20)
+	return strings.Contains(string(buf[:runtime.Stack(buf, true)]), "rescue.pipe")
 }
