@@ -51,6 +51,11 @@ const (
 	luksGrubLock      = "/etc/grub.d/01_booty_luks_lock"
 	luksStatusAuth    = "/etc/booty/luks-status.auth"
 	luksStatusCA      = "/etc/booty/luks-status-ca.pem"
+	// luksInitrdDropIn makes the initramfs try the TPM2 alone before
+	// systemd-cryptsetup asks for a passphrase, and leave
+	// luksInitrdUnlockMarker in /run when the TPM2 opened the volume.
+	luksInitrdDropIn       = "/etc/systemd/system/systemd-cryptsetup@" + luksMapperName + ".service.d/90-booty-tpm2-unlock.conf"
+	luksInitrdUnlockMarker = "/run/booty/luks-tpm2-initrd-unlock"
 	// luksTPM2PCRs: PCR 7 is the Secure Boot state, PK, KEK, db, dbx and the
 	// authorities that verified the boot images, also a MOK when it
 	// verified one. PCR 14 adds what PCR 7 does not see: MOKs that only
@@ -106,6 +111,8 @@ type encryptionExtras struct {
 	// mokWait: module signing queues a MOK for MokManager (mokutil), so
 	// phase 1 waits while a MOK request is pending.
 	mokWait bool
+	// skipInitrdUnlockCheck: DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK.
+	skipInitrdUnlockCheck bool
 }
 
 // withEncryptionSteps adds the disk encryption steps; without
@@ -621,7 +628,8 @@ func (o *Orchestrator) encryptionExtras() (*encryptionExtras, error) {
 	d := &o.cfg.Provision.DiskEncryption
 	sb := &o.cfg.Provision.SecureBoot
 	e := &encryptionExtras{libs: luksTargetLibs(newroot), hostname: o.cfg.Hostname, statusURL: d.StatusURL,
-		mokWait: sb.SigningMode() != config.SigningOff && sb.ModuleSigning.EnrollmentMethod() == config.ModuleSigningEnrollMokutil}
+		mokWait:               sb.SigningMode() != config.SigningOff && sb.ModuleSigning.EnrollmentMethod() == config.ModuleSigningEnrollMokutil,
+		skipInitrdUnlockCheck: d.SkipInitrdUnlockCheck}
 	if e.statusURL != "" {
 		if escrow, ok := o.provider.(config.RecoveryKeyEscrow); ok {
 			e.token = escrow.CurrentToken()
@@ -721,17 +729,21 @@ func writeEncryptionFiles(root string, st *encryptionState, e *encryptionExtras)
 	if len(e.ca) > 0 {
 		statusCA = luksStatusCA
 	}
-	mokWait := ""
+	mokWait, skipInitrdCheck := "", ""
 	if e.mokWait {
 		mokWait = "1"
+	}
+	if e.skipInitrdUnlockCheck {
+		skipInitrdCheck = "1"
 	}
 	files := []file{
 		{luksEnrollKeyPath, st.enrollKey, 0o400},
 		{"/etc/crypttab", crypttab, 0o644},
 		// Sourced by the unit; config validation keeps quotes out.
 		{luksEnvPath, []byte(fmt.Sprintf("LUKS_UUID='%s'\nLUKS_NAME='%s'\nLUKS_ENROLL_SLOT='%d'\nTPM2_PCRS='%s'\n"+
-			"HOST='%s'\nSTATUS_URL='%s'\nSTATUS_CA='%s'\nMOK_WAIT='%s'\n",
-			st.luksUUID, luksMapperName, luksEnrollSlot, luksTPM2PCRs, e.hostname, e.statusURL, statusCA, mokWait)), 0o644},
+			"HOST='%s'\nSTATUS_URL='%s'\nSTATUS_CA='%s'\nMOK_WAIT='%s'\nSKIP_INITRD_UNLOCK_CHECK='%s'\n",
+			st.luksUUID, luksMapperName, luksEnrollSlot, luksTPM2PCRs, e.hostname, e.statusURL, statusCA, mokWait, skipInitrdCheck)), 0o644},
+		{luksInitrdDropIn, []byte(luksInitrdDropInText(st.luksUUID)), 0o644},
 		{luksDracutConf, []byte(luksDracutConfText(e.libs, st.lvm, hasDracutModule(root, "systemd-cryptsetup"))), 0o644},
 		{luksDracutKeyConf, []byte(luksDracutKeyConfText), 0o644},
 		{luksGrubConf, []byte(luksGrubDefaultsText(st)), 0o644},
@@ -791,7 +803,23 @@ func luksDracutConfText(libs []string, lvm, systemdCryptsetupModule bool) string
 	return "# Written by BOOTy: unlock the LUKS2 volume in the initramfs (docs/disk-encryption.md).\n" +
 		"hostonly=\"no\"\n" +
 		"add_dracutmodules+=\"" + modules + "\"\n" +
-		"install_items+=\" /etc/crypttab " + strings.Join(libs, " ") + " \"\n"
+		"install_items+=\" /etc/crypttab " + luksInitrdDropIn + " " + strings.Join(libs, " ") + " \"\n"
+}
+
+// luksInitrdDropInText extends systemd-cryptsetup@booty_crypt.service: in
+// the initramfs (/etc/initrd-release) it first opens the volume with the
+// TPM2 alone (headless: no prompt) and on success leaves
+// luksInitrdUnlockMarker, which survives the switch to the root in /run.
+// If the TPM2 fails, the unit asks for a passphrase as before. Phase 2 of
+// luksEnrollScript removes key slot 1 only with the marker: the test from
+// the booted system proves only that the TPM2 unseals now, not that the
+// initramfs could use it.
+func luksInitrdDropInText(uuid string) string {
+	return "# Written by BOOTy (docs/disk-encryption.md).\n[Service]\n" +
+		"ExecStartPre=-/bin/sh -c '[ -e /etc/initrd-release ] && [ ! -e /dev/mapper/" + luksMapperName + " ] || exit 0; " +
+		"PATH=/usr/bin:/usr/sbin:/usr/lib/systemd:/bin:/sbin systemd-cryptsetup attach " + luksMapperName +
+		" /dev/disk/by-uuid/" + uuid + " none luks,tpm2-device=auto,headless=true && " +
+		"mkdir -p " + filepath.Dir(luksInitrdUnlockMarker) + " && : >" + luksInitrdUnlockMarker + "'\n"
 }
 
 const luksDracutKeyConfText = "# Written by BOOTy: removed by " + luksUnitName + " after the TPM2 enrollment.\n" +
@@ -1001,9 +1029,12 @@ WantedBy=multi-user.target
 // every initramfs without the enrollment key, check it and swap it in.
 // Until that commit point the EXIT trap restores the enrollment unlock.
 //
-// Phase 2 (the next boot): the initramfs of this boot has no enrollment
-// key and the TPM2 opens the volume with the PCRs of this boot, so the TPM2
-// opened the root. Only then key slot 1 and the key are destroyed. A crash
+// Phase 2 (the next boot): the initramfs of this boot opened the root with
+// the TPM2 (luksInitrdUnlockMarker), has no enrollment key and the TPM2
+// opens the volume with the PCRs of this boot. Only then key slot 1 and the
+// key are destroyed. A boot that a passphrase or the recovery key opened
+// keeps slot 1, reports tpm2-initrd-unlock-failed and tries again on the
+// next boot. A crash
 // after luksKillSlot finds the slot gone and only cleans up.
 const luksEnrollScript = `#!/bin/sh
 # Written by BOOTy (docs/disk-encryption.md).
@@ -1035,6 +1066,11 @@ if [ "$(efivar SecureBoot)" != 1 ] || [ "$(efivar SetupMode)" != 0 ]; then
 fi
 
 if [ -e "$bound" ]; then
+	if [ "${SKIP_INITRD_UNLOCK_CHECK:-}" != 1 ] && [ ! -e ` + luksInitrdUnlockMarker + ` ]; then
+		say "the initramfs did not open $dev with the TPM2 on this boot (passphrase or recovery key); key slot $LUKS_ENROLL_SLOT stays, the next boot tries again"
+		status tpm2-initrd-unlock-failed "the initramfs did not open the root with the TPM2 on this boot; key slot $LUKS_ENROLL_SLOT stays"
+		exit 1
+	fi
 	list=$(lsinitrd "/boot/initrd.img-$(uname -r)") || fail "lsinitrd of the booted initramfs"
 	case $list in *luks-enroll.key*) fail "the initramfs of this boot still has the enrollment key" ;; esac
 	case $list in *libcryptsetup-token-systemd-tpm2.so*) ;; *) fail "the initramfs of this boot lacks the TPM2 token plugin" ;; esac
@@ -1107,7 +1143,7 @@ for img in /boot/initrd.img-*; do
 	dracut --force "$img.booty-new" "$kver"
 	list=$(lsinitrd "$img.booty-new")
 	case $list in *luks-enroll.key*) step="$kver still has the enrollment key"; exit 1 ;; esac
-	for f in libtss2-esys.so libtss2-sys.so libtss2-rc.so libtss2-mu.so libtss2-tcti-device.so libcryptsetup-token-systemd-tpm2.so systemd-cryptsetup etc/crypttab; do
+	for f in libtss2-esys.so libtss2-sys.so libtss2-rc.so libtss2-mu.so libtss2-tcti-device.so libcryptsetup-token-systemd-tpm2.so systemd-cryptsetup etc/crypttab 90-booty-tpm2-unlock.conf; do
 		case $list in *"$f"*) ;; *) step="$kver lacks $f"; exit 1 ;; esac
 	done
 	built="$built $img"

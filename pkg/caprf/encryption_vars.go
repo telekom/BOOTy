@@ -31,6 +31,8 @@ func applyDiskEncryptionVar(cfg *config.MachineConfig, key, value string) (bool,
 		d.AllowFailure, err = parseWatchdogBool(value)
 	case "DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK":
 		d.SkipSecureBootCheck, err = parseWatchdogBool(value)
+	case "DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK":
+		d.SkipInitrdUnlockCheck, err = parseWatchdogBool(value)
 	default:
 		return false, nil
 	}

@@ -23,6 +23,13 @@ func TestParseVarsDiskEncryption(t *testing.T) {
 	if cfg.Provision.DiskEncryption != want {
 		t.Fatalf("got %+v, want %+v", cfg.Provision.DiskEncryption, want)
 	}
+	if cfg, err := ParseVars(strings.NewReader("export DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK=\"true\"\n")); err != nil ||
+		!cfg.Provision.DiskEncryption.SkipInitrdUnlockCheck {
+		t.Fatalf("DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK: %v", err)
+	}
+	if _, err := ParseVars(strings.NewReader("export DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK=\"ture\"\n")); err == nil {
+		t.Fatal("a typo in DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK was accepted")
+	}
 	if _, err := ParseVars(strings.NewReader("export DISK_ENCRYPTION_ALLOW_FAILURE=\"ture\"\n")); err == nil {
 		t.Fatal("a typo in DISK_ENCRYPTION_ALLOW_FAILURE was accepted")
 	}
@@ -122,6 +129,7 @@ func TestCommandPayloadCannotChangeDiskEncryption(t *testing.T) {
 		"DISK_ENCRYPTION_ALLOW_FAILURE=true",
 		"DISK_ENCRYPTION_STATUS_URL=https://evil.example.com/s",
 		"DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK=true",
+		"DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK=true",
 	} {
 		if _, _, err := MergeCommandVars(base, []byte(payload)); err == nil || !strings.Contains(err.Error(), "disk encryption") {
 			t.Errorf("payload %q: err = %v, want the disk encryption lock", payload, err)
@@ -149,12 +157,13 @@ func TestDeployArchiveCannotChangeDiskEncryption(t *testing.T) {
 	base := baseAgentVars + "DISK_ENCRYPTION=luks2-tpm2\nDISK_ENCRYPTION_RECOVERY_KEY_URL=https://caprf/key\n"
 	c := &Client{vars: []byte(base)}
 	cfg, _, err := applyArchive(c, deployArchive(t, archiveEntry{name: "deploy/vars",
-		body: "HOSTNAME=w\nDISK_ENCRYPTION=\nDISK_ENCRYPTION_RECOVERY_KEY_URL=https://evil/key\nDISK_ENCRYPTION_ALLOW_FAILURE=true\nDISK_ENCRYPTION_TARGET=3\n"}))
+		body: "HOSTNAME=w\nDISK_ENCRYPTION=\nDISK_ENCRYPTION_RECOVERY_KEY_URL=https://evil/key\nDISK_ENCRYPTION_ALLOW_FAILURE=true\nDISK_ENCRYPTION_TARGET=3\n" +
+			"DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK=true\n"}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	d := cfg.Provision.DiskEncryption
-	if d.Mode != config.DiskEncryptionLUKS2TPM2 || d.RecoveryKeyURL != "https://caprf/key" || d.AllowFailure || d.Target != "3" {
+	if d.Mode != config.DiskEncryptionLUKS2TPM2 || d.RecoveryKeyURL != "https://caprf/key" || d.AllowFailure || d.Target != "3" || d.SkipInitrdUnlockCheck {
 		t.Fatalf("archive changed disk encryption: %+v", d)
 	}
 }

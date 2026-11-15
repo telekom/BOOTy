@@ -68,6 +68,7 @@ if [ -f /etc/booty/luks-tpm2.env ]; then
 	echo "ENROLL_KEY=$(test -e /etc/booty/luks-enroll.key && echo present || echo absent)"
 	echo "BOUND=$(test -e /etc/booty/luks-tpm2.bound && echo yes || echo no)"
 	echo "UNIT=$(systemctl is-enabled booty-luks-tpm2-enroll.service 2>&1)"
+	echo "INITRD_TPM2_UNLOCK=$(test -e /run/booty/luks-tpm2-initrd-unlock && echo yes || echo no)"
 	echo "INITRD_KEY=$(lsinitrd /boot/initrd.img-$(uname -r) 2>/dev/null | grep -c luks-enroll.key)"
 	echo "CRYPTTAB=$(grep "^$LUKS_NAME " /etc/crypttab)"
 	journalctl -b -o cat -u booty-luks-tpm2-enroll.service --no-pager | tail -n 30 | sed 's/^/ENROLL /'
@@ -278,7 +279,7 @@ func TestDiskEncryptionTPM2VM(t *testing.T) {
 		t.Fatal("the TPM2 did not unlock: passphrase prompt with Secure Boot on")
 	}
 	for _, l := range []string{"SECUREBOOT=1", "ROOT_TYPE=crypt", "TPM2_TOKENS=1", "ENROLL_KEY=absent", "BOUND=no", "UNIT=disabled", "INITRD_KEY=0",
-		"GRUB_LOCK=1", "GRUB_UNRESTRICTED=1", "GRUB_RECOVERY=0"} {
+		"INITRD_TPM2_UNLOCK=yes", "GRUB_LOCK=1", "GRUB_UNRESTRICTED=1", "GRUB_RECOVERY=0"} {
 		luksRequireLine(t, report, l)
 	}
 	if slots := luksField(report, "KEYSLOTS"); !strings.HasPrefix(slots, "0,") || strings.HasPrefix(slots, "0,1,") {
@@ -302,6 +303,8 @@ func TestDiskEncryptionTPM2VM(t *testing.T) {
 	report = luksCheckReport(t, "recovery key", out)
 	luksRequireLine(t, report, "SECUREBOOT=0")
 	luksRequireLine(t, report, "ROOT_TYPE=crypt")
+	// The recovery key opened the root, not the TPM2: no marker (#963).
+	luksRequireLine(t, report, "INITRD_TPM2_UNLOCK=no")
 	if pcr7 == "" || pcr7 == luksField(report, "PCR7") {
 		t.Fatalf("PCR 7 did not change with the Secure Boot state: %q", pcr7)
 	}
@@ -455,7 +458,7 @@ func TestDiskEncryptionLVMTPM2VM(t *testing.T) {
 	if prompted {
 		t.Fatal("the TPM2 did not unlock: passphrase prompt with Secure Boot on")
 	}
-	for _, l := range []string{"SECUREBOOT=1", "ROOT_TYPE=lvm", "ROOT_VG=tcaas", "TPM2_TOKENS=1", "ENROLL_KEY=absent", "BOUND=no", "UNIT=disabled", "GRUB_LOCK=1", "GRUB_RECOVERY=0"} {
+	for _, l := range []string{"SECUREBOOT=1", "ROOT_TYPE=lvm", "ROOT_VG=tcaas", "TPM2_TOKENS=1", "ENROLL_KEY=absent", "BOUND=no", "UNIT=disabled", "INITRD_TPM2_UNLOCK=yes", "GRUB_LOCK=1", "GRUB_RECOVERY=0"} {
 		luksRequireLine(t, report, l)
 	}
 	if slots := luksField(report, "KEYSLOTS"); !strings.HasPrefix(slots, "0,") || strings.HasPrefix(slots, "0,1,") {

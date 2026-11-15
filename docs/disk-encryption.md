@@ -58,6 +58,12 @@ Provisioning (BOOTy, Secure Boot off):
      plugin the initramfs falls back to the passphrase prompt silently. Its
      `tpm2-tss` module would add the plugin but needs `tpm2-tools`, and a
      host-only build drops `systemd-cryptsetup` without it;
+   - `/etc/systemd/system/systemd-cryptsetup@booty_crypt.service.d/90-booty-tpm2-unlock.conf`,
+     also in the initramfs: there it first opens the volume with the TPM2
+     alone (`systemd-cryptsetup attach … tpm2-device=auto,headless=true`, no
+     prompt) and on success leaves `/run/booty/luks-tpm2-initrd-unlock`,
+     which phase 2 needs. If the TPM2 fails, `systemd-cryptsetup` asks for a
+     passphrase as before; in the installed system it does nothing;
    - `/etc/dracut.conf.d/91-booty-luks-enroll-key.conf`: the enrollment key
      in the initramfs;
    - `/etc/default/grub.d/99-booty-luks.cfg`: `GRUB_FORCE_PARTUUID=` (no
@@ -88,15 +94,25 @@ Installed system, `booty-luks-tpm2-enroll.service`:
      (`none luks,x-initrd.attach,tpm2-device=auto`), removes the key from
      the dracut configuration, builds every `/boot/initrd.img-*` into a new
      file and checks it with `lsinitrd` (no key; TPM2 libraries, token
-     plugin, `systemd-cryptsetup`, crypttab present), then swaps them in;
+     plugin, `systemd-cryptsetup`, crypttab, the drop-in present), then
+     swaps them in;
   4. marks the volume bound and posts `tpm2-bound`.
 
   Until step 4 an EXIT trap restores the enrollment-key crypttab line and
   dracut file and removes half-built images; the next boot tries again.
   Slot 1 and the key stay.
-- Phase 2, the next boot with Secure Boot on: the initramfs of this boot
-  has no key, and the TPM2 opens the volume with the PCRs of this boot, so
-  the TPM2 unlocked the root. Only then the script wipes key slot 1 (after
+- Phase 2, the next boot with Secure Boot on: first the initramfs must
+  have opened the root with the TPM2 on this boot
+  (`/run/booty/luks-tpm2-initrd-unlock`, #963). A boot that a passphrase or
+  the recovery key opened (an initramfs that cannot use the TPM2, for
+  example without a library or with initramfs-tools) keeps slot 1 and the
+  key, posts `tpm2-initrd-unlock-failed`, fails the unit and tries again on
+  the next boot: `cryptsetup --token-only` from the booted system proves
+  only that the TPM2 unseals now, not that the initramfs can use it.
+  `DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK=true` skips this check
+  (transitional escape hatch, will be removed). Then the initramfs of this
+  boot has no key, and the TPM2 opens the volume with the PCRs of this
+  boot. Only then the script wipes key slot 1 (after
   checking that slot 1 holds the enrollment key), `shred -u` the key file,
   disables itself and posts `slot1-removed`. If slot 1 is gone already (a
   crash after the wipe), it only cleans up. A failed check posts `failed`
@@ -309,7 +325,7 @@ needed: `cryptsetup luksHeaderBackup`.
 **Status callback.** With `DISK_ENCRYPTION_STATUS_URL` the unit posts
 `{"hostname","luksUUID","status","message"}` with `curl --proto =https` and
 the bearer token of the provisioning run (`tpm2-bound`, `slot1-removed`,
-`failed`). It is best effort: a lost status does not stop the enrollment.
+`tpm2-initrd-unlock-failed`, `failed`). It is best effort: a lost status does not stop the enrollment.
 
 **Fail closed.** Errors in `stream-image` (`BOOTY-DSK-028`, not retried),
 `prepare-disk-encryption` (`BOOTY-DSK-026`) and `close-encrypted-disk`
@@ -495,13 +511,14 @@ KVM scenarios (`.github/workflows/kvm-matrix.yml`):
   2. Secure Boot off: the enrollment key unlocks, the unit waits;
   3. Secure Boot on (phase 1): bound to PCR 7+14, slot 1 and the key file
      remain, the initramfs has no key, status `tpm2-bound`;
-  4. Secure Boot on (phase 2): no prompt; slot 1 and the key file are gone,
-     the unit is disabled, status `slot1-removed`; GRUB is locked and has no
-     recovery entries;
+  4. Secure Boot on (phase 2): no prompt, the initramfs opened the root
+     with the TPM2 (marker); slot 1 and the key file are gone, the unit is
+     disabled, status `slot1-removed`; GRUB is locked and has no recovery
+     entries;
   5. the enrollment key, read from the volume after provisioning, opens
      nothing any more; its copies left on the disk are counted;
   6. Secure Boot off: PCR 7 differs, the TPM2 refuses, the recovery key
-     typed at the prompt unlocks;
+     typed at the prompt unlocks; no marker;
   7. the recovery key is in none of the serial console logs.
 - `TestDiskEncryptionTPM2DataPartitionVM` (same scenario): the image gets a
   last ext4 partition 2 mounted at `/data` by PARTUUID; with
@@ -531,15 +548,19 @@ KVM scenarios (`.github/workflows/kvm-matrix.yml`):
   stock Ubuntu 24.04 cloud image with `initramfs-tools` replaced by
   `dracut` 060 and `libtss2-rc0t64`:
   1. provision with Secure Boot off;
-  2. Secure Boot on (phase 1, dracut): bound to PCR 7+14;
-  3. phase 2 (dracut): the TPM2 unlocks without a prompt, slot 1 and the
-     key file are gone; then the installed system replaces dracut with
-     `initramfs-tools` (the stock `cryptsetup-initramfs` stays) and
-     builds the initramfs with `mkinitramfs`, which has the root in
+  2. Secure Boot on (phase 1, dracut): bound to PCR 7+14, status
+     `tpm2-bound`; then the installed system replaces dracut with
+     `initramfs-tools` (the stock `cryptsetup-initramfs` stays) and builds
+     the initramfs with `mkinitramfs`, which has the root in
      `cryptroot/crypttab`;
-  4. same Secure Boot state, PCRs and TPM2 token, initramfs-tools: the
-     boot stops at the `cryptsetup-initramfs` passphrase prompt (the
-     expected failure); the recovery key opens the volume there.
+  3. same Secure Boot state, PCRs and TPM2 token, initramfs-tools (phase
+     2): the boot stops at the `cryptsetup-initramfs` passphrase prompt
+     (the expected failure); the recovery key opens the volume there.
+     Phase 2 keeps slot 1 and the key file although the TPM2 unseals from
+     the booted system, status `tpm2-initrd-unlock-failed` (#963); then the
+     installed system goes back to dracut;
+  4. phase 2 (dracut): the TPM2 unlocks without a prompt, slot 1 and the
+     key file are gone, status `slot1-removed`.
 - `disk-encryption-off-ubuntu-26.04` (`TestDiskEncryptionOffVM`): the same
   image without the keys: no encryption step runs, the partition table is
   the image's with the root grown, the root is plain ext4, and no BOOTy
