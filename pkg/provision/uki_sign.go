@@ -254,6 +254,10 @@ func parseUnsignedPE(b []byte) (l *peLayout, vend uint64, err error) {
 	if binary.LittleEndian.Uint32(b[l.opt+peOptSecurityDir+4:]) != 0 {
 		return nil, 0, errors.New("the PE is signed")
 	}
+	// The section data must not overlap the headers.
+	if l.secTable+peSectionHdrSize*l.nsec > int(l.sizeOfHeader) {
+		return nil, 0, errors.New("unexpected PE layout: SizeOfHeaders ends inside the section table")
+	}
 	// 64 bits: offsets and addresses near 4 GiB must not wrap.
 	end := uint64(l.sizeOfHeader)
 	type span struct{ ptr, size uint32 }

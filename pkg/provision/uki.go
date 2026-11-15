@@ -86,7 +86,8 @@ const (
 var ukiDeniedParams = []string{
 	"init", "rdinit", "single", "s", "S", "1", "emergency", "rescue", "-b",
 	"rd.break", "rd.shell", "rd.emergency", "rd.rescue", "rd.debug", "rd.udev.debug", "rd.systemd.debug_shell",
-	"rd.systemd.unit", "rd.systemd.run", "systemd.debug_shell", "systemd.unit", "systemd.run",
+	"rd.systemd.unit", "rd.systemd.run", "rd.systemd.break", "rd.systemd.wants",
+	"systemd.debug_shell", "systemd.unit", "systemd.run", "systemd.break", "systemd.wants",
 	"systemd.run_success_action", "systemd.run_failure_action", "systemd.confirm_spawn", "systemd.log_level",
 	"kgdboc", "kgdbwait", "kgdbcon", "ekgdboc",
 }

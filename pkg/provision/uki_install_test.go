@@ -94,7 +94,8 @@ func TestUKIPCRPolicyPerHostCmdline(t *testing.T) {
 func TestUKIPerHostCmdlineRefused(t *testing.T) {
 	n := countKeyGeneration(t, false)
 	for _, params := range []string{"init=/bin/sh", "rd.break=pre-mount", "systemd.debug-shell=1", "rd.systemd.debug-shell", "single",
-		"systemd.unit=rescue.target", "booty.x=é", strings.Repeat("a", ukiMaxCmdline)} {
+		"systemd.unit=rescue.target", "rd.systemd.break=pre-switch-root", "systemd.break=pre-basic", "systemd.wants=debug-shell.service",
+		"rd.systemd.wants=debug-shell.service", "booty.x=é", strings.Repeat("a", ukiMaxCmdline)} {
 		o, _, root, esp := ukiTestHost(t, config.SigningPerHost, perHostUKI(t))
 		o.cfg.Provision.SerialConsole = "none"
 		o.cfg.Provision.ExtraKernelParams = params
@@ -138,6 +139,14 @@ func TestReplacePESection(t *testing.T) {
 	}
 	if _, err := replacePESection(testPE(t, true, [2]string{".cmdline", "x"}), ".cmdline", []byte("y")); err == nil {
 		t.Error("a signed PE accepted")
+	}
+	// SizeOfHeaders inside the section table, the section data from there.
+	b = testPE(t, false, [2]string{".cmdline", "root=x"})
+	binary.LittleEndian.PutUint32(b[0x58+60:], 0x150)
+	binary.LittleEndian.PutUint32(b[0x148+20:], 0x150)
+	b = slices.Delete(b, 0x150, 0x200)
+	if _, err := replacePESection(b, ".cmdline", []byte("root=y")); err == nil || !strings.Contains(err.Error(), "SizeOfHeaders") {
+		t.Errorf("section data over the headers: %v", err)
 	}
 }
 

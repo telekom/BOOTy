@@ -430,6 +430,10 @@ func TestAuthenticodeSign(t *testing.T) {
 func FuzzUKISign(f *testing.F) {
 	f.Add(testPE(f, false, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}))
 	f.Add(testPE(f, false, [2]string{".linux", strings.Repeat("k", 0x300)}))
+	// SizeOfHeaders ends inside the section table: section data overlaps it.
+	overlap := testPE(f, false, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"})
+	binary.LittleEndian.PutUint32(overlap[0x58+60:], 0x100)
+	f.Add(overlap)
 	key, err := rsa.GenerateKey(rand.Reader, 1024) //nolint:gosec // test key
 	if err != nil {
 		f.Fatal(err)
