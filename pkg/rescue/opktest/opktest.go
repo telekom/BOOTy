@@ -20,9 +20,12 @@ import (
 // Provider is a mock OpenID provider of one issuer and client ID.
 type Provider struct {
 	Issuer, ClientID string
-	op               *providers.MockProvider
-	backend          *mocks.MockProviderBackend
-	template         *mocks.IDTokenTemplate
+	// JWKSURI is the jwks_uri of the discovery document; empty is
+	// Issuer + "/jwks".
+	JWKSURI  string
+	op       *providers.MockProvider
+	backend  *mocks.MockProviderBackend
+	template *mocks.IDTokenTemplate
 }
 
 // NewProvider returns a provider with new signing keys.
@@ -41,8 +44,12 @@ func (p *Provider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/.well-known/openid-configuration":
 		w.Header().Set("Content-Type", "application/json")
+		jwksURI := p.JWKSURI
+		if jwksURI == "" {
+			jwksURI = p.Issuer + "/jwks"
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issuer": p.Issuer, "jwks_uri": p.Issuer + "/jwks",
+			"issuer": p.Issuer, "jwks_uri": jwksURI,
 			"authorization_endpoint": p.Issuer + "/auth", "token_endpoint": p.Issuer + "/token",
 			"response_types_supported": []string{"id_token"}, "subject_types_supported": []string{"public"},
 			"id_token_signing_alg_values_supported": []string{"RS256"},

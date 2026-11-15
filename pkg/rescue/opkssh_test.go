@@ -5,9 +5,11 @@ package rescue
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +21,7 @@ import (
 
 // startMockOIDC serves a mock provider over HTTPS and returns it with a
 // client that trusts the server.
-func startMockOIDC(t *testing.T, clientID string) (*opktest.Provider, *http.Client) {
+func startMockOIDC(t *testing.T, clientID string, configure ...func(*opktest.Provider)) (*opktest.Provider, *http.Client) {
 	t.Helper()
 	var lc net.ListenConfig
 	ln, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
@@ -30,11 +32,14 @@ func startMockOIDC(t *testing.T, clientID string) (*opktest.Provider, *http.Clie
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, f := range configure {
+		f(prov)
+	}
 	srv := httptest.NewUnstartedServer(prov)
 	srv.Listener = ln
 	srv.StartTLS()
 	t.Cleanup(srv.Close)
-	return prov, srv.Client()
+	return prov, httpsOnly(srv.Client())
 }
 
 func TestOPKVerify(t *testing.T) {
@@ -58,7 +63,7 @@ func TestOPKVerify(t *testing.T) {
 		return v
 	}
 	now := time.Now()
-	alice := map[string]any{"email": "alice@example.com"}
+	alice := map[string]any{"email": "alice@example.com", "email_verified": true}
 	for _, tc := range []struct {
 		name       string
 		issuer     *opktest.Provider
@@ -70,13 +75,16 @@ func TestOPKVerify(t *testing.T) {
 	}{
 		{name: "email in the policy", claims: alice},
 		{name: "group in the policy", claims: map[string]any{"email": "bob@example.com", "groups": []string{"dev", "ops"}}},
-		{name: "expired ID token", claims: map[string]any{"email": "alice@example.com", "iat": now.Add(-2 * time.Hour).Unix(),
+		{name: "expired ID token", claims: map[string]any{"email": "alice@example.com", "email_verified": true, "iat": now.Add(-2 * time.Hour).Unix(),
 			"exp": now.Add(-time.Hour).Unix()}, expiration: "oidc", want: "expired"},
-		{name: "older than the max age", claims: map[string]any{"email": "alice@example.com", "iat": now.Add(-13 * time.Hour).Unix()},
+		{name: "older than the max age", claims: map[string]any{"email": "alice@example.com", "email_verified": true, "iat": now.Add(-13 * time.Hour).Unix()},
 			expiration: "12h", want: "expired"},
 		{name: "unknown issuer", issuer: other, claims: alice, want: "unrecognized issuer"},
 		{name: "wrong client ID", claims: alice, clientID: "someone-else", want: "audience"},
-		{name: "no policy row", claims: map[string]any{"email": "mallory@example.com"}, want: "no RESCUE_SSH_OPK_POLICY row"},
+		{name: "no policy row", claims: map[string]any{"email": "mallory@example.com", "email_verified": true}, want: "no RESCUE_SSH_OPK_POLICY row"},
+		{name: "unverified email", claims: map[string]any{"email": "alice@example.com", "email_verified": false}, want: "no RESCUE_SSH_OPK_POLICY row"},
+		{name: "email without email_verified", claims: map[string]any{"email": "alice@example.com"}, want: "no RESCUE_SSH_OPK_POLICY row"},
+		{name: "string email_verified", claims: map[string]any{"email": "alice@example.com", "email_verified": "true"}},
 		{name: "unknown signing key", issuer: stranger, claims: alice, want: "key"},
 		{name: "not root", claims: alice, user: "alice", want: "only root"},
 	} {
@@ -159,7 +167,7 @@ func TestRescueSSHServer(t *testing.T) {
 	t.Cleanup(func() { _ = ln.Close() })
 	go serveSSH(ctx, ln, srv)
 
-	good, err := prov.NewKey(ctx, map[string]any{"email": "alice@example.com"})
+	good, err := prov.NewKey(ctx, map[string]any{"email": "alice@example.com", "email_verified": true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +204,7 @@ func TestRescueSSHServer(t *testing.T) {
 		_ = c.Close()
 	}
 
-	expired, err := prov.NewKey(ctx, map[string]any{"email": "alice@example.com", "iat": time.Now().Add(-13 * time.Hour).Unix()})
+	expired, err := prov.NewKey(ctx, map[string]any{"email": "alice@example.com", "email_verified": true, "iat": time.Now().Add(-13 * time.Hour).Unix()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,6 +220,35 @@ func TestRescueSSHServer(t *testing.T) {
 	if _, err := ssh.Dial("tcp", ln.Addr().String(), clientConfig("admin", staticSigner)); err == nil {
 		t.Error("a static key logged in as admin")
 	}
+	assertDisconnectKillsCommand(t, dialRescue(t, ln.Addr().String(), "root", staticSigner))
+}
+
+// assertDisconnectKillsCommand starts a long command, drops the connection
+// and waits for the command to end.
+func assertDisconnectKillsCommand(t *testing.T, c *ssh.Client) {
+	t.Helper()
+	s, err := c.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start("echo $$; sleep 300"); err != nil {
+		t.Fatal(err)
+	}
+	var pid int
+	if _, err := fmt.Fscan(out, &pid); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Close()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); os.IsNotExist(err) {
+			return
+		}
+	}
+	t.Fatalf("command %d still runs after the client left", pid)
 }
 
 func newStaticKey(t *testing.T) (ssh.Signer, string) {
@@ -273,5 +310,26 @@ func TestStartSSHChoosesServer(t *testing.T) {
 	t.Cleanup(cancel)
 	if err := startSSH(ctx, &Config{Mode: ModeShell, OPKPolicy: "root a@example.com https://idp.example"}); err != nil {
 		t.Fatalf("with an opkssh setting: %v", err)
+	}
+}
+
+// A discovery document that names an http:// JWKS URI is refused: the keys
+// would come over plain HTTP.
+func TestOPKVerifyRefusesHTTPJWKS(t *testing.T) {
+	ctx := context.Background()
+	prov, httpClient := startMockOIDC(t, "booty", func(p *opktest.Provider) {
+		p.JWKSURI = strings.Replace(p.Issuer, "https://", "http://", 1) + "/jwks"
+	})
+	key, err := prov.NewKey(ctx, map[string]any{"email": "alice@example.com", "email_verified": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := newOPKVerifier(parseOPKProviders(prov.Issuer+" booty 24h"),
+		parseOPKPolicy("root alice@example.com "+prov.Issuer), httpClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.verify(ctx, "root", key.Cert); err == nil || !strings.Contains(err.Error(), "not https") {
+		t.Fatalf("err = %v, want the https refusal", err)
 	}
 }

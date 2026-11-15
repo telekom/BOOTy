@@ -162,16 +162,36 @@ func newOPKVerifier(list []opkProvider, rules []opkRule, client *http.Client) (*
 
 // jwksHTTPClient returns the client for the OIDC discovery and JWKS
 // requests: the BOOTy HTTPS client (system roots and CA_BUNDLE_FILE), TLS
-// verification also with SKIP_TLS_VERIFY, and no redirects.
+// verification also with SKIP_TLS_VERIFY, no redirects and only https://
+// URLs, also for a jwks_uri of the discovery document.
 func jwksHTTPClient() *http.Client {
 	c := network.NewHTTPClient(30 * time.Second)
 	if t, ok := c.Transport.(*http.Transport); ok {
 		t.TLSClientConfig.InsecureSkipVerify = false
 	}
+	return httpsOnly(c)
+}
+
+// httpsOnly makes c refuse redirects and every request that is not https.
+func httpsOnly(c *http.Client) *http.Client {
 	c.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return errors.New("the OIDC provider answered with a redirect, which BOOTy does not follow")
 	}
+	next := c.Transport
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	c.Transport = httpsTransport{next}
 	return c
+}
+
+type httpsTransport struct{ next http.RoundTripper }
+
+func (t httpsTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Scheme != "https" {
+		return nil, fmt.Errorf("refusing the OIDC request to %s: not https", req.URL.Redacted())
+	}
+	return t.next.RoundTrip(req) //nolint:wrapcheck // the transport error as it is
 }
 
 // verify checks an opkssh certificate for a login as user. It returns the
@@ -209,12 +229,17 @@ func (v *opkVerifier) verify(ctx context.Context, user string, cert *ssh.Certifi
 // matches reports whether the rule allows the verified claims to log in as
 // principal, like the opkssh policy: the issuer is equal, an email without
 // letter case, a subject exactly, an oidc:<claim>:<value> value exactly.
+// Unlike opkssh, an email matches only with email_verified true: a provider
+// that lets users set an unverified address would otherwise hand out root.
 func (r opkRule) matches(principal string, c opkClaims) bool {
 	if r.principal != principal || r.issuer != c.Issuer {
 		return false
 	}
 	if rest, ok := strings.CutPrefix(r.identity, "oidc:"); ok {
 		claim, want, _ := strings.Cut(rest, ":")
+		if claim == "email" && !c.emailVerified() {
+			return false
+		}
 		switch v := c.All[claim].(type) {
 		case string:
 			return v == want
@@ -223,7 +248,14 @@ func (r opkRule) matches(principal string, c opkClaims) bool {
 		}
 		return false
 	}
-	return (c.Email != "" && strings.EqualFold(c.Email, r.identity)) || c.Subject == r.identity
+	return (c.Email != "" && c.emailVerified() && strings.EqualFold(c.Email, r.identity)) || c.Subject == r.identity
+}
+
+// emailVerified reports an email_verified claim of true (some providers send
+// the string "true").
+func (c opkClaims) emailVerified() bool {
+	v := c.All["email_verified"]
+	return v == true || v == "true"
 }
 
 // jwtPattern matches a compact JWT, which a library error could quote.

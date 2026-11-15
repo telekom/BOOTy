@@ -247,6 +247,10 @@ type session struct {
 }
 
 func serveSession(ctx context.Context, ch ssh.Channel, reqs <-chan *ssh.Request) {
+	// The requests end when the channel or the connection closes (also by
+	// the idle timeout); cancel then kills the command's process group.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	s := &session{ctx: ctx, ch: ch}
 	defer func() {
 		if s.pty != nil {
@@ -366,6 +370,11 @@ func (s *session) start(req *ssh.Request) error {
 		go func() { _, _ = io.Copy(in, s.ch); _ = in.Close() }()
 		done = func() {}
 	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Start(); err != nil {
 		return err
 	}

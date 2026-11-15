@@ -730,8 +730,9 @@ RESCUE_SSH_OPK_POLICY="root alice@example.com https://accounts.google.com;root o
 - `RESCUE_SSH_OPK_POLICY`: `principal identity issuer` per row. The identity
   is an email address (letter case ignored), a subject (`sub`, exact) or
   `oidc:<claim>:<value>` for a value of a string or list claim such as
-  `groups`. opkssh's `oidc-match-end:` is not supported. Only principal
-  `root` logs in.
+  `groups`. An email (also `oidc:email:`) matches only when the token has
+  `email_verified` true; opkssh only warns there. opkssh's
+  `oidc-match-end:` is not supported. Only principal `root` logs in.
 - A malformed row is logged with its position and skipped.
 - `RESCUE_SSH_PUBKEY` keys still log in, both work side by side. Keys with
   `authorized_keys` options are skipped, because this server does not apply
@@ -749,8 +750,9 @@ allows the identity as `root`.
 
 BOOTy fetches the OpenID discovery document and the JWKS of the issuer on
 each login, with the BOOTy HTTPS client: the system roots plus
-`CA_BUNDLE_FILE`, TLS verification also with `SKIP_TLS_VERIFY`, and no
-redirects. The expiration checks need the clock: when [time
+`CA_BUNDLE_FILE`, TLS verification also with `SKIP_TLS_VERIFY`, no
+redirects, and only `https://` URLs (a discovery document with an `http://`
+`jwks_uri` is refused). The expiration checks need the clock: when [time
 sync](#time-sync) did not set it, BOOTy logs an error at the start of the
 server and adds a hint to every refusal.
 
@@ -761,7 +763,8 @@ line), key exchange `mlkem768x25519-sha256`, `curve25519-sha256`,
 `aes256-gcm@openssh.com`, `aes128-gcm@openssh.com`, user keys Ed25519 and
 ECDSA (also `sk-`) and their certificates, no RSA, no forwarding of any kind,
 no SFTP or other subsystem, no `env` requests, a 30 second login timeout and
-the 15 minute idle timeout. A session runs `/bin/sh` (with a PTY when the
+the 15 minute idle timeout. When a session or connection ends, its command
+and the processes of its process group are killed. A session runs `/bin/sh` (with a PTY when the
 client asks for one; BOOTy mounts `devpts` for it) or `sh -c <command>`.
 
 Security notes:
