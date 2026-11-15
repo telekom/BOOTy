@@ -232,7 +232,7 @@ func TestEnrollUnitAndScript(t *testing.T) {
 	p2 := luksEnrollScript[strings.Index(luksEnrollScript, `if [ -e "$bound" ]`):strings.Index(luksEnrollScript, "step=start")]
 	p1 := luksEnrollScript[strings.Index(luksEnrollScript, "step=start"):]
 	inOrder(t, p2, luksInitrdUnlockMarker, "status tpm2-initrd-unlock-failed", `lsinitrd "/boot/initrd.img-$(uname -r)"`, "*luks-enroll.key*", "--token-only", "luksKillSlot", "shred -u", "systemctl disable", "status slot1-removed")
-	inOrder(t, p1, "trap restore EXIT", "--tpm2-pcrs=", "--token-only", "none luks,x-initrd.attach,tpm2-device=auto", "lsinitrd", `mv "$img.booty-new"`, `: >"$bound"`, "trap - EXIT", "status tpm2-bound")
+	inOrder(t, p1, "trap restore EXIT", "--tpm2-pcrs=", "--token-only", "none luks,x-initrd.attach,tpm2-device=auto", "lsinitrd", `mv "$img.booty-new"`, "rm -f "+luksInitrdUnlockMarker, `: >"$bound"`, "trap - EXIT", "status tpm2-bound")
 	if strings.Contains(p1, "luksKillSlot") || strings.Contains(p1, "shred") {
 		t.Error("phase 1 destroys the enrollment key")
 	}
@@ -380,10 +380,8 @@ func TestEnrollScriptPhase2NeedsInitrdTPM2Unlock(t *testing.T) {
 	if out, c, err = run(""); err == nil || strings.Contains(c, "luksKillSlot") || !strings.Contains(out, "systemd-fido2") {
 		t.Fatalf("second token: slot 1 removed: %v\n%s\n%s", err, out, c)
 	}
-	if err := os.Remove(filepath.Join(dir, "tokens")); err != nil {
-		t.Fatal(err)
-	}
-	// DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK: the old behavior.
+	// DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK: the old behavior, also
+	// with a second token (the token check only backs the marker).
 	if err := os.Remove(marker); err != nil {
 		t.Fatal(err)
 	}

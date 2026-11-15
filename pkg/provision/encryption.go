@@ -1068,15 +1068,17 @@ if [ "$(efivar SecureBoot)" != 1 ] || [ "$(efivar SetupMode)" != 0 ]; then
 fi
 
 if [ -e "$bound" ]; then
-	if [ "${SKIP_INITRD_UNLOCK_CHECK:-}" != 1 ] && [ ! -e ` + luksInitrdUnlockMarker + ` ]; then
-		say "the initramfs did not open $dev with the TPM2 on this boot (passphrase or recovery key); key slot $LUKS_ENROLL_SLOT stays, the next boot tries again"
-		status tpm2-initrd-unlock-failed "the initramfs did not open the root with the TPM2 on this boot; key slot $LUKS_ENROLL_SLOT stays"
-		exit 1
+	if [ "${SKIP_INITRD_UNLOCK_CHECK:-}" != 1 ]; then
+		if [ ! -e ` + luksInitrdUnlockMarker + ` ]; then
+			say "the initramfs did not open $dev with the TPM2 on this boot (passphrase or recovery key); key slot $LUKS_ENROLL_SLOT stays, the next boot tries again"
+			status tpm2-initrd-unlock-failed "the initramfs did not open the root with the TPM2 on this boot; key slot $LUKS_ENROLL_SLOT stays"
+			exit 1
+		fi
+		# headless allows any token that needs no prompt: the marker proves a
+		# TPM2 unlock only when the TPM2 token is the only one.
+		others=$(cryptsetup luksDump "$dev" | sed -n '/^Tokens:/,/^Digests:/p' | grep -E '^  [0-9]+: ' | grep -v ': systemd-tpm2$' || true)
+		[ -z "$others" ] || fail "the volume has a LUKS2 token other than systemd-tpm2 ($others)"
 	fi
-	# headless allows any token that needs no prompt: the marker proves a
-	# TPM2 unlock only when the TPM2 token is the only one.
-	others=$(cryptsetup luksDump "$dev" | sed -n '/^Tokens:/,/^Digests:/p' | grep -E '^  [0-9]+: ' | grep -v ': systemd-tpm2$' || true)
-	[ -z "$others" ] || fail "the volume has a LUKS2 token other than systemd-tpm2 ($others)"
 	list=$(lsinitrd "/boot/initrd.img-$(uname -r)") || fail "lsinitrd of the booted initramfs"
 	case $list in *luks-enroll.key*) fail "the initramfs of this boot still has the enrollment key" ;; esac
 	case $list in *libcryptsetup-token-systemd-tpm2.so*) ;; *) fail "the initramfs of this boot lacks the TPM2 token plugin" ;; esac
@@ -1163,6 +1165,10 @@ for img in $built; do ln -f "$img" "$img.booty-old"; done
 sync
 for img in $built; do mv "$img.booty-new" "$img"; done
 sync
+# A marker from this boot came from the old initramfs (the TPM2 token of
+# an earlier failed try): phase 2 needs a boot of the new one, also after
+# a restart of the unit or a soft-reboot, which keep /run.
+rm -f ` + luksInitrdUnlockMarker + `
 : >"$bound"
 trap - EXIT
 rm -f /boot/initrd.img-*.booty-old

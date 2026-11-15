@@ -112,7 +112,9 @@ Installed system, `booty-luks-tpm2-enroll.service`:
   only that the TPM2 unseals now, not that the initramfs can use it.
   `headless` would let any token that needs no prompt open the volume, so
   a LUKS2 token other than `systemd-tpm2` fails the check (`failed`).
-  `DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK=true` skips this check
+  Phase 1 removes a marker of its own boot, so a restart of the unit or a
+  soft-reboot (both keep `/run`) cannot pass it on.
+  `DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK=true` skips both checks
   (transitional escape hatch, will be removed). Then the initramfs of this
   boot has no key, and the TPM2 opens the volume with the PCRs of this
   boot. Only then the script wipes key slot 1 (after
