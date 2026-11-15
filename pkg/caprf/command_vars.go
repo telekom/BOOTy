@@ -26,7 +26,8 @@ import (
 // such a source. It can not change a URL
 // that BOOTy posts to with the bearer token (inventory, firmware, health,
 // telemetry, crash artifacts), the disk encryption settings except the
-// target partition and DEPROVISION_CRYPTO_ERASE. Unknown keys are rejected too. A payload
+// target partition, DEPROVISION_CRYPTO_ERASE and the rescue login
+// (RESCUE_SSH_PUBKEY, RESCUE_PASSWORD_HASH, RESCUE_SSH_HARDENED). Unknown keys are rejected too. A payload
 // with only blank and comment lines returns no keys.
 //
 // The base is the vars file that BOOTy read at start; MergeCommandVars does
@@ -87,6 +88,8 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 		// Turning it off would leave the LUKS2 keyslots of a deprovisioned
 		// disk to whoever holds the recovery key.
 		{"DEPROVISION_CRYPTO_ERASE", ref.Deprovision.CryptoErase, cfg.Deprovision.CryptoErase},
+		// Who may log in to the rescue shell of a failed command.
+		{"rescue SSH access", lockedRescueAccess(&ref.Rescue), lockedRescueAccess(&cfg.Rescue)},
 	} {
 		if !reflect.DeepEqual(s.ref, s.cand) {
 			fixed = append(fixed, s.name)
@@ -98,6 +101,11 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 			strings.Join(fixed, ", "))
 	}
 	return cfg, keys, nil
+}
+
+// lockedRescueAccess is what decides who can log in to the rescue shell.
+func lockedRescueAccess(r *config.RescueConfig) []any {
+	return []any{r.SSHPubKey, r.PasswordHash, r.SSHHardened}
 }
 
 // cosignLockViolations names what cfg, the config of a standby command,

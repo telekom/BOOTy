@@ -17,8 +17,11 @@ import (
 
 // TestRescueSSHLoginQEMU boots the default flavor (its dropbear and its
 // /etc/passwd), lets the provision fail on an unreachable image, and logs
-// in to the rescue shell over SSH with RESCUE_SSH_PUBKEY. Without a root
-// entry in /etc/passwd, dropbear refused every login ("nonexistent user").
+// in to the rescue shell over SSH with each of two RESCUE_SSH_PUBKEY keys.
+// Without a root entry in /etc/passwd, dropbear refused every login
+// ("nonexistent user"). The hardened server must refuse password login
+// (although RESCUE_PASSWORD_HASH is set), an RSA host key, group14 key
+// exchange, TCP forwarding and the SFTP subsystem.
 //
 // BOOTY_FLAVOR_INITRAMFS: initramfs.cpio.zst of the default flavor.
 // BOOTY_FLAVOR_KERNEL: vmlinuz of `--target kernel-image`.
@@ -39,13 +42,17 @@ func TestRescueSSHLoginQEMU(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	dir := t.TempDir()
-	key := filepath.Join(dir, "id_ed25519")
-	if out, err := exec.CommandContext(ctx, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key).CombinedOutput(); err != nil {
-		t.Fatalf("ssh-keygen: %v\n%s", err, out)
-	}
-	pub, err := os.ReadFile(key + ".pub")
-	if err != nil {
-		t.Fatal(err)
+	keys := []string{filepath.Join(dir, "id_a"), filepath.Join(dir, "id_b")}
+	var pubs []string
+	for _, key := range keys {
+		if out, err := exec.CommandContext(ctx, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key).CombinedOutput(); err != nil {
+			t.Fatalf("ssh-keygen: %v\n%s", err, out)
+		}
+		pub, err := os.ReadFile(key + ".pub")
+		if err != nil {
+			t.Fatal(err)
+		}
+		pubs = append(pubs, strings.TrimSpace(string(pub)))
 	}
 
 	image := filepath.Join(dir, "unused.img")
@@ -56,7 +63,9 @@ func TestRescueSSHLoginQEMU(t *testing.T) {
 	vars["IMAGE"] = "http://10.0.2.2:1/missing.raw" // nothing listens: the provision fails
 	vars["IMAGE_ALLOW_INSECURE_HTTP"] = "true"
 	vars["RESCUE_MODE"] = "shell"
-	vars["RESCUE_SSH_PUBKEY"] = strings.TrimSpace(string(pub))
+	// Two keys, an empty and a malformed entry, which BOOTy skips.
+	vars["RESCUE_SSH_PUBKEY"] = pubs[0] + ";not-a-key;;" + pubs[1]
+	vars["RESCUE_PASSWORD_HASH"] = "$6$rescue$4CGyX0OaQIM6Uu1TqF1C4f8V5jyDT9N2ITqE6wA3lFQmB6zqh5lW5qOHkUzQhC6RJgWbG6V0X4i7vYpJ3m0iA/"
 	initramfs := flavorInitramfsWithVars(t, flavor, vars, nil)
 
 	port := freeTCPPort(ctx, t)
@@ -97,20 +106,60 @@ func TestRescueSSHLoginQEMU(t *testing.T) {
 		}
 	}()
 
+	login := func(key string) ([]byte, error) {
+		return rescueSSH(ctx, port, "-i", key, "-o", "HostKeyAlgorithms=ssh-ed25519",
+			"root@127.0.0.1", "echo rescue-ok; id -un")
+	}
 	var out []byte
 	for range 30 {
-		out, err = exec.CommandContext(ctx, "ssh", "-i", key, "-p", fmt.Sprint(port),
-			"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-			"-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
-			"root@127.0.0.1", "echo rescue-ok; id -un").CombinedOutput()
+		out, err = login(keys[0])
 		if err == nil {
 			break
 		}
 		time.Sleep(2 * time.Second)
 	}
-	if err != nil || !strings.Contains(string(out), "rescue-ok") || !strings.Contains(string(out), "root") {
-		t.Fatalf("rescue SSH login failed: %v\n%s\nconsole tail:\n%s", err, out, tail([]byte(serial.String()), 2000))
+	for i, key := range keys {
+		if i > 0 {
+			out, err = login(key)
+		}
+		if err != nil || !strings.Contains(string(out), "rescue-ok") || !strings.Contains(string(out), "root") {
+			t.Fatalf("rescue SSH login with key %d failed: %v\n%s\nconsole tail:\n%s", i+1, err, out, tail([]byte(serial.String()), 2000))
+		}
 	}
+	assertRescueSSHRefusals(ctx, t, port, keys[0])
+}
+
+// assertRescueSSHRefusals checks what the hardened rescue SSH server
+// refuses. ssh -W opens a direct-tcpip channel, the channel of -L.
+func assertRescueSSHRefusals(ctx context.Context, t *testing.T, port int, key string) {
+	t.Helper()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"password login", []string{"-o", "PubkeyAuthentication=no", "-o", "PreferredAuthentications=password,keyboard-interactive",
+			"root@127.0.0.1", "true"}, "Permission denied (publickey)"},
+		{"RSA host key", []string{"-i", key, "-o", "HostKeyAlgorithms=rsa-sha2-512,rsa-sha2-256,ssh-rsa",
+			"root@127.0.0.1", "true"}, "no matching host key type"},
+		{"group14 key exchange", []string{"-i", key, "-o", "KexAlgorithms=diffie-hellman-group14-sha256",
+			"root@127.0.0.1", "true"}, "no matching key exchange method"},
+		{"local forwarding", []string{"-i", key, "-W", "127.0.0.1:22", "root@127.0.0.1"}, "administratively prohibited"},
+		{"SFTP subsystem", []string{"-i", key, "-s", "root@127.0.0.1", "sftp"}, "subsystem request failed"},
+	} {
+		out, _ := rescueSSH(ctx, port, tc.args...)
+		if !strings.Contains(string(out), tc.want) {
+			t.Errorf("%s: want %q in the ssh output, got:\n%s", tc.name, tc.want, out)
+		}
+	}
+}
+
+// rescueSSH runs ssh against the forwarded rescue SSH port, non-interactive.
+func rescueSSH(ctx context.Context, port int, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "ssh", append([]string{"-p", fmt.Sprint(port),
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+		"-o", "BatchMode=yes", "-o", "ConnectTimeout=5"}, args...)...)
+	return cmd.CombinedOutput()
 }
 
 // freeTCPPort returns a free TCP port on 127.0.0.1.

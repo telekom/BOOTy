@@ -218,6 +218,9 @@ debug dumps.
 - Configuration: deprecated or ignored keys (for example BGP keys next to
   BGP sessions), `SKIP_TLS_VERIFY` and plain HTTP transport, missing report
   URLs, and `ignoring log setting`.
+- Rescue SSH: malformed or RSA entries in `RESCUE_SSH_PUBKEY` (by position,
+  not the key), no valid key at all, password login without a key, and
+  `RESCUE_SSH_HARDENED=false`.
 - `LOG_URL` itself: `remote log handler is dropping entries: buffer full` on
   the console; the server gets one `[WARN] remote log handler dropped lines
   code=BOOTY-LOG-001` line after a gap (written by the handler, not a log
@@ -248,6 +251,8 @@ show one line per stage and per notable result:
 - Image: the source, the download and write progress, checksum and GPG
   signature results, qcow2 conversion, A/B slot streaming, the memory peak
   of the image step.
+- Rescue SSH: with `RESCUE_SSH_HARDENED=false`, that the dropbear build has
+  no RSA support for an RSA host key.
 - Boot handoff: EFI boot entries, GRUB and kernel command line, kexec load
   and execute, reboot and power off, the watchdog handoff.
 - Kernel module signing: the signed out-of-tree modules and the certificate
@@ -429,7 +434,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 - `step made no progress within its budget, stopping the watchdog keepalive; the hardware resets the host`
 
-### WARN (383 messages)
+### WARN (388 messages)
 
 #### WARN `.`
 
@@ -855,6 +860,11 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 - `auto-mount failed`
 - `could not start SSH daemon`
+- `ignoring malformed rescue SSH key`
+- `rescue SSH allows password login: a password hash is set and no SSH key`
+- `rescue SSH hardening disabled (RESCUE_SSH_HARDENED=false): password login and port forwarding allowed, no idle timeout`
+- `rescue SSH has no valid key in RESCUE_SSH_PUBKEY: SSH login is refused, also with a password hash`
+- `rescue SSH key is RSA, which the hardened dropbear build refuses`
 
 #### WARN `pkg/runmode`
 
@@ -907,7 +917,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `progress resumed, petting the watchdog again`
 - `watchdog keepalive failed`
 
-### INFO (489 messages)
+### INFO (490 messages)
 
 #### INFO `.`
 
@@ -1440,6 +1450,10 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `starting Shell`
 - `unmounted`
 - `waiting for command to finish...`
+
+#### INFO `pkg/rescue`
+
+- `no RSA host key: this dropbear build has no RSA support`
 
 #### INFO `pkg/runmode`
 

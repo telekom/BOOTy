@@ -491,10 +491,11 @@ func (o *Orchestrator) RescueConfig() *rescue.Config {
 			cfg.Mode = mode
 		}
 	}
-	if o.cfg.Rescue.SSHPubKey != "" {
-		cfg.SSHKeys = []string{o.cfg.Rescue.SSHPubKey}
-	}
+	var entries int
+	cfg.SSHKeys, entries = rescue.ParseSSHKeys(o.cfg.Rescue.SSHPubKey)
+	cfg.SSHKeyConfigured = entries > 0
 	cfg.PasswordHash = o.cfg.Rescue.PasswordHash
+	cfg.LegacySSH = !config.BoolOr(o.cfg.Rescue.SSHHardened, true)
 	if o.cfg.Rescue.Timeout > 0 {
 		cfg.ShellTimeout = time.Duration(o.cfg.Rescue.Timeout) * time.Second
 	}
