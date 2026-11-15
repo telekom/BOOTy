@@ -442,3 +442,82 @@ func TestRescueSSHIgnoresAuthorizedKeysFile(t *testing.T) {
 		}
 	}
 }
+
+// TestRescueSSHTerminalModes applies the pty-req modes to the terminal.
+func TestRescueSSHTerminalModes(t *testing.T) {
+	a, line := newTestKey(t)
+	addr := startTestServer(t, &Config{SSHKeys: []string{line}}, nil)
+	s, err := dialRescue(t, addr, "root", a).NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RequestPty("xterm", 24, 80, ssh.TerminalModes{ssh.ECHO: 0, ssh.ICANON: 0, ssh.VINTR: 7}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.CombinedOutput("stty -a")
+	if err != nil {
+		t.Fatalf("stty: %v\n%s", err, out)
+	}
+	for _, want := range []string{"-echo ", "-icanon", "intr = ^G"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("stty -a lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRescueSSHForwardHalfClose relays a service that answers after the
+// end of its request, and closes remote forwards with the connection.
+func TestRescueSSHForwardHalfClose(t *testing.T) {
+	var lc net.ListenConfig
+	svc, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	go func() {
+		for {
+			conn, err := svc.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				req, _ := io.ReadAll(conn) // until the client's EOF
+				_, _ = conn.Write(append([]byte("got "), req...))
+				_ = conn.Close()
+			}()
+		}
+	}()
+	a, line := newTestKey(t)
+	addr := startTestServer(t, &Config{LegacySSH: true, SSHKeys: []string{line}}, nil)
+	c := dialRescue(t, addr, "root", a)
+	conn, err := c.Dial("tcp", svc.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write([]byte("req")); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.(interface{ CloseWrite() error }).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := io.ReadAll(conn); err != nil || string(got) != "got req" {
+		t.Errorf("half-closed local forward: %q, %v", got, err)
+	}
+	ln, err := c.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fwd := ln.Addr().String()
+	_ = c.Close()
+	var d net.Dialer
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		conn, err := d.DialContext(context.Background(), "tcp", fwd)
+		if err != nil {
+			break
+		}
+		_ = conn.Close()
+		if time.Now().After(deadline) {
+			t.Fatal("the remote forward still listens after the client left")
+		}
+	}
+}

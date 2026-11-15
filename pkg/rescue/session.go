@@ -46,7 +46,7 @@ type session struct {
 	ch   ssh.Channel
 	term string
 	pty  *os.File // master side; nil without a pty-req
-	tty  string
+	tty  *os.File // terminal side, the command's controlling terminal
 	cmd  *exec.Cmd
 }
 
@@ -58,7 +58,7 @@ func (c *rescueConn) serveSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 	s := &session{rescueConn: c, ctx: ctx, ch: ch}
 	defer func() {
 		if s.pty != nil {
-			_ = s.pty.Close()
+			_, _ = s.pty.Close(), s.tty.Close()
 		}
 	}()
 	for req := range reqs {
@@ -124,7 +124,16 @@ func (s *session) openPTY(payload []byte) error {
 		_ = m.Close()
 		return fmt.Errorf("pty number: %w", err)
 	}
-	s.pty, s.term, s.tty = m, req.Term, fmt.Sprintf("/dev/pts/%d", n)
+	tty, err := os.OpenFile(fmt.Sprintf("/dev/pts/%d", n), os.O_RDWR|unix.O_NOCTTY, 0)
+	if err != nil {
+		_ = m.Close()
+		return fmt.Errorf("open tty: %w", err)
+	}
+	if err := setTermModes(tty, []byte(req.Modes)); err != nil {
+		_, _ = m.Close(), tty.Close()
+		return err
+	}
+	s.pty, s.term, s.tty = m, req.Term, tty
 	return setWinsize(m, payload[4+len(req.Term):])
 }
 
@@ -181,7 +190,7 @@ func (s *session) env(original string, forced bool) []string {
 	env := []string{"USER=" + rescueUser, "LOGNAME=" + rescueUser, "HOME=" + rescueHome, "SHELL=" + rescueShell,
 		"PATH=" + rescuePath}
 	if s.pty != nil {
-		env = append(env, "TERM="+s.term, "SSH_TTY="+s.tty)
+		env = append(env, "TERM="+s.term, "SSH_TTY="+s.tty.Name())
 	}
 	rh, rp, _ := net.SplitHostPort(s.conn.RemoteAddr().String())
 	lh, lp, _ := net.SplitHostPort(s.conn.LocalAddr().String())
@@ -206,20 +215,16 @@ func (s *session) start(req *ssh.Request) error {
 	if unix.Access(rescueHome, unix.X_OK) != nil {
 		cmd.Dir = "/"
 	}
-	var done func()
+	var in io.WriteCloser
 	if s.pty != nil {
-		if done, err = s.attachPTY(cmd); err != nil {
-			return err
-		}
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = s.tty, s.tty, s.tty
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 	} else {
-		in, err := cmd.StdinPipe()
-		if err != nil {
+		if in, err = cmd.StdinPipe(); err != nil {
 			return fmt.Errorf("stdin: %w", err)
 		}
 		cmd.Stdout, cmd.Stderr = s.ch, s.ch.Stderr()
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		go func() { _, _ = io.Copy(in, s.ch); _ = in.Close() }()
-		done = func() {}
 	}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 5 * time.Second
@@ -227,6 +232,7 @@ func (s *session) start(req *ssh.Request) error {
 		return err
 	}
 	s.cmd = cmd
+	done := s.copyIO(in)
 	go func() {
 		_ = cmd.Wait()
 		done()
@@ -234,6 +240,27 @@ func (s *session) start(req *ssh.Request) error {
 		_ = s.ch.Close()
 	}()
 	return nil
+}
+
+// copyIO starts the copies between the channel and the command (stdin pipe
+// or the terminal) and returns the func that waits for the output after
+// the command ended.
+func (s *session) copyIO(in io.WriteCloser) func() {
+	if s.pty == nil {
+		go func() { _, _ = io.Copy(in, s.ch); _ = in.Close() }()
+		return func() {}
+	}
+	out := make(chan struct{})
+	go func() { _, _ = io.Copy(s.pty, s.ch) }()
+	go func() { _, _ = io.Copy(s.ch, s.pty); close(out) }()
+	return func() {
+		// The terminal reads EIO once the last holder of the tty side closed it.
+		_ = s.tty.Close()
+		select {
+		case <-out:
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 // sendExit sends exit-signal for a command killed by a signal, else
@@ -256,27 +283,4 @@ func (s *session) sendExit(ps *os.ProcessState) {
 		}
 	}
 	_, _ = s.ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{uint32(ps.ExitCode() & 0xff)})) //nolint:gosec // masked
-}
-
-// attachPTY gives cmd the terminal as its controlling terminal and copies
-// between the terminal and the channel. The returned func waits for the
-// output after the command ended.
-func (s *session) attachPTY(cmd *exec.Cmd) (func(), error) {
-	tty, err := os.OpenFile(s.tty, os.O_RDWR|unix.O_NOCTTY, 0)
-	if err != nil {
-		return nil, fmt.Errorf("open tty: %w", err)
-	}
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = tty, tty, tty
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
-	out := make(chan struct{})
-	go func() { _, _ = io.Copy(s.pty, s.ch) }()
-	go func() { _, _ = io.Copy(s.ch, s.pty); close(out) }()
-	return func() {
-		// The terminal reads EIO once the last holder of the tty side closed it.
-		_ = tty.Close()
-		select {
-		case <-out:
-		case <-time.After(2 * time.Second):
-		}
-	}, nil
 }

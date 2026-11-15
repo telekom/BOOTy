@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -51,12 +52,27 @@ func (c *rescueConn) directTCPIP(nch ssh.NewChannel) {
 	go pipe(ch, tc)
 }
 
-// pipe copies both ways and closes both ends when one side is done.
+// pipe copies both ways. An EOF of one side half-closes the other (TCP
+// CloseWrite, SSH EOF), so a service that answers after the end of its
+// request still can; both ends close when both directions are done.
 func pipe(ch ssh.Channel, tc net.Conn) {
-	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(ch, tc); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(tc, ch); done <- struct{}{} }()
-	<-done
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(ch, tc)
+		_ = ch.CloseWrite()
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(tc, ch)
+		if cw, ok := tc.(interface{ CloseWrite() error }); ok {
+			_ = cw.CloseWrite()
+		} else {
+			_ = tc.Close()
+		}
+	}()
+	wg.Wait()
 	_ = ch.Close()
 	_ = tc.Close()
 }

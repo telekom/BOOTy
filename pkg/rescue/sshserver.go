@@ -330,8 +330,11 @@ func (s *rescueSSH) serveConn(nc net.Conn, srv *ssh.ServerConfig) {
 	slog.Info("rescue SSH login accepted", attrs...)
 	c := &rescueConn{ctx: s.ctx, conn: conn, legacy: s.legacy,
 		opts: conn.Permissions.ExtraData[keyOptionsKey{}].(*keyOptions)} //nolint:forcetypeassert // every callback sets it
-	defer c.closeForwards()
-	go c.globalRequests(reqs)
+	// The global requests end when the connection closes; wait for them, so
+	// no remote forward is registered after closeForwards.
+	globalDone := make(chan struct{})
+	go func() { c.globalRequests(reqs); close(globalDone) }()
+	defer func() { _ = conn.Close(); <-globalDone; c.closeForwards() }()
 	for nch := range chans {
 		switch nch.ChannelType() {
 		case "session":
