@@ -51,11 +51,11 @@ func TestRescueSSHOPKLoginQEMU(t *testing.T) {
 
 	ca := newPrivateCA(t)
 	prov := startMockOIDCProvider(t, ca)
-	valid := writeOPKKey(ctx, t, prov, filepath.Join(dir, "id_opk"), map[string]any{"email": "alice@example.com"})
+	valid := writeOPKKey(ctx, t, prov, filepath.Join(dir, "id_opk"), map[string]any{"email": "alice@example.com", "email_verified": true})
 	// Issued 13 hours ago: older than the 12h expiration policy.
 	expired := writeOPKKey(ctx, t, prov, filepath.Join(dir, "id_expired"),
-		map[string]any{"email": "alice@example.com", "iat": time.Now().Add(-13 * time.Hour).Unix()})
-	outsider := writeOPKKey(ctx, t, prov, filepath.Join(dir, "id_outsider"), map[string]any{"email": "mallory@example.com"})
+		map[string]any{"email": "alice@example.com", "email_verified": true, "iat": time.Now().Add(-13 * time.Hour).Unix()})
+	outsider := writeOPKKey(ctx, t, prov, filepath.Join(dir, "id_outsider"), map[string]any{"email": "mallory@example.com", "email_verified": true})
 	static := filepath.Join(dir, "id_static")
 	if out, err := exec.CommandContext(ctx, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", static).CombinedOutput(); err != nil {
 		t.Fatalf("ssh-keygen: %v\n%s", err, out)
