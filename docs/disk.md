@@ -316,8 +316,10 @@ The default and the GoBGP release initramfs ship every erase tool: `nvme`
 erase fails with `the nvme tool is not in the initramfs` (or `hdparm`, or
 `sg_sanitize is not in the initramfs, sg_format is not in the initramfs`),
 and the crypto-erase of a disk with a LUKS2 header fails, unless
-`DEPROVISION_CRYPTO_ERASE=false`. Use `SECURE_ERASE_FALLBACK=wipe` there, or
-a flavor with the tools.
+`DEPROVISION_CRYPTO_ERASE=false`. In slim, `SECURE_ERASE_FALLBACK=wipe`
+wipes the disk instead. Micro has no `wipefs` either, so the fallback wipe
+fails there too; use a flavor or a custom initramfs with the tools.
+`SECURE_ERASE_FALLBACK` does not cover a failed LUKS2 crypto-erase.
 
 `SECURE_ERASE_FALLBACK=wipe` (YAML `provision.disk.secureEraseFallback`)
 allows the fallback: BOOTy logs a `WARN` line with the erase error, wipes the

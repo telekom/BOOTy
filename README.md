@@ -1454,7 +1454,8 @@ silently downgrade an explicit secure erase request.
 `SECURE_ERASE_FALLBACK=wipe` allows the plain wipe instead and names the
 disks in the success status. The default and the GoBGP release initramfs
 ship all erase tools (`nvme`, `hdparm`, `sg_sanitize`, `sg_format`,
-`cryptsetup`); the slim and micro flavors ship none. Deprovisioning,
+`cryptsetup`); the slim and micro flavors ship none (micro has no
+`wipefs` for the fallback either). Deprovisioning,
 decommission and the wipe of all disks (`WIPE_ALL_DISKS=true`) do not read
 `SECURE_ERASE`. See [docs/disk.md](docs/disk.md#secure-erase).
 
