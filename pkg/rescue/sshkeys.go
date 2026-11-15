@@ -50,17 +50,23 @@ func ParseSSHKeys(value string) (keys []string, entries int) {
 	return keys, entries
 }
 
-// splitSSHKeys splits value at every newline and at each ";" outside
-// double quotes, quoted like optionsEnd reads them. A newline always ends an
-// entry, so no entry can add a second authorized_keys line.
+// splitSSHKeys splits value at every newline and at each ";" outside the
+// double quotes of the first token of an entry (the options), quoted like
+// optionsEnd reads them. Quotes in the key or the comment are literal. A
+// newline always ends an entry, so no entry can add a second
+// authorized_keys line.
 func splitSSHKeys(value string) []string {
 	var out []string
-	start, quoted := 0, false
+	start, quoted, first := 0, false, true
 	for i := 0; i < len(value); i++ {
 		switch c := value[i]; {
 		case c == '\n' || c == '\r' || (c == ';' && !quoted):
 			out = append(out, value[start:i])
-			start, quoted = i+1, false
+			start, quoted, first = i+1, false, true
+		case !first:
+		case (c == ' ' || c == '\t') && !quoted:
+			// Leading blanks come before the first token.
+			first = strings.TrimSpace(value[start:i]) == ""
 		case c == '\\' && quoted && i+1 < len(value) && value[i+1] != '\n' && value[i+1] != '\r':
 			i++
 		case c == '"':

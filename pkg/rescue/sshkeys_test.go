@@ -40,6 +40,7 @@ func TestParseSSHKeys(t *testing.T) {
 		// the forced command.
 		{"key inside a quoted option", `command="true; ` + testKeyA + `" ` + testKeyB,
 			[]string{`command="true; ` + testKeyA + `" ` + testKeyB}},
+		{"quote in a comment", testKeyA + `"laptop;` + testKeyB, []string{testKeyA + `"laptop`, testKeyB}},
 		{"newline ends a quoted option", `command="x` + "\n" + testKeyA, []string{testKeyA}},
 		{"escaped newline ends a quoted option", `command="x\` + "\n" + testKeyA, []string{testKeyA}},
 	} {
