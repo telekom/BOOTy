@@ -19,6 +19,21 @@ func TestValidateDiskEncryption(t *testing.T) {
 		{"no recovery URL", func(c *Config) { c.Provision.DiskEncryption.RecoveryKeyURL = "" }, "recoveryKeyURL is required"},
 		{"mirroring", func(c *Config) { c.Provision.Disk.MirroringMode = "raid-1" }, "whole-disk image only"},
 		{"ab", func(c *Config) { c.Provision.Image.Mode = ImageModeAB }, "whole-disk image only"},
+		{"status token", func(c *Config) {
+			c.Provision.DiskEncryption.StatusURL, c.Provision.DiskEncryption.StatusToken = "https://p/s", "status-only"
+		}, "-"},
+		{"status reuses provisioning token", func(c *Config) {
+			c.Provision.DiskEncryption.StatusURL, c.Provision.DiskEncryption.StatusReuseProvisioningToken = "https://p/s", true
+		}, "-"},
+		{"status without token", func(c *Config) { c.Provision.DiskEncryption.StatusURL = "https://p/s" }, "statusToken is required"},
+		{"status token and reuse", func(c *Config) {
+			d := &c.Provision.DiskEncryption
+			d.StatusURL, d.StatusToken, d.StatusReuseProvisioningToken = "https://p/s", "t", true
+		}, "exclude each other"},
+		{"status token without URL", func(c *Config) { c.Provision.DiskEncryption.StatusToken = "t" }, "need provision.diskEncryption.statusURL"},
+		{"status token with newline", func(c *Config) {
+			c.Provision.DiskEncryption.StatusURL, c.Provision.DiskEncryption.StatusToken = "https://p/s", "t\nX-Evil: 1"
+		}, "control characters"},
 		{"whole-disk", func(c *Config) { c.Provision.Image.Mode = ImageModeWholeDisk; c.Provision.Disk.MirroringMode = "none" }, "-"},
 	}
 	for _, tt := range tests {

@@ -72,6 +72,9 @@ if [ -f /etc/booty/luks-tpm2.env ]; then
 	echo "CRYPTTAB=$(grep "^$LUKS_NAME " /etc/crypttab)"
 	journalctl -b -o cat -u booty-luks-tpm2-enroll.service --no-pager | tail -n 30 | sed 's/^/ENROLL /'
 fi
+if [ -x ` + luksSwitchScriptPath + ` ]; then
+	` + luksSwitchScriptPath + `
+fi
 echo "` + luksCheckEnd + `"
 systemctl poweroff --no-block
 `
@@ -119,6 +122,9 @@ const (
 	luksPlain luksLayout = iota
 	luksData
 	luksLVM
+	// luksInitramfsToolsSwitch is luksPlain with the switch back to
+	// initramfs-tools staged (TestDiskEncryptionUbuntu2404VM).
+	luksInitramfsToolsSwitch
 )
 
 func newLUKSVM(t *testing.T) *luksVM {
@@ -234,6 +240,7 @@ func TestDiskEncryptionTPM2VM(t *testing.T) {
 		"DISK_ENCRYPTION":                  "luks2-tpm2",
 		"DISK_ENCRYPTION_RECOVERY_KEY_URL": escrow.url + "/recovery-key",
 		"DISK_ENCRYPTION_STATUS_URL":       escrow.url + "/status",
+		"DISK_ENCRYPTION_STATUS_TOKEN":     luksStatusToken,
 	}, map[string]string{luksCAPath: escrow.caPEM})
 	logs = append(logs, out)
 	if bytes.Contains(out, []byte("encrypting partition in place")) || !bytes.Contains(out, []byte("partition formatted with LUKS2")) {
@@ -301,6 +308,12 @@ func TestDiskEncryptionTPM2VM(t *testing.T) {
 	}
 
 	// 7. The recovery key is on no console.
+	requireNoRecoveryKey(t, logs, key)
+}
+
+// requireNoRecoveryKey fails when the recovery key is in a console log.
+func requireNoRecoveryKey(t *testing.T, logs [][]byte, key []byte) {
+	t.Helper()
 	for i, l := range logs {
 		if bytes.Contains(l, key) || bytes.Contains(l, bytes.ReplaceAll(key, []byte("-"), nil)) {
 			t.Fatalf("the recovery key is in the console log of boot %d", i+1)
@@ -404,6 +417,7 @@ func TestDiskEncryptionLVMTPM2VM(t *testing.T) {
 		"DISK_ENCRYPTION":                  "luks2-tpm2",
 		"DISK_ENCRYPTION_RECOVERY_KEY_URL": escrow.url + "/recovery-key",
 		"DISK_ENCRYPTION_STATUS_URL":       escrow.url + "/status",
+		"DISK_ENCRYPTION_STATUS_TOKEN":     luksStatusToken,
 	}, map[string]string{luksCAPath: escrow.caPEM})
 	logs = append(logs, out)
 	if !bytes.Contains(out, []byte("LVM physical volume opened in the LUKS2 mapping")) {
@@ -634,17 +648,9 @@ func prepareLUKSImage(t *testing.T, osImage, dir string, debs []string, layout l
 			t.Fatal(err)
 		}
 	}
-	for _, deb := range debs {
-		data, err := os.ReadFile(deb)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rel := "tmp/" + filepath.Base(deb)
-		luksWriteImageFile(t, mnt, rel, data, 0o644)
-		run(t, "install "+filepath.Base(deb), "chroot", mnt, "dpkg", "-i", "/"+rel)
-		if err := os.Remove(filepath.Join(mnt, rel)); err != nil {
-			t.Fatal(err)
-		}
+	installLUKSImageDebs(t, mnt, debs)
+	if layout == luksInitramfsToolsSwitch {
+		stageInitramfsToolsSwitch(t, mnt)
 	}
 	luksWriteImageFile(t, mnt, "usr/local/lib/booty-luks-check.sh", []byte(luksCheckScript), 0o755)
 	luksWriteImageFile(t, mnt, "etc/systemd/system/booty-luks-check.service", []byte(luksCheckUnit), 0o644)
@@ -663,6 +669,36 @@ func prepareLUKSImage(t *testing.T, osImage, dir string, debs []string, layout l
 		t.Fatal(err)
 	}
 	return gz
+}
+
+// installLUKSImageDebs removes DISK_ENCRYPTION_REMOVE_PKGS (dracut
+// conflicts with initramfs-tools) and installs the debs in one dpkg run, so
+// that they can depend on each other. INITRD=No: no initramfs is built here
+// (the kernel is on the unmounted /boot); BOOTy builds it.
+func installLUKSImageDebs(t *testing.T, mnt string, debs []string) {
+	t.Helper()
+	if remove := strings.Fields(os.Getenv("DISK_ENCRYPTION_REMOVE_PKGS")); len(remove) > 0 {
+		run(t, "remove "+strings.Join(remove, " "), "chroot", append([]string{mnt, "dpkg", "--remove", "--force-depends"}, remove...)...)
+	}
+	if len(debs) == 0 {
+		return
+	}
+	args := []string{mnt, "env", "INITRD=No", "dpkg", "-i"}
+	for _, deb := range debs {
+		data, err := os.ReadFile(deb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel := "tmp/" + filepath.Base(deb)
+		luksWriteImageFile(t, mnt, rel, data, 0o644)
+		args = append(args, "/"+rel)
+	}
+	run(t, "install debs", "chroot", args...)
+	for _, arg := range args[5:] {
+		if err := os.Remove(filepath.Join(mnt, arg)); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func luksWriteImageFile(t *testing.T, root, rel string, data []byte, mode os.FileMode) {
@@ -809,6 +845,11 @@ type escrowServer struct {
 	statuses []string
 }
 
+// luksStatusToken is DISK_ENCRYPTION_STATUS_TOKEN; the escrow server
+// accepts only it on /status and only the provisioning token on
+// /recovery-key.
+const luksStatusToken = "e2e-status-token"
+
 // startEscrowServer stands in for the provisioner endpoints of
 // DISK_ENCRYPTION_RECOVERY_KEY_URL and DISK_ENCRYPTION_STATUS_URL: HTTPS
 // on the QEMU host address with a test CA, bearer token required.
@@ -824,7 +865,12 @@ func startEscrowServer(t *testing.T) *escrowServer {
 	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			body, err := io.ReadAll(r.Body)
-			if err != nil || r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer e2e-token" {
+			token := "e2e-token"
+			if r.URL.Path == "/status" {
+				token = luksStatusToken
+			}
+			if err != nil || r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer "+token {
+				t.Logf("escrow server: refused %s %s", r.Method, r.URL.Path)
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}

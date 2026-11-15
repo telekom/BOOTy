@@ -167,7 +167,7 @@ func TestOpenEncryptedVGProbeError(t *testing.T) {
 // Without LVM the dracut and GRUB files are those of #939, byte for byte.
 func TestEncryptionFilesWithoutLVMUnchanged(t *testing.T) {
 	libs := []string{"/usr/lib/a.so", "/usr/lib/b.so"}
-	if got := luksDracutConfText(libs, false); got != "# Written by BOOTy: unlock the LUKS2 volume in the initramfs (docs/disk-encryption.md).\n"+
+	if got := luksDracutConfText(libs, false, true); got != "# Written by BOOTy: unlock the LUKS2 volume in the initramfs (docs/disk-encryption.md).\n"+
 		"hostonly=\"no\"\nadd_dracutmodules+=\" crypt systemd-cryptsetup \"\ninstall_items+=\" /etc/crypttab /usr/lib/a.so /usr/lib/b.so \"\n" {
 		t.Fatalf("dracut conf:\n%s", got)
 	}

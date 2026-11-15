@@ -66,7 +66,8 @@ Provisioning (BOOTy, Secure Boot off):
    - the unit `booty-luks-tpm2-enroll.service` (enabled), its script
      `/usr/local/sbin/booty-luks-tpm2-enroll` and
      `/etc/booty/luks-tpm2.env`; with a status URL also
-     `/etc/booty/luks-status.auth` (0600, the bearer token) and the
+     `/etc/booty/luks-status.auth` (0600, the bearer token of
+     `DISK_ENCRYPTION_STATUS_TOKEN`) and the
      `CA_BUNDLE_FILE` as `/etc/booty/luks-status-ca.pem`;
    - and runs `dracut --force --regenerate-all` in the target.
 4. `close-encrypted-disk` (after `teardown-chroot`) grows the file system of
@@ -284,7 +285,8 @@ wiped once the TPM2 unlocked a boot (see the window above).
 - no redirect is followed; any status other than 2xx fails (three
   attempts);
 - a standby command payload or deploy archive cannot change the URL, the
-  status URL or any other encryption setting except the target partition;
+  status URL, the status token or any other encryption setting except the
+  target partition;
 - the key is never logged, never in an argument, report or error, and
   reaches `cryptsetup` on stdin; the enrollment key goes through a memfd;
 - the body is built without `encoding/json` (whose buffer pool would keep a
@@ -308,8 +310,22 @@ needed: `cryptsetup luksHeaderBackup`.
 
 **Status callback.** With `DISK_ENCRYPTION_STATUS_URL` the unit posts
 `{"hostname","luksUUID","status","message"}` with `curl --proto =https` and
-the bearer token of the provisioning run (`tpm2-bound`, `slot1-removed`,
-`failed`). It is best effort: a lost status does not stop the enrollment.
+the bearer token `DISK_ENCRYPTION_STATUS_TOKEN` (`tpm2-bound`,
+`slot1-removed`, `failed`). It is best effort: a lost status does not stop
+the enrollment. The token stays in `/etc/booty/luks-status.auth` of the
+installed system until phase 2 has posted `slot1-removed` and removes it,
+so it must stay valid until then: the second boot with Secure Boot on, or
+later when the enrollment waits (MOK request, Secure Boot off) or is
+retried. **Give it a token that can post the
+status of this host only** and nothing else: not the provisioning token,
+which would then have to live as long and could do everything a
+provisioning run can. The token is required with the status URL, a single
+header value without spaces or control characters, and a standby payload
+or deploy archive cannot change it.
+`DISK_ENCRYPTION_STATUS_REUSE_PROVISIONING_TOKEN=true` sends the bearer
+token of the provisioning run instead (the behaviour before the status
+token); it is a transitional escape hatch for providers that cannot issue
+a status-only token yet and will be removed.
 
 **Fail closed.** Errors in `stream-image` (`BOOTY-DSK-028`, not retried),
 `prepare-disk-encryption` (`BOOTY-DSK-026`) and `close-encrypted-disk`
@@ -446,11 +462,20 @@ follow-up.
   ext4.
 - The image has `dracut`, `lsinitrd`, `systemd-cryptsetup`,
   `systemd-cryptenroll`, `cryptsetup`, `shred`, `libtss2-esys.so.0`,
-  `libtss2-rc.so.0`, `libtss2-mu.so.0`, `libtss2-tcti-device.so.0` and
+  `libtss2-sys.so.1`, `libtss2-rc.so.0`, `libtss2-mu.so.0`, `libtss2-tcti-device.so.0` and
   `libcryptsetup-token-systemd-tpm2.so`; `curl` with a status URL.
   - Ubuntu 26.04 cloud image: add `libtss2-rc0t64`.
-  - Ubuntu 24.04 cloud image: add `dracut`, `systemd-cryptsetup` and
-    `libtss2-rc0t64`; `cryptsetup-initramfs` cannot unlock with the TPM2.
+  - Ubuntu 24.04 cloud image: replace `initramfs-tools` with `dracut`
+    (060; it conflicts with `initramfs-tools`) and add `libtss2-rc0t64`.
+    The `systemd` package of 24.04 already has `systemd-cryptsetup`,
+    `systemd-cryptenroll` and the token plugin. dracut 060 has no
+    `systemd-cryptsetup` module; BOOTy then adds only `crypt`, which
+    installs it. dracut 060 does not add the link dependency
+    `libtss2-sys.so.1` of `libtss2-esys` either; BOOTy lists it, as without
+    it systemd-cryptsetup reports `Could not find TPM2 device: Operation
+    not supported` and asks for the passphrase. The stock `cryptsetup-initramfs` (initramfs-tools) cannot
+    unlock with the TPM2: with the volume bound, it stops at the passphrase
+    prompt. KVM scenario `disk-encryption-ubuntu-24.04` (see [Test](#test)).
 - The ramdisk has `cryptsetup`, `partprobe`, `growpart`, `e2fsck`,
   `resize2fs` and `dm_crypt`.
 
@@ -518,6 +543,19 @@ KVM scenarios (`.github/workflows/kvm-matrix.yml`):
   `luksDump` find nothing; the old metadata without the keyslots area
   written back is a valid header again, but the recovery key opens no
   keyslot (with the full backup, the control, it opens).
+- `disk-encryption-ubuntu-24.04` (`TestDiskEncryptionUbuntu2404VM`): the
+  stock Ubuntu 24.04 cloud image with `initramfs-tools` replaced by
+  `dracut` 060 and `libtss2-rc0t64`:
+  1. provision with Secure Boot off;
+  2. Secure Boot on (phase 1, dracut): bound to PCR 7+14;
+  3. phase 2 (dracut): the TPM2 unlocks without a prompt, slot 1 and the
+     key file are gone; then the installed system replaces dracut with
+     `initramfs-tools` (the stock `cryptsetup-initramfs` stays) and
+     builds the initramfs with `mkinitramfs`, which has the root in
+     `cryptroot/crypttab`;
+  4. same Secure Boot state, PCRs and TPM2 token, initramfs-tools: the
+     boot stops at the `cryptsetup-initramfs` passphrase prompt (the
+     expected failure); the recovery key opens the volume there.
 - `disk-encryption-off-ubuntu-26.04` (`TestDiskEncryptionOffVM`): the same
   image without the keys: no encryption step runs, the partition table is
   the image's with the root grown, the root is plain ext4, and no BOOTy
