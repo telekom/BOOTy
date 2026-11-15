@@ -30,8 +30,8 @@ import (
 // as ukify writes it, with room for two more section headers. signed sets
 // the size of the security data directory, as an Authenticode signature
 // does.
-func testPE(t *testing.T, signed bool, sections ...[2]string) []byte {
-	t.Helper()
+func testPE(tb testing.TB, signed bool, sections ...[2]string) []byte {
+	tb.Helper()
 	const lfanew, align = 0x40, 0x200
 	hdrs := lfanew + 4 + 20 + 240 + 40*(len(sections)+2)
 	off := (hdrs + align - 1) / align * align
@@ -332,14 +332,15 @@ func TestPrepareUKIPerHost(t *testing.T) {
 
 // TestUKIPCRSignature: the .pcrsig is what systemd-measure 259 signs for
 // the same sections (pol from `systemd-measure sign --linux=... --bank=sha256`
-// with these contents), and each signature verifies with the key.
+// with these contents, all ten measured sections), and each signature
+// verifies with the key.
 func TestUKIPCRSignature(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 1024) //nolint:gosec // test key
 	if err != nil {
 		t.Fatal(err)
 	}
 	secs := map[string][]byte{"linux": []byte("kernel"), "osrel": []byte("ID=x\n"), "cmdline": []byte("root=x"), "initrd": []byte("initrd"),
-		"uname": []byte("6.8.0"), "sbat": []byte("sbat,1\n"), "pcrpkey": []byte("pub")}
+		"ucode": []byte("ucode"), "splash": []byte("BM"), "dtb": []byte("dtb"), "uname": []byte("6.8.0"), "sbat": []byte("sbat,1\n"), "pcrpkey": []byte("pub")}
 	js, err := ukiPCRSignature(secs, key)
 	if err != nil {
 		t.Fatal(err)
@@ -353,8 +354,8 @@ func TestUKIPCRSignature(t *testing.T) {
 	if err := json.Unmarshal(js, &got); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"1c53432fc329c90e3160c9d70ff9795a1abed2fbe929cfa27b414dc989ce3c26", "3dedf9886465189d0237f4446e0319df02017f92a26492362e7b27afddd272b4",
-		"2b6b476105112e199e95436a0ef28440bece58b8b63888e5aac708677a63b032", "02db9ba9a17757dc5df9a1720af59b30ea8b9a8df22e59a26df89ae79a3b4ce0"}
+	want := []string{"e9b0d22b89a2085ad95e123063a3d2e1681c86a88bd17858d09522da4b06dec7", "84ac7f41088c863a62e23f3c857c388a22da9fbf00d78619a60c9936d05cee9e",
+		"69ab1c62f6444c6c5057218219843da8b0d36dd970f244686ed0f90368688afd", "78b11b8dac5dab4b836f94c34f1aa3054ffaf9f89cecbae52e4bccf089c4d687"}
 	fp := sha256.Sum256(x509.MarshalPKCS1PublicKey(&key.PublicKey))
 	if len(got.SHA256) != len(want) {
 		t.Fatalf("%s", js)
@@ -409,6 +410,53 @@ func TestAuthenticodeSign(t *testing.T) {
 	if _, err := appendPESections(append(slices.Clone(uki), 1), [2][]byte{[]byte(".x"), nil}); err == nil {
 		t.Error("trailing data accepted")
 	}
+	// Header values that would pad the added sections to GiBs or wrap
+	// their addresses are refused.
+	for name, mod := range map[string]func(b []byte){
+		"FileAlignment 2 GiB":        func(b []byte) { binary.LittleEndian.PutUint32(b[0x58+36:], 0x80000000) },
+		"SectionAlignment not pow 2": func(b []byte) { binary.LittleEndian.PutUint32(b[0x58+32:], 0x300) },
+		"sections end at 4 GiB":      func(b []byte) { binary.LittleEndian.PutUint32(b[0x148+12:], 0xfffffe00) },
+	} {
+		b := slices.Clone(uki)
+		mod(b)
+		if _, err := appendPESections(b, [2][]byte{[]byte(".pcrpkey"), []byte("pub")}); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// FuzzUKISign: appendPESections and authenticodeSign error on malformed
+// PE input, never panic or allocate beyond the input.
+func FuzzUKISign(f *testing.F) {
+	f.Add(testPE(f, false, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}))
+	f.Add(testPE(f, false, [2]string{".linux", strings.Repeat("k", 0x300)}))
+	key, err := rsa.GenerateKey(rand.Reader, 1024) //nolint:gosec // test key
+	if err != nil {
+		f.Fatal(err)
+	}
+	der, err := ukiCertificate(key, "fuzz")
+	if err != nil {
+		f.Fatal(err)
+	}
+	cert, _ := x509.ParseCertificate(der)
+	f.Fuzz(func(t *testing.T, b []byte) {
+		out, err := appendPESections(b, [2][]byte{[]byte(".pcrpkey"), []byte("pub")}, [2][]byte{[]byte(".pcrsig"), []byte("{}")})
+		if err != nil {
+			return
+		}
+		if len(out) > len(b)+2*0x10000 { // two sections padded to the largest FileAlignment
+			t.Fatalf("%d bytes from %d", len(out), len(b))
+		}
+		signed, err := authenticodeSign(out, key, cert)
+		if err != nil {
+			t.Fatalf("sign the PE that appendPESections wrote: %v", err)
+		}
+		if _, _, err := ukiSections(b); err == nil {
+			if _, _, err := ukiSections(signed); err != nil {
+				t.Fatalf("the signed UKI does not parse: %v", err)
+			}
+		}
+	})
 }
 
 func TestPrepareUKINeedsOneUKI(t *testing.T) {

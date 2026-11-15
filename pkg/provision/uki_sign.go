@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"unicode/utf16"
@@ -179,20 +180,30 @@ func parsePELayout(b []byte) (*peLayout, error) {
 	l := &peLayout{coff: lfanew + 4, opt: lfanew + 24}
 	l.nsec = int(binary.LittleEndian.Uint16(b[l.coff+2:]))
 	l.secTable = l.opt + int(binary.LittleEndian.Uint16(b[l.coff+16:]))
-	if l.opt+peOptSecurityDir+8 > len(b) || binary.LittleEndian.Uint16(b[l.opt:]) != 0x20b ||
+	// The section table follows the data directories, so that the added
+	// section headers cannot overwrite the security directory.
+	if l.opt+peOptSecurityDir+8 > l.secTable || l.secTable > len(b) || binary.LittleEndian.Uint16(b[l.opt:]) != 0x20b ||
 		binary.LittleEndian.Uint32(b[l.opt+108:]) <= 4 || l.secTable+peSectionHdrSize*l.nsec > len(b) {
 		return nil, errors.New("not a PE32+ image with a security directory")
 	}
 	l.sectAlign = binary.LittleEndian.Uint32(b[l.opt+32:])
 	l.fileAlign = binary.LittleEndian.Uint32(b[l.opt+36:])
 	l.sizeOfHeader = binary.LittleEndian.Uint32(b[l.opt+60:])
-	if l.sectAlign == 0 || l.fileAlign == 0 || l.fileAlign%8 != 0 || int(l.sizeOfHeader) > len(b) {
+	if !peAlignmentOK(l.sectAlign, l.fileAlign) || int(l.sizeOfHeader) > len(b) {
 		return nil, errors.New("unexpected PE alignment")
 	}
 	return l, nil
 }
 
-func alignUp(n, a uint32) uint32 { return (n + a - 1) / a * a }
+// peAlignmentOK: FileAlignment is a power of 2 up to 64 KiB (8 at least
+// for the signature), SectionAlignment one at least as large (PE format).
+// FileAlignment pads the added sections.
+func peAlignmentOK(sect, file uint32) bool {
+	pow2 := func(n uint32) bool { return n&(n-1) == 0 }
+	return file >= 8 && file <= 0x10000 && pow2(file) && sect >= file && pow2(sect)
+}
+
+func alignUp[T uint32 | uint64](n, a T) T { return (n + a - 1) / a * a }
 
 // appendPESections returns the unsigned PE b with sections appended, as
 // ukify adds .pcrpkey and .pcrsig. b must be laid out as ukify writes it:
@@ -207,26 +218,30 @@ func appendPESections(b []byte, sections ...[2][]byte) ([]byte, error) {
 	if binary.LittleEndian.Uint32(b[l.opt+peOptSecurityDir+4:]) != 0 {
 		return nil, errors.New("the PE is signed")
 	}
-	end, vend := l.sizeOfHeader, uint32(0)
+	// 64 bits: offsets and addresses near 4 GiB must not wrap.
+	end, vend := uint64(l.sizeOfHeader), uint64(0)
 	type span struct{ ptr, size uint32 }
 	var raw []span
 	for i := range l.nsec {
 		h := b[l.secTable+peSectionHdrSize*i:]
 		va, vsize := binary.LittleEndian.Uint32(h[12:]), binary.LittleEndian.Uint32(h[8:])
-		vend = max(vend, va+max(vsize, binary.LittleEndian.Uint32(h[16:])))
+		vend = max(vend, uint64(va)+uint64(max(vsize, binary.LittleEndian.Uint32(h[16:]))))
 		if size := binary.LittleEndian.Uint32(h[16:]); size > 0 {
 			raw = append(raw, span{binary.LittleEndian.Uint32(h[20:]), size})
 		}
 	}
 	slices.SortFunc(raw, func(a, b span) int { return int(a.ptr) - int(b.ptr) })
 	for _, s := range raw {
-		if s.ptr != end {
+		if uint64(s.ptr) != end {
 			return nil, fmt.Errorf("unexpected PE layout: section data at %#x, want %#x", s.ptr, end)
 		}
-		end += s.size
+		end += uint64(s.size)
 	}
-	if int(end) != len(b) {
+	if end != uint64(len(b)) {
 		return nil, fmt.Errorf("unexpected PE layout: %d bytes after the last section", len(b)-int(end))
+	}
+	if len(b)%int(l.fileAlign) != 0 {
+		return nil, errors.New("unexpected PE layout: the file size is not a multiple of FileAlignment")
 	}
 	table := l.secTable + peSectionHdrSize*l.nsec
 	free := table + peSectionHdrSize*len(sections)
@@ -234,22 +249,25 @@ func appendPESections(b []byte, sections ...[2][]byte) ([]byte, error) {
 		return nil, errors.New("no room in the PE headers for more sections")
 	}
 	out := slices.Clone(b)
-	va := alignUp(vend, l.sectAlign)
+	va := alignUp(vend, uint64(l.sectAlign))
 	for i, s := range sections {
 		h := out[table+peSectionHdrSize*i:]
 		copy(h[:8], s[0])
 		size := uint32(len(s[1])) //nolint:gosec // a public key and a JSON document
 		rawSize := alignUp(size, l.fileAlign)
 		binary.LittleEndian.PutUint32(h[8:], size)
-		binary.LittleEndian.PutUint32(h[12:], va)
+		binary.LittleEndian.PutUint32(h[12:], uint32(va)) //nolint:gosec // SizeOfImage is checked below
 		binary.LittleEndian.PutUint32(h[16:], rawSize)
 		binary.LittleEndian.PutUint32(h[20:], uint32(len(out))) //nolint:gosec // below maxUKISize
 		binary.LittleEndian.PutUint32(h[36:], peSectionReadData)
 		out = append(append(out, s[1]...), make([]byte, rawSize-size)...)
-		va = alignUp(va+size, l.sectAlign)
+		va = alignUp(va+uint64(size), uint64(l.sectAlign))
+	}
+	if va > math.MaxUint32 {
+		return nil, errors.New("unexpected PE layout: no address space for more sections")
 	}
 	binary.LittleEndian.PutUint16(out[l.coff+2:], uint16(l.nsec+len(sections))) //nolint:gosec // checked against the header room
-	binary.LittleEndian.PutUint32(out[l.opt+peOptSizeOfImage:], va)
+	binary.LittleEndian.PutUint32(out[l.opt+peOptSizeOfImage:], uint32(va))
 	return out, nil
 }
 
