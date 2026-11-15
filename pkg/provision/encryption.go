@@ -664,6 +664,13 @@ func checkEncryptionTarget(root string, curl, lvm bool) error {
 	return checkTargetFiles(root, tools, "Ubuntu: dracut, systemd-cryptsetup, libtss2-rc0t64, lvm2 for LVM")
 }
 
+// hasDracutModule reports whether the dracut of the image has the module
+// name (modules.d/NNname).
+func hasDracutModule(root, name string) bool {
+	m, _ := filepath.Glob(filepath.Join(root, "usr", "lib", "dracut", "modules.d", "[0-9][0-9]"+name))
+	return len(m) > 0
+}
+
 // checkTargetFiles checks that the image has tools and the TPM2 libraries.
 func checkTargetFiles(root string, tools []string, hint string) error {
 	var missing []string
@@ -723,7 +730,7 @@ func writeEncryptionFiles(root string, st *encryptionState, e *encryptionExtras)
 		{luksEnvPath, []byte(fmt.Sprintf("LUKS_UUID='%s'\nLUKS_NAME='%s'\nLUKS_ENROLL_SLOT='%d'\nTPM2_PCRS='%s'\n"+
 			"HOST='%s'\nSTATUS_URL='%s'\nSTATUS_CA='%s'\nMOK_WAIT='%s'\n",
 			st.luksUUID, luksMapperName, luksEnrollSlot, luksTPM2PCRs, e.hostname, e.statusURL, statusCA, mokWait)), 0o644},
-		{luksDracutConf, []byte(luksDracutConfText(e.libs, st.lvm)), 0o644},
+		{luksDracutConf, []byte(luksDracutConfText(e.libs, st.lvm, hasDracutModule(root, "systemd-cryptsetup"))), 0o644},
 		{luksDracutKeyConf, []byte(luksDracutKeyConfText), 0o644},
 		{luksGrubConf, []byte(luksGrubDefaultsText(st)), 0o644},
 		{luksGrubLock, []byte(luksGrubLockScript(e.grubHash)), 0o755},
@@ -768,9 +775,14 @@ func statusAuthHeader(token string) []byte {
 // build adds tpm2-tss for tpm2-device= in crypttab, which needs tpm2-tools,
 // and then drops systemd-cryptsetup. The generic build (the Ubuntu default)
 // with the libraries listed here does not. With lvm the lvm module activates
-// VG tcaas on the opened volume.
-func luksDracutConfText(libs []string, lvm bool) string {
-	modules := " crypt systemd-cryptsetup "
+// VG tcaas on the opened volume. dracut before 102 (Ubuntu 24.04: 060) has
+// no systemd-cryptsetup module and stops on an unknown one; its crypt
+// module installs systemd-cryptsetup itself.
+func luksDracutConfText(libs []string, lvm, systemdCryptsetupModule bool) string {
+	modules := " crypt "
+	if systemdCryptsetupModule {
+		modules += "systemd-cryptsetup "
+	}
 	if lvm {
 		modules += "lvm "
 	}

@@ -449,8 +449,14 @@ follow-up.
   `libtss2-rc.so.0`, `libtss2-mu.so.0`, `libtss2-tcti-device.so.0` and
   `libcryptsetup-token-systemd-tpm2.so`; `curl` with a status URL.
   - Ubuntu 26.04 cloud image: add `libtss2-rc0t64`.
-  - Ubuntu 24.04 cloud image: add `dracut`, `systemd-cryptsetup` and
-    `libtss2-rc0t64`; `cryptsetup-initramfs` cannot unlock with the TPM2.
+  - Ubuntu 24.04 cloud image: replace `initramfs-tools` with `dracut`
+    (060; it conflicts with `initramfs-tools`) and add `libtss2-rc0t64`.
+    The `systemd` package of 24.04 already has `systemd-cryptsetup`,
+    `systemd-cryptenroll` and the token plugin. dracut 060 has no
+    `systemd-cryptsetup` module; BOOTy then adds only `crypt`, which
+    installs it. The stock `cryptsetup-initramfs` (initramfs-tools) cannot
+    unlock with the TPM2: with the volume bound, it stops at the passphrase
+    prompt. KVM scenario `disk-encryption-ubuntu-24.04` (see [Test](#test)).
 - The ramdisk has `cryptsetup`, `partprobe`, `growpart`, `e2fsck`,
   `resize2fs` and `dm_crypt`.
 
@@ -518,6 +524,19 @@ KVM scenarios (`.github/workflows/kvm-matrix.yml`):
   `luksDump` find nothing; the old metadata without the keyslots area
   written back is a valid header again, but the recovery key opens no
   keyslot (with the full backup, the control, it opens).
+- `disk-encryption-ubuntu-24.04` (`TestDiskEncryptionUbuntu2404VM`): the
+  stock Ubuntu 24.04 cloud image with `initramfs-tools` replaced by
+  `dracut` 060 and `libtss2-rc0t64`:
+  1. provision with Secure Boot off;
+  2. Secure Boot on (phase 1, dracut): bound to PCR 7+14;
+  3. phase 2 (dracut): the TPM2 unlocks without a prompt, slot 1 and the
+     key file are gone; then the installed system replaces dracut with
+     `initramfs-tools` (the stock `cryptsetup-initramfs` stays) and
+     builds the initramfs with `mkinitramfs`, which has the root in
+     `cryptroot/crypttab`;
+  4. same Secure Boot state, PCRs and TPM2 token, initramfs-tools: the
+     boot stops at the `cryptsetup-initramfs` passphrase prompt (the
+     expected failure); the recovery key opens the volume there.
 - `disk-encryption-off-ubuntu-26.04` (`TestDiskEncryptionOffVM`): the same
   image without the keys: no encryption step runs, the partition table is
   the image's with the root grown, the root is plain ext4, and no BOOTy
