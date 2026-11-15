@@ -64,7 +64,8 @@ var errArchiveVars = errors.New("deploy archive vars do not parse or validate")
 // change yet: ApplyCommandFiles swaps the staged directories in once every
 // check of the command passed, DiscardCommandFiles drops them. The settings
 // that the running ramdisk uses (transport, agent, network, MODE, DRY_RUN,
-// CAPRF_LEGACY_COMPAT, IMAGE_FOLLOW_REDIRECTS and the bearer-token URLs) keep
+// CAPRF_LEGACY_COMPAT, IMAGE_FOLLOW_REDIRECTS, the bearer-token URLs and the
+// rescue login) keep
 // the values of the base vars: the agent keeps its token and network.
 func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, keys []string, err error) {
 	ref, err := ParseVars(bytes.NewReader(c.vars))
@@ -114,6 +115,8 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 	cfg.Provision.DiskEncryption.Target = target
 	cfg.Provision.SecureBoot.Signing = ref.Provision.SecureBoot.Signing
 	cfg.Deprovision.CryptoErase = ref.Deprovision.CryptoErase
+	cfg.Rescue.SSHPubKey, cfg.Rescue.PasswordHash = ref.Rescue.SSHPubKey, ref.Rescue.PasswordHash
+	cfg.Rescue.SSHHardened = ref.Rescue.SSHHardened
 	// The restored settings can conflict with the archive (an archive
 	// without DISK_ENCRYPTION and with a PARTITION_LAYOUT): check the final
 	// config, like ParseVars checked the archive alone.

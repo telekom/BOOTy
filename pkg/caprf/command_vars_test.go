@@ -193,3 +193,31 @@ func TestMergeCommandVarsKeepsCosignCoverage(t *testing.T) {
 		})
 	}
 }
+
+// A standby command that fails drops to the rescue shell of its own config:
+// its payload must not add a login (a key, a password, the legacy SSH mode).
+func TestStandbyPayloadCannotChangeRescueLogin(t *testing.T) {
+	const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ8kKf8w6YJ6AW2D8KOa/ms2xcrTgfpgPfemuoTsXRYj evil@x"
+	for _, payload := range []string{
+		"RESCUE_SSH_PUBKEY=" + key,
+		"RESCUE_PASSWORD_HASH=$6$salt$hash",
+		"RESCUE_SSH_HARDENED=false",
+	} {
+		if _, _, err := MergeCommandVars([]byte(commandBaseVars), []byte(payload)); err == nil || !strings.Contains(err.Error(), "rescue SSH access") {
+			t.Errorf("payload %q: err = %v, want the lock", payload, err)
+		}
+	}
+	if _, _, err := MergeCommandVars([]byte(commandBaseVars+"RESCUE_SSH_PUBKEY="+key+"\n"), []byte("RESCUE_SSH_PUBKEY="+key)); err != nil {
+		t.Errorf("repeating the base key: %v", err)
+	}
+	useDeployRoot(t)
+	c := &Client{vars: []byte(baseAgentVars)}
+	cfg, _, err := applyArchive(c, deployArchive(t, archiveEntry{name: "deploy/vars",
+		body: "HOSTNAME=w\nRESCUE_SSH_PUBKEY=" + key + "\nRESCUE_PASSWORD_HASH=$6$salt$hash\nRESCUE_SSH_HARDENED=false\n"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := cfg.Rescue; r.SSHPubKey != "" || r.PasswordHash != "" || r.SSHHardened != nil {
+		t.Fatalf("the deploy archive changed the rescue login: %+v", r)
+	}
+}

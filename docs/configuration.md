@@ -650,7 +650,7 @@ does.
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
 | `RESCUE_MODE` | `reboot`, `wait` with `FAILURE_ACTION=wait` | `reboot`, `retry`, `shell`, `wait` | Action after a failed provisioning, also for a failed standby `provision` command. |
-| `RESCUE_SSH_PUBKEY` | (unset) | SSH public keys, separated by `;` | Authorized keys for root in `shell` and `wait` modes. BOOTy starts `dropbear`. See [Rescue SSH server](#rescue-ssh-server). |
+| `RESCUE_SSH_PUBKEY` | (unset) | SSH public keys, separated by `;` | Authorized keys for root in `shell` and `wait` modes. BOOTy starts `dropbear`. A standby command payload or deploy archive cannot change it, `RESCUE_PASSWORD_HASH` or `RESCUE_SSH_HARDENED`. See [Rescue SSH server](#rescue-ssh-server). |
 | `RESCUE_PASSWORD_HASH` | (unset) | crypt(3) hash | Root password hash in `shell` and `wait` modes. SSH password login only without a `RESCUE_SSH_PUBKEY` key. |
 | `RESCUE_SSH_HARDENED` | `true` | boolean | `false` starts `dropbear` with password login and port forwarding and without the idle timeout, as before. Transitional escape hatch; only `false`, `0` or `no` turn the hardening off. YAML `rescue.sshHardened`. |
 | `RESCUE_AUTO_MOUNT` | `false` | boolean | Mount the found disks in `shell` and `wait` modes. |

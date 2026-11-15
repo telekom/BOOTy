@@ -13,3 +13,6 @@ section: Breaking changes
   both for the transition only.
 - `RESCUE_SSH_PUBKEY` accepts several keys separated by `;`. Malformed
   entries are logged and skipped.
+- A standby command payload or deploy archive can no longer change
+  `RESCUE_SSH_PUBKEY`, `RESCUE_PASSWORD_HASH` or `RESCUE_SSH_HARDENED`: a
+  failed command drops to the rescue login of `/deploy/vars`.
