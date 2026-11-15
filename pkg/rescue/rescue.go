@@ -291,9 +291,13 @@ func validatePasswordHash(hash string) error {
 	return fmt.Errorf("invalid rescue password hash: unsupported Linux shadow hash prefix")
 }
 
-// hostKeyPath is the Ed25519 host key, generated on every boot (the
-// ramdisk starts empty).
-const hostKeyPath = "/etc/dropbear/dropbear_ed25519_host_key"
+// Host keys, generated on every boot (the ramdisk starts empty). The RSA
+// key exists only with RESCUE_SSH_HARDENED=false and a dropbear built with
+// DROPBEAR_HARDENED=false.
+const (
+	hostKeyPath    = "/etc/dropbear/dropbear_ed25519_host_key"
+	rsaHostKeyPath = "/etc/dropbear/dropbear_rsa_host_key"
+)
 
 // sshIdleTimeout closes rescue SSH sessions without traffic, in seconds.
 const sshIdleTimeout = "900"
@@ -302,8 +306,11 @@ const sshIdleTimeout = "900"
 // login once a key is configured, no local or remote port forwarding, and
 // an idle timeout. Password login stays only for a password hash without a
 // key, so such setups keep a way in.
-func dropbearArgs(cfg *Config) []string {
-	args := []string{"-r", hostKeyPath}
+func dropbearArgs(cfg *Config, hostKeys []string) []string {
+	var args []string
+	for _, k := range hostKeys {
+		args = append(args, "-r", k)
+	}
 	if !cfg.LegacySSH {
 		if len(cfg.SSHKeys) > 0 || cfg.PasswordHash == "" {
 			args = append(args, "-s")
@@ -320,18 +327,9 @@ func startDropbear(ctx context.Context, cfg *Config) error {
 		return fmt.Errorf("dropbear not found: %w", err)
 	}
 
-	if _, err := os.Stat(hostKeyPath); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Dir(hostKeyPath), 0o700); err != nil {
-			return fmt.Errorf("creating dropbear dir: %w", err)
-		}
-		keygenPath, err := exec.LookPath("dropbearkey")
-		if err != nil {
-			return fmt.Errorf("dropbearkey not found: %w", err)
-		}
-		cmd := exec.CommandContext(ctx, keygenPath, "-t", "ed25519", "-f", hostKeyPath) //nolint:gosec // fixed path
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("generating host key: %w\n%s", err, string(out))
-		}
+	hostKeys, err := generateHostKeys(ctx, cfg)
+	if err != nil {
+		return err
 	}
 
 	switch {
@@ -341,7 +339,7 @@ func startDropbear(ctx context.Context, cfg *Config) error {
 		slog.Warn("rescue SSH allows password login: a password hash is set and no SSH key")
 	}
 
-	cmd := exec.CommandContext(ctx, path, dropbearArgs(cfg)...) //nolint:gosec // fixed args
+	cmd := exec.CommandContext(ctx, path, dropbearArgs(cfg, hostKeys)...) //nolint:gosec // fixed args
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -353,6 +351,41 @@ func startDropbear(ctx context.Context, cfg *Config) error {
 
 	fmt.Printf("SSH daemon started on port 22 (PID %d)\n", cmd.Process.Pid) //nolint:forbidigo // rescue mode output
 	return nil
+}
+
+// generateHostKeys creates the Ed25519 host key and, for RESCUE_SSH_HARDENED
+// =false, an RSA host key when the dropbear build supports RSA (for old
+// clients), and returns the key files to load.
+func generateHostKeys(ctx context.Context, cfg *Config) ([]string, error) {
+	keygenPath, err := exec.LookPath("dropbearkey")
+	if err != nil {
+		return nil, fmt.Errorf("dropbearkey not found: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(hostKeyPath), 0o700); err != nil {
+		return nil, fmt.Errorf("creating dropbear dir: %w", err)
+	}
+	keygen := func(keyType, path string) error {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		}
+		out, err := exec.CommandContext(ctx, keygenPath, "-t", keyType, "-f", path).CombinedOutput() //nolint:gosec // fixed args
+		if err != nil {
+			return fmt.Errorf("generating %s host key: %w\n%s", keyType, err, string(out))
+		}
+		return nil
+	}
+	if err := keygen("ed25519", hostKeyPath); err != nil {
+		return nil, err
+	}
+	keys := []string{hostKeyPath}
+	if cfg.LegacySSH {
+		if err := keygen("rsa", rsaHostKeyPath); err != nil {
+			slog.Info("no RSA host key: this dropbear build has no RSA support", "error", err)
+		} else {
+			keys = append(keys, rsaHostKeyPath)
+		}
+	}
+	return keys, nil
 }
 
 // autoMountDisks discovers block devices and mounts them under /mnt/rescue/.

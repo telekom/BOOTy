@@ -914,7 +914,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `progress resumed, petting the watchdog again`
 - `watchdog keepalive failed`
 
-### INFO (489 messages)
+### INFO (490 messages)
 
 #### INFO `.`
 
@@ -1447,6 +1447,10 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `starting Shell`
 - `unmounted`
 - `waiting for command to finish...`
+
+#### INFO `pkg/rescue`
+
+- `no RSA host key: this dropbear build has no RSA support`
 
 #### INFO `pkg/runmode`
 

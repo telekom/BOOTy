@@ -662,9 +662,9 @@ does.
 (`[options] type base64 [comment]`), separated by `;` (YAML `sshPubKey` may
 also use newlines). Several keys allow a key rotation without a window that
 has only the new key. Empty entries are skipped. A malformed entry (unknown
-key type, a blob that is not base64 or does not match its type) is logged
-with its position and skipped, so the other keys still work. A `;` inside a
-key comment or a `command="..."` option splits the entry; do not use one.
+key type, a blob that is not base64 or not a complete key of its type) is logged
+with its position and skipped, so the other keys still work. Options may contain quoted spaces. A `;` inside a key comment or a
+`command="..."` option splits the entry; do not use one.
 
 BOOTy generates an Ed25519 host key on every boot and starts `dropbear`
 with `-r <host key> -s -j -k -I 900`:
@@ -677,7 +677,9 @@ with `-r <host key> -s -j -k -I 900`:
 - A session without traffic for 15 minutes is closed (`-I 900`).
 
 `RESCUE_SSH_HARDENED=false` drops `-s -j -k -I` (password login, port
-forwarding, no idle timeout), for the transition only.
+forwarding, no idle timeout), for the transition only. With a dropbear built
+with `DROPBEAR_HARDENED=false` it also generates and loads an RSA host key
+for old clients; the hardened build has no RSA, and BOOTy logs that at INFO.
 
 The ramdisk `dropbear` is built from the Debian trixie source
 (`DROPBEAR_VERSION` and `DROPBEAR_SHA256` in `initrd.Dockerfile`, bumped by

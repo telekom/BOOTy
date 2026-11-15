@@ -30,12 +30,24 @@ func TestParseSSHKeys(t *testing.T) {
 		{"malformed entries dropped", "garbage;ssh-ed25519;ssh-ed25519 not-base64!;" + testKeyMislabelled + ";ssh-ed25519 AAAA;" + testKeyB,
 			[]string{testKeyB}},
 		{"unknown key type", "ssh-dss AAAAB3NzaC1kc3M= d@ops", nil},
+		{"type without key bytes", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5", nil},
+		{"trailing bytes", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ8kKf8w6YJ6AW2D8KOa/ms2xcrTgfpgPfemuoTsXRYjAA==", nil},
+		{"forced command with a key type", `command="echo ssh-ed25519 only",no-pty ` + testKeyA, []string{`command="echo ssh-ed25519 only",no-pty ` + testKeyA}},
+		{"escaped quote in options", `command="echo \" ssh-ed25519 x" ` + testKeyB, []string{`command="echo \" ssh-ed25519 x" ` + testKeyB}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := ParseSSHKeys(tc.value); !slices.Equal(got, tc.want) {
 				t.Errorf("ParseSSHKeys(%q) = %q, want %q", tc.value, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDropbearArgsLoadsEachHostKey(t *testing.T) {
+	got := dropbearArgs(&Config{LegacySSH: true}, []string{hostKeyPath, rsaHostKeyPath})
+	want := []string{"-r", hostKeyPath, "-r", rsaHostKeyPath, "-F", "-E", "-p", "22"}
+	if !slices.Equal(got, want) {
+		t.Errorf("dropbearArgs() = %q, want %q", got, want)
 	}
 }
 
@@ -57,7 +69,7 @@ func TestDropbearArgs(t *testing.T) {
 			[]string{"-r", hostKeyPath, "-F", "-E", "-p", "22"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := dropbearArgs(&tc.cfg); !slices.Equal(got, tc.want) {
+			if got := dropbearArgs(&tc.cfg, []string{hostKeyPath}); !slices.Equal(got, tc.want) {
 				t.Errorf("dropbearArgs() = %q, want %q", got, tc.want)
 			}
 		})
