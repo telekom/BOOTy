@@ -12,7 +12,8 @@ section: Breaking changes
   runtime behaviour, `--build-arg DROPBEAR_HARDENED=false` the old algorithms,
   both for the transition only.
 - `RESCUE_SSH_PUBKEY` accepts several keys separated by `;`. Malformed
-  entries are logged and skipped.
+  entries are logged and skipped; with only malformed entries SSH refuses
+  password login too. A `;` inside a quoted option does not split.
 - A standby command payload or deploy archive can no longer change
   `RESCUE_SSH_PUBKEY`, `RESCUE_PASSWORD_HASH` or `RESCUE_SSH_HARDENED`: a
   failed command drops to the rescue login of `/deploy/vars`.
