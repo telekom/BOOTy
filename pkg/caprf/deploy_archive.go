@@ -112,6 +112,7 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 	target := cfg.Provision.DiskEncryption.Target
 	cfg.Provision.DiskEncryption = ref.Provision.DiskEncryption
 	cfg.Provision.DiskEncryption.Target = target
+	cfg.Provision.SecureBoot.Signing = ref.Provision.SecureBoot.Signing
 	cfg.Deprovision.CryptoErase = ref.Deprovision.CryptoErase
 	// The restored settings can conflict with the archive (an archive
 	// without DISK_ENCRYPTION and with a PARTITION_LAYOUT): check the final
@@ -136,6 +137,16 @@ func checkArchiveCosign(tree string, ref, cfg *config.MachineConfig) error {
 	}
 	if p != "" {
 		return fmt.Errorf("deploy archive replaces the cosign trust material %s", p)
+	}
+	// The pinned PCR 11 policy key is read when the UKI is prepared, so a
+	// replaced file would move the pin.
+	if f := ref.Provision.DiskEncryption.PCRPublicKeyFile; f != "" {
+		if p, err = archiveReplacesTrustFile(tree, []string{f}); err != nil {
+			return err
+		}
+		if p != "" {
+			return fmt.Errorf("deploy archive replaces the PCR policy key %s (DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE)", p)
+		}
 	}
 	if cosignPolicySet(ref) && (ref.ProvisionerFilesInRamdisk() || cfg.ProvisionerFilesInRamdisk()) {
 		bad, err := ramdiskCopyViolation(tree, ref.Transport.CABundleFile)

@@ -82,7 +82,8 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 			[]string{cfg.Provision.CrashArtifacts.PrepareURL, cfg.Provision.CrashArtifacts.UploadURL}},
 		// The recovery key and the token go to these URLs; turning
 		// encryption off or allowing a failure would downgrade silently.
-		{"disk encryption", lockedDiskEncryption(ref.Provision.DiskEncryption), lockedDiskEncryption(cfg.Provision.DiskEncryption)},
+		{"disk encryption", lockedDiskEncryption(&ref.Provision.DiskEncryption), lockedDiskEncryption(&cfg.Provision.DiskEncryption)},
+		{"disk encryption signer (SECUREBOOT_SIGNING)", ref.Provision.SecureBoot.Signing, cfg.Provision.SecureBoot.Signing},
 		// Turning it off would leave the LUKS2 keyslots of a deprovisioned
 		// disk to whoever holds the recovery key.
 		{"DEPROVISION_CRYPTO_ERASE", ref.Deprovision.CryptoErase, cfg.Deprovision.CryptoErase},
