@@ -1077,7 +1077,8 @@ if [ -e "$bound" ]; then
 		fi
 		# headless allows any token that needs no prompt: the marker proves a
 		# TPM2 unlock only when the TPM2 token is the only one.
-		others=$(cryptsetup luksDump "$dev" | sed -n '/^Tokens:/,/^Digests:/p' | grep -E '^  [0-9]+: ' | grep -v ': systemd-tpm2$' || true)
+		dump=$(cryptsetup luksDump "$dev") || fail "luksDump of $dev"
+		others=$(printf '%s\n' "$dump" | sed -n '/^Tokens:/,/^Digests:/p' | grep -E '^  [0-9]+: ' | grep -v ': systemd-tpm2$' || true)
 		[ -z "$others" ] || fail "the volume has a LUKS2 token other than systemd-tpm2 ($others)"
 	fi
 	list=$(lsinitrd "/boot/initrd.img-$(uname -r)") || fail "lsinitrd of the booted initramfs"
