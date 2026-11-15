@@ -210,8 +210,10 @@ debug dumps.
 - Boot and Secure Boot: EFI boot entry problems that do not stop the run
   (`EFI_BOOT_ENTRY_REQUIRED=false`, missing EFI variables), shim and
   PE/COFF candidates that fail validation, a Secure Boot state that can not
-  be read, and kernel module signing or MOK enrollment that failed with
-  `MODULE_SIGNING_ALLOW_FAILURE=true`.
+  be read, kernel module signing or MOK enrollment that failed with
+  `MODULE_SIGNING_ALLOW_FAILURE=true`, and per-host kernel parameters that
+  reach only the GRUB entry because the UKI is signed by the image pipeline
+  (`SECUREBOOT_SIGNING=ci`).
 - Hardware: SR-IOV drift with `SRIOV_ON_DRIFT=warn`, health check warnings,
   inventory and firmware report failures, crash artifact collection and
   upload failures.
@@ -243,8 +245,9 @@ show one line per stage and per notable result:
   that are grown, the `/dev/disk` links, LUKS volumes, LUKS2 + TPM2 disk
   encryption (format, enrollment, recovery key handover, the encrypted
   image stream, the LVM physical volume of VG `tcaas` in the mapping and
-  the skipped `enable-lvm`) and the crypto-erase of LUKS2 headers at
-  deprovision.
+  the skipped `enable-lvm`), the signed UKI (the per-host kernel parameters
+  in its `.cmdline`, the removed temporary file of an interrupted install)
+  and the crypto-erase of LUKS2 headers at deprovision.
 - Image: the source, the download and write progress, checksum and GPG
   signature results, qcow2 conversion, A/B slot streaming, the memory peak
   of the image step.
@@ -429,7 +432,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 - `step made no progress within its budget, stopping the watchdog keepalive; the hardware resets the host`
 
-### WARN (383 messages)
+### WARN (384 messages)
 
 #### WARN `.`
 
@@ -845,6 +848,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `skipping symlink in copy tree`
 - `skipping unsupported shared data seed entry`
 - `target root still mounted from an earlier attempt, unmounting`
+- `the UKI signed by the image pipeline keeps its .cmdline: the per-host kernel parameters reach the GRUB fallback entry only`
 - `the image layout cannot be encrypted, provisioning without it (DISK_ENCRYPTION_ALLOW_FAILURE)`
 
 #### WARN `pkg/realm`
@@ -907,7 +911,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `progress resumed, petting the watchdog again`
 - `watchdog keepalive failed`
 
-### INFO (489 messages)
+### INFO (491 messages)
 
 #### INFO `.`
 
@@ -1362,6 +1366,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `partition formatted with LUKS2`
 - `partition layout from URL`
 - `partition layout from image`
+- `per-host kernel parameters go into the UKI .cmdline`
 - `persisted target network configuration`
 - `provisioner files stay in the ramdisk, not copied to the target`
 - `provisioning report`
@@ -1373,6 +1378,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `pulling oci pre-pull image`
 - `recovery key handed over`
 - `removed conflicting serial getty unit`
+- `removed the temporary file of an interrupted UKI install`
 - `removing EFI boot entry`
 - `removing old EFI boot entries`
 - `renaming grub.cfg`

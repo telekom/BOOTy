@@ -28,6 +28,7 @@ import (
 // image's mokutil with MOK_PASSWORD for the same reason).
 //
 //   - ukiPCRSignature is `systemd-measure sign` with its default phases;
+//   - replacePESection sets the per-host .cmdline;
 //   - appendPESections adds .pcrpkey and .pcrsig as ukify does;
 //   - authenticodeSign is `sbsign`.
 
@@ -206,42 +207,12 @@ func peAlignmentOK(sect, file uint32) bool {
 func alignUp[T uint32 | uint64](n, a T) T { return (n + a - 1) / a * a }
 
 // appendPESections returns the unsigned PE b with sections appended, as
-// ukify adds .pcrpkey and .pcrsig. b must be laid out as ukify writes it:
-// the section data right after the headers, without gaps or trailing data,
-// so that the Authenticode hash covers every byte except the checksum and
-// the security directory.
+// ukify adds .pcrpkey and .pcrsig. b must be laid out as parseUnsignedPE
+// requires.
 func appendPESections(b []byte, sections ...[2][]byte) ([]byte, error) {
-	l, err := parsePELayout(b)
+	l, vend, err := parseUnsignedPE(b)
 	if err != nil {
 		return nil, err
-	}
-	if binary.LittleEndian.Uint32(b[l.opt+peOptSecurityDir+4:]) != 0 {
-		return nil, errors.New("the PE is signed")
-	}
-	// 64 bits: offsets and addresses near 4 GiB must not wrap.
-	end, vend := uint64(l.sizeOfHeader), uint64(0)
-	type span struct{ ptr, size uint32 }
-	var raw []span
-	for i := range l.nsec {
-		h := b[l.secTable+peSectionHdrSize*i:]
-		va, vsize := binary.LittleEndian.Uint32(h[12:]), binary.LittleEndian.Uint32(h[8:])
-		vend = max(vend, uint64(va)+uint64(max(vsize, binary.LittleEndian.Uint32(h[16:]))))
-		if size := binary.LittleEndian.Uint32(h[16:]); size > 0 {
-			raw = append(raw, span{binary.LittleEndian.Uint32(h[20:]), size})
-		}
-	}
-	slices.SortFunc(raw, func(a, b span) int { return int(a.ptr) - int(b.ptr) })
-	for _, s := range raw {
-		if uint64(s.ptr) != end {
-			return nil, fmt.Errorf("unexpected PE layout: section data at %#x, want %#x", s.ptr, end)
-		}
-		end += uint64(s.size)
-	}
-	if end != uint64(len(b)) {
-		return nil, fmt.Errorf("unexpected PE layout: %d bytes after the last section", len(b)-int(end))
-	}
-	if len(b)%int(l.fileAlign) != 0 {
-		return nil, errors.New("unexpected PE layout: the file size is not a multiple of FileAlignment")
 	}
 	table := l.secTable + peSectionHdrSize*l.nsec
 	free := table + peSectionHdrSize*len(sections)
@@ -269,6 +240,142 @@ func appendPESections(b []byte, sections ...[2][]byte) ([]byte, error) {
 	binary.LittleEndian.PutUint16(out[l.coff+2:], uint16(l.nsec+len(sections))) //nolint:gosec // checked against the header room
 	binary.LittleEndian.PutUint32(out[l.opt+peOptSizeOfImage:], uint32(va))
 	return out, nil
+}
+
+// parseUnsignedPE returns the layout of the unsigned PE b and the end of
+// its section addresses. b must be laid out as ukify writes it: the
+// section data right after the headers, without gaps or trailing data, so
+// that the Authenticode hash covers every byte except the checksum and the
+// security directory.
+func parseUnsignedPE(b []byte) (l *peLayout, vend uint64, err error) {
+	if l, err = parsePELayout(b); err != nil {
+		return nil, 0, err
+	}
+	if binary.LittleEndian.Uint32(b[l.opt+peOptSecurityDir+4:]) != 0 {
+		return nil, 0, errors.New("the PE is signed")
+	}
+	// 64 bits: offsets and addresses near 4 GiB must not wrap.
+	end := uint64(l.sizeOfHeader)
+	type span struct{ ptr, size uint32 }
+	var raw []span
+	for i := range l.nsec {
+		h := b[l.secTable+peSectionHdrSize*i:]
+		va, vsize := binary.LittleEndian.Uint32(h[12:]), binary.LittleEndian.Uint32(h[8:])
+		vend = max(vend, uint64(va)+uint64(max(vsize, binary.LittleEndian.Uint32(h[16:]))))
+		if size := binary.LittleEndian.Uint32(h[16:]); size > 0 {
+			raw = append(raw, span{binary.LittleEndian.Uint32(h[20:]), size})
+		}
+	}
+	slices.SortFunc(raw, func(a, b span) int { return int(a.ptr) - int(b.ptr) })
+	for _, s := range raw {
+		if uint64(s.ptr) != end {
+			return nil, 0, fmt.Errorf("unexpected PE layout: section data at %#x, want %#x", s.ptr, end)
+		}
+		end += uint64(s.size)
+	}
+	if end != uint64(len(b)) {
+		return nil, 0, fmt.Errorf("unexpected PE layout: %d bytes after the last section", len(b)-int(end))
+	}
+	if len(b)%int(l.fileAlign) != 0 {
+		return nil, 0, errors.New("unexpected PE layout: the file size is not a multiple of FileAlignment")
+	}
+	return l, vend, nil
+}
+
+// replacePESection returns the unsigned PE b with the data of the one
+// section name replaced, in the layout of parseUnsignedPE. The section
+// keeps its virtual address: the new data must fit below the next
+// section's address (a .cmdline of up to 2 KiB fits the 4 KiB
+// SectionAlignment of systemd-stub). The data of the later sections moves
+// in the file; no data directory may point into them, as their file
+// offsets would go stale (the debug directory has one).
+func replacePESection(b []byte, name string, data []byte) ([]byte, error) {
+	l, _, err := parseUnsignedPE(b)
+	if err != nil {
+		return nil, err
+	}
+	idx, err := peSectionIndex(b, l, name)
+	if err != nil {
+		return nil, err
+	}
+	h := b[l.secTable+peSectionHdrSize*idx:]
+	va, ptr, rawSize := uint64(binary.LittleEndian.Uint32(h[12:])), binary.LittleEndian.Uint32(h[20:]), binary.LittleEndian.Uint32(h[16:])
+	if rawSize == 0 {
+		return nil, fmt.Errorf("the %s section has no file data", name)
+	}
+	vnext := uint64(math.MaxUint32) + 1
+	for i := range l.nsec {
+		if v := uint64(binary.LittleEndian.Uint32(b[l.secTable+peSectionHdrSize*i+12:])); v > va {
+			vnext = min(vnext, v)
+		}
+	}
+	vend := alignUp(va+uint64(len(data)), uint64(l.sectAlign))
+	if vend > vnext {
+		return nil, fmt.Errorf("the new %s section (%d bytes) does not fit below the next section", name, len(data))
+	}
+	if err := peDirectoriesBefore(b, l, ptr); err != nil {
+		return nil, fmt.Errorf("cannot move the sections after %s: %w", name, err)
+	}
+	size := uint32(len(data)) //nolint:gosec // a kernel command line
+	newRaw := alignUp(size, l.fileAlign)
+	out := slices.Concat(b[:ptr], data, make([]byte, newRaw-size), b[ptr+rawSize:])
+	for i := range l.nsec {
+		oh := out[l.secTable+peSectionHdrSize*i:]
+		if p := binary.LittleEndian.Uint32(oh[20:]); p > ptr && binary.LittleEndian.Uint32(oh[16:]) > 0 {
+			binary.LittleEndian.PutUint32(oh[20:], p+newRaw-rawSize)
+		}
+	}
+	oh := out[l.secTable+peSectionHdrSize*idx:]
+	binary.LittleEndian.PutUint32(oh[8:], size)
+	binary.LittleEndian.PutUint32(oh[16:], newRaw)
+	if vend > uint64(binary.LittleEndian.Uint32(out[l.opt+peOptSizeOfImage:])) {
+		binary.LittleEndian.PutUint32(out[l.opt+peOptSizeOfImage:], uint32(vend)) //nolint:gosec // below vnext
+	}
+	if _, _, err := parseUnsignedPE(out); err != nil {
+		return nil, fmt.Errorf("replace the %s section: %w", name, err)
+	}
+	return out, nil
+}
+
+// peSectionIndex returns the index of the one section header name.
+func peSectionIndex(b []byte, l *peLayout, name string) (int, error) {
+	idx := -1
+	for i := range l.nsec {
+		if string(bytes.TrimRight(b[l.secTable+peSectionHdrSize*i:][:8], "\x00")) != name {
+			continue
+		}
+		if idx >= 0 {
+			return 0, fmt.Errorf("two %s sections", name)
+		}
+		idx = i
+	}
+	if idx < 0 {
+		return 0, fmt.Errorf("no %s section", name)
+	}
+	return idx, nil
+}
+
+// peDirectoriesBefore checks that no data directory points into a section
+// whose data starts at file offset ptr or later. Data directories hold
+// addresses (the security directory of an unsigned PE is empty), but one
+// can carry a file offset into its section.
+func peDirectoriesBefore(b []byte, l *peLayout, ptr uint32) error {
+	ndir := min(int(binary.LittleEndian.Uint32(b[l.opt+108:])), (l.secTable-l.opt-112)/8)
+	for d := range ndir {
+		dir := b[l.opt+112+8*d:]
+		rva := binary.LittleEndian.Uint32(dir)
+		if rva == 0 || binary.LittleEndian.Uint32(dir[4:]) == 0 {
+			continue
+		}
+		for i := range l.nsec {
+			h := b[l.secTable+peSectionHdrSize*i:]
+			s, end := binary.LittleEndian.Uint32(h[12:]), uint64(binary.LittleEndian.Uint32(h[12:]))+uint64(max(binary.LittleEndian.Uint32(h[8:]), binary.LittleEndian.Uint32(h[16:])))
+			if rva >= s && uint64(rva) < end && binary.LittleEndian.Uint32(h[20:]) >= ptr {
+				return fmt.Errorf("data directory %d points into a section that moves", d)
+			}
+		}
+	}
+	return nil
 }
 
 var (

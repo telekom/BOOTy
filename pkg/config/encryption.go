@@ -77,6 +77,20 @@ type DiskEncryptionConfig struct {
 	// must equal the .pcrpkey section of the UKI.
 	// Default: "" (the .pcrpkey of the verified UKI is used as is)
 	PCRPublicKeyFile string `yaml:"pcrPublicKeyFile" json:"pcrPublicKeyFile"`
+
+	// UKIInplaceWrite installs the per-host signed UKI by truncating and
+	// rewriting the image UKI instead of a temporary file renamed over it.
+	// Transitional escape hatch for an ESP without room for a second copy
+	// of the UKI: an interrupted write leaves a truncated UKI.
+	// Default: false
+	UKIInplaceWrite bool `yaml:"ukiInplaceWrite" json:"ukiInplaceWrite"`
+
+	// UKIKeepImageCmdline signs the .cmdline of the image UKI unchanged with
+	// SECUREBOOT_SIGNING=per-host: the per-host kernel parameters reach the
+	// GRUB fallback entry only, the behavior before they were merged into
+	// the UKI. Transitional escape hatch.
+	// Default: false
+	UKIKeepImageCmdline bool `yaml:"ukiKeepImageCmdline" json:"ukiKeepImageCmdline"`
 }
 
 // UKI reports whether the installed system boots a signed UKI.
@@ -147,6 +161,9 @@ func (c *Config) validateUKISigning() []string {
 		// signing (#935) uses the same setting.
 		if d.PCRPublicKeyFile != "" {
 			errs = append(errs, fmt.Sprintf("provision.diskEncryption.pcrPublicKeyFile needs provision.diskEncryption.mode %q", DiskEncryptionLUKS2TPM2UKI))
+		}
+		if d.UKIInplaceWrite || d.UKIKeepImageCmdline {
+			errs = append(errs, fmt.Sprintf("provision.diskEncryption.ukiInplaceWrite and ukiKeepImageCmdline need provision.diskEncryption.mode %q", DiskEncryptionLUKS2TPM2UKI))
 		}
 		return errs
 	}

@@ -425,7 +425,7 @@ func TestAuthenticodeSign(t *testing.T) {
 	}
 }
 
-// FuzzUKISign: appendPESections and authenticodeSign error on malformed
+// FuzzUKISign: replacePESection, appendPESections and authenticodeSign error on malformed
 // PE input, never panic or allocate beyond the input.
 func FuzzUKISign(f *testing.F) {
 	f.Add(testPE(f, false, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}))
@@ -440,6 +440,11 @@ func FuzzUKISign(f *testing.F) {
 	}
 	cert, _ := x509.ParseCertificate(der)
 	f.Fuzz(func(t *testing.T, b []byte) {
+		if out, err := replacePESection(b, ".cmdline", []byte("root=x booty.test=1")); err == nil {
+			if _, _, err := parseUnsignedPE(out); err != nil || len(out) > len(b)+0x10000 {
+				t.Fatalf("replacePESection wrote %d bytes from %d: %v", len(out), len(b), err)
+			}
+		}
 		out, err := appendPESections(b, [2][]byte{[]byte(".pcrpkey"), []byte("pub")}, [2][]byte{[]byte(".pcrsig"), []byte("{}")})
 		if err != nil {
 			return

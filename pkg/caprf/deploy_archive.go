@@ -92,6 +92,9 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 	if err := checkArchiveCosign(tree, ref, cfg); err != nil {
 		return nil, nil, err
 	}
+	if fixed := ukiCmdlineLockViolations(ref, cfg); len(fixed) > 0 {
+		return nil, nil, fmt.Errorf("deploy archive changes %s settings, which can not change in a running ramdisk", fixed[0])
+	}
 	if len(keys) == 0 {
 		// Standby would run such a command with the base config, and the
 		// files of the archive would not match it.

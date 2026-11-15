@@ -26,7 +26,8 @@ import (
 // such a source. It can not change a URL
 // that BOOTy posts to with the bearer token (inventory, firmware, health,
 // telemetry, crash artifacts), the disk encryption settings except the
-// target partition and DEPROVISION_CRYPTO_ERASE. Unknown keys are rejected too. A payload
+// target partition, the settings of the per-host UKI kernel command line
+// and DEPROVISION_CRYPTO_ERASE. Unknown keys are rejected too. A payload
 // with only blank and comment lines returns no keys.
 //
 // The base is the vars file that BOOTy read at start; MergeCommandVars does
@@ -93,6 +94,7 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 		}
 	}
 	fixed = append(fixed, cosignLockViolations(ref, cfg)...)
+	fixed = append(fixed, ukiCmdlineLockViolations(ref, cfg)...)
 	if len(fixed) > 0 {
 		return nil, nil, fmt.Errorf("payload changes %s settings, which can not change in a running ramdisk",
 			strings.Join(fixed, ", "))

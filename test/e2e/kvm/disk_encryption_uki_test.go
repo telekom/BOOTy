@@ -173,6 +173,9 @@ func prepareUKIImage(t *testing.T, osImage, dir string, debs []string, ci *ukiKe
 	if bootPart == "" || espPart == "" {
 		t.Fatalf("no BOOT or UEFI partition on %s", loop)
 	}
+	if ci == nil {
+		enlargeUKIESP(t, loop, bootPart, espPart, dir)
+	}
 	rootPartUUID := strings.TrimSpace(string(runOutput(t, "root PARTUUID", "blkid", "-o", "value", "-s", "PARTUUID", loop+"p1")))
 	rootFSUUID := strings.TrimSpace(string(runOutput(t, "root UUID", "blkid", "-o", "value", "-s", "UUID", loop+"p1")))
 
@@ -294,6 +297,38 @@ dracut --force --no-hostonly --tmpdir /run --add "crypt systemd-cryptsetup syste
 		t.Fatal(err)
 	}
 	return img
+}
+
+// ukiESPScript moves the ESP ($3, partition $5 of $1) into the last 320
+// MiB of the BOOT partition ($2, partition $4), which shrinks: the per-host
+// install needs room for a second copy of the UKI (about 90 MB with the
+// generic initramfs), more than the 106 MB ESP of the cloud image.
+// The ESP keeps its partition number, type, label and serial.
+const ukiESPScript = `loop=$1 boot=$2 esp=$3 bootn=$4 espn=$5 work=$6
+sectors() { cat "/sys/class/block/$(basename "$1")/$2"; }
+bstart=$(sectors "$boot" start) bsize=$(sectors "$boot" size) espsec=$((320 * 2048))
+newb=$(( (bsize - espsec - 2048) / 2048 * 2048 ))
+estart=$(( (bstart + newb + 2047) / 2048 * 2048 ))
+serial=$(blkid -o value -s UUID "$esp" | tr -d -)
+mkdir -p "$work/mnt" "$work/files"
+mount -o ro "$esp" "$work/mnt"; cp -a "$work/mnt/." "$work/files/"; umount "$work/mnt"
+e2fsck -f -y "$boot" || [ $? -le 1 ]
+resize2fs "$boot" "${newb}s"
+echo "size=$newb" | sfdisk --no-reread -N "$bootn" "$loop"
+echo "start=$estart, size=$espsec" | sfdisk --no-reread -N "$espn" "$loop"
+partx -u "$loop"
+udevadm settle || true
+[ "$(sectors "$esp" start)" = "$estart" ]
+mkfs.vfat -F 32 -n UEFI -i "$serial" "$esp"
+mount "$esp" "$work/mnt"; cp -a "$work/files/." "$work/mnt/"; df -h "$work/mnt"; umount "$work/mnt"
+rm -rf "$work"`
+
+// enlargeUKIESP runs ukiESPScript.
+func enlargeUKIESP(t *testing.T, loop, bootPart, espPart, dir string) {
+	t.Helper()
+	num := func(p string) string { return p[strings.LastIndex(p, "p")+1:] }
+	out := runOutput(t, "enlarge the ESP", "sh", "-ec", ukiESPScript, "sh", loop, bootPart, espPart, num(bootPart), num(espPart), filepath.Join(dir, "esp-move"))
+	t.Logf("ESP enlarged:\n%s", out)
 }
 
 // pushUKIImage pushes the image with the UKI digest annotation, signs it
@@ -528,6 +563,9 @@ func requireUKIBound(t *testing.T, report string) {
 	}
 }
 
+// ukiPerHostParam is the per-host kernel parameter of the per-host scenario.
+const ukiPerHostParam = "booty.perhost=1"
+
 // TestDiskEncryptionUKIPerHostVM: the image ships an unsigned UKI. BOOTy
 // signs it and its PCR 11 policy with per-host keys that it wipes, and
 // reports the certificate, which the test enrolls in db like a
@@ -542,8 +580,12 @@ func TestDiskEncryptionUKIPerHostVM(t *testing.T) {
 	escrow := startEscrowServer(t)
 	vm := newUKIVM(t, dir)
 
-	out := vm.provision(ukiProvisionVars(ref, escrow.url, "per-host"), map[string]string{cosignTestKeyPath: cosignPEM, luksCAPath: escrow.caPEM})
-	for _, want := range []string{"image cosign signature verified", "UKI signed with per-host keys; the private keys are wiped", "UKI boot entry created"} {
+	vars := ukiProvisionVars(ref, escrow.url, "per-host")
+	// A per-host kernel parameter goes into the signed .cmdline (#968).
+	vars["EXTRA_KERNEL_PARAMS"] = ukiPerHostParam
+	out := vm.provision(vars, map[string]string{cosignTestKeyPath: cosignPEM, luksCAPath: escrow.caPEM})
+	for _, want := range []string{"image cosign signature verified", "UKI signed with per-host keys; the private keys are wiped", "UKI boot entry created",
+		"per-host kernel parameters go into the UKI .cmdline"} {
 		if !strings.Contains(string(out), want) {
 			t.Fatalf("provisioning log lacks %q", want)
 		}
@@ -563,12 +605,16 @@ func TestDiskEncryptionUKIPerHostVM(t *testing.T) {
 	}
 	requireUKIBound(t, report)
 
-	// 2. The TPM2 unlocks without a prompt.
+	// 2. The TPM2 unlocks without a prompt, and the per-host parameter is
+	// on the command line of the booted UKI.
 	report, prompted = vm.boot("tpm2 unlock", key)
 	if prompted {
 		t.Fatal("the TPM2 did not unlock the per-host signed UKI")
 	}
 	luksRequireLine(t, report, "ROOT_TYPE=crypt")
+	if c := luksField(report, "CMDLINE"); !strings.Contains(c, "booty.uki=v1") || !strings.Contains(c, ukiPerHostParam) {
+		t.Fatalf("/proc/cmdline %q lacks the image marker or the per-host parameter %s", c, ukiPerHostParam)
+	}
 	pcr7 := luksField(report, "PCR7")
 
 	// 3. Secure Boot off: PCR 7 differs, the recovery key unlocks.

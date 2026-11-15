@@ -207,3 +207,36 @@ func TestDeployArchiveCannotReplacePCRPublicKey(t *testing.T) {
 		})
 	}
 }
+
+// In the UKI mode per-host signing measures the per-host kernel parameters
+// into PCR 11: a standby payload or a deploy archive can not change them.
+func TestPayloadCannotChangeUKIKernelParams(t *testing.T) {
+	ukiVars := "DISK_ENCRYPTION=luks2-tpm2-uki\nSECUREBOOT_SIGNING=per-host\nDISK_ENCRYPTION_RECOVERY_KEY_URL=https://caprf/key\n" +
+		"IMAGE_COSIGN_PUBKEYS=/deploy/cosign.pub\nMODULE_SIGNING_ENROLLMENT=external\nEXTRA_KERNEL_PARAMS=hugepages=16\n"
+	base := []byte(commandBaseVars + "\n" + ukiVars)
+	for _, payload := range []string{"EXTRA_KERNEL_PARAMS=init=/bin/sh", "MACHINE_EXTRA_KERNEL_PARAMS=rd.break", "MACHINE_SERIAL_CONSOLE=ttyS1",
+		"GRUB_CMDLINE_MODE=append", "CLOUDINIT_DATASOURCE=configdrive", "UKI_KEEP_IMAGE_CMDLINE=true", "UKI_INPLACE_WRITE=true"} {
+		if _, _, err := MergeCommandVars(base, []byte(payload)); err == nil {
+			t.Errorf("payload %q accepted", payload)
+		} else if !strings.Contains(err.Error(), "UKI kernel command line") && !strings.Contains(err.Error(), "disk encryption") {
+			t.Errorf("payload %q: err = %v, want the UKI kernel command line lock", payload, err)
+		}
+	}
+	if _, _, err := MergeCommandVars(base, []byte("EXTRA_KERNEL_PARAMS=hugepages=16")); err != nil {
+		t.Errorf("unchanged parameters refused: %v", err)
+	}
+	// Without the UKI mode the parameters reach GRUB only and may change.
+	if _, _, err := MergeCommandVars([]byte(commandBaseVars), []byte("EXTRA_KERNEL_PARAMS=hugepages=16")); err != nil {
+		t.Errorf("payload without the UKI mode refused: %v", err)
+	}
+
+	useDeployRoot(t)
+	c := &Client{vars: []byte(baseAgentVars + ukiVars)}
+	_, _, err := applyArchive(c, deployArchive(t, archiveEntry{name: "deploy/vars", body: "HOSTNAME=w\n" + ukiVars + "MACHINE_EXTRA_KERNEL_PARAMS=rd.shell\n"}))
+	if err == nil || !strings.Contains(err.Error(), "UKI kernel command line") {
+		t.Fatalf("deploy archive: err = %v, want the UKI kernel command line lock", err)
+	}
+	if _, _, err := applyArchive(c, deployArchive(t, archiveEntry{name: "deploy/vars", body: "HOSTNAME=w\n" + ukiVars})); err != nil {
+		t.Fatalf("deploy archive with the same parameters: %v", err)
+	}
+}
