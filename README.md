@@ -57,7 +57,7 @@ CAPRF-compatible `/deploy/vars` file.
 - **Multi-format image streaming** — Gzip, lz4, xz, zstd decompression with auto-detection
 - **OCI registry support** — Pull images from OCI registries (authenticated & unauthenticated) via `oci://` URLs
 - **HTTP retry with backoff** — Automatic exponential backoff retry for image downloads and OCI pulls
-- **Secure erase** — NVMe format (SES1) and ATA Security Erase for full disk sanitization
+- **Secure erase** — NVMe format (SES1), ATA Security Erase and SCSI SANITIZE/FORMAT UNIT for full disk sanitization; LUKS2 crypto-erase at deprovisioning
 - **Software RAID** — mdadm array creation (RAID 0/1/5/6/10)
 - **Filesystem support** — ext2, ext3, ext4, xfs, btrfs mount/resize; vfat mount/format for EFI system partitions
 - **LLDP discovery** — Raw AF_PACKET-based LLDP listener for switch topology discovery
@@ -509,7 +509,7 @@ root is mounted.
 | `COMMANDS_URL` | — | Standby mode: URL to poll for pending commands |
 | `TOKEN_URL` | — | JWT token acquisition endpoint (HTTPS required except localhost) |
 | `TOKEN_ALGORITHM` | — | JWT algorithm override: `RS256` or `ES256` |
-| `SECURE_ERASE` | `false` | Use NVMe format / ATA secure erase instead of partition wipe |
+| `SECURE_ERASE` | `false` | Use NVMe format / ATA Security Erase / SCSI SANITIZE instead of partition wipe |
 | `INSECURE_TRANSPORT` | `false` | Allow insecure HTTP connections. Preset by `CAPRF_LEGACY_COMPAT` |
 | `SKIP_TLS_VERIFY` | `false` | Skip TLS certificate checks for CAPRF callbacks, the connectivity check and images, like `curl --insecure`. Never for `TOKEN_URL`. Preset by `CAPRF_LEGACY_COMPAT` |
 | `CA_BUNDLE_FILE` | — | PEM file in the ramdisk (for example `/deploy/ca-bundle.pem`) whose root certificates every BOOTy HTTPS client trusts in addition to the system roots. An unreadable or invalid file fails the start |
@@ -1442,15 +1442,21 @@ member disks, with a hardware erase instead of a signature wipe:
 export SECURE_ERASE=true
 ```
 
-| Drive Type | Erase Method |
-|-----------|--------------|
-| NVMe | `nvme format --ses=1` (User Data Erase). When the command fails, BOOTy falls back to `wipefs -af`. |
-| SATA/SAS | ATA Security Erase via `hdparm`. When the drive has no ATA security or is frozen, BOOTy falls back to `wipefs -af`. When the erase command fails, provisioning fails. |
+| Drive Type | Tool and erase method | When the drive does not support it |
+|-----------|--------------|--------------|
+| NVMe | `nvme format --ses=1` (User Data Erase) | provisioning fails |
+| SATA (vendor `ATA`, also behind a SAS HBA) | `hdparm`: ATA Security Erase with a temporary password | no ATA security feature set or security-frozen: provisioning fails |
+| SAS (other SCSI disks) | `sg_sanitize --quick`: the first SANITIZE action the drive accepts of crypto erase, block erase and overwrite with zeros; else `sg_format --format --quick` (FORMAT UNIT) | the drive rejects every method: provisioning fails |
+| LUKS2 header (any media) | deprovisioning and decommission, not `SECURE_ERASE`: `cryptsetup luksErase`, then zeros over the header area | the erase fails: the run fails. `DEPROVISION_CRYPTO_ERASE=false` skips it |
 
-A missing `nvme` or `hdparm` tool fails provisioning, so BOOTy does not
-silently downgrade an explicit secure erase request. Deprovisioning,
+A failed erase or a missing tool fails provisioning, so BOOTy does not
+silently downgrade an explicit secure erase request.
+`SECURE_ERASE_FALLBACK=wipe` allows the plain wipe instead and names the
+disks in the success status. The default and the GoBGP release initramfs
+ship all erase tools (`nvme`, `hdparm`, `sg_sanitize`, `sg_format`,
+`cryptsetup`); the slim and micro flavors ship none. Deprovisioning,
 decommission and the wipe of all disks (`WIPE_ALL_DISKS=true`) do not read
-`SECURE_ERASE`.
+`SECURE_ERASE`. See [docs/disk.md](docs/disk.md#secure-erase).
 
 ### Post-Provision Commands
 

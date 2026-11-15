@@ -302,17 +302,22 @@ behind a SAS HBA; other SCSI disks are SAS disks.
 | --- | --- | --- |
 | NVMe | `nvme format <dev> --ses=1 --force` (User Data Erase) | the format fails, or `nvme` is missing |
 | ATA (SATA) | ATA Security Erase with `hdparm` and a temporary password | the drive has no ATA security feature set, is security-frozen, or a `hdparm` command fails; `hdparm` is missing |
-| SAS | SCSI `SANITIZE` with `sg_sanitize --quick`: crypto erase, then block erase, then overwrite with zeros; then `FORMAT UNIT` with `sg_format --format --quick` | the drive rejects every method, or a method fails; `sg_sanitize` and `sg_format` are missing |
+| SAS | SCSI `SANITIZE` with `sg_sanitize --quick`, the first action the drive accepts of crypto erase, block erase and overwrite with zeros; when it rejects all three, `FORMAT UNIT` with `sg_format --format --quick` | the drive rejects every method, or a method fails; `sg_sanitize` and `sg_format` are missing |
 | Other (virtio, unknown vendor) | none | always |
+| LUKS2 header (any media, deprovisioning) | not `SECURE_ERASE`: `cryptsetup luksErase`, then zeros over the header area with `dd` (see [Wipe Behaviour](#wipe-behaviour)) | the erase or its check fails (`BOOTY-DSK-029`); `cryptsetup` is missing. A device that cannot be read is skipped and named in the status, and the wipe after it runs as before. `DEPROVISION_CRYPTO_ERASE=false` skips the step |
 
 A failed or unsupported secure erase fails the run by default. BOOTy does not
 fall back to a signature wipe on its own. After a failed ATA erase BOOTy tries
 to clear the temporary password.
 
-The release initramfs ships `nvme` and `hdparm`, but not `sg_sanitize` and
-`sg_format` (sg3-utils). A SAS secure erase fails there with
-`sg_sanitize is not in the initramfs, sg_format is not in the initramfs`. Add
-sg3-utils to a custom initramfs, or use `SECURE_ERASE_FALLBACK=wipe`.
+The default and the GoBGP release initramfs ship every erase tool: `nvme`
+(nvme-cli), `hdparm`, `sg_sanitize` and `sg_format` (sg3-utils) and
+`cryptsetup`. The slim and micro flavors ship none of them; there a secure
+erase fails with `the nvme tool is not in the initramfs` (or `hdparm`, or
+`sg_sanitize is not in the initramfs, sg_format is not in the initramfs`),
+and the crypto-erase of a disk with a LUKS2 header fails, unless
+`DEPROVISION_CRYPTO_ERASE=false`. Use `SECURE_ERASE_FALLBACK=wipe` there, or
+a flavor with the tools.
 
 `SECURE_ERASE_FALLBACK=wipe` (YAML `provision.disk.secureEraseFallback`)
 allows the fallback: BOOTy logs a `WARN` line with the erase error, wipes the
