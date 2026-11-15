@@ -813,13 +813,15 @@ func luksDracutConfText(libs []string, lvm, systemdCryptsetupModule bool) string
 // If the TPM2 fails, the unit asks for a passphrase as before. Phase 2 of
 // luksEnrollScript removes key slot 1 only with the marker: the test from
 // the booted system proves only that the TPM2 unseals now, not that the
-// initramfs could use it.
+// initramfs could use it. Three tries: systemd 255 (Ubuntu 24.04) does not
+// retry an unseal that another PCR extension raced (TPM_RC_PCR_CHANGED).
+// No $ or %: systemd would expand them.
 func luksInitrdDropInText(uuid string) string {
 	return "# Written by BOOTy (docs/disk-encryption.md).\n[Service]\n" +
 		"ExecStartPre=-/bin/sh -c '[ -e /etc/initrd-release ] && [ ! -e /dev/mapper/" + luksMapperName + " ] || exit 0; " +
-		"PATH=/usr/bin:/usr/sbin:/usr/lib/systemd:/bin:/sbin systemd-cryptsetup attach " + luksMapperName +
+		"PATH=/usr/bin:/usr/sbin:/usr/lib/systemd:/bin:/sbin; export PATH; for try in 1 2 3; do systemd-cryptsetup attach " + luksMapperName +
 		" /dev/disk/by-uuid/" + uuid + " none luks,tpm2-device=auto,headless=true && " +
-		"mkdir -p " + filepath.Dir(luksInitrdUnlockMarker) + " && : >" + luksInitrdUnlockMarker + "'\n"
+		"mkdir -p " + filepath.Dir(luksInitrdUnlockMarker) + " && : >" + luksInitrdUnlockMarker + " && exit 0; done'\n"
 }
 
 const luksDracutKeyConfText = "# Written by BOOTy: removed by " + luksUnitName + " after the TPM2 enrollment.\n" +

@@ -130,7 +130,7 @@ func TestWriteEncryptionFiles(t *testing.T) {
 	}
 	if d := read(luksInitrdDropIn); !strings.Contains(d, "ExecStartPre=-/bin/sh -c '[ -e /etc/initrd-release ]") ||
 		!strings.Contains(d, "systemd-cryptsetup attach booty_crypt /dev/disk/by-uuid/11111111-2222-4333-8444-555555555555 none luks,tpm2-device=auto,headless=true && ") ||
-		!strings.HasSuffix(d, ": >"+luksInitrdUnlockMarker+"'\n") || strings.ContainsAny(d, "$%") {
+		!strings.HasSuffix(d, ": >"+luksInitrdUnlockMarker+" && exit 0; done'\n") || strings.ContainsAny(d, "$%") {
 		t.Errorf("initramfs drop-in:\n%s", d)
 	}
 	if !strings.Contains(read(luksDracutKeyConf), luksEnrollKeyPath) {

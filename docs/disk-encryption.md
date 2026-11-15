@@ -60,7 +60,8 @@ Provisioning (BOOTy, Secure Boot off):
      host-only build drops `systemd-cryptsetup` without it;
    - `/etc/systemd/system/systemd-cryptsetup@booty_crypt.service.d/90-booty-tpm2-unlock.conf`,
      also in the initramfs: there it first opens the volume with the TPM2
-     alone (`systemd-cryptsetup attach … tpm2-device=auto,headless=true`, no
+     alone (`systemd-cryptsetup attach … tpm2-device=auto,headless=true`, three
+     tries as systemd 255 does not retry a raced unseal, no
      prompt) and on success leaves `/run/booty/luks-tpm2-initrd-unlock`,
      which phase 2 needs. If the TPM2 fails, `systemd-cryptsetup` asks for a
      passphrase as before; in the installed system it does nothing;
