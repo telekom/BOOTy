@@ -3,7 +3,9 @@ package rescue
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -215,9 +217,16 @@ func Setup(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
-// setupSSHKeys writes authorized keys for root.
+// setupSSHKeys writes authorized keys for root. Without keys it removes an
+// authorized_keys file that something else put into the ramdisk (a deploy
+// archive with PROVISIONER_FILES_TARGET=ramdisk), so only the trusted
+// configuration decides who may log in.
 func setupSSHKeys(keys []string) error {
 	if len(keys) == 0 {
+		err := os.Remove(filepath.Join(rootSSHDir, "authorized_keys"))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("removing stale authorized_keys: %w", err)
+		}
 		return nil
 	}
 

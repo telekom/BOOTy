@@ -663,7 +663,7 @@ does.
 `RESCUE_SSH_PUBKEY` takes one or more keys in `authorized_keys` form
 (`[options] type base64 [comment]`), separated by `;` (YAML `sshPubKey` may
 also use newlines). Several keys allow a key rotation without a window that
-has only the new key. Empty entries are skipped. A malformed entry (unknown
+has only the new key. Empty entries are skipped. Without a valid key, BOOTy removes an `/root/.ssh/authorized_keys` that came with the ramdisk or a deploy archive, so only `RESCUE_SSH_PUBKEY` grants a key login; if it can not remove the file, it does not start the SSH server. A malformed entry (unknown
 key type, a blob that is not base64 or not a complete key of its type) is logged
 with its position and skipped, so the other keys still work. Options may contain quoted spaces and quoted `;`
 (`command="a; b"`). A `;` in a key comment splits the entry; do not use one.
