@@ -57,23 +57,39 @@ func ParseSSHKeys(value string) (keys []string, entries int) {
 // authorized_keys line.
 func splitSSHKeys(value string) []string {
 	var out []string
-	start, quoted, first := 0, false, true
-	for i := 0; i < len(value); i++ {
-		switch c := value[i]; {
-		case c == '\n' || c == '\r' || (c == ';' && !quoted):
-			out = append(out, value[start:i])
-			start, quoted, first = i+1, false, true
-		case !first:
-		case (c == ' ' || c == '\t') && !quoted:
-			// Leading blanks come before the first token.
-			first = strings.TrimSpace(value[start:i]) == ""
-		case c == '\\' && quoted && i+1 < len(value) && value[i+1] != '\n' && value[i+1] != '\r':
+	for _, line := range strings.Split(strings.ReplaceAll(value, "\r", "\n"), "\n") {
+		for start := 0; start <= len(line); {
+			n := entryEnd(line[start:])
+			out = append(out, line[start:start+n])
+			start += n + 1
+		}
+	}
+	return out
+}
+
+// entryEnd returns the index of the ";" that ends the entry at the start
+// of s, or len(s). Inside the first token (the options), a ";" between
+// double quotes does not count, and a backslash escapes the next byte.
+func entryEnd(s string) int {
+	i := len(s) - len(strings.TrimLeft(s, " \t"))
+	for quoted := false; i < len(s); i++ {
+		c := s[i]
+		if c == ';' && !quoted {
+			return i
+		}
+		if !quoted && (c == ' ' || c == '\t') {
+			break
+		}
+		if c == '\\' && quoted && i+1 < len(s) {
 			i++
-		case c == '"':
+		} else if c == '"' {
 			quoted = !quoted
 		}
 	}
-	return append(out, value[start:])
+	if j := strings.IndexByte(s[i:], ';'); j >= 0 {
+		return i + j
+	}
+	return len(s)
 }
 
 // sshKeyType returns the key type of an authorized_keys entry
