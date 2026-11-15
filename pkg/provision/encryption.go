@@ -69,9 +69,11 @@ const (
 // TPM2 (src/shared/tpm2-util.c), and the libcryptsetup token plugin that
 // systemd-cryptsetup unlocks the TPM2 token with. dracut does not see dlopen
 // dependencies; its tpm2-tss module, which would add the plugin, needs
-// tpm2-tools.
+// tpm2-tools. libtss2-sys is a link dependency of libtss2-esys that dracut
+// 060 (Ubuntu 24.04) does not resolve for install_items; without it the
+// dlopen fails and systemd-cryptsetup asks for the passphrase.
 var luksTPM2Libs = []string{
-	"libtss2-esys.so.0", "libtss2-rc.so.0", "libtss2-mu.so.0", "libtss2-tcti-device.so.0",
+	"libtss2-esys.so.0", "libtss2-sys.so.1", "libtss2-rc.so.0", "libtss2-mu.so.0", "libtss2-tcti-device.so.0",
 	"cryptsetup/libcryptsetup-token-systemd-tpm2.so",
 }
 
@@ -1105,7 +1107,7 @@ for img in /boot/initrd.img-*; do
 	dracut --force "$img.booty-new" "$kver"
 	list=$(lsinitrd "$img.booty-new")
 	case $list in *luks-enroll.key*) step="$kver still has the enrollment key"; exit 1 ;; esac
-	for f in libtss2-esys.so libtss2-rc.so libtss2-mu.so libtss2-tcti-device.so libcryptsetup-token-systemd-tpm2.so systemd-cryptsetup etc/crypttab; do
+	for f in libtss2-esys.so libtss2-sys.so libtss2-rc.so libtss2-mu.so libtss2-tcti-device.so libcryptsetup-token-systemd-tpm2.so systemd-cryptsetup etc/crypttab; do
 		case $list in *"$f"*) ;; *) step="$kver lacks $f"; exit 1 ;; esac
 	done
 	built="$built $img"

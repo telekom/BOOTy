@@ -53,6 +53,7 @@ func encryptionTargetRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	for _, rel := range append(luksTargetTools, "usr/lib/x86_64-linux-gnu/libtss2-esys.so.0",
+		"usr/lib/x86_64-linux-gnu/libtss2-sys.so.1",
 		"usr/lib/x86_64-linux-gnu/libtss2-rc.so.0", "usr/lib/x86_64-linux-gnu/libtss2-mu.so.0",
 		"usr/lib/x86_64-linux-gnu/libtss2-tcti-device.so.0",
 		"usr/lib/x86_64-linux-gnu/cryptsetup/libcryptsetup-token-systemd-tpm2.so",

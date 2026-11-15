@@ -446,7 +446,7 @@ follow-up.
   ext4.
 - The image has `dracut`, `lsinitrd`, `systemd-cryptsetup`,
   `systemd-cryptenroll`, `cryptsetup`, `shred`, `libtss2-esys.so.0`,
-  `libtss2-rc.so.0`, `libtss2-mu.so.0`, `libtss2-tcti-device.so.0` and
+  `libtss2-sys.so.1`, `libtss2-rc.so.0`, `libtss2-mu.so.0`, `libtss2-tcti-device.so.0` and
   `libcryptsetup-token-systemd-tpm2.so`; `curl` with a status URL.
   - Ubuntu 26.04 cloud image: add `libtss2-rc0t64`.
   - Ubuntu 24.04 cloud image: replace `initramfs-tools` with `dracut`
@@ -454,7 +454,10 @@ follow-up.
     The `systemd` package of 24.04 already has `systemd-cryptsetup`,
     `systemd-cryptenroll` and the token plugin. dracut 060 has no
     `systemd-cryptsetup` module; BOOTy then adds only `crypt`, which
-    installs it. The stock `cryptsetup-initramfs` (initramfs-tools) cannot
+    installs it. dracut 060 does not add the link dependency
+    `libtss2-sys.so.1` of `libtss2-esys` either; BOOTy lists it, as without
+    it systemd-cryptsetup reports `Could not find TPM2 device: Operation
+    not supported` and asks for the passphrase. The stock `cryptsetup-initramfs` (initramfs-tools) cannot
     unlock with the TPM2: with the volume bound, it stops at the passphrase
     prompt. KVM scenario `disk-encryption-ubuntu-24.04` (see [Test](#test)).
 - The ramdisk has `cryptsetup`, `partprobe`, `growpart`, `e2fsck`,
