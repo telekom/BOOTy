@@ -313,8 +313,10 @@ needed: `cryptsetup luksHeaderBackup`.
 the bearer token `DISK_ENCRYPTION_STATUS_TOKEN` (`tpm2-bound`,
 `slot1-removed`, `failed`). It is best effort: a lost status does not stop
 the enrollment. The token stays in `/etc/booty/luks-status.auth` of the
-installed system until phase 2 removes it, so it must be valid until the
-first Secure Boot boots are done. **Give it a token that can post the
+installed system until phase 2 has posted `slot1-removed` and removes it,
+so it must stay valid until then: the second boot with Secure Boot on, or
+later when the enrollment waits (MOK request, Secure Boot off) or is
+retried. **Give it a token that can post the
 status of this host only** and nothing else: not the provisioning token,
 which would then have to live as long and could do everything a
 provisioning run can. The token is required with the status URL, a single
