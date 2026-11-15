@@ -41,6 +41,10 @@ const (
 // directory trees in the search paths or the writable upper directory of
 // --mutable. Without the guard, enabling systemd-sysext.service would let
 // anyone who can write /var put files over /usr.
+// ponytail: check, then refresh; a directory added in between still merges.
+// That needs a writer running before sysinit.target, which already is root
+// on the host; an offline write to /var is caught. Close it when
+// systemd-sysext can restrict discovery to images.
 const moduleSysextGuard = `for e in /etc/extensions/* /run/extensions/* /var/lib/extensions/* /usr/local/lib/extensions/* /var/lib/extensions.mutable; do ` +
 	`if [ -d "$e" ]; then echo "BOOTy: refusing to merge $e, which no image policy covers" >&2; exit 1; fi; done`
 
@@ -115,7 +119,7 @@ func (o *Orchestrator) signKernelModulesSysext(ctx context.Context, ms config.Mo
 	}
 	sum := sha256.Sum256(res.CertDER)
 	o.moduleSigning = &ReportModuleSigning{
-		Modules: len(res.Modules), Enrollment: ms.EnrollmentMethod(), Target: config.ModuleSigningTargetSysext,
+		Signing: config.SigningPerHost, Modules: len(res.Modules), Enrollment: ms.EnrollmentMethod(), Target: config.ModuleSigningTargetSysext,
 		CertPath: certPath, CertSHA256: hex.EncodeToString(sum[:]), Cert: res.CertDER,
 	}
 	if len(res.Modules) == 0 {
@@ -238,13 +242,16 @@ func copyIntoRoot(root *os.Root, src, dst string) error {
 	return err //nolint:wrapcheck // the caller names the file
 }
 
+// maxOSReleaseSize caps the os-release read from the image.
+const maxOSReleaseSize = 64 << 10
+
 // targetOSRelease returns ID and VERSION_ID of the target, which
 // systemd-sysext compares with extension-release. /etc/os-release takes
 // precedence over /usr/lib/os-release, as for systemd.
 func targetOSRelease(root *os.Root) (id, version string, err error) {
-	data, err := root.ReadFile("etc/os-release")
+	data, err := readSmallRegularFile(root, "etc/os-release", maxOSReleaseSize)
 	if err != nil {
-		if data, err = root.ReadFile("usr/lib/os-release"); err != nil {
+		if data, err = readSmallRegularFile(root, "usr/lib/os-release", maxOSReleaseSize); err != nil {
 			return "", "", fmt.Errorf("read target os-release: %w", err)
 		}
 	}

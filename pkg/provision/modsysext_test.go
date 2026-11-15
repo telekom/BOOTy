@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -68,7 +69,7 @@ func TestSignKernelModulesSysext(t *testing.T) {
 	if link, err := os.Readlink(filepath.Join(root, moduleSysextWants)); err != nil || !strings.HasSuffix(link, "systemd-sysext.service") {
 		t.Fatalf("systemd-sysext not enabled: %q %v", link, err)
 	}
-	if o.moduleSigning.Modules != 1 || o.moduleSigning.Target != "sysext" || len(o.moduleSigning.Cert) == 0 {
+	if o.moduleSigning.Modules != 1 || o.moduleSigning.Target != "sysext" || o.moduleSigning.Signing != config.SigningPerHost || len(o.moduleSigning.Cert) == 0 {
 		t.Fatalf("report %+v", o.moduleSigning)
 	}
 }
@@ -81,6 +82,25 @@ func TestSignKernelModulesSysextNeedsMergedUsr(t *testing.T) {
 	}
 	if err := o.signKernelModules(context.Background()); err == nil || !strings.Contains(err.Error(), "merged /usr") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// A FIFO as os-release must not block provisioning.
+func TestTargetOSReleaseRejectsFIFO(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "usr/lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "usr/lib/os-release"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	if _, _, err := targetOSRelease(root); err == nil {
+		t.Fatal("want an error for a FIFO os-release")
 	}
 }
 

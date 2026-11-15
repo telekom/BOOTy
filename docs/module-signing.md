@@ -356,6 +356,10 @@ KVM.
 
 ### Limits
 
+- The directory check runs before `systemd-sysext refresh`, not inside it:
+  a directory extension created between the two still merges. That needs a
+  process that writes `/var` before `sysinit.target`, which already runs as
+  root; a directory written offline is refused.
 - The image policy applies to every extension on the host: unsigned
   extensions (for example from `SYSEXT_LAYERS`) no longer merge, and a
   directory extension stops every merge.
