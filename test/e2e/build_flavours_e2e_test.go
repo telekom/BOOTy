@@ -861,8 +861,8 @@ func TestDefaultContainsNetworkAndSSHE2E(t *testing.T) {
 	// BOOTy fetches with net/http; busybox wget does HTTP and HTTPS in the shell.
 	assertNotContains(t, files, "bin/curl", "curl")
 	assertContains(t, files, "bin/wget", "busybox wget")
-	assertContains(t, files, "bin/dropbear", "dropbear SSH")
-	assertContains(t, files, "bin/dropbearkey", "dropbearkey")
+	// BOOTy serves rescue SSH itself.
+	assertNotContains(t, files, "bin/dropbear", "dropbear SSH")
 	// LLDP diagnosis is "booty lldp"; lldpd and lldpcli are not shipped.
 	assertNotContains(t, files, "bin/lldpcli", "LLDP client")
 	assertNotContains(t, files, "sbin/lldpd", "LLDP daemon")
@@ -964,7 +964,7 @@ func TestGoBGPContainsNetworkAndSSHE2E(t *testing.T) {
 	// BOOTy fetches with net/http; busybox wget does HTTP and HTTPS in the shell.
 	assertNotContains(t, files, "bin/curl", "curl")
 	assertContains(t, files, "bin/wget", "busybox wget")
-	assertContains(t, files, "bin/dropbear", "dropbear SSH")
+	assertNotContains(t, files, "bin/dropbear", "dropbear SSH")
 	assertNotContains(t, files, "bin/lldpcli", "LLDP client")
 	assertNotContains(t, files, "sbin/lldpd", "LLDP daemon")
 	assertContains(t, files, "etc/ssl/certs/ca-certificates.crt", "CA certificates")

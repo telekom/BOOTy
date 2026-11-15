@@ -3,6 +3,7 @@ module github.com/telekom/BOOTy
 go 1.27.4
 
 require (
+	github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5
 	github.com/dustin/go-humanize v1.1.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/go-containerregistry v0.22.1
@@ -13,6 +14,7 @@ require (
 	github.com/mdlayher/packet v1.2.0
 	github.com/openpubkey/openpubkey v0.30.0
 	github.com/openpubkey/opkssh v0.19.2
+	github.com/openwall/yescrypt-go v1.0.0
 	github.com/osrg/gobgp/v4 v4.11.0
 	github.com/pierrec/lz4/v4 v4.1.33
 	github.com/spf13/cobra v1.10.2

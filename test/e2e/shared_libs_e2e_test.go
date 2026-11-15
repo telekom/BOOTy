@@ -115,8 +115,6 @@ func TestDefaultSharedLibsResolveE2E(t *testing.T) {
 		"bin/hdparm", "bin/nvme",
 		// Firmware
 		"bin/mstconfig", "bin/mstflint",
-		// SSH
-		"bin/dropbear", "bin/dropbearkey",
 		// Rescue/debug mode
 		"bin/lsblk",
 		// FRR
@@ -145,8 +143,6 @@ func TestGoBGPSharedLibsResolveE2E(t *testing.T) {
 		"bin/hdparm", "bin/nvme",
 		// Firmware
 		"bin/mstconfig", "bin/mstflint",
-		// SSH
-		"bin/dropbear", "bin/dropbearkey",
 		// Rescue mode
 		"bin/lsblk",
 	})

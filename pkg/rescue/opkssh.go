@@ -24,8 +24,27 @@ import (
 	"github.com/telekom/BOOTy/pkg/timesync"
 )
 
-// rescueUser is the only login of the rescue shell.
-const rescueUser = "root"
+// newCertVerifier returns the opkssh verifier of RESCUE_SSH_OPK_PROVIDERS
+// and RESCUE_SSH_OPK_POLICY.
+func newCertVerifier(cfg *Config) (certVerifier, error) {
+	if !timesync.Synced() {
+		slog.Error("rescue SSH: the clock was not synced (TIME_SYNC), so the PK Token times are checked against the RTC")
+	}
+	v, err := newOPKVerifier(parseOPKProviders(cfg.OPKProviders), parseOPKPolicy(cfg.OPKPolicy), jwksHTTPClient())
+	if err != nil {
+		return nil, err
+	}
+	return v.check, nil
+}
+
+// check is the certVerifier of v; its error is the log reason.
+func (v *opkVerifier) check(ctx context.Context, user string, cert *ssh.Certificate) (string, string, error) {
+	claims, err := v.verify(ctx, user, cert)
+	if err != nil {
+		err = errors.New(refusalReason(err))
+	}
+	return claims.Issuer, claims.Subject, err
+}
 
 // opkProvider is one row of RESCUE_SSH_OPK_PROVIDERS, the opkssh
 // /etc/opk/providers format: "issuer client_id expiration".

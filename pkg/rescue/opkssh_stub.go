@@ -2,8 +2,6 @@
 
 package rescue
 
-import "context"
-
-// startOPKSSH is not available: the micro flavor builds with no_opkssh to
-// keep the openpubkey dependencies out of its binary.
-func startOPKSSH(context.Context, *Config) error { return errOPKUnsupported }
+// newCertVerifier is not available: a build with the no_opkssh tag leaves
+// out the openpubkey dependencies.
+func newCertVerifier(*Config) (certVerifier, error) { return nil, errOPKUnsupported }

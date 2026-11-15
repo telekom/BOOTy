@@ -1,5 +1,7 @@
 filippo.io/bigmod v0.1.0 h1:UNzDk7y9ADKST+axd9skUpBQeW7fG2KrTZyOE4uGQy8=
 filippo.io/bigmod v0.1.0/go.mod h1:OjOXDNlClLblvXdwgFFOQFJEocLhhtai8vGLy0JCZlI=
+github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5 h1:IEjq88XO4PuBDcvmjQJcQGg+w+UaafSy8G5Kcb5tBhI=
+github.com/GehirnInc/crypt v0.0.0-20230320061759-8cc1b52080c5/go.mod h1:exZ0C/1emQJAw5tHOaUDyY1ycttqBAPcxuzf7QbY6ec=
 github.com/MaxRink/dhcp v0.0.0-20260901064844-234b97448fae-booty.2 h1:izpsZ0TkT/xxKyaiY/qift0rU+itH+uvRcjaXfmZMno=
 github.com/MaxRink/dhcp v0.0.0-20260901064844-234b97448fae-booty.2/go.mod h1:tGfUTcnFYGYvVNCaZZhwlJySU/fQQxh9TmpsFzWXnnY=
 github.com/MaxRink/gobgp/v4 v4.11.0-booty.6 h1:DBo3EH36l6xZYURRst9W/lH2mNKf9hFza3Mc9X4XsrI=
@@ -113,6 +115,8 @@ github.com/openpubkey/openpubkey v0.30.0 h1:ryalK2HWR4n7lJ9PjrBsWrcHTJ/5K0CLQVFa
 github.com/openpubkey/openpubkey v0.30.0/go.mod h1:ZNVh+S0JnKCqn33bNkgUI1VpuomGv2v5GV9HCsjOZDQ=
 github.com/openpubkey/opkssh v0.19.2 h1:JiuYp518M0WWJ8uAmeHgS48x4zPa7uwghBHE3UUCBkE=
 github.com/openpubkey/opkssh v0.19.2/go.mod h1:POdiLo1i2N//RTxGMAx91661Gyy8zhBc3kghKejUK2U=
+github.com/openwall/yescrypt-go v1.0.0 h1:jsGk48zkFvtUjGVOhYPGh+CS595JmTRcKnpggK2AON4=
+github.com/openwall/yescrypt-go v1.0.0/go.mod h1:e6CWtFizUEOUttaOjeVMiv1lJaJie3mfOtLJ9CCD6sA=
 github.com/orcaman/concurrent-map/v2 v2.0.1 h1:jOJ5Pg2w1oeB6PeDurIYf6k9PQ+aTITr/6lP/L/zp6c=
 github.com/orcaman/concurrent-map/v2 v2.0.1/go.mod h1:9Eq3TG2oBe5FirmYWQfYO5iH1q0Jv47PLaNK++uCdOM=
 github.com/pelletier/go-toml/v2 v2.4.3 h1:GTRvJQutkOSftxIFD5xw9aepkYNuPWmVJpffdDPYVpY=

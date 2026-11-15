@@ -348,55 +348,6 @@ RUN if [ -n "$KERNEL_SUITE" ]; then \
     done && \
     rm -rf /tmp/kernel /tmp/debs /var/lib/apt/lists/*
 
-# Build the rescue SSH server (dropbear) from the trixie source with the
-# hardened compile-time options of hack/dropbear-localoptions.h: no
-# diffie-hellman-group14, no RSA keys, no SFTP. One multi-call binary
-# serves as dropbear and dropbearkey. DROPBEAR_HARDENED=false builds with
-# the upstream defaults instead (transitional, for old SSH clients).
-# Manual bump, like LVM2: no update tool reads these ARGs. Take the version
-# and the SHA-256 of dropbear_<version>.orig.tar.bz2 from the trixie .dsc
-# (the same file as the upstream release tarball).
-FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS dropbear
-ARG DROPBEAR_VERSION=2025.89
-ARG DROPBEAR_SHA256=0d1f7ca711cfc336dc8a85e672cab9cfd8223a02fe2da0a4a7aeb58c9e113634
-ARG DROPBEAR_HARDENED=true
-RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-    gcc make libc6-dev libcrypt-dev bzip2 wget ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /build
-RUN set -eu; \
-    f="dropbear_${DROPBEAR_VERSION}.orig.tar.bz2"; \
-    for url in \
-      "https://deb.debian.org/debian/pool/main/d/dropbear/${f}" \
-      "https://matt.ucc.asn.au/dropbear/releases/dropbear-${DROPBEAR_VERSION}.tar.bz2"; do \
-      if wget --tries=3 --waitretry=5 --retry-connrefused --timeout=30 \
-           --retry-on-http-error=429,500,502,503,504 -O "${f}" "${url}" \
-         && echo "${DROPBEAR_SHA256}  ${f}" | sha256sum -c -; then \
-        exit 0; \
-      fi; \
-      echo "dropbear download from ${url} failed, trying the next mirror" >&2; \
-      rm -f "${f}"; \
-    done; \
-    echo "dropbear ${DROPBEAR_VERSION}: no mirror delivered a file with the pinned checksum" >&2; \
-    exit 1
-RUN tar -xjf "dropbear_${DROPBEAR_VERSION}.orig.tar.bz2"
-WORKDIR /build/dropbear-${DROPBEAR_VERSION}
-COPY hack/dropbear-localoptions.h /build/localoptions.h
-RUN set -eu; \
-    case "${DROPBEAR_HARDENED}" in \
-      true) cp /build/localoptions.h localoptions.h ;; \
-      false) echo "DROPBEAR_HARDENED=false: dropbear keeps the upstream defaults (RSA, group14, SFTP)" >&2 ;; \
-      *) echo "DROPBEAR_HARDENED must be true or false, not ${DROPBEAR_HARDENED}" >&2; exit 1 ;; \
-    esac; \
-    ./configure --disable-zlib --disable-lastlog; \
-    make -j"$(nproc)" PROGRAMS="dropbear dropbearkey" MULTI=1; \
-    strip --strip-all dropbearmulti; \
-    install -D -m 0755 dropbearmulti /out/dropbear
-# The ramdisk SBOM lists this source build as a component (--target
-# sbom-inputs); it matches the file by its SHA-256.
-RUN printf '{"name":"dropbear","version":"%s","purl":"pkg:generic/dropbear@%s?checksum=sha256:%s&download_url=https://matt.ucc.asn.au/dropbear/releases/dropbear-%s.tar.bz2","sha256":"%s"}\n' \
-      "${DROPBEAR_VERSION}" "${DROPBEAR_VERSION}" "${DROPBEAR_SHA256}" "${DROPBEAR_VERSION}" "$(sha256sum /out/dropbear | cut -d' ' -f1)" > /sbom-source.json
-
 # Build disk, system, and firmware tools
 FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 AS tools
 RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
@@ -406,8 +357,6 @@ RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 instal
     hdparm nvme-cli sg3-utils mstflint gpgv \
     cryptsetup-bin \
     && rm -rf /var/lib/apt/lists/*
-# Already stripped; the ldd scan below collects its libraries (libc, libcrypt).
-COPY --from=dropbear /out/dropbear /usr/sbin/dropbear
 
 # Collect shared libraries for all tool binaries while their packages are
 # installed.  Running ldd here (instead of in the final assembly stage)
@@ -422,7 +371,7 @@ RUN mkdir -p /tool-libs /tool-libs-full && \
         /sbin/partprobe /usr/bin/partx /usr/sbin/kpartx /usr/bin/efibootmgr /usr/sbin/dmidecode /usr/sbin/ethtool \
         /sbin/ip /sbin/bridge /sbin/hdparm /usr/sbin/nvme /usr/bin/sg_sanitize /usr/bin/sg_format \
         /usr/bin/mstconfig /usr/bin/mstflint \
-        /usr/sbin/dropbear /bin/lsblk /sbin/blkid /usr/sbin/losetup \
+        /bin/lsblk /sbin/blkid /usr/sbin/losetup \
         /sbin/cryptsetup 2>/dev/null \
     | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' \
     | sort -u | while read -r lib; do \
@@ -546,10 +495,6 @@ COPY --from=tools /usr/bin/mstconfig bin/mstconfig
 COPY --from=tools /usr/bin/mstflint bin/mstflint
 
 
-# Dropbear SSH server for rescue mode, built from source (dropbear stage):
-# one multi-call binary, dropbearkey is a link to it.
-COPY --from=tools /usr/sbin/dropbear bin/dropbear
-RUN ln -sf dropbear bin/dropbearkey
 
 # Trust store and signature verification for HTTPS image/CAPRF/token/sysext
 # fetches and IMAGE_SIGNATURE_URL verification.
@@ -621,7 +566,6 @@ COPY --from=lvm /sbom-source.json source/lvm2.json
 COPY --from=sfdisk /sbom-source.json source/util-linux.json
 COPY --from=efi-fallback /sbom-source.json source/grub-efi.json
 COPY --from=mok-enroll /sbom-source.json source/gnu-efi.json
-COPY --from=dropbear /sbom-source.json source/dropbear.json
 
 # ── ISO build stage (optional, triggered by --target=iso) ──────────────────
 # UEFI boot image: Debian shim (Microsoft UEFI CA) + Debian-signed GRUB,
@@ -833,10 +777,6 @@ COPY --from=tools /usr/bin/mstconfig bin/mstconfig
 COPY --from=tools /usr/bin/mstflint bin/mstflint
 
 
-# Dropbear SSH server for rescue mode, built from source (dropbear stage):
-# one multi-call binary, dropbearkey is a link to it.
-COPY --from=tools /usr/sbin/dropbear bin/dropbear
-RUN ln -sf dropbear bin/dropbearkey
 
 # lsblk for rescue mode disk auto-mount
 COPY --from=tools /bin/lsblk bin/lsblk

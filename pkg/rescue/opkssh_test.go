@@ -5,11 +5,9 @@ package rescue
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -142,174 +140,56 @@ func TestRefusalReasonHidesTokens(t *testing.T) {
 	}
 }
 
-// TestRescueSSHServer logs in over SSH with an opkssh key and a static key
-// and checks the refusals of the hardened server.
-func TestRescueSSHServer(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+// TestRescueSSHOPKLogin logs in over SSH with an opkssh key next to a
+// static key and checks the refusals.
+func TestRescueSSHOPKLogin(t *testing.T) {
+	ctx := context.Background()
 	prov, httpClient := startMockOIDC(t, "booty")
 	v, err := newOPKVerifier(parseOPKProviders(prov.Issuer+" booty 12h"),
 		parseOPKPolicy("root alice@example.com "+prov.Issuer), httpClient)
 	if err != nil {
 		t.Fatal(err)
 	}
-	staticSigner, staticAuthorized := newStaticKey(t)
-	auth := &rescueSSHAuth{ctx: ctx, opk: v, static: staticSSHKeys([]string{staticAuthorized})}
-	srv, _, err := newSSHServerConfig(auth)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
-	go serveSSH(ctx, ln, srv)
+	staticSigner, staticLine := newTestKey(t)
+	addr := startTestServer(t, &Config{SSHKeys: []string{staticLine}, OPKPolicy: "x", PasswordHash: testHash}, v.check)
 
-	good, err := prov.NewKey(ctx, map[string]any{"email": "alice@example.com", "email_verified": true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	goodSigner, err := good.Signer()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, signer := range map[string]ssh.Signer{"opkssh": goodSigner, "static": staticSigner} {
-		c := dialRescue(t, ln.Addr().String(), "root", signer)
-		out := runRescue(t, c, "echo rescue-ok")
-		if out != "rescue-ok\n" {
-			t.Errorf("%s: output %q", name, out)
-		}
-		if _, err := c.Dial("tcp", "127.0.0.1:22"); err == nil || !strings.Contains(err.Error(), "prohibited") {
-			t.Errorf("%s: port forwarding: %v", name, err)
-		}
-		s, err := c.NewSession()
+	for name, claims := range map[string]map[string]any{
+		"valid": {"email": "alice@example.com", "email_verified": true},
+	} {
+		key, err := prov.NewKey(ctx, claims)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := s.RequestPty("xterm", 24, 80, ssh.TerminalModes{}); err != nil {
-			t.Fatalf("%s: pty-req: %v", name, err)
-		}
-		if out, err := s.CombinedOutput("tty; echo $TERM; stty size"); err != nil || !strings.Contains(string(out), "/dev/pts/") ||
-			!strings.Contains(string(out), "xterm") || !strings.Contains(string(out), "24 80") {
-			t.Errorf("%s: PTY session: %v\n%s", name, err, out)
-		}
-		if s, err = c.NewSession(); err != nil {
+		signer, err := key.Signer()
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := s.RequestSubsystem("sftp"); err == nil {
-			t.Errorf("%s: the SFTP subsystem was accepted", name)
+		if out := runRescue(t, dialRescue(t, addr, "root", signer), "echo rescue-ok"); out != "rescue-ok\n" {
+			t.Errorf("%s: output %q", name, out)
 		}
-		_ = c.Close()
 	}
-
-	expired, err := prov.NewKey(ctx, map[string]any{"email": "alice@example.com", "email_verified": true, "iat": time.Now().Add(-13 * time.Hour).Unix()})
-	if err != nil {
-		t.Fatal(err)
+	if out := runRescue(t, dialRescue(t, addr, "root", staticSigner), "echo rescue-ok"); out != "rescue-ok\n" {
+		t.Errorf("static key: output %q", out)
 	}
-	expiredSigner, err := expired.Signer()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, signer := range map[string]ssh.Signer{"expired PK Token": expiredSigner} {
-		if _, err := ssh.Dial("tcp", ln.Addr().String(), clientConfig("root", signer)); err == nil {
+	for name, claims := range map[string]map[string]any{
+		"expired PK Token": {"email": "alice@example.com", "email_verified": true, "iat": time.Now().Add(-13 * time.Hour).Unix()},
+		"no policy row":    {"email": "mallory@example.com", "email_verified": true},
+	} {
+		key, err := prov.NewKey(ctx, claims)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signer, err := key.Signer()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ssh.Dial("tcp", addr, clientConfig("root", ssh.PublicKeys(signer))); err == nil {
 			t.Errorf("%s: login accepted", name)
 		}
 	}
-	if _, err := ssh.Dial("tcp", ln.Addr().String(), clientConfig("admin", staticSigner)); err == nil {
-		t.Error("a static key logged in as admin")
-	}
-	assertDisconnectKillsCommand(t, dialRescue(t, ln.Addr().String(), "root", staticSigner))
-}
-
-// assertDisconnectKillsCommand starts a long command, drops the connection
-// and waits for the command to end.
-func assertDisconnectKillsCommand(t *testing.T, c *ssh.Client) {
-	t.Helper()
-	s, err := c.NewSession()
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := s.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Start("echo $$; sleep 300"); err != nil {
-		t.Fatal(err)
-	}
-	var pid int
-	if _, err := fmt.Fscan(out, &pid); err != nil {
-		t.Fatal(err)
-	}
-	_ = c.Close()
-	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
-		if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); os.IsNotExist(err) {
-			return
-		}
-	}
-	t.Fatalf("command %d still runs after the client left", pid)
-}
-
-func newStaticKey(t *testing.T) (ssh.Signer, string) {
-	t.Helper()
-	prov, err := opktest.NewProvider("https://unused.example", "x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	key, err := prov.NewKey(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer, err := ssh.NewSignerFromSigner(key.Private)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return signer, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey())))
-}
-
-func clientConfig(user string, signer ssh.Signer) *ssh.ClientConfig {
-	return &ssh.ClientConfig{User: user, Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), Timeout: 10 * time.Second} //nolint:gosec // test server
-}
-
-func dialRescue(t *testing.T, addr, user string, signer ssh.Signer) *ssh.Client {
-	t.Helper()
-	c, err := ssh.Dial("tcp", addr, clientConfig(user, signer))
-	if err != nil {
-		t.Fatalf("login: %v", err)
-	}
-	return c
-}
-
-func runRescue(t *testing.T, c *ssh.Client, cmd string) string {
-	t.Helper()
-	s, err := c.NewSession()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Close() }()
-	out, err := s.CombinedOutput(cmd)
-	if err != nil {
-		t.Fatalf("%s: %v\n%s", cmd, err, out)
-	}
-	return string(out)
-}
-
-// Without the opkssh settings BOOTy starts dropbear as before; with one it
-// serves SSH itself and never looks for dropbear.
-func TestStartSSHChoosesServer(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-	if err := startSSH(context.Background(), &Config{Mode: ModeShell}); err == nil || !strings.Contains(err.Error(), "dropbear") {
-		t.Fatalf("without opkssh settings: %v, want the dropbear lookup", err)
-	}
-	old := sshListenAddr
-	sshListenAddr = "127.0.0.1:0"
-	t.Cleanup(func() { sshListenAddr = old })
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	if err := startSSH(ctx, &Config{Mode: ModeShell, OPKPolicy: "root a@example.com https://idp.example"}); err != nil {
-		t.Fatalf("with an opkssh setting: %v", err)
+	// opkssh settings make the login key-only.
+	if _, err := ssh.Dial("tcp", addr, clientConfig("root", ssh.Password(testPassword))); err == nil {
+		t.Error("password login next to opkssh settings")
 	}
 }
 

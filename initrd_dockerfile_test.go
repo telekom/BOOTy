@@ -635,52 +635,14 @@ func TestDockerfileEFIFallbackLoaderReadsLayoutRoots(t *testing.T) {
 	}
 }
 
-// The rescue SSH server is built from the checksum-pinned dropbear source
-// with the hardened localoptions.h, not taken from dropbear-bin.
-func TestDockerfileBuildsHardenedDropbear(t *testing.T) {
+// BOOTy serves rescue SSH itself (pkg/rescue): the ramdisk ships no
+// dropbear, from source or a package.
+func TestDockerfileShipsNoDropbear(t *testing.T) {
 	data, err := os.ReadFile("initrd.Dockerfile")
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(data)
-	if strings.Contains(text, "dropbear-bin") {
-		t.Error("initrd.Dockerfile still installs dropbear-bin")
-	}
-	block := dockerfileStageBlock(t, text, "dropbear")
-	for _, want := range []string{
-		"ARG DROPBEAR_SHA256=",
-		"ARG DROPBEAR_HARDENED=true",
-		`echo "${DROPBEAR_SHA256}  ${f}" | sha256sum -c -`,
-		"true) cp /build/localoptions.h localoptions.h",
-		`PROGRAMS="dropbear dropbearkey" MULTI=1`,
-		"$(sha256sum /out/dropbear | cut -d' ' -f1)",
-	} {
-		if !strings.Contains(block, want) {
-			t.Errorf("dropbear stage lacks %q", want)
-		}
-	}
-	for _, stage := range []string{"busybox", "gobgp-builder"} {
-		block := dockerfileStageBlock(t, text, stage)
-		for _, want := range []string{"COPY --from=tools /usr/sbin/dropbear bin/dropbear", "RUN ln -sf dropbear bin/dropbearkey"} {
-			if !strings.Contains(block, want) {
-				t.Errorf("stage %s lacks %q", stage, want)
-			}
-		}
-	}
-	if !strings.Contains(dockerfileStageBlock(t, text, "sbom-inputs"), "COPY --from=dropbear /sbom-source.json source/dropbear.json") {
-		t.Error("sbom-inputs lacks the dropbear source component")
-	}
-	opts, err := os.ReadFile("hack/dropbear-localoptions.h")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"#define DROPBEAR_DH_GROUP14_SHA256 0",
-		"#define DROPBEAR_RSA 0",
-		"#define DROPBEAR_SFTPSERVER 0",
-	} {
-		if !strings.Contains(string(opts), want) {
-			t.Errorf("hack/dropbear-localoptions.h lacks %q", want)
-		}
+	if strings.Contains(strings.ToLower(string(data)), "dropbear") {
+		t.Error("initrd.Dockerfile still builds or copies dropbear")
 	}
 }

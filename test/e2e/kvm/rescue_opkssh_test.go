@@ -220,3 +220,60 @@ func bootRescueQEMU(ctx context.Context, t *testing.T, kernel, initramfs string)
 	}
 	return port, console
 }
+
+// TestRescueSSHPasswordLoginQEMU boots the default flavor with only
+// RESCUE_PASSWORD_HASH (yescrypt, the Debian default): SSH password login
+// works, like dropbear without -s, and a wrong password is refused.
+func TestRescueSSHPasswordLoginQEMU(t *testing.T) {
+	qemuAvailable(t)
+	flavor := os.Getenv("BOOTY_FLAVOR_INITRAMFS")
+	kernel := os.Getenv("BOOTY_FLAVOR_KERNEL")
+	if flavor == "" || kernel == "" {
+		failOrSkipUnsupportedHost(t, "BOOTY_FLAVOR_INITRAMFS and BOOTY_FLAVOR_KERNEL are required")
+	}
+	requireKVMAssets(t, flavor, kernel)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	dir := t.TempDir()
+	image := filepath.Join(dir, "unused.img")
+	writeFile(t, image, "")
+	caprf := startFakeCAPRF(t, image)
+	vars := caprf.nativeVars("provision")
+	vars["PROVISION_TARGET_OS"] = "linux"
+	vars["IMAGE"] = "http://10.0.2.2:1/missing.raw" // nothing listens: the provision fails
+	vars["IMAGE_ALLOW_INSECURE_HTTP"] = "true"
+	vars["RESCUE_MODE"] = "shell"
+	// libxcrypt yescrypt of "openwall".
+	vars["RESCUE_PASSWORD_HASH"] = "$y$j9T$AAt9R641xPvCI9nXw1HHW/$cuQRBMN3N/f8IcmVN.4YrZ1bHMOiLOoz9/XQMKV/v0A"
+	port, console := bootRescueQEMU(ctx, t, kernel, flavorInitramfsWithVars(t, flavor, vars, nil))
+
+	login := func(password string) (string, error) {
+		c, err := ssh.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port), &ssh.ClientConfig{User: "root",
+			Auth: []ssh.AuthMethod{ssh.Password(password)}, HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // test VM
+			Timeout: 10 * time.Second})
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = c.Close() }()
+		s, err := c.NewSession()
+		if err != nil {
+			return "", err
+		}
+		out, err := s.CombinedOutput("echo rescue-ok; id -un")
+		return string(out), err
+	}
+	var out string
+	var err error
+	for range 30 {
+		if out, err = login("openwall"); err == nil {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil || !strings.Contains(out, "rescue-ok") || !strings.Contains(out, "root") {
+		t.Fatalf("password login failed: %v\n%s\nconsole tail:\n%s", err, out, tail([]byte(console.String()), 3000))
+	}
+	if _, err := login("wrong"); err == nil {
+		t.Error("a wrong password logged in")
+	}
+}
