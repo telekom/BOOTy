@@ -925,9 +925,11 @@ RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
       sleep 10; \
     done
 COPY . /go/src/github.com/telekom/BOOTy/
+# no_opkssh: micro has no rescue SSH server, so its binary leaves out the
+# opkssh login server and the openpubkey dependencies (about 0.9 MB zstd).
 RUN --mount=type=cache,sharing=locked,id=gomod,target=/go/pkg/mod/cache \
     --mount=type=cache,sharing=locked,id=goroot,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -a -trimpath -tags grpcnotrace -ldflags "-s -w \
+    CGO_ENABLED=0 GOOS=linux go build -a -trimpath -tags grpcnotrace,no_opkssh -ldflags "-s -w \
       -X main.Version=${BOOTY_VERSION} \
       -X main.Build=${BOOTY_BUILD} \
       -X github.com/telekom/BOOTy/pkg/buildinfo.version=${BOOTY_VERSION} \

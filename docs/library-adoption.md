@@ -105,6 +105,35 @@ except two cases where BOOTy is stricter: a Fulcio leaf without the
 digitalSignature key usage, and a P-384 key signing with SHA-256, which
 sigstore-go accepts through its compatibility verifier.
 
+## opkssh
+
+The opkssh rescue login (`RESCUE_SSH_OPK_PROVIDERS`, `pkg/rescue`) uses
+[`github.com/openpubkey/openpubkey`](https://pkg.go.dev/github.com/openpubkey/openpubkey)
+(`verifier`, `providers`, `discover`) and the `sshcert` package of
+[`github.com/openpubkey/opkssh`](https://pkg.go.dev/github.com/openpubkey/opkssh)
+for the PK Token checks, and `golang.org/x/crypto/ssh` for the server. It
+does not use the opkssh `policy` package: its verifier builds its own HTTP
+client (BOOTy needs `CA_BUNDLE_FILE`, TLS verification and no redirects) and
+its enforcer runs policy plugins from `/etc/opk/policy.d`, which a deploy
+archive could write. The `providers` and `auth_id` row parsing and matching
+are local (`pkg/rescue/opkssh.go`).
+
+Measured on Go 1.27.4, `CGO_ENABLED=0`, `-trimpath -tags grpcnotrace
+-ldflags '-s -w'`, on `feat/rescue-ssh-hardening` c7dc49ce, with and without
+the opkssh server:
+
+| Target | base | with opkssh | Delta | Delta gzip -9 | Delta xz -9 | Delta zstd -19 |
+|---|---:|---:|---:|---:|---:|---:|
+| linux/amd64 | 31,846,560 | 35,430,560 | +3,584,000 (+11.3%) | +1,252,375 | +861,612 | +959,234 |
+| linux/arm64 | 29,622,432 | 32,964,768 | +3,342,336 (+11.3%) | +1,108,141 | +720,796 | +839,621 |
+
+Most of it is `lestrrat-go/jwx` (JWK and JWS), `x/crypto/ssh`, the
+`zitadel/oidc` discovery client and OpenTelemetry, which openpubkey links.
+The default, gobgp and slim initramfs stay within their size budgets
+(`test/e2e/build_flavours_e2e_test.go`). The micro flavor, which has no
+shell, builds with `-tags no_opkssh`: that binary is the size of the base
+(+4,096 bytes on amd64, none on arm64).
+
 ## Verification
 
 The coverage-first PR adds characterization tests on the original implementation.

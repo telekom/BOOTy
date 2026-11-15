@@ -3,6 +3,7 @@ package rescue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -65,7 +66,16 @@ type Config struct {
 	// LegacySSH starts dropbear without the hardening flags (password
 	// login, port forwarding, no idle timeout): RESCUE_SSH_HARDENED=false.
 	LegacySSH bool `json:"legacySSH,omitempty"`
+	// OPKProviders and OPKPolicy are RESCUE_SSH_OPK_PROVIDERS and
+	// RESCUE_SSH_OPK_POLICY. With either set, BOOTy serves rescue SSH from
+	// its own server, which accepts opkssh PK Token keys and the SSHKeys,
+	// instead of dropbear.
+	OPKProviders string `json:"opkProviders,omitempty"`
+	OPKPolicy    string `json:"opkPolicy,omitempty"`
 }
+
+// errOPKUnsupported is the error of a BOOTy built with the no_opkssh tag.
+var errOPKUnsupported = errors.New("this BOOTy build has no opkssh support (no_opkssh)")
 
 // Validate checks the rescue config.
 func (c *Config) Validate() error {
@@ -198,7 +208,7 @@ func Setup(ctx context.Context, cfg *Config) error {
 		}
 	}
 
-	if err := startDropbear(ctx, cfg); err != nil {
+	if err := startSSH(ctx, cfg); err != nil {
 		slog.Warn("could not start SSH daemon", "error", err)
 	}
 
@@ -209,6 +219,21 @@ func Setup(ctx context.Context, cfg *Config) error {
 	}
 
 	return nil
+}
+
+// startSSH starts the rescue SSH server: the opkssh server when an opkssh
+// setting is set, else dropbear. A build without opkssh support falls back
+// to dropbear, which still takes the static keys.
+func startSSH(ctx context.Context, cfg *Config) error {
+	if cfg.OPKProviders == "" && cfg.OPKPolicy == "" {
+		return startDropbear(ctx, cfg)
+	}
+	err := startOPKSSH(ctx, cfg)
+	if errors.Is(err, errOPKUnsupported) {
+		slog.Warn("ignoring the opkssh settings, starting dropbear with the static keys", "error", err)
+		return startDropbear(ctx, cfg)
+	}
+	return err
 }
 
 // setupSSHKeys writes authorized keys for root.

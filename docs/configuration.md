@@ -652,6 +652,8 @@ does.
 | `RESCUE_MODE` | `reboot`, `wait` with `FAILURE_ACTION=wait` | `reboot`, `retry`, `shell`, `wait` | Action after a failed provisioning, also for a failed standby `provision` command. |
 | `RESCUE_SSH_PUBKEY` | (unset) | SSH public keys, separated by `;` | Authorized keys for root in `shell` and `wait` modes. BOOTy starts `dropbear`. See [Rescue SSH server](#rescue-ssh-server). |
 | `RESCUE_PASSWORD_HASH` | (unset) | crypt(3) hash | Root password hash in `shell` and `wait` modes. SSH password login only without a `RESCUE_SSH_PUBKEY` key. |
+| `RESCUE_SSH_OPK_PROVIDERS` | (unset) | rows `issuer client_id expiration`, separated by `;` | OpenID providers whose opkssh PK Tokens log in, in the format of opkssh's `/etc/opk/providers`. With this key or `RESCUE_SSH_OPK_POLICY` set, BOOTy serves rescue SSH itself instead of `dropbear`. A standby payload or deploy archive cannot change it. See [opkssh logins](#opkssh-logins). YAML `rescue.sshOpkProviders`. |
+| `RESCUE_SSH_OPK_POLICY` | (unset) | rows `principal identity issuer`, separated by `;` | Identities that log in, in the format of opkssh's `/etc/opk/auth_id`. Only principal `root` logs in. A standby payload or deploy archive cannot change it. YAML `rescue.sshOpkPolicy`. |
 | `RESCUE_SSH_HARDENED` | `true` | boolean | `false` starts `dropbear` with password login and port forwarding and without the idle timeout, as before. Transitional escape hatch; only `false`, `0` or `no` turn the hardening off. YAML `rescue.sshHardened`. |
 | `RESCUE_AUTO_MOUNT` | `false` | boolean | Mount the found disks in `shell` and `wait` modes. |
 | `RESCUE_TIMEOUT` | `0` | integer, seconds | Parsed, but no code uses the value. |
@@ -700,6 +702,84 @@ subsystem, agent and Unix socket forwarding. An RSA key in
 `RESCUE_SSH_PUBKEY` is logged as refused. Building with
 `--build-arg DROPBEAR_HARDENED=false` keeps the upstream defaults (RSA,
 group14) for old clients; the release ramdisks use the hardened build.
+
+### opkssh logins
+
+[opkssh](https://github.com/openpubkey/opkssh) logs in with an SSH
+certificate that carries a PK Token: an OpenID Connect ID token of the
+provider that commits to the user's SSH key. `opkssh login` on the operator
+machine writes the key and the certificate, `ssh` presents them. dropbear has
+no `AuthorizedKeysCommand` for `opkssh verify`, so with
+`RESCUE_SSH_OPK_PROVIDERS` or `RESCUE_SSH_OPK_POLICY` set BOOTy serves rescue
+SSH from its own Go server (`golang.org/x/crypto/ssh`) and verifies the PK
+Token with the openpubkey packages. Without these keys `dropbear` runs as
+described above.
+
+```text
+RESCUE_SSH_OPK_PROVIDERS="https://accounts.google.com 206584157355-example.apps.googleusercontent.com 24h"
+RESCUE_SSH_OPK_POLICY="root alice@example.com https://accounts.google.com;root oidc:groups:rescue-admins https://accounts.google.com"
+```
+
+- `RESCUE_SSH_OPK_PROVIDERS`: `issuer client_id expiration` per row, rows
+  separated by `;` (YAML may use newlines), `#` starts a comment. The issuer
+  must be `https://`. Expiration: `12h`, `24h`, `48h`, `1week` (age of the
+  ID token) or `oidc` (its `exp` claim). opkssh's `never` and
+  `oidc_refreshed` are refused.
+- `RESCUE_SSH_OPK_POLICY`: `principal identity issuer` per row. The identity
+  is an email address (letter case ignored), a subject (`sub`, exact) or
+  `oidc:<claim>:<value>` for a value of a string or list claim such as
+  `groups`. opkssh's `oidc-match-end:` is not supported. Only principal
+  `root` logs in.
+- A malformed row is logged with its position and skipped.
+- `RESCUE_SSH_PUBKEY` keys still log in, both work side by side. Keys with
+  `authorized_keys` options are skipped, because this server does not apply
+  options.
+- Login is key-only; `RESCUE_PASSWORD_HASH` sets the console password only.
+  `RESCUE_SSH_HARDENED` does not apply to this server.
+
+A login passes when the certificate is a user certificate signed by its own
+key (its validity period is checked), its PK Token verifies against an
+allowed provider (issuer, `aud` equal to the client ID, the provider's
+signature with a key of its JWKS, the nonce commitment to the user key, the
+expiration policy), the user key of the PK Token is the key of the
+certificate, the client proves that it holds this key, and a policy row
+allows the identity as `root`.
+
+BOOTy fetches the OpenID discovery document and the JWKS of the issuer on
+each login, with the BOOTy HTTPS client: the system roots plus
+`CA_BUNDLE_FILE`, TLS verification also with `SKIP_TLS_VERIFY`, and no
+redirects. The expiration checks need the clock: when [time
+sync](#time-sync) did not set it, BOOTy logs an error at the start of the
+server and adds a hint to every refusal.
+
+The server has the hardening of the `dropbear` setup: an Ed25519 host key
+generated per boot (its fingerprint is in the `rescue SSH server started`
+line), key exchange `mlkem768x25519-sha256`, `curve25519-sha256`,
+`ecdh-sha2-nistp256/384/521`, ciphers `chacha20-poly1305@openssh.com`,
+`aes256-gcm@openssh.com`, `aes128-gcm@openssh.com`, user keys Ed25519 and
+ECDSA (also `sk-`) and their certificates, no RSA, no forwarding of any kind,
+no SFTP or other subsystem, no `env` requests, a 30 second login timeout and
+the 15 minute idle timeout. A session runs `/bin/sh` (with a PTY when the
+client asks for one; BOOTy mounts `devpts` for it) or `sh -c <command>`.
+
+Security notes:
+
+- A PK Token proves that the provider authenticated the identity of the token
+  (`sub`, `email`, the claims) for the client ID, and that the SSH key in the
+  certificate was the key of that login. It does not prove more than the
+  provider checked: trust in an issuer is trust in everyone who can get an ID
+  token for that client ID from it. Use a client ID of your own, and match
+  on `sub` or a group claim where an email address can be reused.
+- The provider's TLS certificate and DNS decide which JWKS BOOTy trusts.
+  Keep `CA_BUNDLE_FILE` to the roots you need.
+- The token is bearer material for that SSH key only, and only until the
+  expiration policy ends it. BOOTy never logs it; the log has the issuer,
+  subject, principal and the reason of a refusal.
+- Standby payloads and deploy archives cannot change the two keys, so a
+  command cannot add its own provider.
+- The micro flavor builds without the server (`-tags no_opkssh`; it has no
+  shell to serve). A build with that tag ignores the opkssh keys with a
+  warning and starts `dropbear` with the static keys.
 
 ## Hardware watchdog
 

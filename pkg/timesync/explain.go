@@ -13,6 +13,10 @@ var last atomic.Pointer[Result]
 
 func lastResult() *Result { return last.Load() }
 
+// Synced reports whether a Sync measured the clock against a time source in
+// this boot.
+func Synced() bool { return last.Load() != nil }
+
 // CodeCertTime is the failure code of a TLS certificate that is not valid
 // at the local clock.
 const CodeCertTime = "BOOTY-TIM-002"

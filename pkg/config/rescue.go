@@ -19,6 +19,21 @@ type RescueConfig struct {
 	// Default: ""
 	SSHPubKey string `yaml:"sshPubKey" json:"sshPubKey"`
 
+	// SSHOPKProviders allows OpenID Connect providers for opkssh logins: rows
+	// "issuer client_id expiration" in the opkssh /etc/opk/providers format,
+	// separated by ";" or newlines. With it or SSHOPKPolicy set, BOOTy serves
+	// rescue SSH from its own server instead of dropbear.
+	// Example: "https://accounts.google.com 206584157355-....apps.googleusercontent.com 24h"
+	// Default: ""
+	SSHOPKProviders string `yaml:"sshOpkProviders" json:"sshOpkProviders"`
+
+	// SSHOPKPolicy maps identities to principals for opkssh logins: rows
+	// "principal identity issuer" in the opkssh /etc/opk/auth_id format,
+	// separated by ";" or newlines. Only principal root logs in.
+	// Example: "root alice@example.com https://accounts.google.com"
+	// Default: ""
+	SSHOPKPolicy string `yaml:"sshOpkPolicy" json:"sshOpkPolicy"`
+
 	// PasswordHash is the crypt(3) password hash for rescue shell login.
 	// Over SSH it works only when no SSH key is set (or SSHHardened is false).
 	// Default: ""
