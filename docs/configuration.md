@@ -767,9 +767,10 @@ Security notes:
   subject, principal and the reason of a refusal.
 - Standby payloads and deploy archives cannot change the two keys, so a
   command cannot add its own provider.
-- The micro flavor builds with `-tags no_opkssh`, without the openpubkey
-  dependencies: its rescue SSH server ignores the opkssh keys with a
-  warning and serves the static keys and the password.
+- The default, gobgp and slim flavours include the opkssh login (about
+  1 MB zstd). The micro flavor builds with `-tags no_opkssh`, without the
+  openpubkey dependencies: its rescue SSH server ignores the opkssh keys
+  with a warning and serves the static keys and the password.
 
 ## Hardware watchdog
 
