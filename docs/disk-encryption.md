@@ -66,7 +66,8 @@ Provisioning (BOOTy, Secure Boot off):
    - the unit `booty-luks-tpm2-enroll.service` (enabled), its script
      `/usr/local/sbin/booty-luks-tpm2-enroll` and
      `/etc/booty/luks-tpm2.env`; with a status URL also
-     `/etc/booty/luks-status.auth` (0600, the bearer token) and the
+     `/etc/booty/luks-status.auth` (0600, the bearer token of
+     `DISK_ENCRYPTION_STATUS_TOKEN`) and the
      `CA_BUNDLE_FILE` as `/etc/booty/luks-status-ca.pem`;
    - and runs `dracut --force --regenerate-all` in the target.
 4. `close-encrypted-disk` (after `teardown-chroot`) grows the file system of
@@ -284,7 +285,8 @@ wiped once the TPM2 unlocked a boot (see the window above).
 - no redirect is followed; any status other than 2xx fails (three
   attempts);
 - a standby command payload or deploy archive cannot change the URL, the
-  status URL or any other encryption setting except the target partition;
+  status URL, the status token or any other encryption setting except the
+  target partition;
 - the key is never logged, never in an argument, report or error, and
   reaches `cryptsetup` on stdin; the enrollment key goes through a memfd;
 - the body is built without `encoding/json` (whose buffer pool would keep a
@@ -308,8 +310,22 @@ needed: `cryptsetup luksHeaderBackup`.
 
 **Status callback.** With `DISK_ENCRYPTION_STATUS_URL` the unit posts
 `{"hostname","luksUUID","status","message"}` with `curl --proto =https` and
-the bearer token of the provisioning run (`tpm2-bound`, `slot1-removed`,
-`failed`). It is best effort: a lost status does not stop the enrollment.
+the bearer token `DISK_ENCRYPTION_STATUS_TOKEN` (`tpm2-bound`,
+`slot1-removed`, `failed`). It is best effort: a lost status does not stop
+the enrollment. The token stays in `/etc/booty/luks-status.auth` of the
+installed system until phase 2 has posted `slot1-removed` and removes it,
+so it must stay valid until then: the second boot with Secure Boot on, or
+later when the enrollment waits (MOK request, Secure Boot off) or is
+retried. **Give it a token that can post the
+status of this host only** and nothing else: not the provisioning token,
+which would then have to live as long and could do everything a
+provisioning run can. The token is required with the status URL, a single
+header value without spaces or control characters, and a standby payload
+or deploy archive cannot change it.
+`DISK_ENCRYPTION_STATUS_REUSE_PROVISIONING_TOKEN=true` sends the bearer
+token of the provisioning run instead (the behaviour before the status
+token); it is a transitional escape hatch for providers that cannot issue
+a status-only token yet and will be removed.
 
 **Fail closed.** Errors in `stream-image` (`BOOTY-DSK-028`, not retried),
 `prepare-disk-encryption` (`BOOTY-DSK-026`) and `close-encrypted-disk`

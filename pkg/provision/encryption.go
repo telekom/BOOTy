@@ -623,7 +623,8 @@ func (o *Orchestrator) encryptionExtras() (*encryptionExtras, error) {
 	e := &encryptionExtras{libs: luksTargetLibs(newroot), hostname: o.cfg.Hostname, statusURL: d.StatusURL,
 		mokWait: sb.SigningMode() != config.SigningOff && sb.ModuleSigning.EnrollmentMethod() == config.ModuleSigningEnrollMokutil}
 	if e.statusURL != "" {
-		if escrow, ok := o.provider.(config.RecoveryKeyEscrow); ok {
+		e.token = d.StatusToken
+		if escrow, ok := o.provider.(config.RecoveryKeyEscrow); ok && d.StatusReuseProvisioningToken {
 			e.token = escrow.CurrentToken()
 		}
 		if f := o.cfg.Transport.CABundleFile; f != "" {

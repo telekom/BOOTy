@@ -26,6 +26,10 @@ func applyDiskEncryptionVar(cfg *config.MachineConfig, key, value string) (bool,
 		d.PCRPublicKeyFile = strings.TrimSpace(value)
 	case "DISK_ENCRYPTION_STATUS_URL":
 		d.StatusURL = strings.TrimSpace(value)
+	case "DISK_ENCRYPTION_STATUS_TOKEN":
+		d.StatusToken = strings.TrimSpace(value)
+	case "DISK_ENCRYPTION_STATUS_REUSE_PROVISIONING_TOKEN":
+		d.StatusReuseProvisioningToken, err = parseWatchdogBool(value)
 	case "DISK_ENCRYPTION_ALLOW_FAILURE":
 		// Strict like the watchdog: a typo must not turn fail-closed off.
 		d.AllowFailure, err = parseWatchdogBool(value)
