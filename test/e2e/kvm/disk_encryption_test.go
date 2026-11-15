@@ -234,6 +234,7 @@ func TestDiskEncryptionTPM2VM(t *testing.T) {
 		"DISK_ENCRYPTION":                  "luks2-tpm2",
 		"DISK_ENCRYPTION_RECOVERY_KEY_URL": escrow.url + "/recovery-key",
 		"DISK_ENCRYPTION_STATUS_URL":       escrow.url + "/status",
+		"DISK_ENCRYPTION_STATUS_TOKEN":     luksStatusToken,
 	}, map[string]string{luksCAPath: escrow.caPEM})
 	logs = append(logs, out)
 	if bytes.Contains(out, []byte("encrypting partition in place")) || !bytes.Contains(out, []byte("partition formatted with LUKS2")) {
@@ -404,6 +405,7 @@ func TestDiskEncryptionLVMTPM2VM(t *testing.T) {
 		"DISK_ENCRYPTION":                  "luks2-tpm2",
 		"DISK_ENCRYPTION_RECOVERY_KEY_URL": escrow.url + "/recovery-key",
 		"DISK_ENCRYPTION_STATUS_URL":       escrow.url + "/status",
+		"DISK_ENCRYPTION_STATUS_TOKEN":     luksStatusToken,
 	}, map[string]string{luksCAPath: escrow.caPEM})
 	logs = append(logs, out)
 	if !bytes.Contains(out, []byte("LVM physical volume opened in the LUKS2 mapping")) {
@@ -809,6 +811,11 @@ type escrowServer struct {
 	statuses []string
 }
 
+// luksStatusToken is DISK_ENCRYPTION_STATUS_TOKEN; the escrow server
+// accepts only it on /status and only the provisioning token on
+// /recovery-key.
+const luksStatusToken = "e2e-status-token"
+
 // startEscrowServer stands in for the provisioner endpoints of
 // DISK_ENCRYPTION_RECOVERY_KEY_URL and DISK_ENCRYPTION_STATUS_URL: HTTPS
 // on the QEMU host address with a test CA, bearer token required.
@@ -824,7 +831,12 @@ func startEscrowServer(t *testing.T) *escrowServer {
 	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			body, err := io.ReadAll(r.Body)
-			if err != nil || r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer e2e-token" {
+			token := "e2e-token"
+			if r.URL.Path == "/status" {
+				token = luksStatusToken
+			}
+			if err != nil || r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer "+token {
+				t.Logf("escrow server: refused %s %s", r.Method, r.URL.Path)
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}

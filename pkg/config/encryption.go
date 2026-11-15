@@ -41,10 +41,24 @@ type DiskEncryptionConfig struct {
 	RecoveryKeyURL string `yaml:"recoveryKeyURL" json:"recoveryKeyURL"`
 
 	// StatusURL receives the result of the TPM2 enrollment from the
-	// installed system (POST, JSON, the bearer token of this run, no key).
+	// installed system (POST, JSON, StatusToken as bearer token, no key).
 	// HTTPS only.
 	// Default: "" (no status)
 	StatusURL string `yaml:"statusURL" json:"statusURL"`
+
+	// StatusToken is the bearer token of the status callback. It stays on
+	// the installed system until the enrollment ends, so it should be
+	// valid for the status callback only. Required with StatusURL unless
+	// StatusReuseProvisioningToken is set.
+	// Default: ""
+	StatusToken string `yaml:"statusToken" json:"statusToken"`
+
+	// StatusReuseProvisioningToken sends the bearer token of the
+	// provisioning run to StatusURL instead of StatusToken, the behavior
+	// before StatusToken. Transitional escape hatch for providers that
+	// cannot issue a status-only token yet.
+	// Default: false
+	StatusReuseProvisioningToken bool `yaml:"statusReuseProvisioningToken" json:"statusReuseProvisioningToken"`
 
 	// SkipSecureBootCheck encrypts although the firmware is in setup mode
 	// or has no Secure Boot. The installed system binds the volume only
@@ -171,6 +185,7 @@ func (c *Config) validateDiskEncryptionTransport() []string {
 			errs = append(errs, "provision.diskEncryption.statusURL must be an https URL without quotes, spaces, $ or backquotes")
 		}
 	}
+	errs = append(errs, d.validateStatusToken()...)
 	if strings.ContainsAny(c.Hostname, unsafe) {
 		errs = append(errs, "hostname must not contain quotes, spaces, $ or backquotes with provision.diskEncryption")
 	}
@@ -178,6 +193,24 @@ func (c *Config) validateDiskEncryptionTransport() []string {
 		errs = append(errs, "provision.diskEncryption needs TLS verification: the recovery key must not go to an unverified server (unset SKIP_TLS_VERIFY, use CA_BUNDLE_FILE)")
 	}
 	return errs
+}
+
+// validateStatusToken checks the token of the status callback: required
+// with a status URL unless the provisioning token is reused, and one
+// header line (curl -H @file).
+func (d *DiskEncryptionConfig) validateStatusToken() []string {
+	switch {
+	case d.StatusURL == "" && (d.StatusToken != "" || d.StatusReuseProvisioningToken):
+		return []string{"provision.diskEncryption.statusToken and statusReuseProvisioningToken need provision.diskEncryption.statusURL"}
+	case d.StatusToken != "" && d.StatusReuseProvisioningToken:
+		return []string{"provision.diskEncryption.statusToken and statusReuseProvisioningToken exclude each other"}
+	case d.StatusURL != "" && d.StatusToken == "" && !d.StatusReuseProvisioningToken:
+		return []string{"provision.diskEncryption.statusToken is required with provision.diskEncryption.statusURL: " +
+			"give the status callback its own token (statusReuseProvisioningToken sends the provisioning token, transitional)"}
+	case strings.ContainsFunc(d.StatusToken, func(r rune) bool { return r <= ' ' || r == 0x7f }):
+		return []string{"provision.diskEncryption.statusToken must not contain spaces or control characters"}
+	}
+	return nil
 }
 
 // ValidateEscrowURL accepts https URLs and http on a loopback host only:
@@ -202,7 +235,8 @@ func ValidateEscrowURL(raw string) error {
 // store the body, which holds the key; the caller zeroes it after the call.
 type RecoveryKeyEscrow interface {
 	EscrowRecoveryKey(ctx context.Context, body []byte) error
-	// CurrentToken is the bearer token that the installed system uses for
-	// the status callback (StatusURL).
+	// CurrentToken is the bearer token of the provisioning run; the
+	// installed system uses it for the status callback (StatusURL) only
+	// with StatusReuseProvisioningToken.
 	CurrentToken() string
 }
