@@ -69,9 +69,11 @@ const (
 // TPM2 (src/shared/tpm2-util.c), and the libcryptsetup token plugin that
 // systemd-cryptsetup unlocks the TPM2 token with. dracut does not see dlopen
 // dependencies; its tpm2-tss module, which would add the plugin, needs
-// tpm2-tools.
+// tpm2-tools. libtss2-sys is a link dependency of libtss2-esys that dracut
+// 060 (Ubuntu 24.04) does not resolve for install_items; without it the
+// dlopen fails and systemd-cryptsetup asks for the passphrase.
 var luksTPM2Libs = []string{
-	"libtss2-esys.so.0", "libtss2-rc.so.0", "libtss2-mu.so.0", "libtss2-tcti-device.so.0",
+	"libtss2-esys.so.0", "libtss2-sys.so.1", "libtss2-rc.so.0", "libtss2-mu.so.0", "libtss2-tcti-device.so.0",
 	"cryptsetup/libcryptsetup-token-systemd-tpm2.so",
 }
 
@@ -664,6 +666,13 @@ func checkEncryptionTarget(root string, curl, lvm bool) error {
 	return checkTargetFiles(root, tools, "Ubuntu: dracut, systemd-cryptsetup, libtss2-rc0t64, lvm2 for LVM")
 }
 
+// hasDracutModule reports whether the dracut of the image has the module
+// name (modules.d/NNname).
+func hasDracutModule(root, name string) bool {
+	m, _ := filepath.Glob(filepath.Join(root, "usr", "lib", "dracut", "modules.d", "[0-9][0-9]"+name))
+	return len(m) > 0
+}
+
 // checkTargetFiles checks that the image has tools and the TPM2 libraries.
 func checkTargetFiles(root string, tools []string, hint string) error {
 	var missing []string
@@ -723,7 +732,7 @@ func writeEncryptionFiles(root string, st *encryptionState, e *encryptionExtras)
 		{luksEnvPath, []byte(fmt.Sprintf("LUKS_UUID='%s'\nLUKS_NAME='%s'\nLUKS_ENROLL_SLOT='%d'\nTPM2_PCRS='%s'\n"+
 			"HOST='%s'\nSTATUS_URL='%s'\nSTATUS_CA='%s'\nMOK_WAIT='%s'\n",
 			st.luksUUID, luksMapperName, luksEnrollSlot, luksTPM2PCRs, e.hostname, e.statusURL, statusCA, mokWait)), 0o644},
-		{luksDracutConf, []byte(luksDracutConfText(e.libs, st.lvm)), 0o644},
+		{luksDracutConf, []byte(luksDracutConfText(e.libs, st.lvm, hasDracutModule(root, "systemd-cryptsetup"))), 0o644},
 		{luksDracutKeyConf, []byte(luksDracutKeyConfText), 0o644},
 		{luksGrubConf, []byte(luksGrubDefaultsText(st)), 0o644},
 		{luksGrubLock, []byte(luksGrubLockScript(e.grubHash)), 0o755},
@@ -768,9 +777,14 @@ func statusAuthHeader(token string) []byte {
 // build adds tpm2-tss for tpm2-device= in crypttab, which needs tpm2-tools,
 // and then drops systemd-cryptsetup. The generic build (the Ubuntu default)
 // with the libraries listed here does not. With lvm the lvm module activates
-// VG tcaas on the opened volume.
-func luksDracutConfText(libs []string, lvm bool) string {
-	modules := " crypt systemd-cryptsetup "
+// VG tcaas on the opened volume. dracut before 102 (Ubuntu 24.04: 060) has
+// no systemd-cryptsetup module and stops on an unknown one; its crypt
+// module installs systemd-cryptsetup itself.
+func luksDracutConfText(libs []string, lvm, systemdCryptsetupModule bool) string {
+	modules := " crypt "
+	if systemdCryptsetupModule {
+		modules += "systemd-cryptsetup "
+	}
 	if lvm {
 		modules += "lvm "
 	}
@@ -1093,7 +1107,7 @@ for img in /boot/initrd.img-*; do
 	dracut --force "$img.booty-new" "$kver"
 	list=$(lsinitrd "$img.booty-new")
 	case $list in *luks-enroll.key*) step="$kver still has the enrollment key"; exit 1 ;; esac
-	for f in libtss2-esys.so libtss2-rc.so libtss2-mu.so libtss2-tcti-device.so libcryptsetup-token-systemd-tpm2.so systemd-cryptsetup etc/crypttab; do
+	for f in libtss2-esys.so libtss2-sys.so libtss2-rc.so libtss2-mu.so libtss2-tcti-device.so libcryptsetup-token-systemd-tpm2.so systemd-cryptsetup etc/crypttab; do
 		case $list in *"$f"*) ;; *) step="$kver lacks $f"; exit 1 ;; esac
 	done
 	built="$built $img"

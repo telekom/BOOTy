@@ -53,9 +53,11 @@ func encryptionTargetRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	for _, rel := range append(luksTargetTools, "usr/lib/x86_64-linux-gnu/libtss2-esys.so.0",
+		"usr/lib/x86_64-linux-gnu/libtss2-sys.so.1",
 		"usr/lib/x86_64-linux-gnu/libtss2-rc.so.0", "usr/lib/x86_64-linux-gnu/libtss2-mu.so.0",
 		"usr/lib/x86_64-linux-gnu/libtss2-tcti-device.so.0",
-		"usr/lib/x86_64-linux-gnu/cryptsetup/libcryptsetup-token-systemd-tpm2.so") {
+		"usr/lib/x86_64-linux-gnu/cryptsetup/libcryptsetup-token-systemd-tpm2.so",
+		"usr/lib/dracut/modules.d/01systemd-cryptsetup/module-setup.sh") {
 		p := filepath.Join(root, rel)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
@@ -161,6 +163,26 @@ func TestWriteEncryptionFiles(t *testing.T) {
 	}
 	if n := strings.Count(read("etc/crypttab"), "booty_crypt"); n != 1 {
 		t.Fatalf("crypttab has %d booty_crypt lines", n)
+	}
+}
+
+// dracut 060 (Ubuntu 24.04) has no systemd-cryptsetup module and stops on
+// an unknown one in add_dracutmodules; its crypt module adds the binary.
+func TestWriteEncryptionFilesDracutWithoutSystemdCryptsetupModule(t *testing.T) {
+	root := encryptionTargetRoot(t)
+	if err := os.RemoveAll(filepath.Join(root, "usr/lib/dracut/modules.d/01systemd-cryptsetup")); err != nil {
+		t.Fatal(err)
+	}
+	st := &encryptionState{luksUUID: "11111111-2222-4333-8444-555555555555", enrollKey: []byte("enroll-key")}
+	if err := writeEncryptionFiles(root, st, &encryptionExtras{libs: luksTargetLibs(root), hostname: "h1", grubHash: "grub.pbkdf2.sha512.10000.AA.BB"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, luksDracutConf))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "add_dracutmodules+=\" crypt \"\n") {
+		t.Fatalf("dracut conf:\n%s", data)
 	}
 }
 
