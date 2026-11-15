@@ -219,7 +219,7 @@ debug dumps.
   BGP sessions), `SKIP_TLS_VERIFY` and plain HTTP transport, missing report
   URLs, and `ignoring log setting`.
 - Rescue SSH: malformed or RSA entries in `RESCUE_SSH_PUBKEY` (by position,
-  not the key), password login without a key, and
+  not the key), no valid key at all, password login without a key, and
   `RESCUE_SSH_HARDENED=false`.
 - `LOG_URL` itself: `remote log handler is dropping entries: buffer full` on
   the console; the server gets one `[WARN] remote log handler dropped lines
@@ -864,6 +864,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `rescue SSH allows password login: a password hash is set and no SSH key`
 - `rescue SSH hardening disabled (RESCUE_SSH_HARDENED=false): password login and port forwarding allowed, no idle timeout`
 - `rescue SSH key is RSA, which the hardened dropbear build refuses`
+- `rescue SSH has no valid key in RESCUE_SSH_PUBKEY: SSH login is refused, also with a password hash`
 
 #### WARN `pkg/runmode`
 

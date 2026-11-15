@@ -663,8 +663,8 @@ does.
 also use newlines). Several keys allow a key rotation without a window that
 has only the new key. Empty entries are skipped. A malformed entry (unknown
 key type, a blob that is not base64 or not a complete key of its type) is logged
-with its position and skipped, so the other keys still work. Options may contain quoted spaces. A `;` inside a key comment or a
-`command="..."` option splits the entry; do not use one.
+with its position and skipped, so the other keys still work. Options may contain quoted spaces and quoted `;`
+(`command="a; b"`). A `;` in a key comment splits the entry; do not use one.
 
 BOOTy generates an Ed25519 host key on every boot and starts `dropbear`
 with `-r <host key> -s -j -k -I 900`:
@@ -672,7 +672,9 @@ with `-r <host key> -s -j -k -I 900`:
 - Login is key-only (`-s`) once a key is set. `RESCUE_PASSWORD_HASH` then
   sets the root password, but SSH refuses password login. Only when no key
   is set and a password hash is, password login stays allowed, with a
-  warning in the log.
+  warning in the log. A `RESCUE_SSH_PUBKEY` with only malformed entries
+  counts as set: SSH then refuses every login rather than fall back to the
+  password.
 - Local and remote port forwarding are refused (`-j -k`).
 - A session without traffic for 15 minutes is closed (`-I 900`).
 

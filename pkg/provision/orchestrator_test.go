@@ -3061,6 +3061,14 @@ func TestRescueConfig_WiresAllFields(t *testing.T) {
 	if rc.LegacySSH {
 		t.Error("LegacySSH should default to false")
 	}
+	if !rc.SSHKeyConfigured {
+		t.Error("SSHKeyConfigured = false with keys set")
+	}
+	cfg.Rescue.SSHPubKey = "not-a-key"
+	if rc := o.RescueConfig(); len(rc.SSHKeys) != 0 || !rc.SSHKeyConfigured {
+		t.Errorf("only a malformed key: SSHKeys %q SSHKeyConfigured %v, want none and true", rc.SSHKeys, rc.SSHKeyConfigured)
+	}
+	cfg.Rescue.SSHPubKey = keyA + ";not-a-key;" + keyB
 	off := false
 	cfg.Rescue.SSHHardened = &off
 	if !o.RescueConfig().LegacySSH {

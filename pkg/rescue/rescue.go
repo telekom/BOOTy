@@ -65,6 +65,10 @@ type Config struct {
 	// LegacySSH starts dropbear without the hardening flags (password
 	// login, port forwarding, no idle timeout): RESCUE_SSH_HARDENED=false.
 	LegacySSH bool `json:"legacySSH,omitempty"`
+	// SSHKeyConfigured is set when RESCUE_SSH_PUBKEY has an entry, valid or
+	// not: login then stays key-only, so a malformed key never turns the
+	// password login on.
+	SSHKeyConfigured bool `json:"sshKeyConfigured,omitempty"`
 }
 
 // Validate checks the rescue config.
@@ -305,14 +309,14 @@ const sshIdleTimeout = "900"
 // dropbearArgs returns the dropbear command line. By default: no password
 // login once a key is configured, no local or remote port forwarding, and
 // an idle timeout. Password login stays only for a password hash without a
-// key, so such setups keep a way in.
+// key (not even a malformed one), so such setups keep a way in.
 func dropbearArgs(cfg *Config, hostKeys []string) []string {
 	var args []string
 	for _, k := range hostKeys {
 		args = append(args, "-r", k)
 	}
 	if !cfg.LegacySSH {
-		if len(cfg.SSHKeys) > 0 || cfg.PasswordHash == "" {
+		if len(cfg.SSHKeys) > 0 || cfg.SSHKeyConfigured || cfg.PasswordHash == "" {
 			args = append(args, "-s")
 		}
 		args = append(args, "-j", "-k", "-I", sshIdleTimeout)
@@ -335,6 +339,8 @@ func startDropbear(ctx context.Context, cfg *Config) error {
 	switch {
 	case cfg.LegacySSH:
 		slog.Warn("rescue SSH hardening disabled (RESCUE_SSH_HARDENED=false): password login and port forwarding allowed, no idle timeout")
+	case len(cfg.SSHKeys) == 0 && cfg.SSHKeyConfigured:
+		slog.Warn("rescue SSH has no valid key in RESCUE_SSH_PUBKEY: SSH login is refused, also with a password hash")
 	case len(cfg.SSHKeys) == 0 && cfg.PasswordHash != "":
 		slog.Warn("rescue SSH allows password login: a password hash is set and no SSH key")
 	}
