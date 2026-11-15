@@ -406,3 +406,39 @@ func TestSetupStartsRescueSSH(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestRescueSSHIgnoresAuthorizedKeysFile plants a key in root's
+// authorized_keys (as a deploy archive with PROVISIONER_FILES_TARGET=ramdisk
+// could): the server only trusts RESCUE_SSH_PUBKEY, so that key is refused,
+// with and without a configured key.
+func TestRescueSSHIgnoresAuthorizedKeysFile(t *testing.T) {
+	planted, plantedLine := newTestKey(t)
+	file := "/root/.ssh/authorized_keys"
+	if _, err := os.Stat(file); os.Geteuid() != 0 || err == nil {
+		// Not root, or a real file to keep: plant it in the home of this
+		// process instead.
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		file = home + "/.ssh/authorized_keys"
+	}
+	if err := os.MkdirAll(file[:strings.LastIndex(file, "/")], 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(plantedLine+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(file) })
+	configured, configuredLine := newTestKey(t)
+	for name, cfg := range map[string]*Config{
+		"no key":   {PasswordHash: testHash},
+		"with key": {SSHKeys: []string{configuredLine}},
+	} {
+		addr := startTestServer(t, cfg, nil)
+		if _, err := ssh.Dial("tcp", addr, clientConfig("root", ssh.PublicKeys(planted))); err == nil {
+			t.Errorf("%s: the key of %s logged in", name, file)
+		}
+		if name == "with key" {
+			_ = dialRescue(t, addr, "root", configured)
+		}
+	}
+}
