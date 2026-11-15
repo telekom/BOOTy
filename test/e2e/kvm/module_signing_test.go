@@ -53,7 +53,9 @@ try "modprobe $SIGNED" SIGNED_MODULE
 echo "SIGNED_SIGNER=$(modinfo -F signer $SIGNED)"
 try "insmod /opt/booty-e2e/$UNSIGNED.ko" UNSIGNED_MODULE
 try "insmod /opt/booty-e2e/$OTHERKEY.ko" OTHERKEY_MODULE
-dmesg | grep -i -e 'module verification' -e 'Lockdown' -e 'Loaded X.509 cert .BOOTy' | sed 's/^/DMESG /'
+echo "SYSEXT_MERGED=$(systemd-sysext status 2>/dev/null | grep -c booty-modules)"
+journalctl -b -u systemd-sysext --no-pager -o cat 2>/dev/null | tail -n 5 | sed 's/^/SYSEXTLOG /'
+dmesg | grep -i -e 'module verification' -e 'Lockdown' -e 'Loaded X.509 cert .BOOTy' -e 'verity' | sed 's/^/DMESG /'
 echo "` + modCheckEnd + `"
 systemctl poweroff --no-block
 `

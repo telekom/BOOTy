@@ -1358,6 +1358,8 @@ func applyMOKStringVar(cfg *config.MachineConfig, key, value string) bool {
 		sb.ModuleSigning.Enrollment = value
 	case "MODULE_SIGNING_CERT_DIR":
 		sb.ModuleSigning.CertDir = value
+	case "MODULE_SIGNING_TARGET":
+		sb.ModuleSigning.Target = value
 	default:
 		return false
 	}

@@ -88,6 +88,39 @@ func TestValidateUKISigning(t *testing.T) {
 	}
 }
 
+// The UKI mode with a module sysext: the provisioner enrolls the per-host
+// module certificate in db, the kernel puts it in .platform, and dm-verity
+// checks the root hash signature against .platform
+// (CONFIG_DM_VERITY_VERIFY_ROOTHASH_SIG_PLATFORM_KEYRING), so the
+// combination is allowed with external enrollment.
+func TestUKIWithModuleSysext(t *testing.T) {
+	ab := &ABConfig{}
+	for _, tc := range []struct {
+		name, signing, enrollment string
+		wantErr                   string
+	}{
+		{"per-host external", SigningPerHost, ModuleSigningEnrollExternal, ""},
+		{"per-host efi-helper", SigningPerHost, "", "MokList does not reach the kernel"},
+		{"ci", SigningCI, ModuleSigningEnrollExternal, "sysext needs signing per-host"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Config{}
+			c.Provision.DiskEncryption = DiskEncryptionConfig{Mode: DiskEncryptionLUKS2TPM2UKI, RecoveryKeyURL: "https://p/key"}
+			c.Provision.Image.CosignPublicKeys = []string{"/cosign.pub"}
+			sb := &c.Provision.SecureBoot
+			sb.Signing, sb.MOKCertPath = tc.signing, "/usr/share/ci/mok.der"
+			sb.ModuleSigning = ModuleSigningConfig{Enrollment: tc.enrollment, Target: ModuleSigningTargetSysext}
+			errs := strings.Join(append(c.validateDiskEncryption(), validateModuleSigning("", sb, ab)...), "; ")
+			if tc.wantErr == "" && errs != "" {
+				t.Fatalf("unexpected errors: %s", errs)
+			}
+			if !strings.Contains(errs, tc.wantErr) {
+				t.Fatalf("errors %q, want %q", errs, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestDiskEncryptionDisablesKexec(t *testing.T) {
 	c := &Config{}
 	if c.KexecDisabled() {

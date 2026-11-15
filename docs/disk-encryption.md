@@ -786,6 +786,7 @@ Remaining:
 | `SECUREBOOT_SIGNING` | `per-host` or `ci` (default `off`; other values are refused) |
 | `MODULE_SIGNING_ENROLLMENT` | `external`: the direct boot has no shim, so a `MokList` enrollment (`efi-helper`, `mokutil`) never reaches the kernel; the provisioner enrolls the module certificate in `db` |
 | `IMAGE_COSIGN_PUBKEYS` | required: the UKI digest comes from the signed manifest |
+| `MODULE_SIGNING_TARGET` | `in-place` or, with `per-host`, the experimental `sysext`: the kernel must verify the root hash signature with the `db` certificate in `.platform` (see [dm-verity roots](module-signing.md#dm-verity-roots-experimental)) |
 | `DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE` | optional with `ci`: the pinned PCR policy key |
 | `DISK_ENCRYPTION_RECOVERY_KEY_URL`, `DISK_ENCRYPTION_TARGET`, `DISK_ENCRYPTION_ALLOW_FAILURE`, `DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK` | as for `luks2-tpm2` |
 | `DISK_ENCRYPTION_STATUS_URL` | not supported with the UKI mode yet (refused) |

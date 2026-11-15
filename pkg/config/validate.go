@@ -817,7 +817,25 @@ func validateModuleSigning(imageMode string, sb *SecureBootConfig, ab *ABConfig)
 	if dir := m.CertDirOrDefault(); !path.IsAbs(dir) || path.Clean(dir) != dir || underChrootBind(dir) {
 		errs = append(errs, fmt.Sprintf("provision.secureBoot.moduleSigning.certDir %q: must be a clean absolute path outside /run, /proc, /sys and /dev", m.CertDir))
 	}
-	return errs
+	return append(errs, validateModuleSigningTarget(sb)...)
+}
+
+func validateModuleSigningTarget(sb *SecureBootConfig) []string {
+	m := &sb.ModuleSigning
+	switch m.TargetOrDefault() {
+	case ModuleSigningTargetInPlace:
+	case ModuleSigningTargetSysext:
+		if sb.SigningMode() != SigningPerHost {
+			return []string{"provision.secureBoot.moduleSigning.target sysext needs signing per-host: the per-host key signs the root hash"}
+		}
+		// The certificate goes into the extension, which covers /usr only.
+		if dir := m.CertDirOrDefault(); !strings.HasPrefix(dir, "/usr/") {
+			return []string{fmt.Sprintf("provision.secureBoot.moduleSigning.certDir %q: target sysext needs a directory below /usr", dir)}
+		}
+	default:
+		return []string{fmt.Sprintf("provision.secureBoot.moduleSigning.target %q: want in-place or sysext", m.Target)}
+	}
+	return nil
 }
 
 // validateModuleSigningMirror rejects efi-helper enrollment with disk
