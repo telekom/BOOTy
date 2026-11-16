@@ -27,7 +27,8 @@ import (
 // that BOOTy posts to with the bearer token (inventory, firmware, health,
 // telemetry, crash artifacts), the disk encryption settings except the
 // target partition, DEPROVISION_CRYPTO_ERASE and the rescue login
-// (RESCUE_SSH_PUBKEY, RESCUE_PASSWORD_HASH, RESCUE_SSH_HARDENED). Unknown keys are rejected too. A payload
+// (RESCUE_SSH_PUBKEY, RESCUE_PASSWORD_HASH, RESCUE_SSH_HARDENED and the
+// RESCUE_SSH_OPK_* opkssh settings). Unknown keys are rejected too. A payload
 // with only blank and comment lines returns no keys.
 //
 // The base is the vars file that BOOTy read at start; MergeCommandVars does
@@ -103,9 +104,10 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 	return cfg, keys, nil
 }
 
-// lockedRescueAccess is what decides who can log in to the rescue shell.
+// lockedRescueAccess is what decides who can log in to the rescue shell,
+// also the opkssh identity providers and identities.
 func lockedRescueAccess(r *config.RescueConfig) []any {
-	return []any{r.SSHPubKey, r.PasswordHash, r.SSHHardened}
+	return []any{r.SSHPubKey, r.PasswordHash, r.SSHHardened, r.SSHOPKProviders, r.SSHOPKPolicy}
 }
 
 // cosignLockViolations names what cfg, the config of a standby command,

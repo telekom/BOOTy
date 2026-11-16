@@ -11,8 +11,8 @@ import (
 // sshKeyBlobs maps each accepted public key type to the SSH wire fields
 // that follow the type name in its blob: "key32" a 32-byte string, "pN" an
 // uncompressed NIST point of N bytes after its curve name, "str" any
-// non-empty string. The hardened dropbear build refuses ssh-rsa; it stays
-// here for builds with DROPBEAR_HARDENED=false.
+// non-empty string. The hardened server refuses ssh-rsa; it stays here for
+// RESCUE_SSH_HARDENED=false.
 var sshKeyBlobs = map[string][]string{
 	"ssh-ed25519":                        {"key32"},
 	"sk-ssh-ed25519@openssh.com":         {"key32", "str"},
@@ -43,7 +43,7 @@ func ParseSSHKeys(value string) (keys []string, entries int) {
 			continue
 		}
 		if keyType == "ssh-rsa" {
-			slog.Warn("rescue SSH key is RSA, which the hardened dropbear build refuses", "entry", entries)
+			slog.Warn("rescue SSH key is RSA, which only RESCUE_SSH_HARDENED=false accepts", "entry", entries)
 		}
 		keys = append(keys, entry)
 	}

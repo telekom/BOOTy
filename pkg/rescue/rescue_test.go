@@ -275,12 +275,6 @@ func TestConfig_NewFieldsPreserved(t *testing.T) {
 	}
 }
 
-func TestSetupSSHKeys_Empty(t *testing.T) {
-	if err := setupSSHKeys(nil); err != nil {
-		t.Errorf("setupSSHKeys(nil) = %v", err)
-	}
-}
-
 func TestSetupPasswordHash_Empty(t *testing.T) {
 	if err := setupPasswordHash(""); err == nil {
 		t.Fatal("expected empty password hash to be rejected")

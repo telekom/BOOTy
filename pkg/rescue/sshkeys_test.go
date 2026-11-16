@@ -59,38 +59,3 @@ func TestParseSSHKeysCountsEntries(t *testing.T) {
 		}
 	}
 }
-
-func TestDropbearArgsLoadsEachHostKey(t *testing.T) {
-	got := dropbearArgs(&Config{LegacySSH: true}, []string{hostKeyPath, rsaHostKeyPath})
-	want := []string{"-r", hostKeyPath, "-r", rsaHostKeyPath, "-F", "-E", "-p", "22"}
-	if !slices.Equal(got, want) {
-		t.Errorf("dropbearArgs() = %q, want %q", got, want)
-	}
-}
-
-func TestDropbearArgs(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		cfg  Config
-		want []string
-	}{
-		{"key only", Config{SSHKeys: []string{testKeyA}},
-			[]string{"-r", hostKeyPath, "-s", "-j", "-k", "-I", "900", "-F", "-E", "-p", "22"}},
-		{"key and password hash", Config{SSHKeys: []string{testKeyA, testKeyB}, PasswordHash: "$6$x$y"},
-			[]string{"-r", hostKeyPath, "-s", "-j", "-k", "-I", "900", "-F", "-E", "-p", "22"}},
-		{"password hash without key", Config{PasswordHash: "$6$x$y"},
-			[]string{"-r", hostKeyPath, "-j", "-k", "-I", "900", "-F", "-E", "-p", "22"}},
-		{"password hash and only malformed keys", Config{SSHKeyConfigured: true, PasswordHash: "$6$x$y"},
-			[]string{"-r", hostKeyPath, "-s", "-j", "-k", "-I", "900", "-F", "-E", "-p", "22"}},
-		{"nothing configured", Config{},
-			[]string{"-r", hostKeyPath, "-s", "-j", "-k", "-I", "900", "-F", "-E", "-p", "22"}},
-		{"legacy", Config{SSHKeys: []string{testKeyA}, PasswordHash: "$6$x$y", LegacySSH: true},
-			[]string{"-r", hostKeyPath, "-F", "-E", "-p", "22"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := dropbearArgs(&tc.cfg, []string{hostKeyPath}); !slices.Equal(got, tc.want) {
-				t.Errorf("dropbearArgs() = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}

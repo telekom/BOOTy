@@ -250,6 +250,9 @@ EXTRA_KERNEL_PARAMS=intel_iommu=on
   `INVENTORY_URL`, `FIRMWARE_URL`, `HEALTH_CHECK_URL`, `TELEMETRY_URL`,
   `METRICS_URL`, `EVENT_URL`, `CRASH_ARTIFACTS_PREPARE_URL` and
   `CRASH_ARTIFACTS_UPLOAD_URL` are fixed too.
+- A payload can not add an identity provider or identity to the rescue
+  SSH login: `RESCUE_SSH_OPK_PROVIDERS` and `RESCUE_SSH_OPK_POLICY` are
+  fixed too (a deploy archive keeps the values of `/deploy/vars`).
 - BOOTy rejects a payload that changes one of these settings, that has an
   unknown key (also a misspelled one), a line that is not `KEY=VALUE`, a
   value that does not parse, or that fails validation. It does not run the
@@ -531,10 +534,12 @@ In the rescue shell, `booty lldp neighbors` and `booty lldp status` show
 the LLDP neighbors and what BOOTy sends, without `lldpcli`; see
 [LLDP diagnosis](networking.md#lldp-diagnosis-in-the-rescue-shell).
 
-For `shell` and `wait`, BOOTy installs the `RESCUE_SSH_PUBKEY` keys for root,
-sets `RESCUE_PASSWORD_HASH`, starts `dropbear` if the ramdisk has it, and mounts
-the disks when `RESCUE_AUTO_MOUNT=true`. Once a key is set, SSH login is
-key-only; see [Rescue SSH server](configuration.md#rescue-ssh-server).
+For `shell` and `wait`, BOOTy sets `RESCUE_PASSWORD_HASH`, starts its rescue
+SSH server with the `RESCUE_SSH_PUBKEY` keys for root, and mounts the disks
+when `RESCUE_AUTO_MOUNT=true`. Once a key is set, SSH login is key-only; see
+[Rescue SSH server](configuration.md#rescue-ssh-server). With
+`RESCUE_SSH_OPK_PROVIDERS` or `RESCUE_SSH_OPK_POLICY` the server also accepts
+opkssh logins; see [opkssh logins](configuration.md#opkssh-logins).
 
 ## Hardware watchdog
 
