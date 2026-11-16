@@ -95,7 +95,9 @@ func TestUKIPerHostCmdlineRefused(t *testing.T) {
 	n := countKeyGeneration(t, false)
 	for _, params := range []string{"init=/bin/sh", "rd.break=pre-mount", "systemd.debug-shell=1", "rd.systemd.debug-shell", "single",
 		"systemd.unit=rescue.target", "rd.systemd.break=pre-switch-root", "systemd.break=pre-basic", "systemd.wants=debug-shell.service",
-		"rd.systemd.wants=debug-shell.service", "booty.x=é", strings.Repeat("a", ukiMaxCmdline)} {
+		"rd.systemd.wants=debug-shell.service", "systemd.mask=booty-luks-tpm2-enroll.service", "rd.systemd.mask=x.service",
+		"systemd.set_credential=a:b", "systemd.set-credential-binary=systemd.unit-dropin.multi-user.target:W1VuaXRdCg==",
+		"systemd.import_credentials=1", "-- --unit=debug-shell.service", "-b", "booty.x=é", strings.Repeat("a", ukiMaxCmdline)} {
 		o, _, root, esp := ukiTestHost(t, config.SigningPerHost, perHostUKI(t))
 		o.cfg.Provision.SerialConsole = "none"
 		o.cfg.Provision.ExtraKernelParams = params
@@ -104,11 +106,12 @@ func TestUKIPerHostCmdlineRefused(t *testing.T) {
 		}
 	}
 	// GRUB_CMDLINE_MODE=append passes quotes through; systemd strips them.
-	for _, params := range []string{"'rd.systemd.debug_shell=1'", "'init=/bin/sh'", "rd.'break'"} {
+	for _, params := range []string{"'rd.systemd.debug_shell=1'", "'init=/bin/sh'", "rd.'break'",
+		"systemd.set_credential_binary=systemd.unit-dropin.multi-user.target:W1VuaXRdCg==", "-- --unit=debug-shell.service"} {
 		o, _, root, esp := ukiTestHost(t, config.SigningPerHost, perHostUKI(t))
 		o.cfg.Provision.GRUBCmdlineMode = config.GRUBCmdlineAppend
 		o.cfg.Provision.ExtraKernelParams = params
-		if _, err := o.prepareUKI(root, esp); err == nil || !strings.Contains(err.Error(), "quotes") || *n != 0 {
+		if _, err := o.prepareUKI(root, esp); err == nil || !strings.Contains(err.Error(), "not allowed") && !strings.Contains(err.Error(), "quotes") || *n != 0 {
 			t.Errorf("append mode %q: err=%v keys=%d", params, err, *n)
 		}
 	}

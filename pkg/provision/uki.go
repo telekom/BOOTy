@@ -82,12 +82,15 @@ const (
 // ukiDeniedParams are kernel parameters that per-host signing does not
 // merge into the .cmdline of the UKI: they replace init, stop the boot in
 // a shell, debug it or start other units, and the PCR 11 signature would
-// bless them. Names compare with "-" as "_", as systemd reads them.
+// bless them, or stop the TPM2 enrollment. Names compare with "-" as "_",
+// as systemd reads them. Words that start with "-" (-b, and "--", after
+// which the kernel passes the rest to init as arguments) are refused too.
 var ukiDeniedParams = []string{
-	"init", "rdinit", "single", "s", "S", "1", "emergency", "rescue", "-b",
+	"init", "rdinit", "single", "s", "S", "1", "emergency", "rescue",
 	"rd.break", "rd.shell", "rd.emergency", "rd.rescue", "rd.debug", "rd.udev.debug", "rd.systemd.debug_shell",
 	"rd.systemd.unit", "rd.systemd.run", "rd.systemd.break", "rd.systemd.wants",
 	"systemd.debug_shell", "systemd.unit", "systemd.run", "systemd.break", "systemd.wants",
+	"systemd.mask", "rd.systemd.mask", "systemd.set_credential", "systemd.set_credential_binary", "systemd.import_credentials",
 	"systemd.run_success_action", "systemd.run_failure_action", "systemd.confirm_spawn", "systemd.log_level",
 	"kgdboc", "kgdbwait", "kgdbcon", "ekgdboc",
 }
@@ -358,6 +361,9 @@ func checkUKIKernelParams(params string) error {
 	norm := func(s string) string { return strings.ReplaceAll(s, "-", "_") }
 	for p := range strings.FieldsSeq(params) {
 		name, _, _ := strings.Cut(p, "=")
+		if strings.HasPrefix(name, "-") {
+			return fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: words that start with - go to init (docs/disk-encryption.md#per-host-kernel-parameters)", name)
+		}
 		if slices.ContainsFunc(ukiDeniedParams, func(d string) bool { return norm(d) == norm(name) }) {
 			return fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: it debugs the boot or opens a shell (docs/disk-encryption.md#per-host-kernel-parameters)", name)
 		}

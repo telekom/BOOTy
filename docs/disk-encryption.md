@@ -821,15 +821,21 @@ list), and the `.cmdline` at most 2047
 bytes (`COMMAND_LINE_SIZE` of x86-64). Parameters that replace init, stop
 the boot in a shell, debug it or start other units are refused, as the PCR
 11 signature would bless them for every boot: `init`, `rdinit`, `single`,
-`s`, `S`, `1`, `emergency`, `rescue`, `-b`, `rd.break`, `rd.shell`,
+`s`, `S`, `1`, `emergency`, `rescue`, `rd.break`, `rd.shell`,
 `rd.emergency`, `rd.rescue`, `rd.debug`, `rd.udev.debug`,
 `rd.systemd.debug_shell`, `rd.systemd.unit`, `rd.systemd.run`,
 `rd.systemd.break`, `rd.systemd.wants`, `systemd.debug_shell`,
 `systemd.unit`, `systemd.run`, `systemd.break`, `systemd.wants`,
+`systemd.mask`, `rd.systemd.mask` (they could mask the TPM2 enrollment and
+keep the empty passphrase), `systemd.set_credential`,
+`systemd.set_credential_binary`, `systemd.import_credentials` (a unit
+drop-in credential can start a shell),
 `systemd.run_success_action`, `systemd.run_failure_action`,
 `systemd.confirm_spawn`, `systemd.log_level`, `kgdboc`, `kgdbwait`,
 `kgdbcon` and `ekgdboc` (with or without a value; `-` and `_` are the same,
-as systemd reads them). There is no override; such a parameter belongs in
+as systemd reads them), and every word that starts with `-` (`-b`, and
+`--`, after which the kernel hands the rest to init as arguments such as
+`--unit=`). There is no override; such a parameter belongs in
 the image `.cmdline`, where the image pipeline decides. The refusal fails
 `prepare-disk-encryption` before any key exists.
 
