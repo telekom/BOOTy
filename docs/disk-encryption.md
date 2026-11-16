@@ -504,7 +504,10 @@ Like `sbkeysync` (`--no-default-keystores --keystore
 /usr/share/secureboot/updates`, the call of `secureboot-db`), BOOTy:
 
 - reads the regular files of `KEK`, `db` and `dbx` (in this order, by
-  name; no dot files, no `PK`) below the target root, through `os.Root`;
+  name; no dot files, no `PK`) below the target root, through `os.Root`.
+  It follows symlinks that stay in the target and skips dangling ones,
+  as `sbkeysync` does; a symlink out of the target (an absolute one)
+  fails the step, as BOOTy cannot resolve it like the installed system;
 - parses each as `EFI_VARIABLE_AUTHENTICATION_2` (PKCS7) followed by
   `EFI_SIGNATURE_LIST`s;
 - skips a file whose entries (signature type and data, not the owner) are
@@ -528,8 +531,10 @@ variable space at boot may accept on the first boot what it refused while
 provisioning; then the binding needs the recovery key once and a new
 binding (see [PCR changes](#pcr-changes)). A file that is not a signed
 signature list is skipped with a warning, as `sbkeysync` skips it. An
-unreadable update file or variable fails the step (`BOOTY-EFI-013`): BOOTy
-could not tell whether the first boot changes PCR 7.
+unreadable update file or variable, or an efivarfs error before the write
+reaches the firmware (clearing the immutable flag, opening the file),
+fails the step (`BOOTY-EFI-013`): BOOTy could not tell whether the first
+boot changes PCR 7.
 
 `SECUREBOOT_APPLY_DBX_UPDATES=false` turns the step off (one WARN line);
 then mask `secureboot-db.service` in the image or bind again after its

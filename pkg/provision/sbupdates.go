@@ -44,6 +44,9 @@ var sbUpdateVars = []struct{ name, guid string }{
 	{"KEK", efiGlobalGUID}, {"db", efiImageSecurityDatabaseGUID}, {"dbx", efiImageSecurityDatabaseGUID},
 }
 
+// writeEFIVar is efi.EFIVarReader.WriteVar; tests fake a firmware refusal.
+var writeEFIVar = (*efi.EFIVarReader).WriteVar
+
 // efiCertTypePKCS7 is EFI_CERT_TYPE_PKCS7_GUID in its byte order on disk.
 var efiCertTypePKCS7 = []byte{0x9d, 0xd2, 0xaf, 0x4a, 0xdf, 0x68, 0xee, 0x49, 0x8a, 0xa9, 0x34, 0x7d, 0x37, 0x56, 0x65, 0xa7}
 
@@ -70,9 +73,10 @@ func (o *Orchestrator) applySecureBootUpdates(context.Context) error {
 // applySecureBootUpdateFiles appends every update file of
 // sbUpdatesDir/{KEK,db,dbx} in the target root whose signature entries are
 // not all in the variable yet, like sbkeysync.
-// A firmware refusal is a warning: the firmware refuses sbkeysync the same
-// way on the first boot, so PCR 7 stays. Only what leaves BOOTy unable to
-// decide (unreadable files or variables) fails the step.
+// A firmware refusal (the write to efivarfs fails) is a warning: the
+// firmware refuses sbkeysync the same way on the first boot, so PCR 7
+// stays. What leaves BOOTy unable to decide (unreadable files or
+// variables, a local efivarfs error before the write) fails the step.
 func applySecureBootUpdateFiles(log *slog.Logger, target fs.FS, vars *efi.EFIVarReader) error {
 	for _, v := range sbUpdateVars {
 		dir := path.Join(strings.TrimPrefix(sbUpdatesDir, "/"), v.name)
@@ -84,10 +88,24 @@ func applySecureBootUpdateFiles(log *slog.Logger, target fs.FS, vars *efi.EFIVar
 			return fmt.Errorf("read the Secure Boot updates of the image: %w", err)
 		}
 		for _, f := range files { // sorted by name
-			if strings.HasPrefix(f.Name(), ".") || !f.Type().IsRegular() {
+			rel := path.Join(dir, f.Name())
+			if strings.HasPrefix(f.Name(), ".") {
 				continue
 			}
-			if err := applySecureBootUpdateFile(log, target, vars, v.name, v.guid, path.Join(dir, f.Name())); err != nil {
+			// sbkeysync follows symlinks; os.Root follows those that stay
+			// in the target. A dangling one sbkeysync skips too; one that
+			// leaves the target (absolute) BOOTy cannot follow, so it fails.
+			fi, err := fs.Stat(target, rel)
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("read Secure Boot update /%s: %w", rel, err)
+			}
+			if !fi.Mode().IsRegular() {
+				continue
+			}
+			if err := applySecureBootUpdateFile(log, target, vars, v.name, v.guid, rel); err != nil {
 				return err
 			}
 		}
@@ -129,7 +147,14 @@ func applySecureBootUpdateFile(log *slog.Logger, target fs.FS, vars *efi.EFIVarR
 		log.Info("Secure Boot update already applied", "variable", name, "file", file, "entries", len(update))
 		return nil
 	}
-	if err := vars.WriteVar(name+"-"+guid, sbAppendAttrs, data); err != nil {
+	if err := writeEFIVar(vars, name+"-"+guid, sbAppendAttrs, data); err != nil {
+		// Only the write itself reaches the firmware. Clearing the
+		// immutable flag or opening the efivarfs file failed locally, and
+		// sbkeysync may succeed on the first boot: that fails the step.
+		var pe *fs.PathError
+		if !errors.As(err, &pe) || pe.Op != "write" {
+			return fmt.Errorf("write %s: %w", name, err)
+		}
 		log.Warn("the firmware refused the Secure Boot update; secureboot-db of the image gets the same answer, so PCR 7 stays",
 			"variable", name, "file", file, "error", err)
 		return nil

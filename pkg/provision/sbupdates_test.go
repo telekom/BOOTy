@@ -6,10 +6,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -204,23 +207,33 @@ func TestApplySecureBootUpdatesRefusalAndBadFileWarn(t *testing.T) {
 	f := newSBUpdateFixture(t)
 	f.update(t, "dbx/bad.bin", []byte("not an update"))
 	f.update(t, "db/db.auth", testAuthVar(testESL(1, 0xc)))
-	if err := os.Mkdir(filepath.Join(f.vars, "db-"+efiImageSecurityDatabaseGUID), 0o755); err != nil {
+	dbVar := filepath.Join(f.vars, "db-"+efiImageSecurityDatabaseGUID)
+	if err := os.Mkdir(dbVar, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(&f.log, nil))
 	err := applySecureBootUpdateFiles(log, os.DirFS(f.dir), efi.NewEFIVarReader(f.vars))
-	// Reading the variable fails first: BOOTy cannot tell what is present.
+	// Reading the variable fails: BOOTy cannot tell what is present.
 	if err == nil || !strings.Contains(err.Error(), "read db") {
 		t.Fatalf("unreadable db: %v", err)
 	}
-	// A dangling link reads as a missing variable, and the write fails like
-	// a refusal of the firmware (EACCES, EINVAL from efivarfs), also as root.
-	dbVar := filepath.Join(f.vars, "db-"+efiImageSecurityDatabaseGUID)
+	// A dangling link reads as a missing variable; opening it for the write
+	// fails before the firmware sees anything: a step failure, not a refusal.
 	if err := os.Remove(dbVar); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(filepath.Join(f.vars, "missing", "db"), dbVar); err != nil {
 		t.Fatal(err)
+	}
+	err = applySecureBootUpdateFiles(log, os.DirFS(f.dir), efi.NewEFIVarReader(f.vars))
+	if err == nil || !strings.Contains(err.Error(), "write db") {
+		t.Fatalf("efivarfs open failure: %v", err)
+	}
+	// The write itself fails: the firmware refused (EACCES from efivarfs).
+	old := writeEFIVar
+	t.Cleanup(func() { writeEFIVar = old })
+	writeEFIVar = func(*efi.EFIVarReader, string, uint32, []byte) error {
+		return fmt.Errorf("writing efi var: %w", &fs.PathError{Op: "write", Path: dbVar, Err: syscall.EACCES})
 	}
 	f.log.Reset()
 	f.apply(t)
@@ -229,6 +242,42 @@ func TestApplySecureBootUpdatesRefusalAndBadFileWarn(t *testing.T) {
 		if !strings.Contains(f.log.String(), want) {
 			t.Errorf("log lacks %s:\n%s", want, f.log.String())
 		}
+	}
+}
+
+func TestApplySecureBootUpdatesFollowsLinksInRoot(t *testing.T) {
+	f := newSBUpdateFixture(t)
+	f.update(t, "shared/update.bin", testAuthVar(testESL(1, 0xa)))
+	f.update(t, "dbx/.keep", nil)
+	link := filepath.Join(f.dir, sbUpdatesDir, "dbx", "update.bin")
+	if err := os.Symlink("../shared/update.bin", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing.bin", filepath.Join(f.dir, sbUpdatesDir, "dbx", "dangling.bin")); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	log := slog.New(slog.NewTextHandler(&f.log, nil))
+	if err := applySecureBootUpdateFiles(log, root.FS(), efi.NewEFIVarReader(f.vars)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(f.vars, testDBX)); err != nil {
+		t.Fatalf("the update behind the in-root link was not applied: %v", err)
+	}
+	// A link out of the target root: BOOTy cannot follow it like the
+	// installed system would, so the step fails.
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/passwd", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := applySecureBootUpdateFiles(log, root.FS(), efi.NewEFIVarReader(f.vars)); err == nil {
+		t.Fatal("a link out of the target root was accepted")
 	}
 }
 
