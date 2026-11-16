@@ -103,6 +103,15 @@ func TestUKIPerHostCmdlineRefused(t *testing.T) {
 			t.Errorf("%.20q: err=%v keys=%d", params, err, *n)
 		}
 	}
+	// GRUB_CMDLINE_MODE=append passes quotes through; systemd strips them.
+	for _, params := range []string{"'rd.systemd.debug_shell=1'", "'init=/bin/sh'", "rd.'break'"} {
+		o, _, root, esp := ukiTestHost(t, config.SigningPerHost, perHostUKI(t))
+		o.cfg.Provision.GRUBCmdlineMode = config.GRUBCmdlineAppend
+		o.cfg.Provision.ExtraKernelParams = params
+		if _, err := o.prepareUKI(root, esp); err == nil || !strings.Contains(err.Error(), "quotes") || *n != 0 {
+			t.Errorf("append mode %q: err=%v keys=%d", params, err, *n)
+		}
+	}
 	if err := checkUKIKernelParams("hugepages=16 isolcpus=2-3 console=ttyS0,115200n8 ds=nocloud"); err != nil {
 		t.Errorf("ordinary parameters refused: %v", err)
 	}

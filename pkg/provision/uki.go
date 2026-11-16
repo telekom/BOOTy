@@ -350,6 +350,11 @@ func checkUKIKernelParams(params string) error {
 			return fmt.Errorf("per-host kernel parameters for the UKI must be printable ASCII: %q", params)
 		}
 	}
+	// The kernel and systemd strip quotes, so a quoted name could pass the
+	// deny list.
+	if strings.ContainsAny(params, "\"'\\") {
+		return fmt.Errorf("per-host kernel parameters for the UKI must not contain quotes or backslashes: %q", params)
+	}
 	norm := func(s string) string { return strings.ReplaceAll(s, "-", "_") }
 	for p := range strings.FieldsSeq(params) {
 		name, _, _ := strings.Cut(p, "=")

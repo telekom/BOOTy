@@ -788,7 +788,9 @@ datasource (`ds=nocloud`, `ci.datasource=ConfigDrive`); with
 `GRUB_CMDLINE_MODE=append` the `ds=nocloud console=...` of that mode.
 Without parameters the `.cmdline` of the image stays as it is.
 
-The parameters must be printable ASCII, and the `.cmdline` at most 2047
+The parameters must be printable ASCII without quotes or backslashes (the
+kernel and systemd strip quotes, so a quoted name would pass the deny
+list), and the `.cmdline` at most 2047
 bytes (`COMMAND_LINE_SIZE` of x86-64). Parameters that replace init, stop
 the boot in a shell, debug it or start other units are refused, as the PCR
 11 signature would bless them for every boot: `init`, `rdinit`, `single`,
