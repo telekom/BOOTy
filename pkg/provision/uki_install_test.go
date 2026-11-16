@@ -183,6 +183,22 @@ func TestReplacePESection(t *testing.T) {
 	if _, err := replacePESection(b, ".cmdline", []byte("root=y")); err == nil {
 		t.Error("a data directory into a moving section accepted")
 	}
+	// A debug directory in .linux, before .cmdline, with an entry whose
+	// PointerToRawData is in .osrel, which moves.
+	b = slices.Clone(uki)
+	linuxVA, linuxPtr := binary.LittleEndian.Uint32(b[0x148+12:]), binary.LittleEndian.Uint32(b[0x148+20:])
+	binary.LittleEndian.PutUint32(b[0x148+8:], 28) // .linux VirtualSize
+	binary.LittleEndian.PutUint32(b[0x58+112+8*6:], linuxVA)
+	binary.LittleEndian.PutUint32(b[0x58+112+8*6+4:], 28)
+	binary.LittleEndian.PutUint32(b[linuxPtr+16:], 4)                                             // SizeOfData
+	binary.LittleEndian.PutUint32(b[linuxPtr+24:], binary.LittleEndian.Uint32(b[0x148+2*40+20:])) // PointerToRawData in .osrel
+	if _, err := replacePESection(b, ".cmdline", []byte("root=y")); err == nil || !strings.Contains(err.Error(), "debug directory") {
+		t.Errorf("debug data in a moving section: %v", err)
+	}
+	binary.LittleEndian.PutUint32(b[linuxPtr+24:], linuxPtr) // data before .cmdline stays
+	if _, err := replacePESection(b, ".cmdline", []byte("root=y")); err != nil {
+		t.Errorf("debug data before .cmdline refused: %v", err)
+	}
 	if _, err := replacePESection(testPE(t, true, [2]string{".cmdline", "x"}), ".cmdline", []byte("y")); err == nil {
 		t.Error("a signed PE accepted")
 	}

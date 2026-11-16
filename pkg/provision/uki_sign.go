@@ -379,7 +379,40 @@ func peDirectoriesBefore(b []byte, l *peLayout, ptr uint32) error {
 			}
 		}
 	}
-	return nil
+	return peDebugDataBefore(b, l, ndir, ptr)
+}
+
+// peDebugDataBefore checks that no entry of the debug directory (data
+// directory 6), which sits before ptr, has a PointerToRawData at ptr or
+// later: that file offset would go stale when the data there moves.
+func peDebugDataBefore(b []byte, l *peLayout, ndir int, ptr uint32) error {
+	const peDebugDir, peDebugEntrySize = 6, 28
+	if ndir <= peDebugDir {
+		return nil
+	}
+	dir := b[l.opt+112+8*peDebugDir:]
+	rva, size := binary.LittleEndian.Uint32(dir), binary.LittleEndian.Uint32(dir[4:])
+	if rva == 0 || size == 0 {
+		return nil
+	}
+	for i := range l.nsec {
+		h := b[l.secTable+peSectionHdrSize*i:]
+		va, raw, sptr := binary.LittleEndian.Uint32(h[12:]), binary.LittleEndian.Uint32(h[16:]), binary.LittleEndian.Uint32(h[20:])
+		if rva < va || uint64(rva)+uint64(size) > uint64(va)+uint64(raw) {
+			continue
+		}
+		off := uint64(sptr) + uint64(rva-va)
+		if off+uint64(size) > uint64(len(b)) {
+			return errors.New("the debug directory is outside the file")
+		}
+		for e := off; e+peDebugEntrySize <= off+uint64(size); e += peDebugEntrySize {
+			if binary.LittleEndian.Uint32(b[e+16:]) > 0 && binary.LittleEndian.Uint32(b[e+24:]) >= ptr {
+				return errors.New("a debug directory entry has its data in a section that moves")
+			}
+		}
+		return nil
+	}
+	return errors.New("the debug directory is not in the file data of one section")
 }
 
 var (

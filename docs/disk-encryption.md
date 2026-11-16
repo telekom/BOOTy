@@ -854,7 +854,7 @@ BOOTy rewrites the `.cmdline` section in its PE code: the section keeps its
 address (a `.cmdline` of up to 2 KiB fits the 4 KiB section alignment of
 systemd-stub), the data of the later sections moves in the file, and
 BOOTy refuses the UKI when a data directory points into a section that
-moves.
+moves, or when a debug directory entry has its data (a file offset) in one.
 
 `UKI_KEEP_IMAGE_CMDLINE=true` signs the image `.cmdline` unchanged, the
 behavior before, as a transitional escape hatch.
