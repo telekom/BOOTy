@@ -82,8 +82,10 @@ const (
 // ukiDeniedParams are kernel parameters that per-host signing does not
 // merge into the .cmdline of the UKI: they replace init, stop the boot in
 // a shell, debug it or start other units, and the PCR 11 signature would
-// bless them, or stop the TPM2 enrollment. Names compare with "-" as "_",
-// as systemd reads them. Words that start with "-" (-b, and "--", after
+// bless them, or stop the TPM2 enrollment, or boot another root or /usr
+// after the initramfs unsealed the volume. Names compare with "-" as "_"
+// and without an "rd." prefix: systemd reads every systemd.* setting as
+// rd.systemd.* in the initramfs too. Words that start with "-" (-b, and "--", after
 // which the kernel passes the rest to init as arguments) are refused too.
 var ukiDeniedParams = []string{
 	"init", "rdinit", "single", "s", "S", "1", "emergency", "rescue",
@@ -93,7 +95,9 @@ var ukiDeniedParams = []string{
 	"systemd.mask", "rd.systemd.mask", "systemd.set_credential", "systemd.set_credential_binary", "systemd.import_credentials",
 	"systemd.volatile",
 	"systemd.run_success_action", "systemd.run_failure_action", "systemd.confirm_spawn", "systemd.log_level",
-	"kgdboc", "kgdbwait", "kgdbcon", "ekgdboc",
+	"systemd.crash_shell", "systemd.mount_extra", "rd.cmdline",
+	"root", "mount.usr", "roothash", "usrhash",
+	"kgdboc", "kgdboc.kgdboc", "kgdbwait", "kgdbcon", "ekgdboc", "kgdbdbgp",
 }
 
 // ukiPerHostRefused are UKI sections that per-host signing refuses: the
@@ -359,7 +363,7 @@ func checkUKIKernelParams(params string) error {
 	if strings.ContainsAny(params, "\"'\\") {
 		return fmt.Errorf("per-host kernel parameters for the UKI must not contain quotes or backslashes: %q", params)
 	}
-	norm := func(s string) string { return strings.ReplaceAll(s, "-", "_") }
+	norm := func(s string) string { return strings.TrimPrefix(strings.ReplaceAll(s, "-", "_"), "rd.") }
 	for p := range strings.FieldsSeq(params) {
 		name, _, _ := strings.Cut(p, "=")
 		if strings.HasPrefix(name, "-") {

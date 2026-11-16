@@ -97,7 +97,10 @@ func TestUKIPerHostCmdlineRefused(t *testing.T) {
 		"systemd.unit=rescue.target", "rd.systemd.break=pre-switch-root", "systemd.break=pre-basic", "systemd.wants=debug-shell.service",
 		"rd.systemd.wants=debug-shell.service", "systemd.mask=booty-luks-tpm2-enroll.service", "rd.systemd.mask=x.service",
 		"systemd.set_credential=a:b", "systemd.set-credential-binary=systemd.unit-dropin.multi-user.target:W1VuaXRdCg==",
-		"systemd.import_credentials=1", "systemd.volatile=yes", "-- --unit=debug-shell.service", "-b", "booty.x=é", strings.Repeat("a", ukiMaxCmdline)} {
+		"systemd.import_credentials=1", "systemd.volatile=yes",
+		"rd.systemd.set_credential=a:b", "rd.systemd.import-credentials=1", "rd.systemd.volatile=yes", "rd.cmdline=ask", "debug",
+		"systemd.mount-extra=/dev/sdb1:/etc:ext4", "rd.systemd.crash_shell", "root=/dev/sdb1", "mount.usr=/dev/sdb2", "roothash=00",
+		"kgdboc.kgdboc=ttyS0", "-- --unit=debug-shell.service", "-b", "booty.x=é", strings.Repeat("a", ukiMaxCmdline)} {
 		o, _, root, esp := ukiTestHost(t, config.SigningPerHost, perHostUKI(t))
 		o.cfg.Provision.SerialConsole = "none"
 		o.cfg.Provision.ExtraKernelParams = params

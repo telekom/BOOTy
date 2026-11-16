@@ -832,9 +832,16 @@ keep the empty passphrase), `systemd.set_credential`,
 drop-in credential can start a shell), `systemd.volatile` (a volatile
 `/etc` hides the enrollment unit),
 `systemd.run_success_action`, `systemd.run_failure_action`,
-`systemd.confirm_spawn`, `systemd.log_level`, `kgdboc`, `kgdbwait`,
-`kgdbcon` and `ekgdboc` (with or without a value; `-` and `_` are the same,
-as systemd reads them), and every word that starts with `-` (`-b`, and
+`systemd.confirm_spawn`, `systemd.log_level`, `systemd.crash_shell`,
+`systemd.mount-extra` (a mount over `/etc` starts any unit), `rd.cmdline`
+(`rd.cmdline=ask` reads more parameters from the console, unmeasured),
+`root`, `mount.usr`, `roothash`, `usrhash` (after the initramfs unsealed the
+volume, another root in a signed boot phase could unseal it again),
+`kgdboc`, `kgdboc.kgdboc`, `kgdbwait`, `kgdbcon`, `ekgdboc` and `kgdbdbgp`
+(with or without a value; `-` and `_` are the same, as systemd reads them,
+and an `rd.` prefix does not count, as systemd reads every `systemd.*`
+setting as `rd.systemd.*` in the initramfs: `rd.debug` refuses `debug`
+too), and every word that starts with `-` (`-b`, and
 `--`, after which the kernel hands the rest to init as arguments such as
 `--unit=`). There is no override; such a parameter belongs in
 the image `.cmdline`, where the image pipeline decides. The refusal fails
