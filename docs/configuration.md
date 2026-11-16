@@ -94,7 +94,7 @@ values are false.
 | `WRITE_RESOLV_CONF` | `true` | boolean | Write the installed OS `/etc/resolv.conf` from `dns_resolver`. `false` keeps the image file, like the legacy scripts. YAML `provision.writeResolvConf`. Preset: `false`. |
 | `RAMDISK_HOSTNAME` | `false` | boolean | For provisioning, set `HOSTNAME` as the ramdisk host name, like `hostname "$HOSTNAME"` in `provision.sh`. A failure is only logged. YAML `ramdiskHostname`. Preset: `true`. |
 | `FAILURE_ACTION` | `reboot` | `reboot`, `wait` | End of a failed run. `wait`: report the error to `ERROR_URL` and keep the ramdisk running. Applies to a failed deprovision, a failure before the mode runs (vars file, network, JWT exchange) and exhausted JWT renewal. For a failed provision it is the default of `RESCUE_MODE`; an explicit `RESCUE_MODE` wins. YAML `failureAction`. Preset: `wait`. |
-| `MACHINE_EXTRA_KERNEL_PARAMS` | (unset) | kernel parameters | Extra kernel parameters for the installed OS GRUB configuration. A `console=` token is folded into the serial console resolution. |
+| `MACHINE_EXTRA_KERNEL_PARAMS` | (unset) | kernel parameters | Extra kernel parameters for the installed OS GRUB configuration. A `console=` token is folded into the serial console resolution. With `DISK_ENCRYPTION=luks2-tpm2-uki` and `SECUREBOOT_SIGNING=per-host` they also go into the `.cmdline` of the signed UKI, with a deny list, and a standby payload or deploy archive can not change them ([Per-host kernel parameters](disk-encryption.md#per-host-kernel-parameters)). |
 | `EXTRA_KERNEL_PARAMS` | (unset) | kernel parameters | Extra kernel parameters that the legacy provisioner reads. BOOTy appends them after `MACHINE_EXTRA_KERNEL_PARAMS`, whatever the line order. |
 | `MACHINE_SERIAL_CONSOLE` | (unset) | for example `ttyS1,115200n8`, `ttyS0`, `none` | Serial console of the installed OS. It overrides the firmware evidence (ACPI SPCR, device tree, sysfs). `none` configures no serial console. `GRUB_CMDLINE_MODE=append` ignores it and logs a warning. Alias: `SERIAL_CONSOLE`. |
 | `SERIAL_CONSOLE` | (unset) | see above | Alias of `MACHINE_SERIAL_CONSOLE`. |
@@ -527,6 +527,8 @@ These keys apply to the provision and deprovision modes.
 | `SECUREBOOT_SHIM_SHA256` | (unset) | 64 hex digits, optional `sha256:` prefix | Expected digest of the installed shim. |
 | `SECUREBOOT_GRUB_SHA256` | (unset) | same | Expected digest of the installed GRUB EFI binary. |
 | `SECUREBOOT_KERNEL_SHA256` | (unset) | same | Expected digest of the installed kernel. |
+| `UKI_INPLACE_WRITE` | `false` | `true`, `false`, `1`, `0`, `yes`, `no` | Transitional escape hatch for an ESP without room for a second copy of the UKI: with `luks2-tpm2-uki` and `SECUREBOOT_SIGNING=per-host`, truncate and rewrite the UKI instead of writing a temporary file and renaming it over the UKI. An interrupted write then leaves a truncated UKI that does not boot (the GRUB entry still does). Without it the ESP needs at least twice the UKI size plus 4 MiB free before the install. YAML `provision.diskEncryption.ukiInplaceWrite`. |
+| `UKI_KEEP_IMAGE_CMDLINE` | `false` | same as above | Transitional escape hatch: with `SECUREBOOT_SIGNING=per-host`, sign the `.cmdline` of the image UKI unchanged; the per-host kernel parameters reach only the GRUB entry, as before they were merged into the UKI. YAML `provision.diskEncryption.ukiKeepImageCmdline`. |
 | `SECUREBOOT_SIGNING` | `off` | `per-host`, `ci`, `off` | Who signs the out-of-tree kernel modules of the target (`/lib/modules/*/{updates,extra}`). `per-host`: BOOTy signs them with a new per-host key, which exists only in memory, runs depmod and rebuilds the initramfs. `ci`: the image arrives signed by CI, and BOOTy holds no key and only enrolls `MOK_CERT_PATH`. `off`: nothing is signed or enrolled, and provisioning runs as without the feature. See [module signing](module-signing.md). |
 | `MOK_CERT_PATH` | (unset) | absolute path in the target | With `SECUREBOOT_SIGNING=ci`: the DER certificate of the CI key that signed the modules, enrolled like the per-host one. It must have the module-signing-only EKU `1.3.6.1.4.1.2312.16.1.2`. |
 | `MODULE_SIGNING_ENROLLMENT` | `efi-helper` | `efi-helper`, `mokutil`, `external` | How the firmware learns the certificate: `efi-helper` boots `mok-enroll.efi` once to write MokList (Secure Boot must be off while provisioning and at the next boot, so not with `SECUREBOOT_REENABLE=true`; not in the micro ramdisk); `mokutil` queues it for one MokManager confirmation with `MOK_PASSWORD`; `external` leaves it to the provisioner (for example Redfish db enrollment). |
@@ -543,7 +545,10 @@ encrypted partition is the last one, and an image with dracut,
 `systemd-cryptsetup` and the TPM2 libraries. Turns kexec off. Without
 `DISK_ENCRYPTION` none of this changes anything. A standby command payload
 or deploy archive can change only `DISK_ENCRYPTION_TARGET`, and not
-`DEPROVISION_CRYPTO_ERASE`.
+`DEPROVISION_CRYPTO_ERASE`. With `luks2-tpm2-uki` it can not change the
+settings of the per-host kernel parameters either (`MACHINE_EXTRA_KERNEL_PARAMS`,
+`EXTRA_KERNEL_PARAMS`, `MACHINE_SERIAL_CONSOLE`, `GRUB_CMDLINE_MODE`, the
+cloud-init datasource).
 
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|

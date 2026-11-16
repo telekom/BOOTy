@@ -425,11 +425,15 @@ func TestAuthenticodeSign(t *testing.T) {
 	}
 }
 
-// FuzzUKISign: appendPESections and authenticodeSign error on malformed
+// FuzzUKISign: replacePESection, appendPESections and authenticodeSign error on malformed
 // PE input, never panic or allocate beyond the input.
 func FuzzUKISign(f *testing.F) {
 	f.Add(testPE(f, false, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"}))
 	f.Add(testPE(f, false, [2]string{".linux", strings.Repeat("k", 0x300)}))
+	// SizeOfHeaders ends inside the section table: section data overlaps it.
+	overlap := testPE(f, false, [2]string{".linux", "k"}, [2]string{".cmdline", "root=x"})
+	binary.LittleEndian.PutUint32(overlap[0x58+60:], 0x100)
+	f.Add(overlap)
 	key, err := rsa.GenerateKey(rand.Reader, 1024) //nolint:gosec // test key
 	if err != nil {
 		f.Fatal(err)
@@ -440,6 +444,11 @@ func FuzzUKISign(f *testing.F) {
 	}
 	cert, _ := x509.ParseCertificate(der)
 	f.Fuzz(func(t *testing.T, b []byte) {
+		if out, err := replacePESection(b, ".cmdline", []byte("root=x booty.test=1")); err == nil {
+			if _, _, err := parseUnsignedPE(out); err != nil || len(out) > len(b)+0x10000 {
+				t.Fatalf("replacePESection wrote %d bytes from %d: %v", len(out), len(b), err)
+			}
+		}
 		out, err := appendPESections(b, [2][]byte{[]byte(".pcrpkey"), []byte("pub")}, [2][]byte{[]byte(".pcrsig"), []byte("{}")})
 		if err != nil {
 			return

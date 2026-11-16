@@ -153,6 +153,9 @@ func prepareUKIImage(t *testing.T, osImage, dir string, debs []string, ci *ukiKe
 	t.Helper()
 	raw := filepath.Join(dir, "os.raw")
 	run(t, "convert OS image to raw", "qemu-img", "convert", "-O", "raw", osImage, raw)
+	if ci == nil {
+		reshapeUKIImage(t, raw, dir)
+	}
 	loop := strings.TrimSpace(string(runOutput(t, "attach image", "losetup", "-P", "--show", "-f", raw)))
 	defer func() { _ = exec.CommandContext(context.Background(), "losetup", "-d", loop).Run() }()
 	label := func(part string) string {
@@ -294,6 +297,53 @@ dracut --force --no-hostonly --tmpdir /run --add "crypt systemd-cryptsetup syste
 		t.Fatal(err)
 	}
 	return img
+}
+
+// ukiESPScript gives the raw image $1 the layout of the UKI image flavour:
+// a 512 MiB ESP (partition, type, label and volume ID kept), the /boot
+// partition after it as XBOOTLDR, and the partitions after the ESP (/boot,
+// the root last) moved right. The per-host install needs room for a second
+// copy of the UKI, more than the 106 MB ESP of the cloud image has.
+const ukiESPScript = `raw=$1 work=$2 new=$1.new
+attach() { l=$(losetup -P --show -f "$1"); udevadm settle || true; echo "$l"; }
+sec() { cat "/sys/class/block/$(basename "$1")/$2"; }
+old=$(attach "$raw")
+for p in "$old"p*; do
+	case "$(blkid -o value -s LABEL "$p")" in UEFI) esp=$p ;; BOOT) boot=$p ;; esac
+done
+espn=${esp##*p} estart=$(sec "$esp" start) want=$((512 * 2048))
+delta=$((want - $(sec "$esp" size)))
+[ "$delta" -gt 0 ] && [ $((delta % 2048)) -eq 0 ]
+truncate -s $(($(stat -c %s "$raw") + delta * 512)) "$new"
+sfdisk -d "$old" | grep -v -e '^last-lba' -e '^device:' | awk -v esp="$esp" -v boot="$boot" -v es="$estart" -v d="$delta" -v w="$want" -v old="${old}p" -v new="$new" '
+$1 ~ /^\/dev\// {
+	match($0, /start= *[0-9]+/); s = substr($0, RSTART + 6, RLENGTH - 6) + 0
+	if ($1 == esp) sub(/size= *[0-9]+/, "size=" w)
+	else if (s > es) sub(/start= *[0-9]+/, "start=" s + d)
+	if ($1 == boot) sub(/type=[0-9A-Fa-f-]+/, "type=BC13C2FF-59E6-4262-A352-B275FD6F7172")
+	sub("^" old, new)
+}
+{ print }' | sfdisk -q "$new"
+nl=$(attach "$new")
+for p in "$old"p*; do
+	n=${p##*p}
+	[ "$n" = "$espn" ] || dd if="$p" of="${nl}p$n" bs=4M conv=sparse status=none
+done
+serial=$(blkid -o value -s UUID "$esp" | tr -d -)
+mkfs.vfat -F 32 -n UEFI -i "$serial" "${nl}p$espn"
+mkdir -p "$work/a" "$work/b"
+mount -o ro "$esp" "$work/a"; mount "${nl}p$espn" "$work/b"
+cp -a "$work/a/." "$work/b/"; df -h "$work/b"
+umount "$work/a" "$work/b"
+losetup -d "$old" "$nl"
+sfdisk -d "$new"
+mv "$new" "$raw"; rm -rf "$work"`
+
+// reshapeUKIImage runs ukiESPScript on raw.
+func reshapeUKIImage(t *testing.T, raw, dir string) {
+	t.Helper()
+	out := runOutput(t, "give the image a 512 MiB ESP", "sh", "-ec", ukiESPScript, "sh", raw, filepath.Join(dir, "esp-move"))
+	t.Logf("UKI image layout:\n%s", out)
 }
 
 // pushUKIImage pushes the image with the UKI digest annotation, signs it
@@ -528,6 +578,9 @@ func requireUKIBound(t *testing.T, report string) {
 	}
 }
 
+// ukiPerHostParam is the per-host kernel parameter of the per-host scenario.
+const ukiPerHostParam = "booty.perhost=1"
+
 // TestDiskEncryptionUKIPerHostVM: the image ships an unsigned UKI. BOOTy
 // signs it and its PCR 11 policy with per-host keys that it wipes, and
 // reports the certificate, which the test enrolls in db like a
@@ -542,8 +595,12 @@ func TestDiskEncryptionUKIPerHostVM(t *testing.T) {
 	escrow := startEscrowServer(t)
 	vm := newUKIVM(t, dir)
 
-	out := vm.provision(ukiProvisionVars(ref, escrow.url, "per-host"), map[string]string{cosignTestKeyPath: cosignPEM, luksCAPath: escrow.caPEM})
-	for _, want := range []string{"image cosign signature verified", "UKI signed with per-host keys; the private keys are wiped", "UKI boot entry created"} {
+	vars := ukiProvisionVars(ref, escrow.url, "per-host")
+	// A per-host kernel parameter goes into the signed .cmdline (#968).
+	vars["EXTRA_KERNEL_PARAMS"] = ukiPerHostParam
+	out := vm.provision(vars, map[string]string{cosignTestKeyPath: cosignPEM, luksCAPath: escrow.caPEM})
+	for _, want := range []string{"image cosign signature verified", "UKI signed with per-host keys; the private keys are wiped", "UKI boot entry created",
+		"per-host kernel parameters go into the UKI .cmdline"} {
 		if !strings.Contains(string(out), want) {
 			t.Fatalf("provisioning log lacks %q", want)
 		}
@@ -563,12 +620,16 @@ func TestDiskEncryptionUKIPerHostVM(t *testing.T) {
 	}
 	requireUKIBound(t, report)
 
-	// 2. The TPM2 unlocks without a prompt.
+	// 2. The TPM2 unlocks without a prompt, and the per-host parameter is
+	// on the command line of the booted UKI.
 	report, prompted = vm.boot("tpm2 unlock", key)
 	if prompted {
 		t.Fatal("the TPM2 did not unlock the per-host signed UKI")
 	}
 	luksRequireLine(t, report, "ROOT_TYPE=crypt")
+	if c := luksField(report, "CMDLINE"); !strings.Contains(c, "booty.uki=v1") || !strings.Contains(c, ukiPerHostParam) {
+		t.Fatalf("/proc/cmdline %q lacks the image marker or the per-host parameter %s", c, ukiPerHostParam)
+	}
 	pcr7 := luksField(report, "PCR7")
 
 	// 3. Secure Boot off: PCR 7 differs, the recovery key unlocks.

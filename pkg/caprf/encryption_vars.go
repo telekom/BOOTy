@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"github.com/telekom/BOOTy/pkg/config"
@@ -37,6 +38,10 @@ func applyDiskEncryptionVar(cfg *config.MachineConfig, key, value string) (bool,
 		d.SkipSecureBootCheck, err = parseWatchdogBool(value)
 	case "DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK":
 		d.SkipInitrdUnlockCheck, err = parseWatchdogBool(value)
+	case "UKI_INPLACE_WRITE":
+		d.UKIInplaceWrite, err = parseWatchdogBool(value)
+	case "UKI_KEEP_IMAGE_CMDLINE":
+		d.UKIKeepImageCmdline, err = parseWatchdogBool(value)
 	default:
 		return false, nil
 	}
@@ -53,6 +58,22 @@ func lockedDiskEncryption(d *config.DiskEncryptionConfig) config.DiskEncryptionC
 	c := *d
 	c.Target = ""
 	return c
+}
+
+// ukiCmdlineLockViolations names the settings of the per-host kernel
+// parameters (pkg/provision Configurator.KernelParams) that cfg, a standby
+// payload or deploy archive, changes when ref, the base config, is in the
+// UKI mode: per-host UKI signing measures them into PCR 11.
+func ukiCmdlineLockViolations(ref, cfg *config.MachineConfig) []string {
+	if ref.Provision.DiskEncryption.UKI() && !reflect.DeepEqual(ukiCmdlineVars(ref), ukiCmdlineVars(cfg)) {
+		return []string{"UKI kernel command line (MACHINE_EXTRA_KERNEL_PARAMS, EXTRA_KERNEL_PARAMS, MACHINE_SERIAL_CONSOLE, GRUB_CMDLINE_MODE, cloud-init)"}
+	}
+	return nil
+}
+
+func ukiCmdlineVars(cfg *config.MachineConfig) []any {
+	p := &cfg.Provision
+	return []any{p.ExtraKernelParams, p.SerialConsole, p.GRUBCmdlineMode, p.CloudInit.Enabled, p.CloudInit.Datasource}
 }
 
 // EscrowRecoveryKey posts body, which holds the LUKS recovery key, to

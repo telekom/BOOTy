@@ -450,9 +450,33 @@ func (c *Configurator) ConfigureGRUB(ctx context.Context, cfg *config.MachineCon
 	return nil
 }
 
+// KernelParams returns the per-host kernel parameters that configure-grub
+// writes to the GRUB drop-in, in either GRUB_CMDLINE_MODE, space-separated.
+// Per-host UKI signing merges the same parameters into the UKI .cmdline.
+func (c *Configurator) KernelParams(cfg *config.MachineConfig) (string, error) {
+	var params string
+	var err error
+	if cfg != nil && cfg.LegacyGRUBCmdline() {
+		params, err = c.legacyKernelParams(cfg)
+	} else {
+		params, _, err = c.resolvedKernelParams(cfg)
+	}
+	return strings.Join(strings.Fields(params), " "), err
+}
+
 // grubCmdlineEntry renders the GRUB drop-in content and the console parameter
 // it carries.
 func (c *Configurator) grubCmdlineEntry(cfg *config.MachineConfig) (line, consoleParam string, err error) {
+	params, consoleParam, err := c.resolvedKernelParams(cfg)
+	if err != nil {
+		return "", "", err
+	}
+	return "GRUB_CMDLINE_LINUX=\"" + params + "\"\n" + grubSerialTerminalConfig(&c.serialConsole), consoleParam, nil
+}
+
+// resolvedKernelParams returns the kernel parameters of the resolved
+// GRUB_CMDLINE_MODE and the console parameter among them.
+func (c *Configurator) resolvedKernelParams(cfg *config.MachineConfig) (params, consoleParam string, err error) {
 	cloudInitDatasourceParam, err := cloudInitKernelDatasourceParam(cfg)
 	if err != nil {
 		return "", "", err
@@ -476,18 +500,18 @@ func (c *Configurator) grubCmdlineEntry(cfg *config.MachineConfig) (line, consol
 		kernelParams = append(kernelParams, consoleParam)
 	}
 
-	grubLine := fmt.Sprintf("GRUB_CMDLINE_LINUX=\"%s", strings.Join(kernelParams, " "))
+	params = strings.Join(kernelParams, " ")
 	if extraParams != "" {
-		grubLine += " " + extraParams
+		params += " " + extraParams
 	}
 	abRootParam, err := abRootKernelParam(cfg)
 	if err != nil {
 		return "", "", err
 	}
 	if abRootParam != "" {
-		grubLine += " " + abRootParam
+		params += " " + abRootParam
 	}
-	return grubLine + "\"\n" + grubSerialTerminalConfig(&c.serialConsole), consoleParam, nil
+	return params, consoleParam, nil
 }
 
 // resolvedExtraKernelParams validates operator kernel parameters and removes

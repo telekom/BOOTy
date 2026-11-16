@@ -681,8 +681,15 @@ unchanged):
 
 - exactly one UKI at `/EFI/Linux/<os-id>-<kernel release>.efi` on the ESP
   (UAPI Boot Loader Specification, type #2). BOOTy refuses zero or more than
-  one `.efi` file there. With `per-host` it replaces the file in place
-  with the signed one; with `ci` it does not change it;
+  one `.efi` file there. With `per-host` it replaces the file with the
+  signed one (see [Atomic install](#atomic-install)); with `ci` it does not
+  change it;
+- with `per-host`, an ESP of at least twice the UKI size plus margin: BOOTy
+  needs free space for a second copy of the UKI plus 4 MiB. The UKI image
+  flavour ships a 512 MiB ESP (partition 15, label `UEFI`), the `/boot`
+  partition after it as XBOOTLDR and the root last, and guarantees the UKI
+  size plus 32 MiB free. The 106 MB ESP of the Ubuntu cloud images is too
+  small for an 86 MB UKI (`UKI_INPLACE_WRITE=true` is the escape hatch);
 - the OCI manifest of the image carries the annotation
   `com.github.telekom.booty.uki.sha256` with the hex SHA-256 of that file
   as shipped. The cosign signature of the image covers the manifest, so the
@@ -743,11 +750,15 @@ Provisioning (BOOTy, Secure Boot off):
 3. `prepare-disk-encryption` checks the tools and the UKI: exactly one file, its SHA-256 equals the annotation,
    it is a PE with a `.linux` section, not a multi-profile UKI.
    - `per-host`: refuses a signed UKI or one with `.pcrsig` or `.pcrpkey`;
-     makes the keys; signs the expected PCR 11 values of the four default
-     boot phases (SHA-256 bank) of the UKI with the per-host `.pcrpkey`,
-     adds `.pcrpkey` and `.pcrsig`, signs the UKI for Secure Boot, checks
-     the result (signature, the new sections, the old ones unchanged),
-     writes it over the UKI and wipes the keys.
+     checks the free space of the ESP and the
+     [per-host kernel parameters](#per-host-kernel-parameters), both before
+     any key exists; makes the keys; sets the `.cmdline` to the one of the
+     image with the per-host kernel parameters appended; signs the
+     expected PCR 11 values of the four default boot phases (SHA-256 bank)
+     of the UKI with that `.cmdline` and the per-host `.pcrpkey`, adds
+     `.pcrpkey` and `.pcrsig`, signs the UKI for Secure Boot, checks the
+     result (signature, the new sections, the others unchanged), installs
+     it over the UKI atomically and wipes the keys.
    - `ci`: needs a Secure Boot signature, `.pcrsig` and `.pcrpkey`; checks
      the pinned key, and that `.pcrsig` holds the policy of the
      `enter-initrd` phase of this UKI signed by its `.pcrpkey` (a `.pcrsig`
@@ -790,6 +801,91 @@ anyone with the disk opens the volume. The provisioner turns Secure Boot on
 and checks the result (`cryptsetup luksDump`: one `systemd-tpm2` token with
 `tpm2-pubkey-pcrs: 11` and `tpm2-hash-pcrs: 7`, no key slot 1).
 
+### Per-host kernel parameters
+
+With `per-host` BOOTy builds the PCR 11 policy itself, so the per-host
+kernel parameters go into the signed UKI: the `.cmdline` becomes
+`<.cmdline of the image> <parameters>`, and the PCR 11 policy and the
+Secure Boot signature cover it like the rest of the UKI. The parameters are
+the ones that `configure-grub` writes to the GRUB drop-in
+`10-caprf-kernel-params.cfg`, so both boot entries get the same:
+`MACHINE_EXTRA_KERNEL_PARAMS` and `EXTRA_KERNEL_PARAMS`, the resolved
+serial console (`console=`, `MACHINE_SERIAL_CONSOLE`), and the cloud-init
+datasource (`ds=nocloud`, `ci.datasource=ConfigDrive`); with
+`GRUB_CMDLINE_MODE=append` the `ds=nocloud console=...` of that mode.
+Without parameters the `.cmdline` of the image stays as it is.
+
+The parameters must be printable ASCII without quotes or backslashes (the
+kernel and systemd strip quotes, so a quoted name would pass the deny
+list), and the `.cmdline` at most 2047
+bytes (`COMMAND_LINE_SIZE` of x86-64). Parameters that replace init, stop
+the boot in a shell, debug it or start other units are refused, as the PCR
+11 signature would bless them for every boot: `init`, `rdinit`, `single`,
+`s`, `S`, `1`, `emergency`, `rescue`, `rd.break`, `rd.shell`,
+`rd.emergency`, `rd.rescue`, `rd.debug`, `rd.udev.debug`,
+`rd.systemd.debug_shell`, `rd.systemd.unit`, `rd.systemd.run`,
+`rd.systemd.break`, `rd.systemd.wants`, `systemd.debug_shell`,
+`systemd.unit`, `systemd.run`, `systemd.break`, `systemd.wants`,
+`systemd.mask`, `rd.systemd.mask` (they could mask the TPM2 enrollment and
+keep the empty passphrase), `systemd.set_credential`,
+`systemd.set_credential_binary`, `systemd.import_credentials` (a unit
+drop-in credential can start a shell), `systemd.volatile` (a volatile
+`/etc` hides the enrollment unit),
+`systemd.run_success_action`, `systemd.run_failure_action`,
+`systemd.confirm_spawn`, `systemd.log_level`, `systemd.crash_shell`,
+`systemd.mount-extra` (a mount over `/etc` starts any unit), `rd.cmdline`
+(`rd.cmdline=ask` reads more parameters from the console, unmeasured),
+`root`, `mount.usr`, `roothash`, `usrhash` (after the initramfs unsealed the
+volume, another root in a signed boot phase could unseal it again),
+`kgdboc`, `kgdboc.kgdboc`, `kgdbwait`, `kgdbcon`, `ekgdboc` and `kgdbdbgp`
+(with or without a value; `-` and `_` are the same, as systemd reads them,
+and an `rd.` prefix does not count, as systemd reads every `systemd.*`
+setting as `rd.systemd.*` in the initramfs: `rd.debug` refuses `debug`
+too), and every word that starts with `-` (`-b`, and
+`--`, after which the kernel hands the rest to init as arguments such as
+`--unit=`). There is no override; such a parameter belongs in
+the image `.cmdline`, where the image pipeline decides. The refusal fails
+`prepare-disk-encryption` before any key exists.
+
+A standby payload or deploy archive can not change these settings in the
+UKI mode: it would change the measured command line of the signed UKI.
+
+BOOTy rewrites the `.cmdline` section in its PE code: the section keeps its
+address (a `.cmdline` of up to 2 KiB fits the 4 KiB section alignment of
+systemd-stub), the data of the later sections moves in the file, and
+BOOTy refuses the UKI when a data directory points into a section that
+moves, or when a debug directory entry has its data (a file offset) in one.
+
+`UKI_KEEP_IMAGE_CMDLINE=true` signs the image `.cmdline` unchanged, the
+behavior before, as a transitional escape hatch.
+
+With `ci` BOOTy holds no PCR policy key and can not change the signed
+`.cmdline`. The per-host kernel parameters reach the GRUB fallback entry
+only, and BOOTy logs a warning that names them; the run goes on, as a
+`ci` host always has some (the resolved serial console). Per-host
+parameters that the UKI boot needs go into the image `.cmdline`.
+
+### Atomic install
+
+With `per-host` BOOTy writes the signed UKI to `.<name>.efi.booty-tmp`
+next to it (no UKI loader picks up that name), syncs it, renames it over
+the UKI and syncs the directory. An interrupted install leaves the image
+UKI or the signed one; the next `prepare-disk-encryption` removes a
+leftover temporary file and reports a truncated UKI as such. FAT has no
+journal: a power loss during the rename itself can still leave the
+directory for `fsck.fat`, which `systemd-fsck` runs at boot; the rename is
+the best primitive FAT offers.
+
+Before it makes any key, BOOTy checks that the ESP has room for the
+temporary copy: the size of the UKI plus 4 MiB (the added sections, the
+certificate and cluster rounding). Otherwise `prepare-disk-encryption`
+fails with the needed and the free space. The UKI size is known only
+after `stream-image`, so the check can not run before `wipe-disks`; size
+the ESP of the UKI image flavour for at least twice the UKI plus margin.
+`UKI_INPLACE_WRITE=true` truncates and rewrites the UKI instead, the
+behavior before, for ESPs that cannot fit two copies; an interrupted write
+then leaves a truncated UKI that does not boot (the GRUB entry still does).
+
 ### Boot path
 
 The UKI boots directly from a firmware boot entry, verified against `db`.
@@ -811,7 +907,9 @@ Closed by `luks2-tpm2-uki`, compared with `luks2-tpm2`:
   anyway);
 - a changed kernel command line (`init=/bin/sh`, `rd.break`) from the
   console, a BMC or the boot loader: it is in `.cmdline`, measured and
-  signed; systemd-stub ignores overrides with Secure Boot on;
+  signed; systemd-stub ignores overrides with Secure Boot on. The per-host
+  kernel parameters are part of it, checked against a deny list and locked
+  against standby payloads;
 - booting another signed OS (a distribution live image) and extending PCR
   11 from there: PCR 7 differs (another `db` entry verified it);
 - booting with Secure Boot off: PCR 7 differs.
@@ -853,6 +951,9 @@ Remaining:
 | `IMAGE_COSIGN_PUBKEYS` | required: the UKI digest comes from the signed manifest |
 | `MODULE_SIGNING_TARGET` | `in-place` or, with `per-host`, the experimental `sysext`: the kernel must verify the root hash signature with the `db` certificate in `.platform` (see [dm-verity roots](module-signing.md#dm-verity-roots-experimental)) |
 | `DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE` | optional with `ci`: the pinned PCR policy key |
+| `MACHINE_EXTRA_KERNEL_PARAMS`, `EXTRA_KERNEL_PARAMS` | with `per-host` also in the UKI `.cmdline` ([Per-host kernel parameters](#per-host-kernel-parameters)); with `ci` GRUB only |
+| `UKI_KEEP_IMAGE_CMDLINE` | `true`: `per-host` signs the image `.cmdline` unchanged (transitional) |
+| `UKI_INPLACE_WRITE` | `true`: `per-host` rewrites the UKI in place, for an ESP without room for two copies (transitional) |
 | `DISK_ENCRYPTION_RECOVERY_KEY_URL`, `DISK_ENCRYPTION_TARGET`, `DISK_ENCRYPTION_ALLOW_FAILURE`, `DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK` | as for `luks2-tpm2` |
 | `DISK_ENCRYPTION_STATUS_URL` | not supported with the UKI mode yet (refused) |
 
@@ -885,10 +986,14 @@ sbsigntool installed, the crypttab above, a generic dracut initramfs),
 pushed to a local registry with the digest annotation and a cosign
 signature; OVMF with the Microsoft keys and swtpm.
 
-- per-host: BOOTy signs; the test enrolls the reported certificate in `db`;
-  the first Secure Boot boot binds (one token, `tpm2-pubkey-pcrs: 11`,
-  `tpm2-hash-pcrs: 7`, no key slot 1); the next unlocks with the TPM2; with
-  Secure Boot off the recovery key unlocks.
+- per-host: the test gives the image the layout of the UKI image flavour
+  (a 512 MiB ESP with the label and volume ID kept, `/boot` after it as
+  XBOOTLDR, the root last and moved right), as the 106 MB ESP of the cloud
+  image has no room for the atomic install; BOOTy signs with `EXTRA_KERNEL_PARAMS=booty.perhost=1`; the
+  test enrolls the reported certificate in `db`; the first Secure Boot boot
+  binds (one token, `tpm2-pubkey-pcrs: 11`, `tpm2-hash-pcrs: 7`, no key
+  slot 1); the next unlocks with the TPM2 and has `booty.perhost=1` in
+  `/proc/cmdline`; with Secure Boot off the recovery key unlocks.
 - ci: BOOTy leaves the UKI as it is; the first Secure Boot boot binds; an
   updated UKI signed with the same keys unlocks with the same token; a UKI
   signed for Secure Boot whose PCR 11 policy is signed by another key gets
@@ -897,4 +1002,7 @@ signature; OVMF with the Microsoft keys and swtpm.
 - No recovery key and no private key in any console log.
 
 Unit tests assert that `ci` never generates a key and that nothing of this
-runs with the defaults.
+runs with the defaults; the per-host `.cmdline`, its PCR 11 policy against
+`systemd-measure` output, the deny list and the payload lock; and the
+atomic install (a failed write keeps the old UKI, the free-space refusal, a
+leftover temporary file, a truncated UKI).

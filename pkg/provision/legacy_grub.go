@@ -41,15 +41,10 @@ func (c *Configurator) findUpdateGRUB() string {
 // CAPRF legacy provisioner: it appends "ds=nocloud <console> <extra>" to the
 // image GRUB_CMDLINE_LINUX and runs update-grub when the image has it.
 func (c *Configurator) configureGRUBLegacy(ctx context.Context, cfg *config.MachineConfig) error {
-	extra := strings.TrimSpace(cfg.Provision.ExtraKernelParams)
-	if strings.ContainsAny(extra, legacyGRUBUnsafe) {
-		return fmt.Errorf("unsafe characters in ExtraKernelParams: %q", extra)
-	}
-	abRoot, err := abRootKernelParam(cfg)
+	params, err := c.legacyKernelParams(cfg)
 	if err != nil {
 		return err
 	}
-	params := strings.Join(strings.Fields("ds=nocloud "+c.legacyConsoleParam()+" "+extra+" "+abRoot), " ")
 	line := fmt.Sprintf("GRUB_CMDLINE_LINUX=\"$GRUB_CMDLINE_LINUX %s\"\n", params)
 
 	// targetPath refuses paths that leave the target root through symlinks.
@@ -75,6 +70,20 @@ func (c *Configurator) configureGRUBLegacy(ctx context.Context, cfg *config.Mach
 		return fmt.Errorf("update-grub: %s: %w", string(out), err)
 	}
 	return nil
+}
+
+// legacyKernelParams returns "ds=nocloud <console> <extra>" of the legacy
+// drop-in.
+func (c *Configurator) legacyKernelParams(cfg *config.MachineConfig) (string, error) {
+	extra := strings.TrimSpace(cfg.Provision.ExtraKernelParams)
+	if strings.ContainsAny(extra, legacyGRUBUnsafe) {
+		return "", fmt.Errorf("unsafe characters in ExtraKernelParams: %q", extra)
+	}
+	abRoot, err := abRootKernelParam(cfg)
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(strings.Fields("ds=nocloud "+c.legacyConsoleParam()+" "+extra+" "+abRoot), " "), nil
 }
 
 // legacyConsoleParam returns console=ttyS0,115200n8, or ttyS1 on Lenovo

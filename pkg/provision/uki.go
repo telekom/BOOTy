@@ -16,13 +16,17 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"math/big"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/telekom/BOOTy/pkg/config"
 	"github.com/telekom/BOOTy/pkg/image"
@@ -63,7 +67,38 @@ const (
 	ukiTPM2PCRs = "7"
 	ukiKeyBits  = 2048
 	maxUKISize  = 512 << 20
+	// ukiTempSuffix names the temporary file of the atomic UKI install,
+	// .<name>.efi.booty-tmp next to the UKI: no UKI loader picks it up.
+	ukiTempSuffix = ".booty-tmp"
+	// ukiESPMargin is the ESP space that the atomic install needs on top
+	// of a second copy of the UKI: the sections that per-host signing
+	// adds, the certificate and FAT cluster rounding.
+	ukiESPMargin = 4 << 20
+	// ukiMaxCmdline is the longest UKI .cmdline: COMMAND_LINE_SIZE of
+	// x86-64 is 2048 bytes with the NUL.
+	ukiMaxCmdline = 2047
 )
+
+// ukiDeniedParams are kernel parameters that per-host signing does not
+// merge into the .cmdline of the UKI: they replace init, stop the boot in
+// a shell, debug it or start other units, and the PCR 11 signature would
+// bless them, or stop the TPM2 enrollment, or boot another root or /usr
+// after the initramfs unsealed the volume. Names compare with "-" as "_"
+// and without an "rd." prefix: systemd reads every systemd.* setting as
+// rd.systemd.* in the initramfs too. Words that start with "-" (-b, and "--", after
+// which the kernel passes the rest to init as arguments) are refused too.
+var ukiDeniedParams = []string{
+	"init", "rdinit", "single", "s", "S", "1", "emergency", "rescue",
+	"rd.break", "rd.shell", "rd.emergency", "rd.rescue", "rd.debug", "rd.udev.debug", "rd.systemd.debug_shell",
+	"rd.systemd.unit", "rd.systemd.run", "rd.systemd.break", "rd.systemd.wants",
+	"systemd.debug_shell", "systemd.unit", "systemd.run", "systemd.break", "systemd.wants",
+	"systemd.mask", "rd.systemd.mask", "systemd.set_credential", "systemd.set_credential_binary", "systemd.import_credentials",
+	"systemd.volatile",
+	"systemd.run_success_action", "systemd.run_failure_action", "systemd.confirm_spawn", "systemd.log_level",
+	"systemd.crash_shell", "systemd.mount_extra", "rd.cmdline",
+	"root", "mount.usr", "roothash", "usrhash",
+	"kgdboc", "kgdboc.kgdboc", "kgdbwait", "kgdbcon", "ekgdboc", "kgdbdbgp",
+}
 
 // ukiPerHostRefused are UKI sections that per-host signing refuses: the
 // ones that it adds, and the ones whose PCR 11 measurement
@@ -103,6 +138,16 @@ var (
 	// newUKISigningKey generates a per-host key. SECUREBOOT_SIGNING=ci must
 	// never call it (TestPrepareUKICIMakesNoKey).
 	newUKISigningKey = func() (*rsa.PrivateKey, error) { return rsa.GenerateKey(rand.Reader, ukiKeyBits) }
+	// espFreeBytes is the space that an unprivileged writer may still use.
+	espFreeBytes = func(dir string) (uint64, error) {
+		var st unix.Statfs_t
+		if err := unix.Statfs(dir, &st); err != nil {
+			return 0, fmt.Errorf("statfs %s: %w", dir, err)
+		}
+		return st.Bavail * uint64(st.Bsize), nil //nolint:gosec // block size is positive
+	}
+	// syncUKIFile flushes the temporary UKI before the rename.
+	syncUKIFile = (*os.File).Sync
 )
 
 // loadUKIDigest reads the UKI digest from the manifest of the verified
@@ -171,6 +216,9 @@ func (o *Orchestrator) prepareUKI(root, esp string) (*ukiState, error) {
 	var pubPEM, sigJSON []byte
 	switch signing {
 	case config.SigningCI:
+		if p, perr := o.config.KernelParams(o.cfg); perr == nil && p != "" {
+			o.log.Warn("the UKI signed by the image pipeline keeps its .cmdline: the per-host kernel parameters reach the GRUB fallback entry only", "params", p)
+		}
 		pubPEM, sigJSON, err = o.checkCIUKI(u.sections, u.signed)
 	case config.SigningPerHost:
 		pubPEM, sigJSON, err = o.installPerHostUKI(esp, st, u)
@@ -213,6 +261,9 @@ func (o *Orchestrator) loadImageUKI(root, esp string) (*imageUKI, error) {
 		return nil, err
 	}
 	if sum := sha256.Sum256(u.data); hex.EncodeToString(sum[:]) != o.ukiDigest {
+		if _, _, err := ukiSections(u.data); err != nil {
+			return nil, fmt.Errorf("%s is truncated or corrupt (%d bytes; an interrupted install?), not the UKI of the image: %w", u.rel, len(u.data), err)
+		}
 		return nil, fmt.Errorf("%s has SHA-256 %x, the signed image manifest says %s", u.rel, sum, o.ukiDigest)
 	}
 	if u.sections, u.signed, err = ukiSections(u.data); err != nil {
@@ -227,14 +278,33 @@ func (o *Orchestrator) loadImageUKI(root, esp string) (*imageUKI, error) {
 	return u, nil
 }
 
-// installPerHostUKI signs the unsigned UKI with per-host keys and replaces
-// it on the ESP, in place: the ESP may not fit two copies. u.data becomes
-// the signed UKI.
+// installPerHostUKI signs the unsigned UKI with per-host keys, with the
+// per-host kernel parameters in its .cmdline, and replaces it on the ESP.
+// u.data becomes the signed UKI.
 func (o *Orchestrator) installPerHostUKI(esp string, st *ukiState, u *imageUKI) (pubPEM, sigJSON []byte, err error) {
 	if u.signed {
 		return nil, nil, errors.New("already signed; SECUREBOOT_SIGNING=per-host needs the unsigned UKI")
 	}
-	signed, pubPEM, sigJSON, err := o.signUKIPerHost(st, u.data, u.sections)
+	inplace := o.cfg.Provision.DiskEncryption.UKIInplaceWrite
+	if !inplace {
+		if err := checkESPRoom(esp, len(u.data)); err != nil {
+			return nil, nil, err
+		}
+	}
+	cmdline, err := o.ukiCmdline(u.sections["cmdline"])
+	if err != nil {
+		return nil, nil, err
+	}
+	data, sections := u.data, u.sections
+	if cmdline != nil {
+		// Before signUKIPerHost, so the PCR 11 policy covers it.
+		if data, err = replacePESection(data, ".cmdline", cmdline); err != nil {
+			return nil, nil, fmt.Errorf("set the per-host .cmdline: %w", err)
+		}
+		sections = maps.Clone(sections)
+		sections["cmdline"] = cmdline
+	}
+	signed, pubPEM, sigJSON, err := o.signUKIPerHost(st, data, sections)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -243,7 +313,7 @@ func (o *Orchestrator) installPerHostUKI(esp string, st *ukiState, u *imageUKI) 
 		return nil, nil, fmt.Errorf("open the ESP: %w", err)
 	}
 	defer espRoot.Close() //nolint:errcheck // closed after the write returned
-	if err := espRoot.WriteFile(u.rel, signed, 0o644); err != nil {
+	if err := installUKIFile(espRoot, u.rel, signed, inplace); err != nil {
 		return nil, nil, fmt.Errorf("install the signed UKI: %w", err)
 	}
 	u.data = signed
@@ -254,7 +324,126 @@ func (o *Orchestrator) installPerHostUKI(esp string, st *ukiState, u *imageUKI) 
 	return pubPEM, sigJSON, nil
 }
 
-// readImageUKI returns the one UKI below /EFI/Linux of the ESP.
+// ukiCmdline returns the .cmdline for per-host signing: the one of the
+// image with the per-host kernel parameters of the GRUB drop-in appended,
+// or nil to keep it (no parameters, UKI_KEEP_IMAGE_CMDLINE).
+func (o *Orchestrator) ukiCmdline(imageCmdline []byte) ([]byte, error) {
+	if o.cfg.Provision.DiskEncryption.UKIKeepImageCmdline {
+		return nil, nil
+	}
+	params, err := o.config.KernelParams(o.cfg)
+	if err != nil {
+		return nil, fmt.Errorf("per-host kernel parameters: %w", err)
+	}
+	if params == "" {
+		return nil, nil
+	}
+	if err := checkUKIKernelParams(params); err != nil {
+		return nil, err
+	}
+	base := bytes.TrimRight(imageCmdline, "\x00 \t\n")
+	cmdline := slices.Concat(base, []byte(" "+params), imageCmdline[len(base):])
+	if len(bytes.TrimRight(cmdline, "\x00")) > ukiMaxCmdline {
+		return nil, fmt.Errorf("the UKI .cmdline with the per-host kernel parameters is longer than %d bytes", ukiMaxCmdline)
+	}
+	o.log.Info("per-host kernel parameters go into the UKI .cmdline", "params", params)
+	return cmdline, nil
+}
+
+// checkUKIKernelParams refuses parameters that are not printable ASCII or
+// in ukiDeniedParams.
+func checkUKIKernelParams(params string) error {
+	for _, c := range []byte(params) {
+		if c < ' ' || c > '~' {
+			return fmt.Errorf("per-host kernel parameters for the UKI must be printable ASCII: %q", params)
+		}
+	}
+	// The kernel and systemd strip quotes, so a quoted name could pass the
+	// deny list.
+	if strings.ContainsAny(params, "\"'\\") {
+		return fmt.Errorf("per-host kernel parameters for the UKI must not contain quotes or backslashes: %q", params)
+	}
+	norm := func(s string) string { return strings.TrimPrefix(strings.ReplaceAll(s, "-", "_"), "rd.") }
+	for p := range strings.FieldsSeq(params) {
+		name, _, _ := strings.Cut(p, "=")
+		if strings.HasPrefix(name, "-") {
+			return fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: words that start with - go to init (docs/disk-encryption.md#per-host-kernel-parameters)", name)
+		}
+		if slices.ContainsFunc(ukiDeniedParams, func(d string) bool { return norm(d) == norm(name) }) {
+			return fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: it debugs the boot or opens a shell (docs/disk-encryption.md#per-host-kernel-parameters)", name)
+		}
+	}
+	return nil
+}
+
+// checkESPRoom checks that the ESP has room for a second copy of the UKI
+// of size bytes, which the atomic install writes before the rename.
+func checkESPRoom(esp string, size int) error {
+	free, err := espFreeBytes(esp)
+	if err != nil {
+		return fmt.Errorf("free space of the ESP: %w", err)
+	}
+	need := uint64(size) + ukiESPMargin //nolint:gosec // a file size
+	if free < need {
+		return fmt.Errorf("the ESP has %d MiB free, installing the signed UKI atomically needs %d MiB (a second copy of the %d MiB UKI and %d MiB margin): "+
+			"make the ESP at least twice the UKI size plus margin, or set UKI_INPLACE_WRITE=true", free>>20, (need+1<<20-1)>>20, (size+1<<20-1)>>20, ukiESPMargin>>20)
+	}
+	return nil
+}
+
+// ukiTempPath is the temporary file of the atomic install of rel.
+func ukiTempPath(rel string) string {
+	return path.Join(path.Dir(rel), "."+path.Base(rel)+ukiTempSuffix)
+}
+
+// installUKIFile replaces rel below esp with data: written to a temporary
+// file in the same directory, synced, renamed over rel, and the directory
+// synced, so an interruption leaves the old or the new UKI. FAT has no
+// journal: a power loss during the rename can still need fsck.fat, which
+// systemd-fsck runs at boot. inplace truncates and rewrites rel instead.
+func installUKIFile(esp *os.Root, rel string, data []byte, inplace bool) (err error) {
+	if inplace {
+		return esp.WriteFile(rel, data, 0o644) //nolint:wrapcheck // wrapped by the caller
+	}
+	tmp := ukiTempPath(rel)
+	if err := esp.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove %s: %w", tmp, err)
+	}
+	f, err := esp.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", tmp, err)
+	}
+	defer func() {
+		if err != nil {
+			_ = f.Close()
+			_ = esp.Remove(tmp)
+		}
+	}()
+	if _, err = f.Write(data); err != nil {
+		return fmt.Errorf("write %s: %w", tmp, err)
+	}
+	if err = syncUKIFile(f); err != nil {
+		return fmt.Errorf("sync %s: %w", tmp, err)
+	}
+	if err = f.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", tmp, err)
+	}
+	if err = esp.Rename(tmp, rel); err != nil {
+		return fmt.Errorf("rename %s to %s: %w", tmp, rel, err)
+	}
+	d, err := esp.Open(path.Dir(rel))
+	if err != nil {
+		return fmt.Errorf("open %s: %w", path.Dir(rel), err)
+	}
+	defer d.Close() //nolint:errcheck // synced below
+	if err := d.Sync(); err != nil {
+		return fmt.Errorf("sync %s: %w", path.Dir(rel), err)
+	}
+	return nil
+}
+
+// readImageUKI returns the one UKI below /EFI/Linux of the ESP. It removes
+// a temporary file that an interrupted atomic install left.
 func readImageUKI(esp *os.Root) (rel string, data []byte, err error) {
 	entries, err := fs.ReadDir(esp.FS(), ukiESPDir)
 	if err != nil {
@@ -262,6 +451,13 @@ func readImageUKI(esp *os.Root) (rel string, data []byte, err error) {
 	}
 	var names []string
 	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") && strings.HasSuffix(e.Name(), ukiTempSuffix) {
+			if err := esp.Remove(path.Join(ukiESPDir, e.Name())); err != nil {
+				return "", nil, fmt.Errorf("remove the leftover %s: %w", e.Name(), err)
+			}
+			slog.Info("removed the temporary file of an interrupted UKI install", "file", path.Join(ukiESPDir, e.Name()))
+			continue
+		}
 		if e.Type().IsRegular() && strings.EqualFold(path.Ext(e.Name()), ".efi") {
 			names = append(names, path.Join(ukiESPDir, e.Name()))
 		}
