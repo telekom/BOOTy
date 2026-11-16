@@ -316,6 +316,7 @@ func (o *Orchestrator) installPerHostUKI(esp string, st *ukiState, u *imageUKI) 
 	if err := installUKIFile(espRoot, u.rel, signed, inplace); err != nil {
 		return nil, nil, fmt.Errorf("install the signed UKI: %w", err)
 	}
+	o.log.Info("UKI installed", "path", filepath.Join(esp, u.rel), "atomic", !inplace, "bytes", len(signed))
 	u.data = signed
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: st.cert})
 	if err := writeTargetRootFile(esp, filepath.Join(esp, ukiCertESPPath), certPEM); err != nil {
