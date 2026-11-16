@@ -97,7 +97,7 @@ func TestUKIPerHostCmdlineRefused(t *testing.T) {
 		"systemd.unit=rescue.target", "rd.systemd.break=pre-switch-root", "systemd.break=pre-basic", "systemd.wants=debug-shell.service",
 		"rd.systemd.wants=debug-shell.service", "systemd.mask=booty-luks-tpm2-enroll.service", "rd.systemd.mask=x.service",
 		"systemd.set_credential=a:b", "systemd.set-credential-binary=systemd.unit-dropin.multi-user.target:W1VuaXRdCg==",
-		"systemd.import_credentials=1", "-- --unit=debug-shell.service", "-b", "booty.x=é", strings.Repeat("a", ukiMaxCmdline)} {
+		"systemd.import_credentials=1", "systemd.volatile=yes", "-- --unit=debug-shell.service", "-b", "booty.x=é", strings.Repeat("a", ukiMaxCmdline)} {
 		o, _, root, esp := ukiTestHost(t, config.SigningPerHost, perHostUKI(t))
 		o.cfg.Provision.SerialConsole = "none"
 		o.cfg.Provision.ExtraKernelParams = params
@@ -117,6 +117,37 @@ func TestUKIPerHostCmdlineRefused(t *testing.T) {
 	}
 	if err := checkUKIKernelParams("hugepages=16 isolcpus=2-3 console=ttyS0,115200n8 ds=nocloud"); err != nil {
 		t.Errorf("ordinary parameters refused: %v", err)
+	}
+}
+
+// TestReplacePESectionMovesLaterSections: a .cmdline that grows past
+// FileAlignment moves the data of the later section in the file, not its
+// address.
+func TestReplacePESectionMovesLaterSections(t *testing.T) {
+	uki := perHostUKI(t) // .linux, .cmdline, .osrel; 0x200 each
+	// SectionAlignment 0x1000 with a section every 0x1000, as systemd-stub.
+	binary.LittleEndian.PutUint32(uki[0x58+32:], 0x1000)
+	for i := range 3 {
+		binary.LittleEndian.PutUint32(uki[0x148+40*i+12:], uint32(0x1000*(i+1)))
+	}
+	osrelPtr := binary.LittleEndian.Uint32(uki[0x148+2*40+20:])
+	cmdline := []byte("root=x " + strings.Repeat("a", 0x300))
+	out, err := replacePESection(uki, ".cmdline", cmdline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := binary.LittleEndian.Uint32(out[0x148+2*40+20:]); got != osrelPtr+0x200 {
+		t.Fatalf(".osrel PointerToRawData %#x, want %#x", got, osrelPtr+0x200)
+	}
+	if va := binary.LittleEndian.Uint32(out[0x148+2*40+12:]); va != 0x3000 {
+		t.Fatalf(".osrel moved to address %#x", va)
+	}
+	secs, _, err := ukiSections(out)
+	if err != nil || !bytes.Equal(secs["cmdline"], cmdline) || string(secs["osrel"]) != "ID=x" || string(secs["linux"]) != "k" {
+		t.Fatalf("sections %q, %v", secs, err)
+	}
+	if len(out) != len(uki)+0x200 {
+		t.Fatalf("%d bytes, want %d", len(out), len(uki)+0x200)
 	}
 }
 

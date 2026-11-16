@@ -829,7 +829,8 @@ the boot in a shell, debug it or start other units are refused, as the PCR
 `systemd.mask`, `rd.systemd.mask` (they could mask the TPM2 enrollment and
 keep the empty passphrase), `systemd.set_credential`,
 `systemd.set_credential_binary`, `systemd.import_credentials` (a unit
-drop-in credential can start a shell),
+drop-in credential can start a shell), `systemd.volatile` (a volatile
+`/etc` hides the enrollment unit),
 `systemd.run_success_action`, `systemd.run_failure_action`,
 `systemd.confirm_spawn`, `systemd.log_level`, `kgdboc`, `kgdbwait`,
 `kgdbcon` and `ekgdboc` (with or without a value; `-` and `_` are the same,

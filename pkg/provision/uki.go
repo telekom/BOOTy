@@ -91,6 +91,7 @@ var ukiDeniedParams = []string{
 	"rd.systemd.unit", "rd.systemd.run", "rd.systemd.break", "rd.systemd.wants",
 	"systemd.debug_shell", "systemd.unit", "systemd.run", "systemd.break", "systemd.wants",
 	"systemd.mask", "rd.systemd.mask", "systemd.set_credential", "systemd.set_credential_binary", "systemd.import_credentials",
+	"systemd.volatile",
 	"systemd.run_success_action", "systemd.run_failure_action", "systemd.confirm_spawn", "systemd.log_level",
 	"kgdboc", "kgdbwait", "kgdbcon", "ekgdboc",
 }
