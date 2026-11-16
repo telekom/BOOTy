@@ -3048,10 +3048,15 @@ func TestRescueConfig_WiresAllFields(t *testing.T) {
 	cfg.Rescue.PasswordHash = "$6$rounds=4096$salt$hash"
 	cfg.Rescue.Timeout = 120
 	cfg.Rescue.AutoMountDisks = true
+	cfg.Rescue.SSHOPKProviders = "https://idp.example booty 24h"
+	cfg.Rescue.SSHOPKPolicy = "root alice@example.com https://idp.example"
 	provider := &mockProvider{}
 	o := newTestOrchestrator(t, cfg, provider)
 	rc := o.RescueConfig()
 
+	if rc.OPKProviders != cfg.Rescue.SSHOPKProviders || rc.OPKPolicy != cfg.Rescue.SSHOPKPolicy {
+		t.Errorf("OPKProviders, OPKPolicy = %q, %q", rc.OPKProviders, rc.OPKPolicy)
+	}
 	if rc.Mode != "shell" {
 		t.Errorf("Mode = %q, want shell", rc.Mode)
 	}

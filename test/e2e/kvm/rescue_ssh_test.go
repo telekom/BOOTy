@@ -15,10 +15,10 @@ import (
 	"time"
 )
 
-// TestRescueSSHLoginQEMU boots the default flavor (its dropbear and its
+// TestRescueSSHLoginQEMU boots the default flavor (its rescue SSH server and its
 // /etc/passwd), lets the provision fail on an unreachable image, and logs
 // in to the rescue shell over SSH with each of two RESCUE_SSH_PUBKEY keys.
-// Without a root entry in /etc/passwd, dropbear refused every login
+// Without a root entry in /etc/passwd, the old dropbear refused every login
 // ("nonexistent user"). The hardened server must refuse password login
 // (although RESCUE_PASSWORD_HASH is set), an RSA host key, group14 key
 // exchange, TCP forwarding and the SFTP subsystem.

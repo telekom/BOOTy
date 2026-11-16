@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -15,10 +14,7 @@ import (
 	exec "github.com/telekom/BOOTy/pkg/executil"
 )
 
-var (
-	rootSSHDir = "/root/.ssh"
-	shadowPath = "/etc/shadow"
-)
+var shadowPath = "/etc/shadow"
 
 var supportedPasswordHashPrefixes = []string{
 	"$1$",
@@ -64,14 +60,23 @@ type Config struct {
 	PasswordHash   string        `json:"passwordHash,omitempty"`
 	AutoMountDisks bool          `json:"autoMountDisks,omitempty"`
 	NetworkConfig  bool          `json:"networkConfig,omitempty"`
-	// LegacySSH starts dropbear without the hardening flags (password
-	// login, port forwarding, no idle timeout): RESCUE_SSH_HARDENED=false.
+	// LegacySSH turns the rescue SSH hardening off (password login also
+	// with keys, RSA keys and host key, group14, HMAC-SHA1, port
+	// forwarding, no idle timeout): RESCUE_SSH_HARDENED=false.
 	LegacySSH bool `json:"legacySSH,omitempty"`
 	// SSHKeyConfigured is set when RESCUE_SSH_PUBKEY has an entry, valid or
 	// not: login then stays key-only, so a malformed key never turns the
 	// password login on.
 	SSHKeyConfigured bool `json:"sshKeyConfigured,omitempty"`
+	// OPKProviders and OPKPolicy are RESCUE_SSH_OPK_PROVIDERS and
+	// RESCUE_SSH_OPK_POLICY. With either set, the rescue SSH server also
+	// accepts opkssh PK Token keys, and login is key-only.
+	OPKProviders string `json:"opkProviders,omitempty"`
+	OPKPolicy    string `json:"opkPolicy,omitempty"`
 }
+
+// errOPKUnsupported is the error of a BOOTy built with the no_opkssh tag.
+var errOPKUnsupported = errors.New("this BOOTy build has no opkssh support (no_opkssh)")
 
 // Validate checks the rescue config.
 func (c *Config) Validate() error {
@@ -194,17 +199,13 @@ func Setup(ctx context.Context, cfg *Config) error {
 		return nil
 	}
 
-	if err := setupSSHKeys(cfg.SSHKeys); err != nil {
-		return fmt.Errorf("setting up SSH keys: %w", err)
-	}
-
 	if cfg.PasswordHash != "" {
 		if err := setupPasswordHash(cfg.PasswordHash); err != nil {
 			return fmt.Errorf("setting up password: %w", err)
 		}
 	}
 
-	if err := startDropbear(ctx, cfg); err != nil {
+	if err := startRescueSSH(ctx, cfg); err != nil {
 		slog.Warn("could not start SSH daemon", "error", err)
 	}
 
@@ -214,34 +215,6 @@ func Setup(ctx context.Context, cfg *Config) error {
 		}
 	}
 
-	return nil
-}
-
-// setupSSHKeys writes authorized keys for root. Without keys it removes an
-// authorized_keys file that something else put into the ramdisk (a deploy
-// archive with PROVISIONER_FILES_TARGET=ramdisk), so only the trusted
-// configuration decides who may log in.
-func setupSSHKeys(keys []string) error {
-	if len(keys) == 0 {
-		err := os.Remove(filepath.Join(rootSSHDir, "authorized_keys"))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("removing stale authorized_keys: %w", err)
-		}
-		return nil
-	}
-
-	if err := os.MkdirAll(rootSSHDir, 0o700); err != nil {
-		return fmt.Errorf("creating %s: %w", rootSSHDir, err)
-	}
-
-	content := ""
-	for _, k := range keys {
-		content += k + "\n"
-	}
-
-	if err := os.WriteFile(filepath.Join(rootSSHDir, "authorized_keys"), []byte(content), 0o600); err != nil {
-		return fmt.Errorf("writing authorized_keys: %w", err)
-	}
 	return nil
 }
 
@@ -302,105 +275,6 @@ func validatePasswordHash(hash string) error {
 		}
 	}
 	return fmt.Errorf("invalid rescue password hash: unsupported Linux shadow hash prefix")
-}
-
-// Host keys, generated on every boot (the ramdisk starts empty). The RSA
-// key exists only with RESCUE_SSH_HARDENED=false and a dropbear built with
-// DROPBEAR_HARDENED=false.
-const (
-	hostKeyPath    = "/etc/dropbear/dropbear_ed25519_host_key"
-	rsaHostKeyPath = "/etc/dropbear/dropbear_rsa_host_key"
-)
-
-// sshIdleTimeout closes rescue SSH sessions without traffic, in seconds.
-const sshIdleTimeout = "900"
-
-// dropbearArgs returns the dropbear command line. By default: no password
-// login once a key is configured, no local or remote port forwarding, and
-// an idle timeout. Password login stays only for a password hash without a
-// key (not even a malformed one), so such setups keep a way in.
-func dropbearArgs(cfg *Config, hostKeys []string) []string {
-	var args []string
-	for _, k := range hostKeys {
-		args = append(args, "-r", k)
-	}
-	if !cfg.LegacySSH {
-		if len(cfg.SSHKeys) > 0 || cfg.SSHKeyConfigured || cfg.PasswordHash == "" {
-			args = append(args, "-s")
-		}
-		args = append(args, "-j", "-k", "-I", sshIdleTimeout)
-	}
-	return append(args, "-F", "-E", "-p", "22")
-}
-
-// startDropbear starts the dropbear SSH daemon if available.
-func startDropbear(ctx context.Context, cfg *Config) error {
-	path, err := exec.LookPath("dropbear")
-	if err != nil {
-		return fmt.Errorf("dropbear not found: %w", err)
-	}
-
-	hostKeys, err := generateHostKeys(ctx, cfg)
-	if err != nil {
-		return err
-	}
-
-	switch {
-	case cfg.LegacySSH:
-		slog.Warn("rescue SSH hardening disabled (RESCUE_SSH_HARDENED=false): password login and port forwarding allowed, no idle timeout")
-	case len(cfg.SSHKeys) == 0 && cfg.SSHKeyConfigured:
-		slog.Warn("rescue SSH has no valid key in RESCUE_SSH_PUBKEY: SSH login is refused, also with a password hash")
-	case len(cfg.SSHKeys) == 0 && cfg.PasswordHash != "":
-		slog.Warn("rescue SSH allows password login: a password hash is set and no SSH key")
-	}
-
-	cmd := exec.CommandContext(ctx, path, dropbearArgs(cfg, hostKeys)...) //nolint:gosec // fixed args
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting dropbear: %w", err)
-	}
-
-	// Reap the child process in the background to avoid zombies (BOOTy is PID 1).
-	go func() { _ = cmd.Wait() }()
-
-	fmt.Printf("SSH daemon started on port 22 (PID %d)\n", cmd.Process.Pid) //nolint:forbidigo // rescue mode output
-	return nil
-}
-
-// generateHostKeys creates the Ed25519 host key and, for RESCUE_SSH_HARDENED
-// =false, an RSA host key when the dropbear build supports RSA (for old
-// clients), and returns the key files to load.
-func generateHostKeys(ctx context.Context, cfg *Config) ([]string, error) {
-	keygenPath, err := exec.LookPath("dropbearkey")
-	if err != nil {
-		return nil, fmt.Errorf("dropbearkey not found: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(hostKeyPath), 0o700); err != nil {
-		return nil, fmt.Errorf("creating dropbear dir: %w", err)
-	}
-	keygen := func(keyType, path string) error {
-		if _, err := os.Stat(path); err == nil {
-			return nil
-		}
-		out, err := exec.CommandContext(ctx, keygenPath, "-t", keyType, "-f", path).CombinedOutput() //nolint:gosec // fixed args
-		if err != nil {
-			return fmt.Errorf("generating %s host key: %w\n%s", keyType, err, string(out))
-		}
-		return nil
-	}
-	if err := keygen("ed25519", hostKeyPath); err != nil {
-		return nil, err
-	}
-	keys := []string{hostKeyPath}
-	if cfg.LegacySSH {
-		if err := keygen("rsa", rsaHostKeyPath); err != nil {
-			slog.Info("no RSA host key: this dropbear build has no RSA support", "error", err)
-		} else {
-			keys = append(keys, rsaHostKeyPath)
-		}
-	}
-	return keys, nil
 }
 
 // autoMountDisks discovers block devices and mounts them under /mnt/rescue/.

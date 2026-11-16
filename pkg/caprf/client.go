@@ -1293,6 +1293,8 @@ func applyStringVar(cfg *config.MachineConfig, key, value string) bool {
 		"RESCUE_MODE":                 &cfg.Rescue.Mode,
 		"RESCUE_SSH_PUBKEY":           &cfg.Rescue.SSHPubKey,
 		"RESCUE_PASSWORD_HASH":        &cfg.Rescue.PasswordHash,
+		"RESCUE_SSH_OPK_PROVIDERS":    &cfg.Rescue.SSHOPKProviders,
+		"RESCUE_SSH_OPK_POLICY":       &cfg.Rescue.SSHOPKPolicy,
 		"CLOUDINIT_DATASOURCE":        &cfg.Provision.CloudInit.Datasource,
 		"OVERLAYFS_MODE":              &cfg.Provision.OverlayFS.Mode,
 		"OVERLAYFS_DEVICE":            &cfg.Provision.OverlayFS.Device,
