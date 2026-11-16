@@ -66,6 +66,13 @@ type DiskEncryptionConfig struct {
 	// Default: false
 	SkipSecureBootCheck bool `yaml:"skipSecureBootCheck" json:"skipSecureBootCheck"`
 
+	// SkipInitrdUnlockCheck lets phase 2 of the TPM2 enrollment remove key
+	// slot 1 without the proof that the initramfs unlocked the root with
+	// the TPM2 on that boot. Transitional escape hatch, not for the UKI
+	// mode.
+	// Default: false
+	SkipInitrdUnlockCheck bool `yaml:"skipInitrdUnlockCheck" json:"skipInitrdUnlockCheck"`
+
 	// AllowFailure provisions without encryption when the checks before
 	// the first disk change fail (no TPM, image without the tools,
 	// unsupported layout). Errors after that always fail the run.
