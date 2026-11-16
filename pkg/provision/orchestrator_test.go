@@ -5216,7 +5216,9 @@ func TestNoHostWriterRunsAfterCopyMachineFiles(t *testing.T) {
 	allowed := map[string]bool{
 		"run-machine-commands":    true,
 		"run-post-provision-cmds": true,
-		"create-efi-boot-entry":   true,
+		// Reads the update files through os.Root, writes firmware variables.
+		"apply-secureboot-updates": true,
+		"create-efi-boot-entry":    true,
 		// Disk mirroring (#581): copies the ESP at block level and remounts
 		// /boot/efi through mountBoot, which refuses a mountpoint that
 		// resolves outside the target root.

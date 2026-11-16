@@ -1950,6 +1950,8 @@ func applyOptionalBoolVar(cfg *config.MachineConfig, key, value string) (bool, e
 		"OOB_EFI_VAR":                &cfg.Telemetry.OOBEFIVar,
 		"LLDP_EMIT_ALL":              &cfg.Network.LLDP.EmitAll,
 		"LLDP_DISABLE_FW_AGENT":      &cfg.Network.LLDP.DisableFirmwareAgent,
+		// Default on: a typo must not turn it off.
+		"SECUREBOOT_APPLY_DBX_UPDATES": &cfg.Provision.SecureBoot.ApplyDBXUpdates,
 	}[key]; ok {
 		// A typo must not silently pick a value, so only booleans parse.
 		v, err := strconv.ParseBool(value)
