@@ -214,6 +214,10 @@ EXTRA_KERNEL_PARAMS=intel_iommu=on
   [GoBGP and EVPN](configuration.md#gobgp-and-evpn) and
   [FRR](configuration.md#frr)), `MODE`, `DRY_RUN` and `CAPRF_LEGACY_COMPAT`.
   The command type selects the mode.
+- A payload can not change the rescue login (`RESCUE_SSH_PUBKEY`,
+  `RESCUE_PASSWORD_HASH`, `RESCUE_SSH_HARDENED`): a vars payload that does
+  is refused, a deploy archive keeps the values of `/deploy/vars`. A failed
+  command drops to the rescue shell of `/deploy/vars`.
 - A payload can change the image, but not the policy its signature is
   checked against: the `IMAGE_COSIGN_*` and `SYSEXT_COSIGN_*` options (keys,
   trusted root, identity, issuer) are fixed too. With such a policy in
@@ -527,9 +531,10 @@ In the rescue shell, `booty lldp neighbors` and `booty lldp status` show
 the LLDP neighbors and what BOOTy sends, without `lldpcli`; see
 [LLDP diagnosis](networking.md#lldp-diagnosis-in-the-rescue-shell).
 
-For `shell` and `wait`, BOOTy installs `RESCUE_SSH_PUBKEY` for root, sets
-`RESCUE_PASSWORD_HASH`, starts `dropbear` if the ramdisk has it, and mounts
-the disks when `RESCUE_AUTO_MOUNT=true`.
+For `shell` and `wait`, BOOTy installs the `RESCUE_SSH_PUBKEY` keys for root,
+sets `RESCUE_PASSWORD_HASH`, starts `dropbear` if the ramdisk has it, and mounts
+the disks when `RESCUE_AUTO_MOUNT=true`. Once a key is set, SSH login is
+key-only; see [Rescue SSH server](configuration.md#rescue-ssh-server).
 
 ## Hardware watchdog
 

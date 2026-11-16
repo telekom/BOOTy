@@ -164,11 +164,12 @@ func TestOpenEncryptedVGProbeError(t *testing.T) {
 	}
 }
 
-// Without LVM the dracut and GRUB files are those of #939, byte for byte.
+// Without LVM the dracut and GRUB files are those of #939, byte for byte,
+// plus the initramfs drop-in of the TPM2 unlock check (#963).
 func TestEncryptionFilesWithoutLVMUnchanged(t *testing.T) {
 	libs := []string{"/usr/lib/a.so", "/usr/lib/b.so"}
 	if got := luksDracutConfText(libs, false, true); got != "# Written by BOOTy: unlock the LUKS2 volume in the initramfs (docs/disk-encryption.md).\n"+
-		"hostonly=\"no\"\nadd_dracutmodules+=\" crypt systemd-cryptsetup \"\ninstall_items+=\" /etc/crypttab /usr/lib/a.so /usr/lib/b.so \"\n" {
+		"hostonly=\"no\"\nadd_dracutmodules+=\" crypt systemd-cryptsetup \"\ninstall_items+=\" /etc/crypttab "+luksInitrdDropIn+" /usr/lib/a.so /usr/lib/b.so \"\n" {
 		t.Fatalf("dracut conf:\n%s", got)
 	}
 	if got := luksGrubDefaultsText(&encryptionState{luksUUID: "u"}); got != "# Written by BOOTy (docs/disk-encryption.md).\nGRUB_FORCE_PARTUUID=\nGRUB_DISABLE_RECOVERY=true\n" {

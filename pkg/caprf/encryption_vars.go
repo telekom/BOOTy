@@ -36,6 +36,8 @@ func applyDiskEncryptionVar(cfg *config.MachineConfig, key, value string) (bool,
 		d.AllowFailure, err = parseWatchdogBool(value)
 	case "DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK":
 		d.SkipSecureBootCheck, err = parseWatchdogBool(value)
+	case "DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK":
+		d.SkipInitrdUnlockCheck, err = parseWatchdogBool(value)
 	case "UKI_INPLACE_WRITE":
 		d.UKIInplaceWrite, err = parseWatchdogBool(value)
 	case "UKI_KEEP_IMAGE_CMDLINE":

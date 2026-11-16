@@ -1971,12 +1971,8 @@ func applyFeatureToggle(cfg *config.MachineConfig, key, value string) (bool, err
 		cfg.LegacyCompat = parseBoolVar(value)
 	case "SECUREBOOT_REENABLE":
 		cfg.Provision.SecureBoot.ReEnable = parseBoolVar(value)
-	case "RESCUE_TIMEOUT":
-		if err := setIntField(&cfg.Rescue.Timeout, value); err != nil {
-			return true, fmt.Errorf("invalid %s: %w", key, err)
-		}
-	case "RESCUE_AUTO_MOUNT":
-		cfg.Rescue.AutoMountDisks = parseBoolVar(value)
+	case "RESCUE_TIMEOUT", "RESCUE_AUTO_MOUNT", "RESCUE_SSH_HARDENED":
+		return true, applyRescueVar(cfg, key, value)
 	case "EVPN_L2_ENABLED":
 		cfg.Network.EVPN.L2Enabled = parseBoolVar(value)
 	case "EVPN_RESOLVE_OVERLAY_INDEX":
@@ -2061,6 +2057,24 @@ func applyDeviceOptionVar(cfg *config.MachineConfig, key, value string) (bool, e
 		return false, nil
 	}
 	return true, nil
+}
+
+// applyRescueVar handles the non-string RESCUE_* vars.
+func applyRescueVar(cfg *config.MachineConfig, key, value string) error {
+	switch key {
+	case "RESCUE_TIMEOUT":
+		if err := setIntField(&cfg.Rescue.Timeout, value); err != nil {
+			return fmt.Errorf("invalid %s: %w", key, err)
+		}
+	case "RESCUE_AUTO_MOUNT":
+		cfg.Rescue.AutoMountDisks = parseBoolVar(value)
+	case "RESCUE_SSH_HARDENED":
+		// Fail secure: only an explicit false value turns the hardening off.
+		v := strings.ToLower(strings.TrimSpace(value))
+		hardened := v != "false" && v != "0" && v != "no"
+		cfg.Rescue.SSHHardened = &hardened
+	}
+	return nil
 }
 
 // parseBoolVar interprets common truthy string values (case-insensitive).

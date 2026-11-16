@@ -125,6 +125,14 @@ func TestWriteEncryptionFiles(t *testing.T) {
 			t.Errorf("dracut conf lacks %q:\n%s", want, dracut)
 		}
 	}
+	if !strings.Contains(dracut, " "+luksInitrdDropIn+" ") {
+		t.Errorf("dracut conf lacks the drop-in:\n%s", dracut)
+	}
+	if d := read(luksInitrdDropIn); !strings.Contains(d, "ExecStartPre=-/bin/sh -c '[ -e /etc/initrd-release ]") ||
+		!strings.Contains(d, "systemd-cryptsetup attach booty_crypt /dev/disk/by-uuid/11111111-2222-4333-8444-555555555555 none luks,tpm2-device=auto,headless=true && ") ||
+		!strings.HasSuffix(d, ": >"+luksInitrdUnlockMarker+" && exit 0; done'\n") || strings.ContainsAny(d, "$%") {
+		t.Errorf("initramfs drop-in:\n%s", d)
+	}
 	if !strings.Contains(read(luksDracutKeyConf), luksEnrollKeyPath) {
 		t.Error("enrollment key dracut conf does not include the key")
 	}
@@ -147,7 +155,8 @@ func TestWriteEncryptionFiles(t *testing.T) {
 		t.Error("unit with a status URL does not wait for the network")
 	}
 	if env := read(luksEnvPath); !strings.Contains(env, "TPM2_PCRS='7+14'\n") || !strings.Contains(env, "LUKS_ENROLL_SLOT='1'\n") ||
-		!strings.Contains(env, "STATUS_URL='https://p/status'\n") || !strings.Contains(env, "STATUS_CA='"+luksStatusCA+"'\n") {
+		!strings.Contains(env, "STATUS_URL='https://p/status'\n") || !strings.Contains(env, "STATUS_CA='"+luksStatusCA+"'\n") ||
+		!strings.Contains(env, "SKIP_INITRD_UNLOCK_CHECK=''\n") {
 		t.Errorf("env:\n%s", env)
 	}
 	if fi, err := os.Stat(filepath.Join(root, luksScriptPath)); err != nil || fi.Mode().Perm() != 0o755 {
@@ -222,8 +231,8 @@ func TestEnrollUnitAndScript(t *testing.T) {
 	// and the TPM2; phase 1 never wipes it.
 	p2 := luksEnrollScript[strings.Index(luksEnrollScript, `if [ -e "$bound" ]`):strings.Index(luksEnrollScript, "step=start")]
 	p1 := luksEnrollScript[strings.Index(luksEnrollScript, "step=start"):]
-	inOrder(t, p2, `lsinitrd "/boot/initrd.img-$(uname -r)"`, "*luks-enroll.key*", "--token-only", "luksKillSlot", "shred -u", "systemctl disable", "status slot1-removed")
-	inOrder(t, p1, "trap restore EXIT", "--tpm2-pcrs=", "--token-only", "none luks,x-initrd.attach,tpm2-device=auto", "lsinitrd", `mv "$img.booty-new"`, `: >"$bound"`, "trap - EXIT", "status tpm2-bound")
+	inOrder(t, p2, luksInitrdUnlockMarker, "status tpm2-initrd-unlock-failed", `lsinitrd "/boot/initrd.img-$(uname -r)"`, "*luks-enroll.key*", "--token-only", "luksKillSlot", "shred -u", "systemctl disable", "status slot1-removed")
+	inOrder(t, p1, "trap restore EXIT", "--tpm2-pcrs=", "--token-only", "none luks,x-initrd.attach,tpm2-device=auto", "lsinitrd", `mv "$img.booty-new"`, "rm -f "+luksInitrdUnlockMarker, `: >"$bound"`, "trap - EXIT", "status tpm2-bound")
 	if strings.Contains(p1, "luksKillSlot") || strings.Contains(p1, "shred") {
 		t.Error("phase 1 destroys the enrollment key")
 	}
@@ -282,6 +291,112 @@ func TestEnrollScriptWaitsForPendingMOKChange(t *testing.T) {
 	writeEnv("")
 	if out := run(); !strings.Contains(out, "phase1") {
 		t.Fatalf("MOK_WAIT unset: phase 1 waits: %s", out)
+	}
+}
+
+// Phase 2 removes key slot 1 only after a boot whose initramfs opened the
+// root with the TPM2 (#963): a passphrase or recovery key boot keeps the
+// slot and reports tpm2-initrd-unlock-failed, although the TPM2 unseals
+// from the booted system.
+func TestEnrollScriptPhase2NeedsInitrdTPM2Unlock(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	dir := t.TempDir()
+	bin, efivars := filepath.Join(dir, "bin"), filepath.Join(dir, "efivars")
+	for _, d := range []string{bin, efivars} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, v := range map[string]byte{"SecureBoot": 1, "SetupMode": 0} {
+		if err := os.WriteFile(filepath.Join(efivars, name+"-"+efiGlobalGUID), []byte{6, 0, 0, 0, v}, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	calls := filepath.Join(dir, "calls")
+	fakes := map[string]string{
+		// The TPM2 unseals from the booted system and slot 1 exists.
+		"cryptsetup": `echo "cryptsetup $*" >>` + calls + `; [ "$1" != luksDump ] || [ ! -e ` + filepath.Join(dir, "dumpfail") + ` ] || exit 1; [ "$1" != luksDump ] || printf 'Keyslots:\n  1: luks2\nTokens:\n  0: systemd-tpm2\n%s\nDigests:\n' "$(cat ` + filepath.Join(dir, "tokens") + ` 2>/dev/null)"`,
+		"curl":       `echo "curl $*" >>` + calls + `; echo 204`,
+		"lsinitrd":   `echo usr/lib/cryptsetup/libcryptsetup-token-systemd-tpm2.so`,
+		"systemctl":  `echo "systemctl $*" >>` + calls,
+		"shred":      `echo "shred $*" >>` + calls,
+	}
+	for name, body := range fakes {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil { //nolint:gosec // test binary
+			t.Fatal(err)
+		}
+	}
+	env, crypttab, marker := filepath.Join(dir, "env"), filepath.Join(dir, "crypttab"), filepath.Join(dir, "marker")
+	if err := os.WriteFile(crypttab, []byte("booty_crypt UUID=u none luks,x-initrd.attach,tpm2-device=auto\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := luksEnrollScript[:strings.Index(luksEnrollScript, "step=start")]
+	for old, repl := range map[string]string{
+		"/sys/firmware/efi/efivars": efivars, luksEnvPath: env, "/etc/booty/luks-tpm2.bound": filepath.Join(dir, "bound"),
+		luksInitrdUnlockMarker: marker, "/etc/crypttab": crypttab, luksEnrollKeyPath: filepath.Join(dir, "key"),
+		luksStatusAuth: filepath.Join(dir, "auth"), "/boot/": dir + "/boot-",
+	} {
+		script = strings.ReplaceAll(script, old, repl)
+	}
+	run := func(skip string) (string, string, error) {
+		t.Helper()
+		_ = os.Remove(calls)
+		// Phase 2 removes the marker of phase 1 when it is done.
+		if err := os.WriteFile(filepath.Join(dir, "bound"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(env, []byte("LUKS_UUID=u\nLUKS_NAME=booty_crypt\nLUKS_ENROLL_SLOT=1\nTPM2_PCRS=7+14\nHOST=h\n"+
+			"STATUS_URL=https://p/s\nSTATUS_CA=\nSKIP_INITRD_UNLOCK_CHECK='"+skip+"'\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.CommandContext(t.Context(), "sh", "-c", script)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+		out, err := cmd.CombinedOutput()
+		c, _ := os.ReadFile(calls)
+		return string(out), string(c), err
+	}
+
+	// A passphrase or recovery key boot: no marker.
+	out, c, err := run("")
+	if err == nil || strings.Contains(c, "luksKillSlot") || strings.Contains(c, "shred") || strings.Contains(c, "systemctl disable") {
+		t.Fatalf("slot 1 removed without the initramfs TPM2 unlock: %v\n%s\n%s", err, out, c)
+	}
+	if !strings.Contains(c, `"status":"tpm2-initrd-unlock-failed"`) || !strings.Contains(out, "key slot 1 stays") {
+		t.Fatalf("no tpm2-initrd-unlock-failed status:\n%s\n%s", out, c)
+	}
+	// The initramfs opened the root with the TPM2: slot 1 goes.
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, c, err = run(""); err != nil || !strings.Contains(c, "luksKillSlot") || !strings.Contains(c, `"status":"slot1-removed"`) {
+		t.Fatalf("marker set: slot 1 stays: %v\n%s\n%s", err, out, c)
+	}
+	// Another token could have opened the volume headless: no proof.
+	if err := os.WriteFile(filepath.Join(dir, "tokens"), []byte("  1: systemd-fido2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, c, err = run(""); err == nil || strings.Contains(c, "luksKillSlot") || !strings.Contains(out, "systemd-fido2") {
+		t.Fatalf("second token: slot 1 removed: %v\n%s\n%s", err, out, c)
+	}
+	// A failed luksDump is no proof that the TPM2 token is the only one.
+	if err := os.WriteFile(filepath.Join(dir, "dumpfail"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, c, err = run(""); err == nil || strings.Contains(c, "luksKillSlot") || !strings.Contains(out, "luksDump") {
+		t.Fatalf("failed luksDump: slot 1 removed: %v\n%s\n%s", err, out, c)
+	}
+	if err := os.Remove(filepath.Join(dir, "dumpfail")); err != nil {
+		t.Fatal(err)
+	}
+	// DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK: the old behavior, also
+	// with a second token (the token check only backs the marker).
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	if out, c, err = run("1"); err != nil || !strings.Contains(c, "luksKillSlot") {
+		t.Fatalf("opt-out: slot 1 stays: %v\n%s\n%s", err, out, c)
 	}
 }
 

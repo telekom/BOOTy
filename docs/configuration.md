@@ -555,12 +555,13 @@ cloud-init datasource).
 | `DISK_ENCRYPTION` | (unset) | `luks2-tpm2`, `luks2-tpm2-uki` | Format `DISK_ENCRYPTION_TARGET` with LUKS2 while the image is written and write that partition into the opened volume. The installed system binds it to the TPM2 (PCR 7+14) on its first boot with Secure Boot on. `luks2-tpm2-uki`: the installed system boots the signed UKI of the image and binds to PCR 7 and a signed PCR 11 policy; needs `SECUREBOOT_SIGNING` and a cosign-verified image (see [disk-encryption.md](disk-encryption.md#signed-uki-and-pcr-11)). Not with disk mirroring, RAID, `PARTITION_LAYOUT`, an image mode other than `whole-disk`, or `SKIP_TLS_VERIFY` (also not its `CAPRF_LEGACY_COMPAT` preset). YAML `provision.diskEncryption.mode`. |
 | `DISK_ENCRYPTION_TARGET` | `root` | `root`, partition number | Partition of the image to encrypt. Must be the last partition, ext4 for a data partition; not the ESP. The root needs a separate `/boot` partition. A partition of the Linux LVM type is the physical volume of VG `tcaas`; `root` selects it when the image has no Linux filesystem or Discoverable Partitions root partition and one LVM partition and the root is on LVM; a number makes it a data VG (see [Root on LVM](disk-encryption.md#root-on-lvm-vg-tcaas)). YAML `provision.diskEncryption.target`. |
 | `DISK_ENCRYPTION_RECOVERY_KEY_URL` | (unset) | URL | Required with `DISK_ENCRYPTION`. BOOTy posts the recovery key here (JSON, bearer token) before it formats the partition; any answer other than 2xx, a redirect included, fails the run. HTTPS with TLS verification (`CA_BUNDLE_FILE` roots apply); plain HTTP only on loopback, `INSECURE_TRANSPORT` does not apply. BOOTy never logs or stores the key. YAML `provision.diskEncryption.recoveryKeyURL`. |
-| `DISK_ENCRYPTION_STATUS_URL` | (unset) | https URL | The installed system posts the enrollment result here (`tpm2-bound`, `slot1-removed` or `failed`; JSON, bearer token `DISK_ENCRYPTION_STATUS_TOKEN`, no key). Best effort. Needs `DISK_ENCRYPTION_STATUS_TOKEN` or `DISK_ENCRYPTION_STATUS_REUSE_PROVISIONING_TOKEN`. YAML `provision.diskEncryption.statusURL`. |
+| `DISK_ENCRYPTION_STATUS_URL` | (unset) | https URL | The installed system posts the enrollment result here (`tpm2-bound`, `slot1-removed`, `tpm2-initrd-unlock-failed` or `failed`; JSON, bearer token `DISK_ENCRYPTION_STATUS_TOKEN`, no key). Best effort. Needs `DISK_ENCRYPTION_STATUS_TOKEN` or `DISK_ENCRYPTION_STATUS_REUSE_PROVISIONING_TOKEN`. YAML `provision.diskEncryption.statusURL`. |
 | `DISK_ENCRYPTION_STATUS_TOKEN` | (unset) | token | Required with `DISK_ENCRYPTION_STATUS_URL`: the bearer token of the status callback. It is stored in the target (`/etc/booty/luks-status.auth`, 0600) until phase 2 has posted `slot1-removed` and must stay valid until then, so issue a token that can post the status of this host only, not the provisioning token. No spaces or control characters. A standby command payload or deploy archive cannot change it. YAML `provision.diskEncryption.statusToken`. |
 | `DISK_ENCRYPTION_STATUS_REUSE_PROVISIONING_TOKEN` | `false` | `true`, `false`, `1`, `0`, `yes`, `no` | Transitional escape hatch: send the bearer token of the provisioning run to `DISK_ENCRYPTION_STATUS_URL` instead of `DISK_ENCRYPTION_STATUS_TOKEN` (the behaviour before the status token). The provisioning token must then stay valid until phase 2 has posted `slot1-removed` (the second boot with Secure Boot on, later when the enrollment is delayed or retried). Not together with `DISK_ENCRYPTION_STATUS_TOKEN`. A standby command payload or deploy archive cannot change it. Any other value stops the parse. YAML `provision.diskEncryption.statusReuseProvisioningToken`. |
 | `DISK_ENCRYPTION_ALLOW_FAILURE` | `false` | `true`, `false`, `1`, `0`, `yes`, `no` | Provision without encryption when a check before the first disk write fails (no TPM, Secure Boot check, ramdisk tools, unsupported image layout). Errors after the first write always fail the run. Any other value stops the parse. YAML `provision.diskEncryption.allowFailure`. |
 | `DEPROVISION_CRYPTO_ERASE` | `true` | `true`, `false`, `1`, `0`, `yes`, `no`; empty is the default | `deprovision`/`hard` and `decommission` crypto-erase every LUKS2 header on the disks that they wipe, right before the wipe: `cryptsetup luksErase`, then zeros over both header copies and the keyslots area, then a check that no header copy is left. A host without LUKS2 runs no tool and sees no change. Any failure, also a damaged header, fails the run (`BOOTY-DSK-029`); a device that cannot be read is skipped and named in the status. `false` skips the step. A standby command payload or deploy archive cannot change it. Any other value stops the parse. See [Crypto-erase at deprovision](disk-encryption.md#crypto-erase-at-deprovision). YAML `deprovision.cryptoErase`. |
 | `DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK` | `false` | same as above | Encrypt although the firmware has no Secure Boot or is in setup mode (no PK). The installed system still binds only with Secure Boot on in user mode; until then the enrollment key unlocks. YAML `provision.diskEncryption.skipSecureBootCheck`. |
+| `DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK` | `false` | same as above | Transitional escape hatch, will be removed: phase 2 of the TPM2 enrollment removes key slot 1 even when the initramfs did not open the root with the TPM2 on that boot (a passphrase or the recovery key did). Without it such a boot keeps slot 1 and posts `tpm2-initrd-unlock-failed` (#963). Not used by `luks2-tpm2-uki`. A standby command payload or deploy archive cannot change it. YAML `provision.diskEncryption.skipInitrdUnlockCheck`. |
 | `DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE` | (unset) | path | With `luks2-tpm2-uki` and `SECUREBOOT_SIGNING=ci`: PEM public key file in the ramdisk that the `.pcrpkey` section of the UKI must equal, pinned like `IMAGE_COSIGN_PUBKEYS`. Unset: the `.pcrpkey` of the verified UKI is used. YAML `provision.diskEncryption.pcrPublicKeyFile`. |
 | `SECUREBOOT_SIGNING` | `off` | `off`, `per-host`, `ci` | Who signs the UKI of `DISK_ENCRYPTION=luks2-tpm2-uki`. `per-host`: BOOTy makes a PCR policy key and a Secure Boot key for this host, signs the UKI in its own process (no image tool sees a key), and wipes both private keys; the provisioner enrolls the reported certificate in `db`. `ci`: the image pipeline signed the UKI; BOOTy makes no key. With the UKI mode `MODULE_SIGNING_ENROLLMENT` must be `external`. Here it acts with `DISK_ENCRYPTION=luks2-tpm2-uki` only; per-host module signing (#935) uses the same setting. A standby command payload or deploy archive cannot change it. YAML `provision.secureBoot.signing`. |
 
@@ -657,10 +658,58 @@ does.
 | Key | Default | Values | Description |
 |-----|---------|--------|-------------|
 | `RESCUE_MODE` | `reboot`, `wait` with `FAILURE_ACTION=wait` | `reboot`, `retry`, `shell`, `wait` | Action after a failed provisioning, also for a failed standby `provision` command. |
-| `RESCUE_SSH_PUBKEY` | (unset) | SSH public key | Authorized key for root in `shell` and `wait` modes. BOOTy starts `dropbear`. |
-| `RESCUE_PASSWORD_HASH` | (unset) | crypt(3) hash | Root password hash in `shell` and `wait` modes. |
+| `RESCUE_SSH_PUBKEY` | (unset) | SSH public keys, separated by `;` | Authorized keys for root in `shell` and `wait` modes. BOOTy starts `dropbear`. A standby command payload or deploy archive cannot change it, `RESCUE_PASSWORD_HASH` or `RESCUE_SSH_HARDENED`. See [Rescue SSH server](#rescue-ssh-server). |
+| `RESCUE_PASSWORD_HASH` | (unset) | crypt(3) hash | Root password hash in `shell` and `wait` modes. SSH password login only without a `RESCUE_SSH_PUBKEY` key. |
+| `RESCUE_SSH_HARDENED` | `true` | boolean | `false` starts `dropbear` with password login and port forwarding and without the idle timeout, as before. Transitional escape hatch; only `false`, `0` or `no` turn the hardening off. YAML `rescue.sshHardened`. |
 | `RESCUE_AUTO_MOUNT` | `false` | boolean | Mount the found disks in `shell` and `wait` modes. |
 | `RESCUE_TIMEOUT` | `0` | integer, seconds | Parsed, but no code uses the value. |
+
+### Rescue SSH server
+
+`RESCUE_SSH_PUBKEY` takes one or more keys in `authorized_keys` form
+(`[options] type base64 [comment]`), separated by `;` (YAML `sshPubKey` may
+also use newlines). Several keys allow a key rotation without a window that
+has only the new key. Empty entries are skipped. Without a valid key, BOOTy removes an `/root/.ssh/authorized_keys` that came with the ramdisk or a deploy archive, so only `RESCUE_SSH_PUBKEY` grants a key login; if it can not remove the file, it does not start the SSH server. A malformed entry (unknown
+key type, a blob that is not base64 or not a complete key of its type) is logged
+with its position and skipped, so the other keys still work. Options may contain quoted spaces and quoted `;`
+(`command="a; b"`). A `;` in a key comment splits the entry; do not use one.
+
+BOOTy generates an Ed25519 host key on every boot and starts `dropbear`
+with `-r <host key> -s -j -k -I 900`:
+
+- Login is key-only (`-s`) once a key is set. `RESCUE_PASSWORD_HASH` then
+  sets the root password, but SSH refuses password login. Only when no key
+  is set and a password hash is, password login stays allowed, with a
+  warning in the log. A `RESCUE_SSH_PUBKEY` with only malformed entries
+  counts as set: SSH then refuses every login rather than fall back to the
+  password.
+- Local and remote port forwarding are refused (`-j -k`).
+- A session without traffic for 15 minutes is closed (`-I 900`).
+
+`RESCUE_SSH_HARDENED=false` drops `-s -j -k -I` (password login, port
+forwarding, no idle timeout), for the transition only. With a dropbear built
+with `DROPBEAR_HARDENED=false` it also generates and loads an RSA host key
+for old clients; the hardened build has no RSA, and BOOTy logs that at INFO.
+
+The ramdisk `dropbear` is built from the Debian trixie source
+(`DROPBEAR_VERSION` and `DROPBEAR_SHA256` in `initrd.Dockerfile`, bumped by
+hand) with the compile-time options of `hack/dropbear-localoptions.h`. It
+supports:
+
+| | Algorithms |
+|-|------------|
+| Key exchange | `mlkem768x25519-sha256`, `sntrup761x25519-sha512`, `curve25519-sha256`, `ecdh-sha2-nistp256/384/521` |
+| Host key | `ssh-ed25519` (the only key BOOTy generates) |
+| User keys | `ssh-ed25519`, `ecdsa-sha2-nistp256/384/521`, `sk-ssh-ed25519@openssh.com`, `sk-ecdsa-sha2-nistp256@openssh.com` |
+| Ciphers | `chacha20-poly1305@openssh.com`, `aes128-ctr`, `aes256-ctr` |
+| MACs | `hmac-sha2-256` |
+
+Not supported: `diffie-hellman-group14-sha256` and every other
+finite-field key exchange, RSA and DSA keys, SHA-1 MACs, the SFTP
+subsystem, agent and Unix socket forwarding. An RSA key in
+`RESCUE_SSH_PUBKEY` is logged as refused. Building with
+`--build-arg DROPBEAR_HARDENED=false` keeps the upstream defaults (RSA,
+group14) for old clients; the release ramdisks use the hardened build.
 
 ## Hardware watchdog
 
