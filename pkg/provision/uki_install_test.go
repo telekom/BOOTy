@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -265,9 +266,24 @@ func TestPrepareUKIESPRoom(t *testing.T) {
 	if _, err := o.prepareUKI(root, esp); err == nil || !strings.Contains(err.Error(), "UKI_INPLACE_WRITE") || *n != 0 {
 		t.Fatalf("err=%v keys=%d", err, *n)
 	}
+	var logs bytes.Buffer
+	o.log = slog.New(slog.NewTextHandler(&logs, nil))
 	o.cfg.Provision.DiskEncryption.UKIInplaceWrite = true
 	if _, err := o.prepareUKI(root, esp); err != nil {
 		t.Fatalf("UKI_INPLACE_WRITE: %v", err)
+	}
+	if !strings.Contains(logs.String(), `msg="UKI installed" path=`+filepath.Join(esp, "EFI/Linux/ubuntu-6.8.efi")+" atomic=false bytes=") {
+		t.Fatalf("no UKI installed atomic=false line in %q", logs.String())
+	}
+	espFreeBytes = old
+	o, _, root, esp = ukiTestHost(t, config.SigningPerHost, perHostUKI(t))
+	logs.Reset()
+	o.log = slog.New(slog.NewTextHandler(&logs, nil))
+	if _, err := o.prepareUKI(root, esp); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), `msg="UKI installed" path=`+filepath.Join(esp, "EFI/Linux/ubuntu-6.8.efi")+" atomic=true bytes=") {
+		t.Fatalf("no UKI installed atomic=true line in %q", logs.String())
 	}
 }
 

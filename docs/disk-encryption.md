@@ -874,7 +874,9 @@ UKI or the signed one; the next `prepare-disk-encryption` removes a
 leftover temporary file and reports a truncated UKI as such. FAT has no
 journal: a power loss during the rename itself can still leave the
 directory for `fsck.fat`, which `systemd-fsck` runs at boot; the rename is
-the best primitive FAT offers.
+the best primitive FAT offers. After the install BOOTy logs `UKI installed`
+(INFO) with the ESP `path` of the UKI, `atomic=true` and its size in
+`bytes`; with `UKI_INPLACE_WRITE=true` the line says `atomic=false`.
 
 Before it makes any key, BOOTy checks that the ESP has room for the
 temporary copy: the size of the UKI plus 4 MiB (the added sections, the

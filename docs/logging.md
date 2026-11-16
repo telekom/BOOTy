@@ -257,7 +257,8 @@ show one line per stage and per notable result:
   encryption (format, enrollment, recovery key handover, the encrypted
   image stream, the LVM physical volume of VG `tcaas` in the mapping and
   the skipped `enable-lvm`), the signed UKI (the per-host kernel parameters
-  in its `.cmdline`, the removed temporary file of an interrupted install)
+  in its `.cmdline`, `UKI installed` with `path`, `atomic` and `bytes`, the
+  removed temporary file of an interrupted install)
   and the crypto-erase of LUKS2 headers at deprovision.
 - Image: the source, the download and write progress, checksum and GPG
   signature results, qcow2 conversion, A/B slot streaming, the memory peak
@@ -946,7 +947,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `progress resumed, petting the watchdog again`
 - `watchdog keepalive failed`
 
-### INFO (493 messages)
+### INFO (494 messages)
 
 #### INFO `.`
 
@@ -1336,6 +1337,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `Streaming image into A/B target slot`
 - `Streaming image partition-by-partition`
 - `UKI boot entry created`
+- `UKI installed`
 - `UKI prepared`
 - `UKI signed with per-host keys; the private keys are wiped`
 - `adding fstab entry for the /boot array`
