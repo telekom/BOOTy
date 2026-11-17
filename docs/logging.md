@@ -316,7 +316,9 @@ debug dumps.
   be read, kernel module signing or MOK enrollment that failed with
   `MODULE_SIGNING_ALLOW_FAILURE=true`, and per-host kernel parameters that
   reach only the GRUB entry because the UKI is signed by the image pipeline
-  (`SECUREBOOT_SIGNING=ci`). With disk encryption: a `KEK`/`db`/`dbx` update
+  (`SECUREBOOT_SIGNING=ci`), or that go into the per-host signed UKI
+  although they are not on its allow list (`UKI_CMDLINE_POLICY=warn`,
+  `params` with the names). With disk encryption: a `KEK`/`db`/`dbx` update
   of the image that the firmware refused or that is not a signed signature
   list (`variable`, `file`, `error`), and `SECUREBOOT_APPLY_DBX_UPDATES=false`.
 - Hardware: SR-IOV drift with `SRIOV_ON_DRIFT=warn`, health check warnings,
@@ -561,7 +563,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 - `step made no progress within its budget, stopping the watchdog keepalive; the hardware resets the host`: `budget`, `code`, `idle`, `reset_within`, `step`
 
-### WARN (403 messages)
+### WARN (404 messages)
 
 #### WARN `.`
 
@@ -962,6 +964,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `no /boot/grub on the root filesystem and no /boot entry in fstab`
 - `no EFI partition found, skipping EFI boot entry creation`
 - `no serial console configured`: `baud`, `conflicts`, `device`, `reason`, `selectedBy`, `state`
+- `per-host kernel parameters not on the allow list of the UKI .cmdline: UKI_CMDLINE_POLICY=enforce, the default from the next minor release, refuses them`: `params`
 - `provisioning report not written to the target`: `error`, `path`
 - `provisioning report: reporting the configured partition layout`: `error`
 - `read the CI module signing certificate failed, continuing because MODULE_SIGNING_ALLOW_FAILURE=true`: `error`

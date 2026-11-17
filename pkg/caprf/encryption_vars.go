@@ -38,10 +38,25 @@ func applyDiskEncryptionVar(cfg *config.MachineConfig, key, value string) (bool,
 		d.SkipSecureBootCheck, err = parseWatchdogBool(value)
 	case "DISK_ENCRYPTION_SKIP_INITRD_UNLOCK_CHECK":
 		d.SkipInitrdUnlockCheck, err = parseWatchdogBool(value)
+	default:
+		return applyUKIVar(d, key, value)
+	}
+	if err != nil {
+		return true, fmt.Errorf("invalid %s: %w", key, err)
+	}
+	return true, nil
+}
+
+// applyUKIVar sets the options of the per-host signed UKI.
+func applyUKIVar(d *config.DiskEncryptionConfig, key, value string) (bool, error) {
+	var err error
+	switch key {
 	case "UKI_INPLACE_WRITE":
 		d.UKIInplaceWrite, err = parseWatchdogBool(value)
 	case "UKI_KEEP_IMAGE_CMDLINE":
 		d.UKIKeepImageCmdline, err = parseWatchdogBool(value)
+	case "UKI_CMDLINE_POLICY":
+		d.UKICmdlinePolicy = strings.ToLower(strings.TrimSpace(value))
 	default:
 		return false, nil
 	}

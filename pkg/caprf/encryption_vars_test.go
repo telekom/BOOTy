@@ -224,7 +224,7 @@ func TestPayloadCannotChangeUKIKernelParams(t *testing.T) {
 		"IMAGE_COSIGN_PUBKEYS=/deploy/cosign.pub\nMODULE_SIGNING_ENROLLMENT=external\nEXTRA_KERNEL_PARAMS=hugepages=16\n"
 	base := []byte(commandBaseVars + "\n" + ukiVars)
 	for _, payload := range []string{"EXTRA_KERNEL_PARAMS=init=/bin/sh", "MACHINE_EXTRA_KERNEL_PARAMS=rd.break", "MACHINE_SERIAL_CONSOLE=ttyS1",
-		"GRUB_CMDLINE_MODE=append", "CLOUDINIT_DATASOURCE=configdrive", "UKI_KEEP_IMAGE_CMDLINE=true", "UKI_INPLACE_WRITE=true"} {
+		"GRUB_CMDLINE_MODE=append", "CLOUDINIT_DATASOURCE=configdrive", "UKI_KEEP_IMAGE_CMDLINE=true", "UKI_INPLACE_WRITE=true", "UKI_CMDLINE_POLICY=warn"} {
 		if _, _, err := MergeCommandVars(base, []byte(payload)); err == nil {
 			t.Errorf("payload %q accepted", payload)
 		} else if !strings.Contains(err.Error(), "UKI kernel command line") && !strings.Contains(err.Error(), "disk encryption") {
@@ -233,6 +233,13 @@ func TestPayloadCannotChangeUKIKernelParams(t *testing.T) {
 	}
 	if _, _, err := MergeCommandVars(base, []byte("EXTRA_KERNEL_PARAMS=hugepages=16")); err != nil {
 		t.Errorf("unchanged parameters refused: %v", err)
+	}
+	// UKI_CMDLINE_POLICY=enforce of the base config cannot be relaxed.
+	enforced := []byte(string(base) + "UKI_CMDLINE_POLICY=enforce\n")
+	for _, payload := range []string{"UKI_CMDLINE_POLICY=warn", "UKI_CMDLINE_POLICY="} {
+		if _, _, err := MergeCommandVars(enforced, []byte(payload)); err == nil {
+			t.Errorf("payload %q relaxed UKI_CMDLINE_POLICY=enforce", payload)
+		}
 	}
 	// Without the UKI mode the parameters reach GRUB only and may change.
 	if _, _, err := MergeCommandVars([]byte(commandBaseVars), []byte("EXTRA_KERNEL_PARAMS=hugepages=16")); err != nil {

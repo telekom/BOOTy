@@ -98,7 +98,20 @@ type DiskEncryptionConfig struct {
 	// the UKI. Transitional escape hatch.
 	// Default: false
 	UKIKeepImageCmdline bool `yaml:"ukiKeepImageCmdline" json:"ukiKeepImageCmdline"`
+
+	// UKICmdlinePolicy decides what SECUREBOOT_SIGNING=per-host does with a
+	// per-host kernel parameter that is not on the allow list of the UKI
+	// .cmdline: "warn" logs it and records it in the report, "enforce"
+	// refuses it. The default becomes "enforce" in the next minor release.
+	// Default: "" (warn)
+	UKICmdlinePolicy string `yaml:"ukiCmdlinePolicy" json:"ukiCmdlinePolicy"`
 }
+
+// The values of DiskEncryptionConfig.UKICmdlinePolicy.
+const (
+	UKICmdlinePolicyWarn    = "warn"
+	UKICmdlinePolicyEnforce = "enforce"
+)
 
 // UKI reports whether the installed system boots a signed UKI.
 func (d *DiskEncryptionConfig) UKI() bool {
@@ -162,15 +175,12 @@ func (c *Config) validateUKISigning() []string {
 	d := &c.Provision.DiskEncryption
 	// validateSigningMode (module signing) refuses unknown values.
 	signing := c.Provision.SecureBoot.SigningMode()
-	var errs []string
+	errs := d.validateUKIOptions()
 	if !d.UKI() {
 		// Without the UKI mode the signer has nothing to sign here; module
 		// signing (#935) uses the same setting.
 		if d.PCRPublicKeyFile != "" {
 			errs = append(errs, fmt.Sprintf("provision.diskEncryption.pcrPublicKeyFile needs provision.diskEncryption.mode %q", DiskEncryptionLUKS2TPM2UKI))
-		}
-		if d.UKIInplaceWrite || d.UKIKeepImageCmdline {
-			errs = append(errs, fmt.Sprintf("provision.diskEncryption.ukiInplaceWrite and ukiKeepImageCmdline need provision.diskEncryption.mode %q", DiskEncryptionLUKS2TPM2UKI))
 		}
 		return errs
 	}
@@ -195,6 +205,20 @@ func (c *Config) validateUKISigning() []string {
 			DiskEncryptionLUKS2TPM2UKI, ModuleSigningEnrollExternal))
 	}
 	return errs
+}
+
+// validateUKIOptions checks the options of the per-host signed UKI.
+func (d *DiskEncryptionConfig) validateUKIOptions() []string {
+	if !d.UKI() {
+		if d.UKIInplaceWrite || d.UKIKeepImageCmdline || d.UKICmdlinePolicy != "" {
+			return []string{fmt.Sprintf("provision.diskEncryption.ukiInplaceWrite, ukiKeepImageCmdline and ukiCmdlinePolicy need provision.diskEncryption.mode %q", DiskEncryptionLUKS2TPM2UKI)}
+		}
+		return nil
+	}
+	if p := d.UKICmdlinePolicy; p != "" && p != UKICmdlinePolicyWarn && p != UKICmdlinePolicyEnforce {
+		return []string{fmt.Sprintf("provision.diskEncryption.ukiCmdlinePolicy %q: want %q or %q", p, UKICmdlinePolicyWarn, UKICmdlinePolicyEnforce)}
+	}
+	return nil
 }
 
 // validateDiskEncryptionTransport checks the values that reach the
