@@ -321,7 +321,7 @@ func TestEnrollScriptPhase2NeedsInitrdTPM2Unlock(t *testing.T) {
 		"curl":       `echo "curl $*" >>` + calls + `; echo 204`,
 		"lsinitrd":   `echo usr/lib/cryptsetup/libcryptsetup-token-systemd-tpm2.so`,
 		"systemctl":  `echo "systemctl $*" >>` + calls,
-		"shred":      `echo "shred $*" >>` + calls,
+		"shred":      `echo "shred $*" >>` + calls + `; shift; rm -f "$@"`,
 	}
 	for name, body := range fakes {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil { //nolint:gosec // test binary
@@ -384,8 +384,20 @@ func TestEnrollScriptPhase2NeedsInitrdTPM2Unlock(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "dumpfail"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, c, err = run(""); err == nil || strings.Contains(c, "luksKillSlot") || !strings.Contains(out, "luksDump") {
+	if out, c, err = run(""); err == nil || strings.Contains(c, "luksKillSlot") || !strings.Contains(out, "luksDump") ||
+		!strings.Contains(c, `"status":"luks-dump-failed"`) {
 		t.Fatalf("failed luksDump: slot 1 removed: %v\n%s\n%s", err, out, c)
+	}
+	// Without the token check the slot 1 check runs the only luksDump: a
+	// failure there is no proof that slot 1 is gone, the key stays (#967).
+	key := filepath.Join(dir, "key")
+	if err := os.WriteFile(key, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, c, err = run("1")
+	if _, serr := os.Stat(key); err == nil || serr != nil || strings.Contains(c, "luksKillSlot") || strings.Contains(c, "shred") ||
+		strings.Contains(c, "systemctl disable") || !strings.Contains(c, `"status":"luks-dump-failed"`) || strings.Contains(c, "slot1-removed") {
+		t.Fatalf("failed luksDump of the slot 1 check: key shredded or no luks-dump-failed: %v\n%s\n%s", err, out, c)
 	}
 	if err := os.Remove(filepath.Join(dir, "dumpfail")); err != nil {
 		t.Fatal(err)

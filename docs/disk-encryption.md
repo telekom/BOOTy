@@ -126,7 +126,10 @@ Installed system, `booty-luks-tpm2-enroll.service`:
   checking that slot 1 holds the enrollment key), `shred -u` the key file,
   disables itself and posts `slot1-removed`. If slot 1 is gone already (a
   crash after the wipe), it only cleans up. A failed check posts `failed`
-  and keeps everything for the next boot.
+  and keeps everything for the next boot. A failed `cryptsetup luksDump`
+  proves neither that slot 1 is gone nor which tokens the volume has: slot 1
+  and the key stay, the unit posts `luks-dump-failed`, fails and tries again
+  on the next boot (#967).
 - Later boots: `systemd-cryptsetup` in the initramfs unseals the key with
   the TPM2. When the PCRs differ it asks on the console; the recovery key
   works there.
@@ -337,7 +340,7 @@ needed: `cryptsetup luksHeaderBackup`.
 `{"hostname","luksUUID","status","message"}` with `curl --proto =https` and
 the bearer token `DISK_ENCRYPTION_STATUS_TOKEN` (`tpm2-bound`,
 `slot1-removed`,
-`tpm2-initrd-unlock-failed`, `failed`). It is best effort: a lost status does not stop
+`tpm2-initrd-unlock-failed`, `luks-dump-failed`, `failed`). It is best effort: a lost status does not stop
 the enrollment. The token stays in `/etc/booty/luks-status.auth` of the
 installed system until phase 2 has posted `slot1-removed` and removes it,
 so it must stay valid until then: the second boot with Secure Boot on, or
