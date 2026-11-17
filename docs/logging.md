@@ -214,7 +214,9 @@ debug dumps.
   be read, kernel module signing or MOK enrollment that failed with
   `MODULE_SIGNING_ALLOW_FAILURE=true`, and per-host kernel parameters that
   reach only the GRUB entry because the UKI is signed by the image pipeline
-  (`SECUREBOOT_SIGNING=ci`).
+  (`SECUREBOOT_SIGNING=ci`). With disk encryption: a `KEK`/`db`/`dbx` update
+  of the image that the firmware refused or that is not a signed signature
+  list (`variable`, `file`, `error`), and `SECUREBOOT_APPLY_DBX_UPDATES=false`.
 - Hardware: SR-IOV drift with `SRIOV_ON_DRIFT=warn`, health check warnings,
   inventory and firmware report failures, crash artifact collection and
   upload failures.
@@ -258,7 +260,9 @@ show one line per stage and per notable result:
   image stream, the LVM physical volume of VG `tcaas` in the mapping and
   the skipped `enable-lvm`), the signed UKI (the per-host kernel parameters
   in its `.cmdline`, `UKI installed` with `path`, `atomic` and `bytes`, the
-  removed temporary file of an interrupted install)
+  removed temporary file of an interrupted install), the Secure Boot
+  updates of the image before the PCR 7 binding (`Secure Boot update
+  applied` or `already applied`: `variable`, `file`, `entries`, `new`)
   and the crypto-erase of LUKS2 headers at deprovision.
 - Image: the source, the download and write progress, checksum and GPG
   signature results, qcow2 conversion, A/B slot streaming, the memory peak
@@ -453,7 +457,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 - `step made no progress within its budget, stopping the watchdog keepalive; the hardware resets the host`
 
-### WARN (399 messages)
+### WARN (403 messages)
 
 #### WARN `.`
 
@@ -815,6 +819,8 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `SR-IOV firmware changed: rebooting into the ramdisk to verify the runtime settings`
 - `SR-IOV inventory after configure-sriov failed`
 - `SRIOV_VERIFY_REBOOT=off: the runtime settings that wait for the firmware change are not verified`
+- `Secure Boot update skipped: not a signed signature list`
+- `Secure Boot updates of the image are not applied (SECUREBOOT_APPLY_DBX_UPDATES=false); if secureboot-db applies one on the first boot, PCR 7 changes after the binding`
 - `bundled EFI fallback loader unavailable, falling back to target-root grub-install`
 - `cannot create serial console run directory`
 - `cannot list target disk partitions`
@@ -870,6 +876,8 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `skipping unsupported shared data seed entry`
 - `target root still mounted from an earlier attempt, unmounting`
 - `the UKI signed by the image pipeline keeps its .cmdline: the per-host kernel parameters reach the GRUB fallback entry only`
+- `the firmware refused the Secure Boot update; secureboot-db of the image gets the same answer, so PCR 7 stays`
+- `the firmware variable has a malformed signature list: comparing with the entries before it`
 - `the image layout cannot be encrypted, provisioning without it (DISK_ENCRYPTION_ALLOW_FAILURE)`
 
 #### WARN `pkg/realm`
@@ -947,7 +955,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `progress resumed, petting the watchdog again`
 - `watchdog keepalive failed`
 
-### INFO (494 messages)
+### INFO (496 messages)
 
 #### INFO `.`
 
@@ -1333,6 +1341,8 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `MOK enrollment staged: the next firmware boot runs mok-enroll.efi`
 - `No SR-IOV profiles, skipping`
 - `SR-IOV profiles set the ConnectX VFs, skipping setup-mellanox (NUM_VFS)`
+- `Secure Boot update already applied`
+- `Secure Boot update applied`
 - `Streaming image`
 - `Streaming image into A/B target slot`
 - `Streaming image partition-by-partition`

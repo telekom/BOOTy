@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +65,13 @@ echo "TOKEN_SUM=$(cryptsetup luksDump "$dev" | sed -n '/^Tokens:/,/^Digests:/p' 
 : >/run/booty-empty-pass
 echo "EMPTY_PASS=$(cryptsetup open --test-passphrase --disable-external-tokens --key-file /run/booty-empty-pass "$dev" >/dev/null 2>&1 && echo opens || echo refused)"
 echo "UNIT=$(systemctl is-enabled booty-luks-tpm2-enroll.service 2>&1)"
+if [ -e /etc/booty-e2e-dbx-hash ]; then
+	echo "DBX_TEST=$(od -An -tx1 -v /sys/firmware/efi/efivars/dbx-d719b2cb-3d3a-4596-a3bc-dad00e67656f | tr -d ' \n' | grep -c "$(cat /etc/booty-e2e-dbx-hash)")"
+	sbdb=$(journalctl -b -o cat -u secureboot-db.service --no-pager)
+	echo "SBKEYSYNC_SEEN=$(printf '%s\n' "$sbdb" | grep -c 'booty-e2e-dbxupdate.bin \[')"
+	echo "SBKEYSYNC_INSERTED=$(printf '%s\n' "$sbdb" | grep -c 'Inserting key update.*booty-e2e-dbxupdate.bin')"
+	printf '%s\n' "$sbdb" | tail -n 20 | sed 's/^/SBKEYSYNC /'
+fi
 journalctl -b -o cat -u booty-luks-tpm2-enroll.service --no-pager | tail -n 30 | sed 's/^/ENROLL /'
 journalctl -b -o cat --no-pager | grep -i -e 'tpm2' -e 'cryptsetup' | tail -n 30 | sed 's/^/JOURNAL /'
 echo "` + luksCheckEnd + `"
@@ -149,7 +157,7 @@ type ukiVariant struct {
 // prepareUKIImage installs the UKI tools, builds the initramfs that unlocks
 // the root by PARTUUID, and puts a UKI on the ESP: unsigned with ci == nil,
 // else signed with the keys of ci. variants are built too and copied out.
-func prepareUKIImage(t *testing.T, osImage, dir string, debs []string, ci *ukiKeys, variants map[string]ukiVariant) ukiImage {
+func prepareUKIImage(t *testing.T, osImage, dir string, debs []string, ci *ukiKeys, variants map[string]ukiVariant, dbx *ukiDBXUpdate) ukiImage {
 	t.Helper()
 	raw := filepath.Join(dir, "os.raw")
 	run(t, "convert OS image to raw", "qemu-img", "convert", "-O", "raw", osImage, raw)
@@ -215,6 +223,9 @@ func prepareUKIImage(t *testing.T, osImage, dir string, debs []string, ci *ukiKe
 	for _, deb := range debs {
 		luksWriteImageFile(t, mnt, "tmp/"+filepath.Base(deb), readFile(t, deb), 0o644)
 		chroot("install "+filepath.Base(deb), "dpkg -i /tmp/"+filepath.Base(deb)+"; rm /tmp/"+filepath.Base(deb))
+	}
+	if dbx != nil {
+		addUKIDBXUpdate(t, mnt, chroot, *dbx)
 	}
 
 	// The root file system of the cloud image is nearly full: the builder
@@ -297,6 +308,48 @@ dracut --force --no-hostonly --tmpdir /run --add "crypt systemd-cryptsetup syste
 		t.Fatal(err)
 	}
 	return img
+}
+
+// ukiDBXUpdate is a dbx update for the image: one SHA-256 entry, signed
+// by a test KEK that the test enrolls in the OVMF variables (#976).
+type ukiDBXUpdate struct {
+	kek  ukiKeys // sbKey, sbCert
+	hash [32]byte
+}
+
+// ukiDBXUpdateFile is the update in the image, next to the dbx update of
+// secureboot-db.
+const ukiDBXUpdateFile = "/usr/share/secureboot/updates/dbx/booty-e2e-dbxupdate.bin"
+
+func newUKIDBXUpdate(t *testing.T, dir string) ukiDBXUpdate {
+	t.Helper()
+	u := ukiDBXUpdate{kek: newUKIKeys(t, dir, "kek-")}
+	if _, err := rand.Read(u.hash[:]); err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+// addUKIDBXUpdate installs secureboot-db, whose unit runs sbkeysync on the
+// first boot, and signs the update with sbvarsign (sbsigntool, installed
+// with the UKI tools): EFI_VARIABLE_AUTHENTICATION_2 with append write, as
+// the dbxupdate files of secureboot-db.
+func addUKIDBXUpdate(t *testing.T, mnt string, chroot func(desc, script string), u ukiDBXUpdate) {
+	t.Helper()
+	// EFI_SIGNATURE_LIST: EFI_CERT_SHA256_GUID, list size, header size 0,
+	// signature size 48; one EFI_SIGNATURE_DATA: owner GUID and hash.
+	hdr := []byte{0x26, 0x16, 0xc4, 0xc1, 0x4c, 0x50, 0x92, 0x40, 0xac, 0xa9, 0x41, 0xf9, 0x36, 0x93, 0x43, 0x28,
+		28 + 48, 0, 0, 0, 0, 0, 0, 0, 48, 0, 0, 0}
+	esl := bytes.Join([][]byte{hdr, bytes.Repeat([]byte{0xb0}, 16), u.hash[:]}, nil)
+	luksWriteImageFile(t, mnt, "run/booty-dbx.esl", esl, 0o644)
+	luksWriteImageFile(t, mnt, "run/kek.key", readFile(t, u.kek.sbKey), 0o600)
+	luksWriteImageFile(t, mnt, "run/kek.crt", readFile(t, u.kek.sbCert), 0o644)
+	luksWriteImageFile(t, mnt, "etc/booty-e2e-dbx-hash", []byte(hex.EncodeToString(u.hash[:])), 0o644)
+	chroot("add a dbx update signed by the test KEK", "export DEBIAN_FRONTEND=noninteractive; "+
+		"apt-get install -y -q --no-install-recommends secureboot-db; apt-get clean; "+
+		"mkdir -p "+filepath.Dir(ukiDBXUpdateFile)+"; ls -l "+filepath.Dir(ukiDBXUpdateFile)+"; "+
+		"sbvarsign --key /run/kek.key --cert /run/kek.crt --output "+ukiDBXUpdateFile+" dbx /run/booty-dbx.esl; "+
+		"rm /run/kek.key /run/kek.crt /run/booty-dbx.esl")
 }
 
 // ukiESPScript gives the raw image $1 the layout of the UKI image flavour:
@@ -516,6 +569,23 @@ func (vm *ukiVM) enrollDB(certPEM []byte) {
 		"--add-db", "a0baa8a3-041d-48a8-bc87-c36d121b5e3d", p)
 }
 
+// requireLogLine fails unless one line of out has every part.
+func requireLogLine(t *testing.T, out []byte, parts ...string) {
+	t.Helper()
+	for line := range strings.Lines(string(out)) {
+		if !slices.ContainsFunc(parts, func(p string) bool { return !strings.Contains(line, p) }) {
+			return
+		}
+	}
+	t.Fatalf("no log line with %q", parts)
+}
+
+// enrollKEK adds a KEK certificate (PEM), offline like enrollDB.
+func (vm *ukiVM) enrollKEK(certPEM string) {
+	run(vm.t, "enroll the test KEK", "virt-fw-vars", "--inplace", vm.vars,
+		"--add-kek", "a0baa8a3-041d-48a8-bc87-c36d121b5e3d", certPEM)
+}
+
 // assertNoSecrets fails if a secret is in any console log.
 func (vm *ukiVM) assertNoSecrets(secrets ...[]byte) {
 	for i, l := range vm.logs {
@@ -584,16 +654,20 @@ const ukiPerHostParam = "booty.perhost=1"
 // TestDiskEncryptionUKIPerHostVM: the image ships an unsigned UKI. BOOTy
 // signs it and its PCR 11 policy with per-host keys that it wipes, and
 // reports the certificate, which the test enrolls in db like a
-// provisioner. The first Secure Boot boot binds the volume to PCR 7 and the
+// provisioner. The image carries a dbx update newer than the firmware dbx,
+// which BOOTy applies before the reboot (#976). The first Secure Boot boot binds the volume to PCR 7 and the
 // signed PCR 11 policy; the next unlocks with the TPM2 alone; with Secure
 // Boot off the TPM2 refuses and the recovery key unlocks.
 func TestDiskEncryptionUKIPerHostVM(t *testing.T) {
 	osImage, debs := ukiAssets(t)
 	dir := t.TempDir()
-	img := prepareUKIImage(t, osImage, dir, debs, nil, nil)
+	dbx := newUKIDBXUpdate(t, dir)
+	img := prepareUKIImage(t, osImage, dir, debs, nil, nil, &dbx)
 	ref, cosignPEM := pushUKIImage(t, img, dir)
 	escrow := startEscrowServer(t)
 	vm := newUKIVM(t, dir)
+	// The firmware dbx lacks the entry of the image's dbx update (#976).
+	vm.enrollKEK(dbx.kek.sbCert)
 
 	vars := ukiProvisionVars(ref, escrow.url, "per-host")
 	// A per-host kernel parameter goes into the signed .cmdline (#968).
@@ -605,6 +679,7 @@ func TestDiskEncryptionUKIPerHostVM(t *testing.T) {
 			t.Fatalf("provisioning log lacks %q", want)
 		}
 	}
+	requireLogLine(t, out, "Secure Boot update applied", ukiDBXUpdateFile)
 	key := escrow.recoveryKey(t)
 	cert := vm.espFile(img.espPart, "EFI/BOOTy/uki-signing.crt", nil)
 	if got := sha256.Sum256(vm.espFile(img.espPart, "EFI/Linux/"+img.ukiName, nil)); hex.EncodeToString(got[:]) == img.ukiSHA {
@@ -619,8 +694,14 @@ func TestDiskEncryptionUKIPerHostVM(t *testing.T) {
 		t.Fatal("passphrase prompt on the first boot: the empty passphrase did not open the volume")
 	}
 	requireUKIBound(t, report)
+	// BOOTy applied the dbx update before the binding, so secureboot-db
+	// found it in dbx and the PCR 7 of the binding is final (#976).
+	for _, line := range []string{"DBX_TEST=1", "SBKEYSYNC_SEEN=1", "SBKEYSYNC_INSERTED=0"} {
+		luksRequireLine(t, report, line)
+	}
 
-	// 2. The TPM2 unlocks without a prompt, and the per-host parameter is
+	// 2. The TPM2 unlocks without a prompt (PCR 7 unchanged after
+	// secureboot-db), and the per-host parameter is
 	// on the command line of the booted UKI.
 	report, prompted = vm.boot("tpm2 unlock", key)
 	if prompted {
@@ -661,7 +742,7 @@ func TestDiskEncryptionUKICIVM(t *testing.T) {
 	img := prepareUKIImage(t, osImage, dir, debs, &ci, map[string]ukiVariant{
 		"update":   {marker: "v2", pcr: ci, sb: ci},
 		"tampered": {marker: "v3", pcr: rogue, sb: ci},
-	})
+	}, nil)
 	ref, cosignPEM := pushUKIImage(t, img, dir)
 	escrow := startEscrowServer(t)
 	vm := newUKIVM(t, dir)

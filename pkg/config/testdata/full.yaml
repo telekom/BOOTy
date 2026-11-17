@@ -661,6 +661,9 @@ provision:
       kernel: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
     mokCertPath: ""
     mokPassword: ""
+    # applyDbxUpdates: with disk encryption, apply the KEK/db/dbx updates of
+    # the image before the PCR 7 binding (default: true)
+    applyDbxUpdates: true
 
   cloudInit:
     enabled: false

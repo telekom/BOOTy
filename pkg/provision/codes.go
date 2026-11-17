@@ -102,6 +102,7 @@ var failureCodes = []FailureCode{
 	{"BOOTY-DSK-026", ClassConfig, "prepare-disk-encryption", "The image cannot unlock the encrypted disk (no separate /boot, missing tools) or writing the unlock configuration failed."},
 	{"BOOTY-DSK-028", ClassPermanent, AnyStep, "Disk encryption in stream-image failed: preflight (TPM, Secure Boot, tools), recovery key hand-off, image layout or LUKS2 format. Not retried: reprovision."},
 	{"BOOTY-EFI-012", ClassPermanent, "create-uki-boot-entry", "Creating the firmware boot entry for the signed UKI failed."},
+	{"BOOTY-EFI-013", ClassEnvironment, "apply-secureboot-updates", "Reading the Secure Boot updates of the image or the KEK, db or dbx variable, or preparing the efivarfs write, failed. A firmware refusal of an update is a warning. SECUREBOOT_APPLY_DBX_UPDATES=false skips the step."},
 	{"BOOTY-DSK-027", ClassPermanent, "close-encrypted-disk", "Closing the LUKS2 mapping or growing the encrypted data partition failed."},
 	{"BOOTY-DSK-029", ClassHardware, "crypto-erase", "Crypto-erase of a LUKS2 device before the deprovision wipe failed: damaged header, cryptsetup luksErase, overwrite or check. DEPROVISION_CRYPTO_ERASE=false skips it."},
 

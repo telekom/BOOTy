@@ -35,6 +35,14 @@ type SecureBootConfig struct {
 	// ModuleSigning configures Signing per-host and ci: enrollment,
 	// certificate directory and failure handling.
 	ModuleSigning ModuleSigningConfig `yaml:"moduleSigning" json:"moduleSigning"`
+
+	// ApplyDBXUpdates writes the pending KEK, db and dbx updates of the
+	// image (/usr/share/secureboot/updates, what secureboot-db applies on
+	// the first boot) into the firmware before the reboot, so the PCR 7
+	// that the first boot binds the encrypted volume to stays. Disk
+	// encryption only (docs/disk-encryption.md#secure-boot-database-updates).
+	// Default: true
+	ApplyDBXUpdates *bool `yaml:"applyDbxUpdates,omitempty" json:"applyDbxUpdates,omitempty"`
 }
 
 // Secure Boot signing modes (SecureBootConfig.Signing).

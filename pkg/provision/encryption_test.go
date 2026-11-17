@@ -451,7 +451,7 @@ func TestEncryptionStepsOnlyWhenEnabled(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	cfg.Provision.DiskEncryption.Mode = config.DiskEncryptionLUKS2TPM2
 	on := names(cfg)
-	if len(on) != len(off)+2 {
+	if len(on) != len(off)+3 {
 		t.Fatalf("%d steps with encryption, %d without", len(on), len(off))
 	}
 	joined := strings.Join(on, ",")

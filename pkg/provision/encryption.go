@@ -118,13 +118,16 @@ type encryptionExtras struct {
 // withEncryptionSteps adds the disk encryption steps; without
 // DISK_ENCRYPTION the step list is the same as without this feature.
 // prepare-disk-encryption runs before configure-grub, which picks up its
-// GRUB files; close-encrypted-disk needs the target unmounted.
+// GRUB files; apply-secureboot-updates after the last step that changes the
+// target; close-encrypted-disk needs the target unmounted.
 func (o *Orchestrator) withEncryptionSteps(steps []Step) []Step {
-	out := make([]Step, 0, len(steps)+2)
+	out := make([]Step, 0, len(steps)+4)
 	for _, st := range steps {
 		switch st.Name {
 		case "configure-grub":
 			out = append(out, Step{"prepare-disk-encryption", o.prepareDiskEncryption})
+		case "create-efi-boot-entry":
+			out = append(out, Step{"apply-secureboot-updates", o.applySecureBootUpdates})
 		case "teardown-chroot":
 			if o.cfg.Provision.DiskEncryption.UKI() {
 				// After the GRUB entry, so the UKI comes first in BootOrder.

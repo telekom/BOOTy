@@ -82,7 +82,7 @@ systemctl poweroff --no-block
 
 const luksCheckUnit = `[Unit]
 Description=BOOTy disk encryption e2e check
-After=local-fs.target booty-luks-tpm2-enroll.service
+After=local-fs.target booty-luks-tpm2-enroll.service secureboot-db.service
 Before=serial-getty@ttyS0.service
 
 [Service]

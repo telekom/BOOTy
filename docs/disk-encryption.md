@@ -77,7 +77,11 @@ Provisioning (BOOTy, Secure Boot off):
      `DISK_ENCRYPTION_STATUS_TOKEN`) and the
      `CA_BUNDLE_FILE` as `/etc/booty/luks-status-ca.pem`;
    - and runs `dracut --force --regenerate-all` in the target.
-4. `close-encrypted-disk` (after `teardown-chroot`) grows the file system of
+4. `apply-secureboot-updates` (after the last step that changes the
+   target) appends the pending `KEK`, `db` and `dbx` updates of the image
+   to the firmware, see
+   [Secure Boot database updates](#secure-boot-database-updates).
+5. `close-encrypted-disk` (after `teardown-chroot`) grows the file system of
    an encrypted data partition (on LVM: deactivates VG `tcaas`) and closes
    the mapping. BOOTy reboots
    through the firmware; disk encryption turns kexec off.
@@ -447,8 +451,10 @@ These change PCR 7 or 14, so the TPM2 refuses and the recovery key is
 needed, unless you bind again before:
 
 - `db`, `dbx` or `KEK` updates (firmware updates, `fwupd` or
-  `secureboot-db` dbx updates, the Microsoft UEFI CA 2023 rollover and the
-  revocation of the 2011 CA);
+  `secureboot-db` dbx updates after the first boot, the Microsoft UEFI CA
+  2023 rollover and the revocation of the 2011 CA). The updates that the
+  image carries at provisioning are applied before the binding
+  ([Secure Boot database updates](#secure-boot-database-updates));
 - shim updates that change the vendor `dbx` (`MokListX`/`MokListXRT`) or
   the SBAT level;
 - MOK enrollment, rotation or deletion (also a new module signing key),
@@ -471,6 +477,80 @@ Without that step the recovery key unlocks at the console, and the same
 `systemd-pcrlock` can predict PCR 7 from the variables and sign policies
 for future values; it is the way to avoid this window and a possible
 follow-up.
+
+## Secure Boot database updates
+
+PCR 7 measures `KEK`, `db` and `dbx` as the firmware reads them at boot. A
+write at runtime changes PCR 7 only from the next boot on. Ubuntu's
+`secureboot-db.service` runs `sbkeysync` on the first boot and appends
+the signed updates in `/usr/share/secureboot/updates/{KEK,db,dbx}` (for
+example `dbx/dbxupdate_x64.bin`) when the firmware lacks one of their
+entries. That is the boot on which the first-boot unit binds the volume
+(phase 1 of `luks2-tpm2`, the only phase of `luks2-tpm2-uki`), and
+`systemd-cryptenroll` binds to the live PCR 7 of that boot. A firmware
+whose `dbx` is older than the image's then unlocks once more and asks for
+the recovery key on the next boot (#976).
+
+So BOOTy makes the same writes while provisioning (step
+`apply-secureboot-updates`, disk encryption only). Disk encryption turns
+kexec off, so the first boot of the installed system starts in the
+firmware, measures the updated variables, and binds to the PCR 7 that the
+later boots measure too. `secureboot-db` stays in the image and finds
+nothing left to do. No key is needed: the update files are authenticated
+variables that a `KEK` key holder signed (for `dbx` Microsoft's), and the
+firmware checks the signature.
+
+Like `sbkeysync` (`--no-default-keystores --keystore
+/usr/share/secureboot/updates`, the call of `secureboot-db`), BOOTy:
+
+- reads the regular files of `KEK`, `db` and `dbx` (in this order, by
+  name; no dot files, no `PK`) below the target root, through `os.Root`.
+  It follows symlinks that stay in the target and skips dangling ones,
+  as `sbkeysync` does; a symlink out of the target (an absolute one)
+  fails the step, as BOOTy cannot resolve it like the installed system;
+- parses each as `EFI_VARIABLE_AUTHENTICATION_2` (PKCS7) followed by
+  `EFI_SIGNATURE_LIST`s;
+- skips a file whose entries (signature type and data, not the owner) are
+  all in the variable already: re-provisioning, or an image that is not
+  newer than the firmware, writes nothing. `sbkeysync` compares less (the
+  SHA-256 data or the X.509 serial number, ignoring other signature
+  types), so an entry that BOOTy finds is one that `sbkeysync` finds too:
+  BOOTy may apply a file that `sbkeysync` would skip, never skip one that
+  `sbkeysync` would apply. A malformed signature list in the firmware
+  variable is a warning; BOOTy compares with the entries before it, as
+  `sbkeysync` reads past it;
+- otherwise writes the whole file to efivarfs in one `write` with the
+  attributes non-volatile, boot service, runtime, time-based authenticated
+  and append write (`0x67`), and clears the immutable flag of the
+  efivarfs file first.
+
+Each file logs one line: `Secure Boot update applied` (`entries`, `new`)
+or `Secure Boot update already applied` (INFO), or a WARN.
+
+**A firmware refusal is a warning, not a failure.** The firmware checks
+the signature against `KEK` (a host with its own PK and `KEK`, without
+Microsoft's, refuses Microsoft's `dbx` update) or runs out of variable
+space. It answers `secureboot-db` on the first boot the same way, so PCR 7
+does not move after the binding, and failing the run, or binding only the
+recovery key, would gain nothing. One exception: a firmware that frees
+variable space at boot may accept on the first boot what it refused while
+provisioning; then the binding needs the recovery key once and a new
+binding (see [PCR changes](#pcr-changes)). A file that is not a signed
+signature list is skipped with a warning; `sbkeysync` skips it too, or
+writes it and the firmware refuses the malformed list. An
+unreadable update file or variable, or an efivarfs error before the write
+reaches the firmware (clearing the immutable flag, opening the file),
+fails the step (`BOOTY-EFI-013`): BOOTy could not tell whether the first
+boot changes PCR 7.
+
+`SECUREBOOT_APPLY_DBX_UPDATES=false` turns the step off (one WARN line).
+Like the `DISK_ENCRYPTION*` keys, a standby command payload cannot change
+it (the payload is refused) and a deploy archive gets the value of the
+vars file back;
+then mask `secureboot-db.service` in the image or bind again after its
+first run. Any later `KEK`, `db` or `dbx` update, by `secureboot-db` after
+a package update, `fwupd` or the firmware, needs a new binding as in
+[PCR changes](#pcr-changes).
 
 ## Requirements
 
@@ -956,6 +1036,7 @@ Remaining:
 | `MACHINE_EXTRA_KERNEL_PARAMS`, `EXTRA_KERNEL_PARAMS` | with `per-host` also in the UKI `.cmdline` ([Per-host kernel parameters](#per-host-kernel-parameters)); with `ci` GRUB only |
 | `UKI_KEEP_IMAGE_CMDLINE` | `true`: `per-host` signs the image `.cmdline` unchanged (transitional) |
 | `UKI_INPLACE_WRITE` | `true`: `per-host` rewrites the UKI in place, for an ESP without room for two copies (transitional) |
+| `SECUREBOOT_APPLY_DBX_UPDATES` | `false`: do not apply the `KEK`/`db`/`dbx` updates of the image before the binding ([Secure Boot database updates](#secure-boot-database-updates)); as for `luks2-tpm2` |
 | `DISK_ENCRYPTION_RECOVERY_KEY_URL`, `DISK_ENCRYPTION_TARGET`, `DISK_ENCRYPTION_ALLOW_FAILURE`, `DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK` | as for `luks2-tpm2` |
 | `DISK_ENCRYPTION_STATUS_URL` | not supported with the UKI mode yet (refused) |
 
@@ -996,6 +1077,12 @@ signature; OVMF with the Microsoft keys and swtpm.
   binds (one token, `tpm2-pubkey-pcrs: 11`, `tpm2-hash-pcrs: 7`, no key
   slot 1); the next unlocks with the TPM2 and has `booty.perhost=1` in
   `/proc/cmdline`; with Secure Boot off the recovery key unlocks.
+  [Secure Boot database updates](#secure-boot-database-updates): the test
+  enrolls a test `KEK` in the OVMF variables and gives the image
+  (with `secureboot-db`) a `dbx` update with a new SHA-256 entry, signed by
+  that `KEK` with `sbvarsign`. BOOTy logs `Secure Boot update applied`;
+  on the first boot the entry is in `dbx` and `sbkeysync` inserts nothing,
+  and the second boot unlocks without a prompt.
 - ci: BOOTy leaves the UKI as it is; the first Secure Boot boot binds; an
   updated UKI signed with the same keys unlocks with the same token; a UKI
   signed for Secure Boot whose PCR 11 policy is signed by another key gets

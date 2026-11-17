@@ -87,6 +87,8 @@ func MergeCommandVars(base, payload []byte) (cfg *config.MachineConfig, keys []s
 		// encryption off or allowing a failure would downgrade silently.
 		{"disk encryption", lockedDiskEncryption(&ref.Provision.DiskEncryption), lockedDiskEncryption(&cfg.Provision.DiskEncryption)},
 		{"disk encryption signer (SECUREBOOT_SIGNING)", ref.Provision.SecureBoot.Signing, cfg.Provision.SecureBoot.Signing},
+		// Off, the first boot can move PCR 7 after the binding (#976).
+		{"disk encryption (SECUREBOOT_APPLY_DBX_UPDATES)", ref.Provision.SecureBoot.ApplyDBXUpdates, cfg.Provision.SecureBoot.ApplyDBXUpdates},
 		// Turning it off would leave the LUKS2 keyslots of a deprovisioned
 		// disk to whoever holds the recovery key.
 		{"DEPROVISION_CRYPTO_ERASE", ref.Deprovision.CryptoErase, cfg.Deprovision.CryptoErase},
