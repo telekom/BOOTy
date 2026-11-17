@@ -123,6 +123,81 @@ func TestOPKVerify(t *testing.T) {
 	}
 }
 
+// The certificate principals are the client's choice: they grant nothing,
+// the policy decides. The validity period, the signature and the critical
+// options are still checked.
+func TestOPKVerifyCertificate(t *testing.T) {
+	ctx := context.Background()
+	prov, httpClient := startMockOIDC(t, "booty")
+	v, err := newOPKVerifier(parseOPKProviders(prov.Issuer+" booty 24h"),
+		parseOPKPolicy("root alice@example.com "+prov.Issuer), httpClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := map[string]any{"email": "alice@example.com", "email_verified": true}
+	mallory := map[string]any{"email": "mallory@example.com", "email_verified": true}
+	for _, tc := range []struct {
+		name   string
+		claims map[string]any
+		user   string
+		edit   func(*ssh.Certificate) // before signing
+		tamper func(*ssh.Certificate) // after signing
+		want   string                 // "" accepts
+	}{
+		{name: "principal root, identity not in the policy", claims: mallory,
+			edit: func(c *ssh.Certificate) { c.ValidPrincipals = []string{"root"} }, want: "no RESCUE_SSH_OPK_POLICY row"},
+		{name: "other principal, identity not in the policy", claims: mallory,
+			edit: func(c *ssh.Certificate) { c.ValidPrincipals = []string{"alice"} }, want: "no RESCUE_SSH_OPK_POLICY row"},
+		{name: "other principal, identity in the policy", claims: alice,
+			edit: func(c *ssh.Certificate) { c.ValidPrincipals = []string{"alice", "root"} }},
+		{name: "principal of the user, not root", claims: alice, user: "alice",
+			edit: func(c *ssh.Certificate) { c.ValidPrincipals = []string{"alice"} }, want: "only root"},
+		{name: "no principals", claims: alice, tamper: func(c *ssh.Certificate) { c.ValidPrincipals = nil }, want: "no principals"},
+		{name: "expired", claims: alice, edit: func(c *ssh.Certificate) { c.ValidBefore = 1 /* 1970 */ }, want: "expired"},
+		{name: "not yet valid", claims: alice, edit: func(c *ssh.Certificate) { c.ValidAfter = 1 << 62 }, want: "not yet valid"},
+		{name: "force-command", claims: alice,
+			edit: func(c *ssh.Certificate) { c.CriticalOptions = map[string]string{"force-command": "true"} }, want: "critical option"},
+		{name: "source-address", claims: alice,
+			edit: func(c *ssh.Certificate) { c.CriticalOptions = map[string]string{"source-address": "192.0.2.1/32"} }, want: "critical option"},
+		{name: "altered after signing", claims: alice, tamper: func(c *ssh.Certificate) { c.ValidPrincipals = []string{"root"} },
+			want: "signature"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key, err := prov.NewKey(ctx, tc.claims)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cert := *key.Cert
+			if tc.edit != nil {
+				tc.edit(&cert)
+				signer, err := ssh.NewSignerFromSigner(key.Private)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := cert.SignCert(rand.Reader, signer); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.tamper != nil {
+				tc.tamper(&cert)
+			}
+			user := "root"
+			if tc.user != "" {
+				user = tc.user
+			}
+			_, err = v.verify(ctx, user, &cert)
+			switch {
+			case tc.want == "" && err != nil:
+				t.Fatalf("refused: %v", err)
+			case tc.want != "" && err == nil:
+				t.Fatal("accepted")
+			case tc.want != "" && !strings.Contains(err.Error(), tc.want):
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseOPKTables(t *testing.T) {
 	got := parseOPKProviders("https://a.example c 24h; http://b.example c 24h; https://c.example c never;" +
 		"https://d.example c oidc_refreshed; https://e.example c; # comment\nhttps://f.example c oidc")
