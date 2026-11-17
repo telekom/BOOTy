@@ -130,13 +130,18 @@ func TestUKIPerHostCmdlineRefused(t *testing.T) {
 func TestUKIKernelParamsAllowList(t *testing.T) {
 	allowed := "console=ttyS0,115200n8 ds=nocloud ci.datasource=ConfigDrive hugepages=16 hugepagesz=1G default-hugepagesz=1G " +
 		"isolcpus=2-3 nohz_full=2-3 rcu_nocbs=2-3 irqaffinity=0-1 iommu=pt intel_iommu=on amd_iommu=on net.ifnames=0 biosdevname=0 " +
+		"iommu=force,nopt intel-iommu=on,sm_on amd_iommu=pgtbl_v1 amd_iommu=force_isolation,pgtbl_v2 " +
 		"transparent_hugepage=never numa_balancing=disable mitigations=auto mitigations=auto,nosmt"
 	for _, enforce := range []bool{false, true} {
 		if na, err := checkUKIKernelParams(allowed, enforce); err != nil || na != nil {
 			t.Errorf("enforce=%v: allowed parameters: %v %q", enforce, err, na)
 		}
 		for _, p := range []string{"mitigations=off", "mitigations", "mitigations=nosmt", "rd.mitigations=off", "mitigations=AUTO",
-			"rd.break", "systemd.unit=rescue.target", "init=/bin/sh", "root=/dev/sdb1", "kgdbwait"} {
+			"rd.break", "systemd.unit=rescue.target", "init=/bin/sh", "root=/dev/sdb1", "kgdbwait", "3", "5",
+			// IOMMU options that turn DMA protection off or let devices bypass it.
+			"intel_iommu=off", "intel-iommu=off", "intel_iommu=on,igfx_off", "intel_iommu=tboot_noforce", "intel_iommu=nobounce",
+			"amd_iommu=off", "amd_iommu=pgtbl_v1,off", "amd_iommu=pgtbl_v1off", "iommu=off", "iommu=pt,off", "iommu=soft", "iommu=noforce",
+			"iommu=offx", "iommu=", "iommu", "intel_iommu=ON", "rd.intel_iommu=off"} {
 			if _, err := checkUKIKernelParams("hugepages=16 "+p, enforce); err == nil {
 				t.Errorf("enforce=%v: %q accepted", enforce, p)
 			}

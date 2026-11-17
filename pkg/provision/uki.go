@@ -83,14 +83,14 @@ const (
 // into the .cmdline of the UKI: the ones configure-grub writes (console,
 // the cloud-init datasource) and hardware tuning that does not change what
 // boots or what may unseal the volume. mitigations is allowed with
-// ukiMitigations only. UKI_CMDLINE_POLICY=enforce refuses every other
+// ukiMitigations only, the IOMMU names with ukiIOMMUOptions only.
+// UKI_CMDLINE_POLICY=enforce refuses every other
 // name, warn logs it. Names compare as in ukiDeniedParams.
 var ukiAllowedParams = []string{
 	"console",
 	"ds", "ci.datasource",
 	"hugepages", "hugepagesz", "default_hugepagesz",
 	"isolcpus", "nohz_full", "rcu_nocbs", "irqaffinity",
-	"iommu", "intel_iommu", "amd_iommu",
 	"net.ifnames", "biosdevname",
 	"transparent_hugepage", "numa_balancing",
 }
@@ -98,6 +98,20 @@ var ukiAllowedParams = []string{
 // ukiMitigations are the allowed values of mitigations: the default, and
 // the default with SMT off, which is stricter.
 var ukiMitigations = []string{"auto", "auto,nosmt"}
+
+// ukiIOMMUOptions are the allowed comma-separated options of the IOMMU
+// names: the ones that keep DMA translation on. off, intel_iommu=igfx_off,
+// tboot_noforce and nobounce, iommu=soft and noforce turn it off or let
+// devices bypass it, and every other option is refused too, as the kernel
+// matches options by prefix (amd_iommu before 6.x anywhere in the value).
+// iommu=pt maps host devices 1:1 but keeps the IOMMU for VFIO and SR-IOV
+// passthrough; amd_iommu=on is not an option, the kernel ignores it.
+var ukiIOMMUOptions = map[string][]string{
+	"iommu":       {"pt", "nopt", "force", "merge", "nomerge", "panic", "nopanic"},
+	"intel_iommu": {"on", "strict", "forcedac", "sp_off", "sm_on", "sm_off"},
+	"amd_iommu": {"on", "force_enable", "force_isolation", "fullflush", "pgtbl_v1", "pgtbl_v2",
+		"irtcachedis", "nohugepages", "v2_pgsizes_only"},
+}
 
 // ukiDeniedParams are kernel parameters that per-host signing never
 // merges into the .cmdline of the UKI, also with UKI_CMDLINE_POLICY=warn:
@@ -109,7 +123,7 @@ var ukiMitigations = []string{"auto", "auto,nosmt"}
 // rd.systemd.* in the initramfs too. Words that start with "-" (-b, and "--", after
 // which the kernel passes the rest to init as arguments) are refused too.
 var ukiDeniedParams = []string{
-	"init", "rdinit", "single", "s", "S", "1", "emergency", "rescue",
+	"init", "rdinit", "single", "s", "S", "1", "2", "3", "4", "5", "emergency", "rescue",
 	"rd.break", "rd.shell", "rd.emergency", "rd.rescue", "rd.debug", "rd.udev.debug", "rd.systemd.debug_shell",
 	"rd.systemd.unit", "rd.systemd.run", "rd.systemd.break", "rd.systemd.wants",
 	"systemd.debug_shell", "systemd.unit", "systemd.run", "systemd.break", "systemd.wants",
@@ -387,7 +401,8 @@ func (o *Orchestrator) ukiCmdline(st *ukiState, imageCmdline []byte) ([]byte, er
 }
 
 // checkUKIKernelParams refuses parameters that are not printable ASCII,
-// in ukiDeniedParams, or mitigations with a value not in ukiMitigations.
+// in ukiDeniedParams, mitigations with a value not in ukiMitigations, or
+// an IOMMU name with an option not in ukiIOMMUOptions.
 // It returns the names not in ukiAllowedParams; enforce refuses them.
 func checkUKIKernelParams(params string, enforce bool) (notAllowed []string, err error) {
 	for _, c := range []byte(params) {
@@ -413,6 +428,13 @@ func checkUKIKernelParams(params string, enforce bool) (notAllowed []string, err
 		case is(name)("mitigations"):
 			if !slices.Contains(ukiMitigations, value) {
 				return nil, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: mitigations must be %s (docs/disk-encryption.md#per-host-kernel-parameters)", p, strings.Join(ukiMitigations, " or "))
+			}
+		case ukiIOMMUOptions[norm(name)] != nil:
+			for o := range strings.SplitSeq(value, ",") {
+				if !slices.Contains(ukiIOMMUOptions[norm(name)], o) {
+					return nil, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: %s may only have the options %s, which keep DMA protection (docs/disk-encryption.md#per-host-kernel-parameters)",
+						p, norm(name), strings.Join(ukiIOMMUOptions[norm(name)], ","))
+				}
 			}
 		case slices.ContainsFunc(ukiAllowedParams, is(name)):
 		case enforce:

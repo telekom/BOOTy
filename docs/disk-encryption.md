@@ -919,7 +919,7 @@ release.
 | `ds`, `ci.datasource` | the cloud-init datasource that `configure-grub` writes (`ds=nocloud`, `ci.datasource=ConfigDrive`) |
 | `hugepages`, `hugepagesz`, `default_hugepagesz` | memory reservation for workloads |
 | `isolcpus`, `nohz_full`, `rcu_nocbs`, `irqaffinity` | CPU isolation for workloads |
-| `iommu`, `intel_iommu`, `amd_iommu` | IOMMU mode for SR-IOV and device passthrough |
+| `iommu`, `intel_iommu`, `amd_iommu` | IOMMU mode for SR-IOV and device passthrough, only with options that keep DMA protection on (comma-separated): `iommu=` `pt`, `nopt`, `force`, `merge`, `nomerge`, `panic`, `nopanic`; `intel_iommu=` `on`, `strict`, `forcedac`, `sp_off`, `sm_on`, `sm_off`; `amd_iommu=` `on` (ignored by the kernel), `force_enable`, `force_isolation`, `fullflush`, `pgtbl_v1`, `pgtbl_v2`, `irtcachedis`, `nohugepages`, `v2_pgsizes_only`. `off`, `intel_iommu=igfx_off`, `tboot_noforce` and `nobounce`, `iommu=soft` and `noforce` turn the IOMMU off or let devices bypass it, and every other option is refused too, as the kernel matches options by prefix (`iommu=offx` is `off`). `iommu=pt` maps the devices of the host 1:1 but keeps the IOMMU for VFIO and SR-IOV passthrough |
 | `net.ifnames`, `biosdevname` | interface naming, which the network configuration of the image depends on |
 | `transparent_hugepage`, `numa_balancing` | memory tuning |
 | `mitigations` | only `mitigations=auto` (the default) and `mitigations=auto,nosmt` (also turns SMT off); `mitigations=off` and every other value are refused |
@@ -944,7 +944,7 @@ supplies the parameters would supply the extension too.
 In both modes these are always refused, as they replace init, stop the boot
 in a shell, debug it or start other units, and the PCR 11 signature would
 bless them for every boot: `init`, `rdinit`, `single`,
-`s`, `S`, `1`, `emergency`, `rescue`, `rd.break`, `rd.shell`,
+`s`, `S`, `1` to `5` (runlevels, which pick the target like `systemd.unit`), `emergency`, `rescue`, `rd.break`, `rd.shell`,
 `rd.emergency`, `rd.rescue`, `rd.debug`, `rd.udev.debug`,
 `rd.systemd.debug_shell`, `rd.systemd.unit`, `rd.systemd.run`,
 `rd.systemd.break`, `rd.systemd.wants`, `systemd.debug_shell`,
