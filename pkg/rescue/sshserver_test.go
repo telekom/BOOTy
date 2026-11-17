@@ -444,6 +444,29 @@ func TestRescueSSHIgnoresAuthorizedKeysFile(t *testing.T) {
 	}
 }
 
+// TestRescueSSHRefusesPlainCertificates: a RESCUE_SSH_PUBKEY key is no
+// certificate authority. A certificate without a PK Token over that key,
+// signed by it, is refused whatever its principals; the key itself logs in.
+func TestRescueSSHRefusesPlainCertificates(t *testing.T) {
+	signer, line := newTestKey(t)
+	addr := startTestServer(t, &Config{SSHKeys: []string{line}}, nil)
+	for _, principals := range [][]string{{"alice"}, {"root"}} {
+		cert := &ssh.Certificate{Key: signer.PublicKey(), CertType: ssh.UserCert, ValidPrincipals: principals,
+			ValidBefore: ssh.CertTimeInfinity}
+		if err := cert.SignCert(rand.Reader, signer); err != nil {
+			t.Fatal(err)
+		}
+		certSigner, err := ssh.NewCertSigner(cert, signer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ssh.Dial("tcp", addr, clientConfig("root", ssh.PublicKeys(certSigner))); err == nil {
+			t.Errorf("certificate for %v accepted", principals)
+		}
+	}
+	_ = dialRescue(t, addr, "root", signer)
+}
+
 // TestRescueSSHTerminalModes applies the pty-req modes to the terminal.
 func TestRescueSSHTerminalModes(t *testing.T) {
 	a, line := newTestKey(t)

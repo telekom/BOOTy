@@ -26,7 +26,8 @@ import (
 // TestRescueSSHOPKLoginQEMU boots the default flavor with the opkssh
 // settings: BOOTy serves rescue SSH itself. A mock OpenID provider on the
 // host (HTTPS with a private CA, CA_BUNDLE_FILE) serves the JWKS. A PK Token
-// key of an identity in the policy logs in, an expired one is refused, and
+// key of an identity in the policy logs in as root; an expired one, one of
+// an identity without a policy row and a login as another user are refused;
 // a static RESCUE_SSH_PUBKEY key still works, with the hardening of the
 // dropbear setup.
 //
@@ -80,10 +81,11 @@ func TestRescueSSHOPKLoginQEMU(t *testing.T) {
 	initramfs := flavorInitramfsWithVars(t, flavor, vars, map[string]string{"deploy/ca-bundle.pem": ca.pem})
 
 	port, console := bootRescueQEMU(ctx, t, kernel, initramfs)
-	opkLogin := func(key string) ([]byte, error) {
+	opkLoginAs := func(user, key string) ([]byte, error) {
 		return rescueSSH(ctx, port, "-i", key, "-o", "CertificateFile="+key+"-cert.pub", "-o", "IdentitiesOnly=yes",
-			"root@127.0.0.1", "echo rescue-ok; id -un")
+			user+"@127.0.0.1", "echo rescue-ok; id -un")
 	}
+	opkLogin := func(key string) ([]byte, error) { return opkLoginAs("root", key) }
 	var out []byte
 	for range 30 {
 		if out, err = opkLogin(valid); err == nil {
@@ -99,6 +101,10 @@ func TestRescueSSHOPKLoginQEMU(t *testing.T) {
 			t.Errorf("%s: want a refusal, got %v\n%s", name, err, out)
 		}
 	}
+	// The certificate names opkssh-wildcard, not a user: only root may log in.
+	if out, err := opkLoginAs("alice", valid); err == nil || !strings.Contains(string(out), "Permission denied") {
+		t.Errorf("login as alice: want a refusal, got %v\n%s", err, out)
+	}
 	if out, err := rescueSSH(ctx, port, "-i", static, "-o", "IdentitiesOnly=yes", "root@127.0.0.1", "echo rescue-ok"); err != nil ||
 		!strings.Contains(string(out), "rescue-ok") {
 		t.Errorf("static key login failed: %v\n%s", err, out)
@@ -106,7 +112,8 @@ func TestRescueSSHOPKLoginQEMU(t *testing.T) {
 	assertRescueSSHRefusals(ctx, t, port, static)
 
 	log := console.String()
-	for _, want := range []string{"rescue SSH login accepted", "method=opkssh", "rescue SSH login refused", "expired", "no RESCUE_SSH_OPK_POLICY row"} {
+	for _, want := range []string{"rescue SSH login accepted", "method=opkssh", "rescue SSH login refused", "expired", "no RESCUE_SSH_OPK_POLICY row",
+		"only root can log in"} {
 		if !strings.Contains(log, want) {
 			t.Errorf("console has no %q; tail:\n%s", want, tail([]byte(log), 3000))
 		}
