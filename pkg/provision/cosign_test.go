@@ -347,6 +347,12 @@ func TestCosignRequireOCI(t *testing.T) {
 		{name: "http sysext", imageURLs: []string{ociRef}, sysextSrc: "https://images.example/ext.raw", sysextKeys: []string{keyPath},
 			wantErr: `sysext "ext" signature: cosign signature verification failed: IMAGE_COSIGN_REQUIRE_OCI is set`},
 		{name: "http sysext without sysext policy", imageURLs: []string{ociRef}, sysextSrc: "https://images.example/ext.raw"},
+		{name: "upper-case oci image", imageURLs: []string{"OCI://registry.example/os@sha256:" + strings.Repeat("1", 64)}},
+		{name: "padded oci sysext", imageURLs: []string{ociRef}, sysextSrc: "  OCI://registry.example/ext@sha256:" + strings.Repeat("2", 64) + " ",
+			sysextKeys: []string{keyPath}},
+		{name: "scheme prefix is not oci", imageURLs: []string{ociRef, "xoci://registry.example/os"}, wantErr: "is not oci://"},
+		{name: "local sysext", imageURLs: []string{ociRef}, sysextSrc: "/var/lib/ext.raw", sysextKeys: []string{keyPath},
+			wantErr: `sysext "ext" signature: cosign signature verification failed: IMAGE_COSIGN_REQUIRE_OCI is set`},
 		{name: "oci sysext", imageURLs: []string{ociRef}, sysextSrc: "oci://registry.example/ext@sha256:" + strings.Repeat("2", 64),
 			sysextKeys: []string{keyPath}},
 	}
