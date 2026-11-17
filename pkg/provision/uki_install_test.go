@@ -141,7 +141,10 @@ func TestUKIKernelParamsAllowList(t *testing.T) {
 			// IOMMU options that turn DMA protection off or let devices bypass it.
 			"intel_iommu=off", "intel-iommu=off", "intel_iommu=on,igfx_off", "intel_iommu=tboot_noforce", "intel_iommu=nobounce",
 			"amd_iommu=off", "amd_iommu=pgtbl_v1,off", "amd_iommu=pgtbl_v1off", "iommu=off", "iommu=pt,off", "iommu=soft", "iommu=noforce",
-			"iommu=offx", "iommu=", "iommu", "intel_iommu=ON", "rd.intel_iommu=off"} {
+			"iommu=offx", "iommu=", "iommu", "intel_iommu=ON", "rd.intel_iommu=off",
+			// cloud-init seeds and cloud-config from the command line.
+			"ds=nocloud;s=http://192.0.2.1/", "ds=nocloud;s=/dev/sdb/", "ci.datasource=NoCloud;s=x", "ds=", "x=acc:",
+			"cloud-config-url=http://192.0.2.1/c", "url=http://192.0.2.1/c"} {
 			if _, err := checkUKIKernelParams("hugepages=16 "+p, enforce); err == nil {
 				t.Errorf("enforce=%v: %q accepted", enforce, p)
 			}

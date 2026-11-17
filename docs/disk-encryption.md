@@ -902,7 +902,9 @@ datasource (`ds=nocloud`, `ci.datasource=ConfigDrive`); with
 Without parameters the `.cmdline` of the image stays as it is.
 
 The parameters must be printable ASCII without quotes or backslashes (the
-kernel and systemd strip quotes, so a quoted name would pass the checks),
+kernel and systemd strip quotes, so a quoted name would pass the checks)
+and without `cc:` (cloud-init runs the cloud-config between `cc:` and
+`end_cc` anywhere in the command line),
 and the `.cmdline` at most 2047 bytes (`COMMAND_LINE_SIZE` of x86-64).
 Names compare with `-` as `_` and without an `rd.` prefix, as the kernel
 and systemd read them (`rd.debug` is `debug`, `default-hugepagesz` is
@@ -916,7 +918,7 @@ release.
 | Name | Why it is allowed |
 |---|---|
 | `console` | the serial console that `configure-grub` resolves (`MACHINE_SERIAL_CONSOLE`) |
-| `ds`, `ci.datasource` | the cloud-init datasource that `configure-grub` writes (`ds=nocloud`, `ci.datasource=ConfigDrive`) |
+| `ds`, `ci.datasource` | the cloud-init datasource that `configure-grub` writes (`ds=nocloud`, `ci.datasource=ConfigDrive`); only a name (letters, digits, `_`, `-`): a seed (`ds=nocloud;s=http://...`) is refused, as cloud-init would run its user-data as root |
 | `hugepages`, `hugepagesz`, `default_hugepagesz` | memory reservation for workloads |
 | `isolcpus`, `nohz_full`, `rcu_nocbs`, `irqaffinity` | CPU isolation for workloads |
 | `iommu`, `intel_iommu`, `amd_iommu` | IOMMU mode for SR-IOV and device passthrough, only with options that keep DMA protection on (comma-separated): `iommu=` `pt`, `nopt`, `force`, `merge`, `nomerge`, `panic`, `nopanic`; `intel_iommu=` `on`, `strict`, `forcedac`, `sp_off`, `sm_on`, `sm_off`; `amd_iommu=` `on` (ignored by the kernel), `force_enable`, `force_isolation`, `fullflush`, `pgtbl_v1`, `pgtbl_v2`, `irtcachedis`, `nohugepages`, `v2_pgsizes_only`. `off`, `intel_iommu=igfx_off`, `tboot_noforce` and `nobounce`, `iommu=soft` and `noforce` turn the IOMMU off or let devices bypass it, and every other option is refused too, as the kernel matches options by prefix (`iommu=offx` is `off`). `iommu=pt` maps the devices of the host 1:1 but keeps the IOMMU for VFIO and SR-IOV passthrough |
@@ -958,6 +960,7 @@ drop-in credential can start a shell), `systemd.volatile` (a volatile
 `systemd.confirm_spawn`, `systemd.log_level`, `systemd.crash_shell`,
 `systemd.mount-extra` (a mount over `/etc` starts any unit), `rd.cmdline`
 (`rd.cmdline=ask` reads more parameters from the console, unmeasured),
+`cloud-config-url`, `url` (cloud-init runs the cloud-config they fetch),
 `root`, `mount.usr`, `roothash`, `usrhash` (after the initramfs unsealed the
 volume, another root in a signed boot phase could unseal it again),
 `kgdboc`, `kgdboc.kgdboc`, `kgdbwait`, `kgdbcon`, `ekgdboc` and `kgdbdbgp`

@@ -22,6 +22,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -99,6 +100,11 @@ var ukiAllowedParams = []string{
 // the default with SMT off, which is stricter.
 var ukiMitigations = []string{"auto", "auto,nosmt"}
 
+// ukiDatasource is the value of ds and ci.datasource: a datasource name,
+// as configure-grub writes it. cloud-init takes a seed URL or path after
+// a ";" (ds=nocloud;s=http://...) and would run its user-data as root.
+var ukiDatasource = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
 // ukiIOMMUOptions are the allowed comma-separated options of the IOMMU
 // names: the ones that keep DMA translation on. off, intel_iommu=igfx_off,
 // tboot_noforce and nobounce, iommu=soft and noforce turn it off or let
@@ -120,7 +126,8 @@ var ukiIOMMUOptions = map[string][]string{
 // bless them, or stop the TPM2 enrollment, or boot another root or /usr
 // after the initramfs unsealed the volume. Names compare with "-" as "_"
 // and without an "rd." prefix: systemd reads every systemd.* setting as
-// rd.systemd.* in the initramfs too. Words that start with "-" (-b, and "--", after
+// rd.systemd.* in the initramfs too. cloud-config-url and url fetch
+// cloud-config that cloud-init runs as root. Words that start with "-" (-b, and "--", after
 // which the kernel passes the rest to init as arguments) are refused too.
 var ukiDeniedParams = []string{
 	"init", "rdinit", "single", "s", "S", "1", "2", "3", "4", "5", "emergency", "rescue",
@@ -131,6 +138,7 @@ var ukiDeniedParams = []string{
 	"systemd.volatile",
 	"systemd.run_success_action", "systemd.run_failure_action", "systemd.confirm_spawn", "systemd.log_level",
 	"systemd.crash_shell", "systemd.mount_extra", "rd.cmdline",
+	"cloud-config-url", "url",
 	"root", "mount.usr", "roothash", "usrhash",
 	"kgdboc", "kgdboc.kgdboc", "kgdbwait", "kgdbcon", "ekgdboc", "kgdbdbgp",
 }
@@ -415,6 +423,11 @@ func checkUKIKernelParams(params string, enforce bool) (notAllowed []string, err
 	if strings.ContainsAny(params, "\"'\\") {
 		return nil, fmt.Errorf("per-host kernel parameters for the UKI must not contain quotes or backslashes: %q", params)
 	}
+	// cloud-init reads cloud-config between "cc:" and "end_cc" anywhere
+	// in the command line.
+	if strings.Contains(params, "cc:") {
+		return nil, fmt.Errorf("per-host kernel parameters for the UKI must not contain cc:, the cloud-init configuration: %q", params)
+	}
 	norm := func(s string) string { return strings.TrimPrefix(strings.ReplaceAll(s, "-", "_"), "rd.") }
 	is := func(name string) func(string) bool { return func(d string) bool { return norm(d) == norm(name) } }
 	for p := range strings.FieldsSeq(params) {
@@ -435,6 +448,10 @@ func checkUKIKernelParams(params string, enforce bool) (notAllowed []string, err
 					return nil, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: %s may only have the options %s, which keep DMA protection (docs/disk-encryption.md#per-host-kernel-parameters)",
 						p, norm(name), strings.Join(ukiIOMMUOptions[norm(name)], ","))
 				}
+			}
+		case is(name)("ds"), is(name)("ci.datasource"):
+			if !ukiDatasource.MatchString(value) {
+				return nil, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: the cloud-init datasource must be a name, without a seed (docs/disk-encryption.md#per-host-kernel-parameters)", p)
 			}
 		case slices.ContainsFunc(ukiAllowedParams, is(name)):
 		case enforce:
