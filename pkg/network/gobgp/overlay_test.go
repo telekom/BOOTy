@@ -272,6 +272,7 @@ func TestParseRouteDistinguisher(t *testing.T) {
 		"70000:65535":      four(70000, 65535),
 		"65535:70000":      two(65535, 70000),
 		"65536:1":          four(65536, 1),
+		"1.100:5":          four(65636, 5),
 		"192.0.2.17:2":     {Rd: &apipb.RouteDistinguisher_IpAddress{IpAddress: &apipb.RouteDistinguisherIPAddress{Admin: "192.0.2.17", Assigned: 2}}},
 	} {
 		got, err := parseRouteDistinguisher(in)
@@ -283,7 +284,8 @@ func TestParseRouteDistinguisher(t *testing.T) {
 		}
 	}
 	for _, in := range []string{"4210000017:70000", "1.2.3.4:70000", "65000:5000000000", "4294967296:1",
-		"2001:db8::1:5", "nope", "65000:", ":5", "65000:-1"} {
+		"2001:db8::1:5", "nope", "65000:", ":5", "65000:-1",
+		"1.100:65536", "65536.1:1", "192.0.2.17:65536", "65000:4294967296"} {
 		if _, err := parseRouteDistinguisher(in); err == nil {
 			t.Errorf("%s: accepted, want an error", in)
 		}
