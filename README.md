@@ -934,8 +934,9 @@ every `oci://` sysext source. Verification fails closed:
   `provision.image.cosignRequireOCI`, default `false`) such sources are
   refused instead: under an image policy every configured `IMAGE` source,
   under a sysext policy every layer source must be `oci://`. `verify-image`
-  and dry-run fail with `BOOTY-IMG-001` and `IMAGE_COSIGN_REQUIRE_OCI is set
-  and the image source <url> is not oci://` before any disk is touched.
+  and dry-run fail before any disk is touched; the `verify-image` status
+  reports `BOOTY-IMG-001`, dry-run only the reason `IMAGE_COSIGN_REQUIRE_OCI
+  is set and the image source <url> is not oci://`.
 
 BOOTy verifies offline against the configured keys and needs no Sigstore
 service. It reads the signatures that `cosign sign --key` and `cosign attach
