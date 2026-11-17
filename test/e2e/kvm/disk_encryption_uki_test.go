@@ -670,11 +670,13 @@ func TestDiskEncryptionUKIPerHostVM(t *testing.T) {
 	vm.enrollKEK(dbx.kek.sbCert)
 
 	vars := ukiProvisionVars(ref, escrow.url, "per-host")
-	// A per-host kernel parameter goes into the signed .cmdline (#968).
+	// A per-host kernel parameter goes into the signed .cmdline (#968); it
+	// is not on the allow list, so the default UKI_CMDLINE_POLICY=warn
+	// logs it (#972).
 	vars["EXTRA_KERNEL_PARAMS"] = ukiPerHostParam
 	out := vm.provision(vars, map[string]string{cosignTestKeyPath: cosignPEM, luksCAPath: escrow.caPEM})
 	for _, want := range []string{"image cosign signature verified", "UKI signed with per-host keys; the private keys are wiped", "UKI boot entry created",
-		"per-host kernel parameters go into the UKI .cmdline"} {
+		"per-host kernel parameters go into the UKI .cmdline", "per-host kernel parameters not on the allow list of the UKI .cmdline"} {
 		if !strings.Contains(string(out), want) {
 			t.Fatalf("provisioning log lacks %q", want)
 		}

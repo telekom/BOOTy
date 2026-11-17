@@ -146,3 +146,23 @@ func TestDiskEncryptionDisablesKexec(t *testing.T) {
 		t.Fatal("disk encryption must reboot through the firmware")
 	}
 }
+
+func TestUKICmdlinePolicy(t *testing.T) {
+	for _, tc := range []struct{ mode, policy, wantErr string }{
+		{DiskEncryptionLUKS2TPM2UKI, "", ""},
+		{DiskEncryptionLUKS2TPM2UKI, UKICmdlinePolicyWarn, ""},
+		{DiskEncryptionLUKS2TPM2UKI, UKICmdlinePolicyEnforce, ""},
+		{DiskEncryptionLUKS2TPM2UKI, "off", "ukiCmdlinePolicy \"off\""},
+		{DiskEncryptionLUKS2TPM2, UKICmdlinePolicyEnforce, "ukiCmdlinePolicy need"},
+	} {
+		c := &Config{}
+		c.Provision.DiskEncryption = DiskEncryptionConfig{Mode: tc.mode, RecoveryKeyURL: "https://p/key", UKICmdlinePolicy: tc.policy}
+		c.Provision.Image.CosignPublicKeys = []string{"/cosign.pub"}
+		c.Provision.SecureBoot.Signing = SigningPerHost
+		c.Provision.SecureBoot.ModuleSigning.Enrollment = ModuleSigningEnrollExternal
+		errs := strings.Join(c.validateDiskEncryption(), "; ")
+		if (tc.wantErr == "") != (errs == "") || !strings.Contains(errs, tc.wantErr) {
+			t.Errorf("%s %q: errors %q, want %q", tc.mode, tc.policy, errs, tc.wantErr)
+		}
+	}
+}

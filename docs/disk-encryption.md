@@ -902,12 +902,51 @@ datasource (`ds=nocloud`, `ci.datasource=ConfigDrive`); with
 Without parameters the `.cmdline` of the image stays as it is.
 
 The parameters must be printable ASCII without quotes or backslashes (the
-kernel and systemd strip quotes, so a quoted name would pass the deny
-list), and the `.cmdline` at most 2047
-bytes (`COMMAND_LINE_SIZE` of x86-64). Parameters that replace init, stop
-the boot in a shell, debug it or start other units are refused, as the PCR
-11 signature would bless them for every boot: `init`, `rdinit`, `single`,
-`s`, `S`, `1`, `emergency`, `rescue`, `rd.break`, `rd.shell`,
+kernel and systemd strip quotes, so a quoted name would pass the checks)
+and without `cc:` (cloud-init runs the cloud-config between `cc:` and
+`end_cc` anywhere in the command line),
+and the `.cmdline` at most 2047 bytes (`COMMAND_LINE_SIZE` of x86-64).
+Names compare with `-` as `_` and without an `rd.` prefix, as the kernel
+and systemd read them (`rd.debug` is `debug`, `default-hugepagesz` is
+`default_hugepagesz`).
+
+Only the names on an allow list go into the signed `.cmdline`: every other
+parameter would be blessed by the PCR 11 signature for every boot, and a
+list of unsafe names fails open on each new kernel, systemd or dracut
+release.
+
+| Name | Why it is allowed |
+|---|---|
+| `console` | the serial console that `configure-grub` resolves (`MACHINE_SERIAL_CONSOLE`) |
+| `ds`, `ci.datasource` | the cloud-init datasource that `configure-grub` writes (`ds=nocloud`, `ci.datasource=ConfigDrive`); only a name (letters, digits, `_`, `-`): a seed (`ds=nocloud;s=http://...`) is refused, as cloud-init would run its user-data as root |
+| `hugepages`, `hugepagesz`, `default_hugepagesz` | memory reservation for workloads |
+| `isolcpus`, `nohz_full`, `rcu_nocbs`, `irqaffinity` | CPU isolation for workloads |
+| `iommu`, `intel_iommu`, `amd_iommu` | IOMMU mode for SR-IOV and device passthrough, only with options that keep DMA protection on (comma-separated): `iommu=` `pt`, `nopt`, `force`, `merge`, `nomerge`, `panic`, `nopanic`; `intel_iommu=` `on`, `strict`, `forcedac`, `sp_off`, `sm_on`, `sm_off`; `amd_iommu=` `on` (ignored by the kernel), `force_enable`, `force_isolation`, `fullflush`, `pgtbl_v1`, `pgtbl_v2`, `irtcachedis`, `nohugepages`, `v2_pgsizes_only`. `off`, `intel_iommu=igfx_off`, `tboot_noforce` and `nobounce`, `iommu=soft` and `noforce` turn the IOMMU off or let devices bypass it, and every other option is refused too, as the kernel matches options by prefix (`iommu=offx` is `off`). `iommu=pt` maps the devices of the host 1:1 but keeps the IOMMU for VFIO and SR-IOV passthrough |
+| `net.ifnames`, `biosdevname` | interface naming, which the network configuration of the image depends on |
+| `transparent_hugepage`, `numa_balancing` | memory tuning |
+| `mitigations` | only `mitigations=auto` (the default) and `mitigations=auto,nosmt` (also turns SMT off); `mitigations=off` and every other value are refused |
+
+`UKI_CMDLINE_POLICY` decides what happens with a name that is not on the
+list:
+
+- `warn` (the default in this release): the parameter goes into the
+  `.cmdline`, BOOTy logs `per-host kernel parameters not on the allow list
+  of the UKI .cmdline` at WARN with the names in `params`, and the
+  provisioning report lists them in `secureBoot.uki.cmdlineNotAllowed`.
+- `enforce`: `prepare-disk-encryption` refuses the parameter, with an error
+  that names it, before any key exists.
+
+The default becomes `enforce` in the next minor release: check the
+reports of your hosts for `cmdlineNotAllowed` and move those parameters
+into the image `.cmdline`, where the image pipeline decides, or set
+`UKI_CMDLINE_POLICY=enforce` now. A parameter that the list should have
+needs a BOOTy change; there is no per-host extension, as the config that
+supplies the parameters would supply the extension too.
+
+In both modes these are always refused, as they replace init, stop the boot
+in a shell, debug it or start other units, and the PCR 11 signature would
+bless them for every boot: `init`, `rdinit`, `single`,
+`s`, `S`, `1` to `5` (runlevels, which pick the target like `systemd.unit`), `emergency`, `rescue`, `rd.break`, `rd.shell`,
 `rd.emergency`, `rd.rescue`, `rd.debug`, `rd.udev.debug`,
 `rd.systemd.debug_shell`, `rd.systemd.unit`, `rd.systemd.run`,
 `rd.systemd.break`, `rd.systemd.wants`, `systemd.debug_shell`,
@@ -921,20 +960,19 @@ drop-in credential can start a shell), `systemd.volatile` (a volatile
 `systemd.confirm_spawn`, `systemd.log_level`, `systemd.crash_shell`,
 `systemd.mount-extra` (a mount over `/etc` starts any unit), `rd.cmdline`
 (`rd.cmdline=ask` reads more parameters from the console, unmeasured),
+`cloud-config-url`, `url` (cloud-init runs the cloud-config they fetch),
 `root`, `mount.usr`, `roothash`, `usrhash` (after the initramfs unsealed the
 volume, another root in a signed boot phase could unseal it again),
 `kgdboc`, `kgdboc.kgdboc`, `kgdbwait`, `kgdbcon`, `ekgdboc` and `kgdbdbgp`
-(with or without a value; `-` and `_` are the same, as systemd reads them,
-and an `rd.` prefix does not count, as systemd reads every `systemd.*`
-setting as `rd.systemd.*` in the initramfs: `rd.debug` refuses `debug`
-too), and every word that starts with `-` (`-b`, and
-`--`, after which the kernel hands the rest to init as arguments such as
-`--unit=`). There is no override; such a parameter belongs in
-the image `.cmdline`, where the image pipeline decides. The refusal fails
+(with or without a value; systemd reads every `systemd.*` setting as
+`rd.systemd.*` in the initramfs), and every word that starts with `-`
+(`-b`, and `--`, after which the kernel hands the rest to init as arguments
+such as `--unit=`). There is no override. The refusal fails
 `prepare-disk-encryption` before any key exists.
 
-A standby payload or deploy archive can not change these settings in the
-UKI mode: it would change the measured command line of the signed UKI.
+A standby payload or deploy archive can not change these settings, nor
+`UKI_CMDLINE_POLICY`, in the UKI mode: it would change the measured
+command line of the signed UKI.
 
 BOOTy rewrites the `.cmdline` section in its PE code: the section keeps its
 address (a `.cmdline` of up to 2 KiB fits the 4 KiB section alignment of
@@ -996,7 +1034,7 @@ Closed by `luks2-tpm2-uki`, compared with `luks2-tpm2`:
 - a changed kernel command line (`init=/bin/sh`, `rd.break`) from the
   console, a BMC or the boot loader: it is in `.cmdline`, measured and
   signed; systemd-stub ignores overrides with Secure Boot on. The per-host
-  kernel parameters are part of it, checked against a deny list and locked
+  kernel parameters are part of it, checked against an allow list and locked
   against standby payloads;
 - booting another signed OS (a distribution live image) and extending PCR
   11 from there: PCR 7 differs (another `db` entry verified it);
@@ -1041,6 +1079,7 @@ Remaining:
 | `DISK_ENCRYPTION_PCR_PUBLIC_KEY_FILE` | optional with `ci`: the pinned PCR policy key |
 | `MACHINE_EXTRA_KERNEL_PARAMS`, `EXTRA_KERNEL_PARAMS` | with `per-host` also in the UKI `.cmdline` ([Per-host kernel parameters](#per-host-kernel-parameters)); with `ci` GRUB only |
 | `UKI_KEEP_IMAGE_CMDLINE` | `true`: `per-host` signs the image `.cmdline` unchanged (transitional) |
+| `UKI_CMDLINE_POLICY` | `warn` (default) or `enforce`: what `per-host` does with a per-host kernel parameter that is not on the [allow list](#per-host-kernel-parameters); the default becomes `enforce` in the next minor release |
 | `UKI_INPLACE_WRITE` | `true`: `per-host` rewrites the UKI in place, for an ESP without room for two copies (transitional) |
 | `SECUREBOOT_APPLY_DBX_UPDATES` | `false`: do not apply the `KEK`/`db`/`dbx` updates of the image before the binding ([Secure Boot database updates](#secure-boot-database-updates)); as for `luks2-tpm2` |
 | `DISK_ENCRYPTION_RECOVERY_KEY_URL`, `DISK_ENCRYPTION_TARGET`, `DISK_ENCRYPTION_ALLOW_FAILURE`, `DISK_ENCRYPTION_SKIP_SECURE_BOOT_CHECK` | as for `luks2-tpm2` |
@@ -1098,6 +1137,6 @@ signature; OVMF with the Microsoft keys and swtpm.
 
 Unit tests assert that `ci` never generates a key and that nothing of this
 runs with the defaults; the per-host `.cmdline`, its PCR 11 policy against
-`systemd-measure` output, the deny list and the payload lock; and the
+`systemd-measure` output, the allow list in both `UKI_CMDLINE_POLICY` modes, the refused names, and the payload lock; and the
 atomic install (a failed write keeps the old UKI, the free-space refusal, a
 leftover temporary file, a truncated UKI).

@@ -119,8 +119,88 @@ func TestUKIPerHostCmdlineRefused(t *testing.T) {
 			t.Errorf("append mode %q: err=%v keys=%d", params, err, *n)
 		}
 	}
-	if err := checkUKIKernelParams("hugepages=16 isolcpus=2-3 console=ttyS0,115200n8 ds=nocloud"); err != nil {
-		t.Errorf("ordinary parameters refused: %v", err)
+	if na, err := checkUKIKernelParams("hugepages=16 isolcpus=2-3 console=ttyS0,115200n8 ds=nocloud", true); err != nil || na != nil {
+		t.Errorf("ordinary parameters refused: %v %q", err, na)
+	}
+}
+
+// TestUKIKernelParamsAllowList: allowed names pass in both modes; other
+// names are returned with warn and refused with enforce; the deny list and
+// the mitigations rule refuse in both modes.
+func TestUKIKernelParamsAllowList(t *testing.T) {
+	allowed := "console=ttyS0,115200n8 ds=nocloud ci.datasource=ConfigDrive hugepages=16 hugepagesz=1G default-hugepagesz=1G " +
+		"isolcpus=2-3 nohz_full=2-3 rcu_nocbs=2-3 irqaffinity=0-1 iommu=pt intel_iommu=on amd_iommu=on net.ifnames=0 biosdevname=0 " +
+		"iommu=force,nopt intel-iommu=on,sm_on amd_iommu=pgtbl_v1 amd_iommu=force_isolation,pgtbl_v2 " +
+		"transparent_hugepage=never numa_balancing=disable mitigations=auto mitigations=auto,nosmt"
+	for _, enforce := range []bool{false, true} {
+		if na, err := checkUKIKernelParams(allowed, enforce); err != nil || na != nil {
+			t.Errorf("enforce=%v: allowed parameters: %v %q", enforce, err, na)
+		}
+		for _, p := range []string{"mitigations=off", "mitigations", "mitigations=nosmt", "rd.mitigations=off", "mitigations=AUTO",
+			"rd.break", "systemd.unit=rescue.target", "init=/bin/sh", "root=/dev/sdb1", "kgdbwait", "3", "5",
+			// IOMMU options that turn DMA protection off or let devices bypass it.
+			"intel_iommu=off", "intel-iommu=off", "intel_iommu=on,igfx_off", "intel_iommu=tboot_noforce", "intel_iommu=nobounce",
+			"amd_iommu=off", "amd_iommu=pgtbl_v1,off", "amd_iommu=pgtbl_v1off", "iommu=off", "iommu=pt,off", "iommu=soft", "iommu=noforce",
+			"iommu=offx", "iommu=", "iommu", "intel_iommu=ON", "rd.intel_iommu=off",
+			// cloud-init seeds and cloud-config from the command line.
+			"ds=nocloud;s=http://192.0.2.1/", "ds=nocloud;s=/dev/sdb/", "ci.datasource=NoCloud;s=x", "ds=", "x=acc:",
+			"cloud-config-url=http://192.0.2.1/c", "url=http://192.0.2.1/c"} {
+			if _, err := checkUKIKernelParams("hugepages=16 "+p, enforce); err == nil {
+				t.Errorf("enforce=%v: %q accepted", enforce, p)
+			}
+		}
+	}
+	na, err := checkUKIKernelParams("hugepages=16 booty.test=1 quiet loglevel=7", false)
+	if err != nil || !slices.Equal(na, []string{"booty.test", "quiet", "loglevel"}) {
+		t.Errorf("warn: %q, %v", na, err)
+	}
+	for _, p := range []string{"booty.test=1", "quiet", "systemd.setenv=X=1", "panic=0"} {
+		if _, err := checkUKIKernelParams(p, true); err == nil || !strings.Contains(err.Error(), "UKI_CMDLINE_POLICY=enforce") {
+			t.Errorf("enforce: %q: %v", p, err)
+		}
+	}
+}
+
+// TestUKIPerHostCmdlinePolicy: with UKI_CMDLINE_POLICY=enforce a name
+// outside the allow list fails before any key is made; with warn it goes
+// into the .cmdline and the report names it.
+func TestUKIPerHostCmdlinePolicy(t *testing.T) {
+	n := countKeyGeneration(t, false)
+	o, _, root, esp := ukiTestHost(t, config.SigningPerHost, perHostUKI(t))
+	o.cfg.Provision.SerialConsole = "none"
+	o.cfg.Provision.ExtraKernelParams = "hugepages=16 booty.test=1"
+	o.cfg.Provision.DiskEncryption.UKICmdlinePolicy = config.UKICmdlinePolicyEnforce
+	if _, err := o.prepareUKI(root, esp); err == nil || !strings.Contains(err.Error(), `"booty.test"`) || *n != 0 {
+		t.Fatalf("enforce: err=%v keys=%d", err, *n)
+	}
+
+	// Values with commas pass the GRUB parameter check too.
+	o, _, root, esp = ukiTestHost(t, config.SigningPerHost, perHostUKI(t))
+	o.cfg.Provision.SerialConsole = "none"
+	o.cfg.Provision.ExtraKernelParams = "mitigations=auto,nosmt isolcpus=1,3"
+	o.cfg.Provision.DiskEncryption.UKICmdlinePolicy = config.UKICmdlinePolicyEnforce
+	if _, err := o.prepareUKI(root, esp); err != nil {
+		t.Fatalf("enforce with mitigations=auto,nosmt: %v", err)
+	}
+	signed, _ := os.ReadFile(filepath.Join(esp, "EFI/Linux/ubuntu-6.8.efi"))
+	if secs, _, _ := ukiSections(signed); string(secs["cmdline"]) != "root=x mitigations=auto,nosmt isolcpus=1,3" {
+		t.Fatalf("enforce: .cmdline %q", secs["cmdline"])
+	}
+
+	o, _, root, esp = ukiTestHost(t, config.SigningPerHost, perHostUKI(t))
+	o.cfg.Provision.SerialConsole = "none"
+	o.cfg.Provision.ExtraKernelParams = "hugepages=16 booty.test=1"
+	st, err := o.prepareUKI(root, esp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.encryption = &encryptionState{uki: st}
+	if r := o.reportUKI(); !slices.Equal(r.CmdlineNotAllowed, []string{"booty.test"}) {
+		t.Fatalf("report %q", r.CmdlineNotAllowed)
+	}
+	signed, _ = os.ReadFile(filepath.Join(esp, "EFI/Linux/ubuntu-6.8.efi"))
+	if secs, _, _ := ukiSections(signed); string(secs["cmdline"]) != "root=x hugepages=16 booty.test=1" {
+		t.Fatalf("warn: .cmdline %q", secs["cmdline"])
 	}
 }
 

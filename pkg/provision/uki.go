@@ -22,6 +22,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -79,16 +80,57 @@ const (
 	ukiMaxCmdline = 2047
 )
 
-// ukiDeniedParams are kernel parameters that per-host signing does not
-// merge into the .cmdline of the UKI: they replace init, stop the boot in
+// ukiAllowedParams are the kernel parameters that per-host signing merges
+// into the .cmdline of the UKI: the ones configure-grub writes (console,
+// the cloud-init datasource) and hardware tuning that does not change what
+// boots or what may unseal the volume. mitigations is allowed with
+// ukiMitigations only, the IOMMU names with ukiIOMMUOptions only.
+// UKI_CMDLINE_POLICY=enforce refuses every other
+// name, warn logs it. Names compare as in ukiDeniedParams.
+var ukiAllowedParams = []string{
+	"console",
+	"ds", "ci.datasource",
+	"hugepages", "hugepagesz", "default_hugepagesz",
+	"isolcpus", "nohz_full", "rcu_nocbs", "irqaffinity",
+	"net.ifnames", "biosdevname",
+	"transparent_hugepage", "numa_balancing",
+}
+
+// ukiMitigations are the allowed values of mitigations: the default, and
+// the default with SMT off, which is stricter.
+var ukiMitigations = []string{"auto", "auto,nosmt"}
+
+// ukiDatasource is the value of ds and ci.datasource: a datasource name,
+// as configure-grub writes it. cloud-init takes a seed URL or path after
+// a ";" (ds=nocloud;s=http://...) and would run its user-data as root.
+var ukiDatasource = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// ukiIOMMUOptions are the allowed comma-separated options of the IOMMU
+// names: the ones that keep DMA translation on. off, intel_iommu=igfx_off,
+// tboot_noforce and nobounce, iommu=soft and noforce turn it off or let
+// devices bypass it, and every other option is refused too, as the kernel
+// matches options by prefix (amd_iommu before 6.x anywhere in the value).
+// iommu=pt maps host devices 1:1 but keeps the IOMMU for VFIO and SR-IOV
+// passthrough; amd_iommu=on is not an option, the kernel ignores it.
+var ukiIOMMUOptions = map[string][]string{
+	"iommu":       {"pt", "nopt", "force", "merge", "nomerge", "panic", "nopanic"},
+	"intel_iommu": {"on", "strict", "forcedac", "sp_off", "sm_on", "sm_off"},
+	"amd_iommu": {"on", "force_enable", "force_isolation", "fullflush", "pgtbl_v1", "pgtbl_v2",
+		"irtcachedis", "nohugepages", "v2_pgsizes_only"},
+}
+
+// ukiDeniedParams are kernel parameters that per-host signing never
+// merges into the .cmdline of the UKI, also with UKI_CMDLINE_POLICY=warn:
+// they replace init, stop the boot in
 // a shell, debug it or start other units, and the PCR 11 signature would
 // bless them, or stop the TPM2 enrollment, or boot another root or /usr
 // after the initramfs unsealed the volume. Names compare with "-" as "_"
 // and without an "rd." prefix: systemd reads every systemd.* setting as
-// rd.systemd.* in the initramfs too. Words that start with "-" (-b, and "--", after
+// rd.systemd.* in the initramfs too. cloud-config-url and url fetch
+// cloud-config that cloud-init runs as root. Words that start with "-" (-b, and "--", after
 // which the kernel passes the rest to init as arguments) are refused too.
 var ukiDeniedParams = []string{
-	"init", "rdinit", "single", "s", "S", "1", "emergency", "rescue",
+	"init", "rdinit", "single", "s", "S", "1", "2", "3", "4", "5", "emergency", "rescue",
 	"rd.break", "rd.shell", "rd.emergency", "rd.rescue", "rd.debug", "rd.udev.debug", "rd.systemd.debug_shell",
 	"rd.systemd.unit", "rd.systemd.run", "rd.systemd.break", "rd.systemd.wants",
 	"systemd.debug_shell", "systemd.unit", "systemd.run", "systemd.break", "systemd.wants",
@@ -96,6 +138,7 @@ var ukiDeniedParams = []string{
 	"systemd.volatile",
 	"systemd.run_success_action", "systemd.run_failure_action", "systemd.confirm_spawn", "systemd.log_level",
 	"systemd.crash_shell", "systemd.mount_extra", "rd.cmdline",
+	"cloud-config-url", "url",
 	"root", "mount.usr", "roothash", "usrhash",
 	"kgdboc", "kgdboc.kgdboc", "kgdbwait", "kgdbcon", "ekgdboc", "kgdbdbgp",
 }
@@ -120,6 +163,9 @@ type ukiState struct {
 	sha256     string // of the installed UKI
 	certSHA256 string // per-host Secure Boot certificate
 	cert       []byte // DER
+	// cmdlineNotAllowed are the per-host kernel parameter names that
+	// UKI_CMDLINE_POLICY=warn let through.
+	cmdlineNotAllowed []string
 }
 
 // ReportUKI is the installed UKI. Cert (DER, base64 in JSON) is the
@@ -130,6 +176,9 @@ type ReportUKI struct {
 	SHA256     string `json:"sha256"`
 	CertSHA256 string `json:"certSHA256,omitempty"`
 	Cert       []byte `json:"cert,omitempty"`
+	// CmdlineNotAllowed are the per-host kernel parameter names in the
+	// .cmdline that are not on the allow list (UKI_CMDLINE_POLICY=warn).
+	CmdlineNotAllowed []string `json:"cmdlineNotAllowed,omitempty"`
 }
 
 // uki functions and paths that tests replace.
@@ -291,7 +340,7 @@ func (o *Orchestrator) installPerHostUKI(esp string, st *ukiState, u *imageUKI) 
 			return nil, nil, err
 		}
 	}
-	cmdline, err := o.ukiCmdline(u.sections["cmdline"])
+	cmdline, err := o.ukiCmdline(st, u.sections["cmdline"])
 	if err != nil {
 		return nil, nil, err
 	}
@@ -327,8 +376,9 @@ func (o *Orchestrator) installPerHostUKI(esp string, st *ukiState, u *imageUKI) 
 
 // ukiCmdline returns the .cmdline for per-host signing: the one of the
 // image with the per-host kernel parameters of the GRUB drop-in appended,
-// or nil to keep it (no parameters, UKI_KEEP_IMAGE_CMDLINE).
-func (o *Orchestrator) ukiCmdline(imageCmdline []byte) ([]byte, error) {
+// or nil to keep it (no parameters, UKI_KEEP_IMAGE_CMDLINE). It records
+// the names not on the allow list in st.
+func (o *Orchestrator) ukiCmdline(st *ukiState, imageCmdline []byte) ([]byte, error) {
 	if o.cfg.Provision.DiskEncryption.UKIKeepImageCmdline {
 		return nil, nil
 	}
@@ -339,8 +389,15 @@ func (o *Orchestrator) ukiCmdline(imageCmdline []byte) ([]byte, error) {
 	if params == "" {
 		return nil, nil
 	}
-	if err := checkUKIKernelParams(params); err != nil {
+	enforce := o.cfg.Provision.DiskEncryption.UKICmdlinePolicy == config.UKICmdlinePolicyEnforce
+	notAllowed, err := checkUKIKernelParams(params, enforce)
+	if err != nil {
 		return nil, err
+	}
+	if len(notAllowed) > 0 {
+		o.log.Warn("per-host kernel parameters not on the allow list of the UKI .cmdline: UKI_CMDLINE_POLICY=enforce, the default from the next minor release, refuses them",
+			"params", strings.Join(notAllowed, " "))
+		st.cmdlineNotAllowed = notAllowed
 	}
 	base := bytes.TrimRight(imageCmdline, "\x00 \t\n")
 	cmdline := slices.Concat(base, []byte(" "+params), imageCmdline[len(base):])
@@ -351,30 +408,91 @@ func (o *Orchestrator) ukiCmdline(imageCmdline []byte) ([]byte, error) {
 	return cmdline, nil
 }
 
-// checkUKIKernelParams refuses parameters that are not printable ASCII or
-// in ukiDeniedParams.
-func checkUKIKernelParams(params string) error {
+// checkUKIKernelParams refuses parameters that are not printable ASCII,
+// in ukiDeniedParams, mitigations with a value not in ukiMitigations, or
+// an IOMMU name with an option not in ukiIOMMUOptions.
+// It returns the names not in ukiAllowedParams; enforce refuses them.
+func checkUKIKernelParams(params string, enforce bool) (notAllowed []string, err error) {
+	if err := checkUKIKernelParamChars(params); err != nil {
+		return nil, err
+	}
+	for p := range strings.FieldsSeq(params) {
+		name, value, _ := strings.Cut(p, "=")
+		if strings.HasPrefix(name, "-") {
+			return nil, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: words that start with - go to init (docs/disk-encryption.md#per-host-kernel-parameters)", name)
+		}
+		if slices.ContainsFunc(ukiDeniedParams, ukiParamIs(name)) {
+			return nil, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: it debugs the boot or opens a shell (docs/disk-encryption.md#per-host-kernel-parameters)", name)
+		}
+		checked, err := checkUKIParamValue(p, name, value)
+		switch {
+		case err != nil:
+			return nil, err
+		case checked, slices.ContainsFunc(ukiAllowedParams, ukiParamIs(name)):
+		case enforce:
+			return nil, fmt.Errorf("per-host kernel parameter %q is not on the allow list of the UKI .cmdline (UKI_CMDLINE_POLICY=enforce): "+
+				"put it into the image .cmdline, or set UKI_KEEP_IMAGE_CMDLINE=true (docs/disk-encryption.md#per-host-kernel-parameters)", name)
+		default:
+			notAllowed = append(notAllowed, name)
+		}
+	}
+	return notAllowed, nil
+}
+
+// checkUKIKernelParamChars refuses characters that the kernel, systemd or
+// cloud-init read in a way that the name checks do not see.
+func checkUKIKernelParamChars(params string) error {
 	for _, c := range []byte(params) {
 		if c < ' ' || c > '~' {
 			return fmt.Errorf("per-host kernel parameters for the UKI must be printable ASCII: %q", params)
 		}
 	}
 	// The kernel and systemd strip quotes, so a quoted name could pass the
-	// deny list.
+	// checks.
 	if strings.ContainsAny(params, "\"'\\") {
 		return fmt.Errorf("per-host kernel parameters for the UKI must not contain quotes or backslashes: %q", params)
 	}
-	norm := func(s string) string { return strings.TrimPrefix(strings.ReplaceAll(s, "-", "_"), "rd.") }
-	for p := range strings.FieldsSeq(params) {
-		name, _, _ := strings.Cut(p, "=")
-		if strings.HasPrefix(name, "-") {
-			return fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: words that start with - go to init (docs/disk-encryption.md#per-host-kernel-parameters)", name)
-		}
-		if slices.ContainsFunc(ukiDeniedParams, func(d string) bool { return norm(d) == norm(name) }) {
-			return fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: it debugs the boot or opens a shell (docs/disk-encryption.md#per-host-kernel-parameters)", name)
-		}
+	// cloud-init reads cloud-config between "cc:" and "end_cc" anywhere
+	// in the command line.
+	if strings.Contains(params, "cc:") {
+		return fmt.Errorf("per-host kernel parameters for the UKI must not contain cc:, the cloud-init configuration: %q", params)
 	}
 	return nil
+}
+
+// ukiParamNorm compares names with "-" as "_" and without an "rd." prefix.
+func ukiParamNorm(s string) string { return strings.TrimPrefix(strings.ReplaceAll(s, "-", "_"), "rd.") }
+
+func ukiParamIs(name string) func(string) bool {
+	return func(d string) bool { return ukiParamNorm(d) == ukiParamNorm(name) }
+}
+
+// checkUKIParamValue checks the value of the allowed names whose other
+// values weaken the system: mitigations, the IOMMU names and the cloud-init
+// datasource. checked reports that name is one of them and value allowed.
+func checkUKIParamValue(p, name, value string) (checked bool, err error) {
+	is := ukiParamIs(name)
+	switch {
+	case is("mitigations"):
+		if !slices.Contains(ukiMitigations, value) {
+			return false, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: mitigations must be %s (docs/disk-encryption.md#per-host-kernel-parameters)", p, strings.Join(ukiMitigations, " or "))
+		}
+	case ukiIOMMUOptions[ukiParamNorm(name)] != nil:
+		opts := ukiIOMMUOptions[ukiParamNorm(name)]
+		for o := range strings.SplitSeq(value, ",") {
+			if !slices.Contains(opts, o) {
+				return false, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: %s may only have the options %s, which keep DMA protection (docs/disk-encryption.md#per-host-kernel-parameters)",
+					p, ukiParamNorm(name), strings.Join(opts, ","))
+			}
+		}
+	case is("ds"), is("ci.datasource"):
+		if !ukiDatasource.MatchString(value) {
+			return false, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: the cloud-init datasource must be a name, without a seed (docs/disk-encryption.md#per-host-kernel-parameters)", p)
+		}
+	default:
+		return false, nil
+	}
+	return true, nil
 }
 
 // checkESPRoom checks that the ESP has room for a second copy of the UKI
@@ -707,5 +825,5 @@ func (o *Orchestrator) reportUKI() *ReportUKI {
 		return nil
 	}
 	u := o.encryption.uki
-	return &ReportUKI{Signing: u.signing, Loader: u.loader, SHA256: u.sha256, CertSHA256: u.certSHA256, Cert: u.cert}
+	return &ReportUKI{Signing: u.signing, Loader: u.loader, SHA256: u.sha256, CertSHA256: u.certSHA256, Cert: u.cert, CmdlineNotAllowed: u.cmdlineNotAllowed}
 }

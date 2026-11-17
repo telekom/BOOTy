@@ -57,8 +57,10 @@ const machineCommandsChrootDir = "/tmp/booty-machine-commands"
 
 var managedEFIVendors = [...]string{"ubuntu", "debian"}
 
-// safeKernelParams matches only safe characters for kernel command line parameters.
-var safeKernelParams = regexp.MustCompile(`^[a-zA-Z0-9=._\-/ ]*$`)
+// safeKernelParams matches only safe characters for kernel command line
+// parameters. A comma separates values (isolcpus=1,3, mitigations=auto,nosmt)
+// and has no meaning in the double-quoted GRUB_CMDLINE_LINUX.
+var safeKernelParams = regexp.MustCompile(`^[a-zA-Z0-9=.,_\-/ ]*$`)
 
 // virtualTerminalParam matches the kernel virtual terminals, which are valid
 // console values but never carry a serial getty.
