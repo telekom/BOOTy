@@ -246,8 +246,9 @@ func (v *opkVerifier) verify(ctx context.Context, user string, cert *ssh.Certifi
 	// its validity period and signature like sshd's cert-authority line.
 	// Its principals are the client's choice (opkssh login writes
 	// opkssh-wildcard) and opkssh's verifier lets sshd accept any of them,
-	// so RESCUE_SSH_OPK_POLICY alone decides the user. x/crypto refuses a
-	// certificate without principals, as OpenSSH 10.3 does.
+	// so RESCUE_SSH_OPK_POLICY alone decides the user. A certificate
+	// without principals is refused, as OpenSSH 10.3 and
+	// golang.org/x/crypto v0.59.0 do.
 	if len(cert.ValidPrincipals) == 0 {
 		return claims, errors.New("certificate: no principals")
 	}
