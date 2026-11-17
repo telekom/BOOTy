@@ -413,47 +413,22 @@ func (o *Orchestrator) ukiCmdline(st *ukiState, imageCmdline []byte) ([]byte, er
 // an IOMMU name with an option not in ukiIOMMUOptions.
 // It returns the names not in ukiAllowedParams; enforce refuses them.
 func checkUKIKernelParams(params string, enforce bool) (notAllowed []string, err error) {
-	for _, c := range []byte(params) {
-		if c < ' ' || c > '~' {
-			return nil, fmt.Errorf("per-host kernel parameters for the UKI must be printable ASCII: %q", params)
-		}
+	if err := checkUKIKernelParamChars(params); err != nil {
+		return nil, err
 	}
-	// The kernel and systemd strip quotes, so a quoted name could pass the
-	// checks.
-	if strings.ContainsAny(params, "\"'\\") {
-		return nil, fmt.Errorf("per-host kernel parameters for the UKI must not contain quotes or backslashes: %q", params)
-	}
-	// cloud-init reads cloud-config between "cc:" and "end_cc" anywhere
-	// in the command line.
-	if strings.Contains(params, "cc:") {
-		return nil, fmt.Errorf("per-host kernel parameters for the UKI must not contain cc:, the cloud-init configuration: %q", params)
-	}
-	norm := func(s string) string { return strings.TrimPrefix(strings.ReplaceAll(s, "-", "_"), "rd.") }
-	is := func(name string) func(string) bool { return func(d string) bool { return norm(d) == norm(name) } }
 	for p := range strings.FieldsSeq(params) {
 		name, value, _ := strings.Cut(p, "=")
 		if strings.HasPrefix(name, "-") {
 			return nil, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: words that start with - go to init (docs/disk-encryption.md#per-host-kernel-parameters)", name)
 		}
-		switch {
-		case slices.ContainsFunc(ukiDeniedParams, is(name)):
+		if slices.ContainsFunc(ukiDeniedParams, ukiParamIs(name)) {
 			return nil, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: it debugs the boot or opens a shell (docs/disk-encryption.md#per-host-kernel-parameters)", name)
-		case is(name)("mitigations"):
-			if !slices.Contains(ukiMitigations, value) {
-				return nil, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: mitigations must be %s (docs/disk-encryption.md#per-host-kernel-parameters)", p, strings.Join(ukiMitigations, " or "))
-			}
-		case ukiIOMMUOptions[norm(name)] != nil:
-			for o := range strings.SplitSeq(value, ",") {
-				if !slices.Contains(ukiIOMMUOptions[norm(name)], o) {
-					return nil, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: %s may only have the options %s, which keep DMA protection (docs/disk-encryption.md#per-host-kernel-parameters)",
-						p, norm(name), strings.Join(ukiIOMMUOptions[norm(name)], ","))
-				}
-			}
-		case is(name)("ds"), is(name)("ci.datasource"):
-			if !ukiDatasource.MatchString(value) {
-				return nil, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: the cloud-init datasource must be a name, without a seed (docs/disk-encryption.md#per-host-kernel-parameters)", p)
-			}
-		case slices.ContainsFunc(ukiAllowedParams, is(name)):
+		}
+		checked, err := checkUKIParamValue(p, name, value)
+		switch {
+		case err != nil:
+			return nil, err
+		case checked, slices.ContainsFunc(ukiAllowedParams, ukiParamIs(name)):
 		case enforce:
 			return nil, fmt.Errorf("per-host kernel parameter %q is not on the allow list of the UKI .cmdline (UKI_CMDLINE_POLICY=enforce): "+
 				"put it into the image .cmdline, or set UKI_KEEP_IMAGE_CMDLINE=true (docs/disk-encryption.md#per-host-kernel-parameters)", name)
@@ -462,6 +437,62 @@ func checkUKIKernelParams(params string, enforce bool) (notAllowed []string, err
 		}
 	}
 	return notAllowed, nil
+}
+
+// checkUKIKernelParamChars refuses characters that the kernel, systemd or
+// cloud-init read in a way that the name checks do not see.
+func checkUKIKernelParamChars(params string) error {
+	for _, c := range []byte(params) {
+		if c < ' ' || c > '~' {
+			return fmt.Errorf("per-host kernel parameters for the UKI must be printable ASCII: %q", params)
+		}
+	}
+	// The kernel and systemd strip quotes, so a quoted name could pass the
+	// checks.
+	if strings.ContainsAny(params, "\"'\\") {
+		return fmt.Errorf("per-host kernel parameters for the UKI must not contain quotes or backslashes: %q", params)
+	}
+	// cloud-init reads cloud-config between "cc:" and "end_cc" anywhere
+	// in the command line.
+	if strings.Contains(params, "cc:") {
+		return fmt.Errorf("per-host kernel parameters for the UKI must not contain cc:, the cloud-init configuration: %q", params)
+	}
+	return nil
+}
+
+// ukiParamNorm compares names with "-" as "_" and without an "rd." prefix.
+func ukiParamNorm(s string) string { return strings.TrimPrefix(strings.ReplaceAll(s, "-", "_"), "rd.") }
+
+func ukiParamIs(name string) func(string) bool {
+	return func(d string) bool { return ukiParamNorm(d) == ukiParamNorm(name) }
+}
+
+// checkUKIParamValue checks the value of the allowed names whose other
+// values weaken the system: mitigations, the IOMMU names and the cloud-init
+// datasource. checked reports that name is one of them and value allowed.
+func checkUKIParamValue(p, name, value string) (checked bool, err error) {
+	is := ukiParamIs(name)
+	switch {
+	case is("mitigations"):
+		if !slices.Contains(ukiMitigations, value) {
+			return false, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: mitigations must be %s (docs/disk-encryption.md#per-host-kernel-parameters)", p, strings.Join(ukiMitigations, " or "))
+		}
+	case ukiIOMMUOptions[ukiParamNorm(name)] != nil:
+		opts := ukiIOMMUOptions[ukiParamNorm(name)]
+		for o := range strings.SplitSeq(value, ",") {
+			if !slices.Contains(opts, o) {
+				return false, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: %s may only have the options %s, which keep DMA protection (docs/disk-encryption.md#per-host-kernel-parameters)",
+					p, ukiParamNorm(name), strings.Join(opts, ","))
+			}
+		}
+	case is("ds"), is("ci.datasource"):
+		if !ukiDatasource.MatchString(value) {
+			return false, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: the cloud-init datasource must be a name, without a seed (docs/disk-encryption.md#per-host-kernel-parameters)", p)
+		}
+	default:
+		return false, nil
+	}
+	return true, nil
 }
 
 // checkESPRoom checks that the ESP has room for a second copy of the UKI
