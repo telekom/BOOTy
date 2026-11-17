@@ -1239,10 +1239,17 @@ if [ "$(efivar SecureBoot)" != 1 ] || [ "$(efivar SetupMode)" != 0 ]; then
 	say "Secure Boot is not on in user mode, the enrollment waits"
 	exit 0
 fi
-if ! cryptsetup luksDump "$dev" | grep -q "^  $LUKS_ENROLL_SLOT: luks2"; then
+# A failed luksDump proves nothing: the unit stays enabled (#981). The UKI
+# mode has no status URL yet, so luks-dump-failed goes to the journal only.
+dump_failed() {
+	say "luks-dump-failed: luksDump of $dev failed; key slot $LUKS_ENROLL_SLOT stays, the next boot tries again"
+	exit 1
+}
+dump=$(cryptsetup luksDump "$dev") || dump_failed
+if ! printf '%s\n' "$dump" | grep -q "^  $LUKS_ENROLL_SLOT: luks2"; then
 	# An earlier run wiped key slot $LUKS_ENROLL_SLOT after the enrollment
 	# and stopped before it disabled the unit; the TPM2 opened this boot.
-	cryptsetup luksDump "$dev" | grep -q systemd-tpm2
+	printf '%s\n' "$dump" | grep -q systemd-tpm2
 	systemctl disable ` + luksUnitName + `
 	say "done: key slot $LUKS_ENROLL_SLOT is already gone"
 	exit 0
@@ -1252,7 +1259,8 @@ systemd-cryptenroll --unlock-key-file=/dev/null --wipe-slot=tpm2 --tpm2-device=a
 	--tpm2-public-key="$TPM2_PUBLIC_KEY" --tpm2-public-key-pcrs=11 --tpm2-signature="$TPM2_SIGNATURE" \
 	--tpm2-pcrs="$TPM2_PCRS" "$dev"
 say "the TPM2 unseals with PCR $TPM2_PCRS and the signed PCR 11 policy"
-if cryptsetup luksDump "$dev" | grep -q "^  $LUKS_ENROLL_SLOT: luks2"; then
+dump=$(cryptsetup luksDump "$dev") || dump_failed
+if printf '%s\n' "$dump" | grep -q "^  $LUKS_ENROLL_SLOT: luks2"; then
 	# cryptsetup reads nothing from /dev/null; an empty file is the empty passphrase.
 	empty=$(mktemp)
 	# Not the TPM2 token: only the empty passphrase may pass this check.

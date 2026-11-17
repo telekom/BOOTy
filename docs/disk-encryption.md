@@ -870,7 +870,10 @@ Installed system:
   new policy unseals with the current PCR values before it writes the slot.
   Then the unit wipes key slot 1 and disables itself. A run that stopped
   after the wipe finishes on the next boot without the empty passphrase,
-  once it sees the TPM2 token. One phase is enough:
+  once it sees the TPM2 token. A failed `cryptsetup luksDump` proves
+  neither: the unit logs `luks-dump-failed`, fails, stays enabled and tries
+  again on the next boot, so slot 1 is not left behind by a disabled unit
+  (#981). There is no status callback in this mode yet. One phase is enough:
   unlike `luks2-tpm2` nothing in the boot chain changes (the UKI and its
   initramfs ran this boot), and the slot is proven before it is written.
 - Later boots: systemd-stub passes `.pcrsig` to the initramfs, where

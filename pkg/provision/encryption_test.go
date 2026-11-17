@@ -738,3 +738,63 @@ func TestCloseEncryptedDisk(t *testing.T) {
 		t.Fatalf("root: err=%v cmds=%v cryptsetup=%v", err, cmd.calls, *calls)
 	}
 }
+
+// A failed luksDump in the UKI enrollment proves nothing (#981): the unit
+// stays enabled and slot 1 with the empty passphrase is removed on a later
+// boot, never left behind by a disabled unit.
+func TestUKIEnrollScriptLuksDumpFails(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	dir := t.TempDir()
+	bin, efivars := filepath.Join(dir, "bin"), filepath.Join(dir, "efivars")
+	for _, d := range []string{bin, efivars} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, v := range map[string]byte{"SecureBoot": 1, "SetupMode": 0} {
+		if err := os.WriteFile(filepath.Join(efivars, name+"-"+efiGlobalGUID), []byte{6, 0, 0, 0, v}, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	calls, count := filepath.Join(dir, "calls"), filepath.Join(dir, "count")
+	fakes := map[string]string{
+		// luksDump number $FAIL_AT fails; the others show slot 1 and the TPM2 token.
+		"cryptsetup": `echo "cryptsetup $*" >>` + calls + `; [ "$1" = luksDump ] || exit 0; echo >>` + count +
+			`; [ "$(wc -l <` + count + `)" != "$FAIL_AT" ] || exit 1; printf 'Keyslots:\n  1: luks2\nTokens:\n  0: systemd-tpm2\n'`,
+		"systemd-cryptenroll": `echo "systemd-cryptenroll $*" >>` + calls,
+		"systemctl":           `echo "systemctl $*" >>` + calls,
+	}
+	for name, body := range fakes {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil { //nolint:gosec // test binary
+			t.Fatal(err)
+		}
+	}
+	env := filepath.Join(dir, "env")
+	if err := os.WriteFile(env, []byte("LUKS_UUID=u\nLUKS_NAME=booty_crypt\nLUKS_ENROLL_SLOT=1\nTPM2_PCRS=7\nTPM2_PUBLIC_KEY=k\nTPM2_SIGNATURE=s\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := strings.NewReplacer("/sys/firmware/efi/efivars", efivars, luksEnvPath, env).Replace(ukiEnrollScript)
+	run := func(failAt string) (string, string, error) {
+		t.Helper()
+		_ = os.Remove(calls)
+		_ = os.Remove(count)
+		cmd := exec.CommandContext(t.Context(), "sh", "-c", script)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "FAIL_AT="+failAt)
+		out, err := cmd.CombinedOutput()
+		c, _ := os.ReadFile(calls)
+		return string(out), string(c), err
+	}
+
+	if out, c, err := run(""); err != nil || !strings.Contains(c, "luksKillSlot") || !strings.Contains(c, "systemctl disable") {
+		t.Fatalf("luksDump works: slot 1 stays: %v\n%s\n%s", err, out, c)
+	}
+	// 1: the check for an earlier run; 2: the check after the enrollment.
+	for _, failAt := range []string{"1", "2"} {
+		out, c, err := run(failAt)
+		if err == nil || strings.Contains(c, "luksKillSlot") || strings.Contains(c, "systemctl disable") || !strings.Contains(out, "luks-dump-failed") {
+			t.Fatalf("luksDump %s fails: unit disabled or no luks-dump-failed: %v\n%s\n%s", failAt, err, out, c)
+		}
+	}
+}
