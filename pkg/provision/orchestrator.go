@@ -2473,6 +2473,11 @@ func (o *Orchestrator) checkCosignSources(imageURLs []string) error {
 			}
 		}
 	}
+	return o.checkSysextCosignSources()
+}
+
+// checkSysextCosignSources is the sysext part of checkCosignSources.
+func (o *Orchestrator) checkSysextCosignSources() error {
 	sysext := &o.cfg.Provision.Sysext
 	p := sysextCosignPolicy(sysext)
 	if !sysext.Enabled || !p.enabled() {
@@ -2487,7 +2492,7 @@ func (o *Orchestrator) checkCosignSources(imageURLs []string) error {
 		switch {
 		case image.IsOCIReference(source):
 			err = requireOCIDigest(source)
-		case requireOCI:
+		case o.cfg.Provision.Image.CosignRequireOCI:
 			err = errNotOCI("sysext", source)
 		}
 		// Without IMAGE_COSIGN_REQUIRE_OCI a source that is not oci:// is
