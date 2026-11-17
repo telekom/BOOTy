@@ -76,7 +76,8 @@ func (o *Orchestrator) applySecureBootUpdates(context.Context) error {
 // A firmware refusal (the write to efivarfs fails) is a warning: the
 // firmware refuses sbkeysync the same way on the first boot, so PCR 7
 // stays. What leaves BOOTy unable to decide (unreadable files or
-// variables, a local efivarfs error before the write) fails the step.
+// variables, a local efivarfs error before the write) fails the step; a
+// malformed list in the variable is a warning, as sbkeysync reads past it.
 func applySecureBootUpdateFiles(log *slog.Logger, target fs.FS, vars *efi.EFIVarReader) error {
 	for _, v := range sbUpdateVars {
 		dir := path.Join(strings.TrimPrefix(sbUpdatesDir, "/"), v.name)
@@ -131,7 +132,11 @@ func applySecureBootUpdateFile(log *slog.Logger, target fs.FS, vars *efi.EFIVarR
 	}
 	have, err := signatureEntries(cur)
 	if err != nil {
-		return fmt.Errorf("parse %s of the firmware: %w", name, err)
+		// sbkeysync ignores what does not parse in the variable too. Fewer
+		// entries only make BOOTy write an update that sbkeysync might
+		// skip, never skip one that sbkeysync writes.
+		log.Warn("the firmware variable has a malformed signature list: comparing with the entries before it",
+			"variable", name, "entries", len(have), "error", err)
 	}
 	present := make(map[string]bool, len(have))
 	for _, e := range have {
@@ -183,21 +188,24 @@ func authVarSignatures(b []byte) ([]string, error) {
 }
 
 // signatureEntries returns the entries of a series of EFI_SIGNATURE_LISTs,
-// each the signature type and the signature data without the owner GUID,
-// which is what sbkeysync compares.
+// each the signature type and the signature data without the owner GUID.
+// sbkeysync compares less (SHA-256 data or the X.509 serial number, any
+// type; other types not at all), so an entry found here is one that
+// sbkeysync finds too. On an error it returns the entries before the
+// malformed list.
 func signatureEntries(b []byte) ([]string, error) {
 	const listHdrSize, ownerSize = 28, 16
 	var out []string
 	for len(b) > 0 {
 		if len(b) < listHdrSize {
-			return nil, fmt.Errorf("signature list header truncated at %d bytes", len(b))
+			return out, fmt.Errorf("signature list header truncated at %d bytes", len(b))
 		}
 		size := binary.LittleEndian.Uint32(b[16:])
 		hdr := binary.LittleEndian.Uint32(b[20:])
 		sig := binary.LittleEndian.Uint32(b[24:])
 		if size < listHdrSize || uint64(size) > uint64(len(b)) || hdr > size-listHdrSize ||
 			sig <= ownerSize || (size-listHdrSize-hdr)%sig != 0 {
-			return nil, fmt.Errorf("malformed signature list (size %d, header %d, signature %d)", size, hdr, sig)
+			return out, fmt.Errorf("malformed signature list (size %d, header %d, signature %d)", size, hdr, sig)
 		}
 		typ := string(b[:16])
 		for body := b[listHdrSize+hdr : size]; len(body) > 0; body = body[sig:] {

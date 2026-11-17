@@ -117,6 +117,7 @@ func (c *Client) stageDeployArchive(payload []byte) (cfg *config.MachineConfig, 
 	cfg.Provision.DiskEncryption = ref.Provision.DiskEncryption
 	cfg.Provision.DiskEncryption.Target = target
 	cfg.Provision.SecureBoot.Signing = ref.Provision.SecureBoot.Signing
+	cfg.Provision.SecureBoot.ApplyDBXUpdates = ref.Provision.SecureBoot.ApplyDBXUpdates
 	cfg.Deprovision.CryptoErase = ref.Deprovision.CryptoErase
 	cfg.Rescue.SSHPubKey, cfg.Rescue.PasswordHash = ref.Rescue.SSHPubKey, ref.Rescue.PasswordHash
 	cfg.Rescue.SSHHardened = ref.Rescue.SSHHardened

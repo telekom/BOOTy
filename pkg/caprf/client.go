@@ -1223,8 +1223,11 @@ func applyVar(cfg *config.MachineConfig, key, value string) error {
 	if key == "LOG_FLUSH_TIMEOUT_SEC" {
 		return applyLogFlushTimeoutVar(cfg, value)
 	}
-	if key == "DEPROVISION_CRYPTO_ERASE" {
-		return applyCryptoEraseVar(cfg, value)
+	switch key {
+	case "DEPROVISION_CRYPTO_ERASE":
+		return applyDefaultOnBoolVar(&cfg.Deprovision.CryptoErase, key, value)
+	case "SECUREBOOT_APPLY_DBX_UPDATES":
+		return applyDefaultOnBoolVar(&cfg.Provision.SecureBoot.ApplyDBXUpdates, key, value)
 	}
 	if handled, err := applySRIOVVar(cfg, key, value); handled {
 		return err
@@ -1247,19 +1250,20 @@ func applyLogFlushTimeoutVar(cfg *config.MachineConfig, value string) error {
 	return nil
 }
 
-// applyCryptoEraseVar sets DEPROVISION_CRYPTO_ERASE strictly, like the
-// disk encryption booleans: a typo must not turn the crypto-erase off. An
-// empty value is unset (on).
-func applyCryptoEraseVar(cfg *config.MachineConfig, value string) error {
-	cfg.Deprovision.CryptoErase = nil
+// applyDefaultOnBoolVar sets a boolean that defaults to on
+// (DEPROVISION_CRYPTO_ERASE, SECUREBOOT_APPLY_DBX_UPDATES) strictly, like
+// the disk encryption booleans: a typo must not turn it off. An empty value
+// is unset (on).
+func applyDefaultOnBoolVar(field **bool, key, value string) error {
+	*field = nil
 	if strings.TrimSpace(value) == "" {
 		return nil
 	}
 	on, err := parseWatchdogBool(value)
 	if err != nil {
-		return fmt.Errorf("invalid DEPROVISION_CRYPTO_ERASE: %w", err)
+		return fmt.Errorf("invalid %s: %w", key, err)
 	}
-	cfg.Deprovision.CryptoErase = &on
+	*field = &on
 	return nil
 }
 
@@ -1950,8 +1954,6 @@ func applyOptionalBoolVar(cfg *config.MachineConfig, key, value string) (bool, e
 		"OOB_EFI_VAR":                &cfg.Telemetry.OOBEFIVar,
 		"LLDP_EMIT_ALL":              &cfg.Network.LLDP.EmitAll,
 		"LLDP_DISABLE_FW_AGENT":      &cfg.Network.LLDP.DisableFirmwareAgent,
-		// Default on: a typo must not turn it off.
-		"SECUREBOOT_APPLY_DBX_UPDATES": &cfg.Provision.SecureBoot.ApplyDBXUpdates,
 	}[key]; ok {
 		// A typo must not silently pick a value, so only booleans parse.
 		v, err := strconv.ParseBool(value)

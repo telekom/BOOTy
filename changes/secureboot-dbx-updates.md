@@ -10,4 +10,5 @@ section: Upgrade notes for CAPRF
   recovery key on hosts whose `dbx` is older than the image's. A firmware
   refusal is a warning; an unreadable update file or variable fails the
   run with `BOOTY-EFI-013`. `SECUREBOOT_APPLY_DBX_UPDATES=false` turns it
-  off.
+  off; like the `DISK_ENCRYPTION*` keys, a standby command payload or
+  deploy archive cannot change it.

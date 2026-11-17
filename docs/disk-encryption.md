@@ -512,7 +512,13 @@ Like `sbkeysync` (`--no-default-keystores --keystore
   `EFI_SIGNATURE_LIST`s;
 - skips a file whose entries (signature type and data, not the owner) are
   all in the variable already: re-provisioning, or an image that is not
-  newer than the firmware, writes nothing;
+  newer than the firmware, writes nothing. `sbkeysync` compares less (the
+  SHA-256 data or the X.509 serial number, ignoring other signature
+  types), so an entry that BOOTy finds is one that `sbkeysync` finds too:
+  BOOTy may apply a file that `sbkeysync` would skip, never skip one that
+  `sbkeysync` would apply. A malformed signature list in the firmware
+  variable is a warning; BOOTy compares with the entries before it, as
+  `sbkeysync` reads past it;
 - otherwise writes the whole file to efivarfs in one `write` with the
   attributes non-volatile, boot service, runtime, time-based authenticated
   and append write (`0x67`), and clears the immutable flag of the
@@ -530,13 +536,17 @@ recovery key, would gain nothing. One exception: a firmware that frees
 variable space at boot may accept on the first boot what it refused while
 provisioning; then the binding needs the recovery key once and a new
 binding (see [PCR changes](#pcr-changes)). A file that is not a signed
-signature list is skipped with a warning, as `sbkeysync` skips it. An
+signature list is skipped with a warning; `sbkeysync` skips it too, or
+writes it and the firmware refuses the malformed list. An
 unreadable update file or variable, or an efivarfs error before the write
 reaches the firmware (clearing the immutable flag, opening the file),
 fails the step (`BOOTY-EFI-013`): BOOTy could not tell whether the first
 boot changes PCR 7.
 
-`SECUREBOOT_APPLY_DBX_UPDATES=false` turns the step off (one WARN line);
+`SECUREBOOT_APPLY_DBX_UPDATES=false` turns the step off (one WARN line).
+Like the `DISK_ENCRYPTION*` keys, a standby command payload cannot change
+it (the payload is refused) and a deploy archive gets the value of the
+vars file back;
 then mask `secureboot-db.service` in the image or bind again after its
 first run. Any later `KEK`, `db` or `dbx` update, by `secureboot-db` after
 a package update, `fwupd` or the firmware, needs a new binding as in

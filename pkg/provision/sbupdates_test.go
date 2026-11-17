@@ -281,6 +281,52 @@ func TestApplySecureBootUpdatesFollowsLinksInRoot(t *testing.T) {
 	}
 }
 
+// sbkeysync reads past a malformed list in the firmware variable: BOOTy
+// warns and compares with the entries before it.
+func TestApplySecureBootUpdatesMalformedFirmwareList(t *testing.T) {
+	f := newSBUpdateFixture(t)
+	f.update(t, "dbx/u.bin", testAuthVar(testESL(1, 0xa)))
+	fw := append(testESL(2, 0xa), 0xff, 0xff)
+	f.firmware(t, testDBX, fw)
+	f.apply(t)
+	if got, _ := os.ReadFile(filepath.Join(f.vars, testDBX)); !bytes.Equal(got[4:], fw) {
+		t.Fatal("dbx written although the entry is before the malformed list")
+	}
+	for _, want := range []string{`level=WARN msg="the firmware variable has a malformed signature list: comparing with the entries before it" variable=dbx entries=1`,
+		`msg="Secure Boot update already applied" variable=dbx`} {
+		if !strings.Contains(f.log.String(), want) {
+			t.Fatalf("log lacks %s:\n%s", want, f.log.String())
+		}
+	}
+	// Behind the malformed list the entry counts as missing: written.
+	f.firmware(t, testDBX, append([]byte{0xff, 0xff}, testESL(2, 0xa)...))
+	f.apply(t)
+	if !strings.Contains(f.log.String(), `msg="Secure Boot update applied" variable=dbx`) {
+		t.Fatalf("log: %s", f.log.String())
+	}
+}
+
+func FuzzAuthVarSignatures(f *testing.F) {
+	f.Add(testAuthVar(testESL(1, 0xa, 0xb), testESL(2, 0xc)))
+	f.Add(testAuthVar())
+	f.Add(append(testAuthVar(testESL(1, 0xa)), 0xff))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		for _, parse := range []func([]byte) ([]string, error){authVarSignatures, signatureEntries} {
+			entries, _ := parse(b)
+			total := 0
+			for _, e := range entries {
+				if len(e) <= 16 {
+					t.Fatalf("entry of %d bytes", len(e))
+				}
+				total += len(e)
+			}
+			if total > len(b) {
+				t.Fatalf("%d entry bytes from %d input bytes", total, len(b))
+			}
+		}
+	})
+}
+
 func TestApplySecureBootUpdatesStepGates(t *testing.T) {
 	cfg := &config.MachineConfig{}
 	o := newTestOrchestrator(t, cfg, &mockProvider{})

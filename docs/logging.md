@@ -457,7 +457,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 
 - `step made no progress within its budget, stopping the watchdog keepalive; the hardware resets the host`
 
-### WARN (402 messages)
+### WARN (403 messages)
 
 #### WARN `.`
 
@@ -877,6 +877,7 @@ and describe a new kind of message in [What each level logs](#what-each-level-lo
 - `target root still mounted from an earlier attempt, unmounting`
 - `the UKI signed by the image pipeline keeps its .cmdline: the per-host kernel parameters reach the GRUB fallback entry only`
 - `the firmware refused the Secure Boot update; secureboot-db of the image gets the same answer, so PCR 7 stays`
+- `the firmware variable has a malformed signature list: comparing with the entries before it`
 - `the image layout cannot be encrypted, provisioning without it (DISK_ENCRYPTION_ALLOW_FAILURE)`
 
 #### WARN `pkg/realm`
