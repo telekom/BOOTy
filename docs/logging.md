@@ -152,8 +152,8 @@ BOOTy logs no person's data on purpose, but some attributes identify the
 machine it provisions or the person who logs in to the rescue shell. The
 machine can be a node of a tenant cluster, so its names and addresses
 count as data of the tenant's staff. Classes and data subjects follow the
-platform logging contract: classes `tenant-pii` (user name, account),
-`customer-data` (address, host name, hardware identifier), `content`
+platform logging contract: classes `tenant-pii` (user name, account, host
+name), `customer-data` (address, hardware identifier), `content`
 (command line); data subjects `operator`, `tenant-user`, `end-customer`. A
 field that can hold several data subjects names the one with the highest
 need for protection (`end-customer`, then `tenant-user`, then `operator`).
@@ -178,12 +178,13 @@ key's value.
 | `command` | `content` | `tenant-user` | INFO | yes | no | command line of a machine or post-provision command of the config, values of secret flags removed |
 | `data` | `customer-data` | `tenant-user` | WARN | yes | no | one line of a network state dump (`debug`): addresses, MACs and names of the machine |
 | `dst` | `customer-data` | `tenant-user` | WARN, INFO, DEBUG | yes | no | destination prefix of a type-5 route; for file copies a path |
-| `hostname` | `customer-data` | `tenant-user` | WARN, INFO | yes | no | host name of the machine (CAPRF, ramdisk, BGP, standby) |
+| `hostname` | `tenant-pii` | `tenant-user` | WARN, INFO | yes | no | host name of the machine (CAPRF, ramdisk, BGP, standby); it becomes the node name and can carry the tenant's cluster name |
 | `ip` | `customer-data` | `tenant-user` | WARN, INFO, DEBUG | yes | no | IP address of the machine: IPMI, provision, overlay loopback, host route |
 | `key` | `tenant-pii` | `tenant-user` | WARN, INFO | yes | yes | fingerprint of the SSH key of a rescue login; also a vars key name |
 | `line` | `content` | `tenant-user` | WARN, INFO | yes | no | one output line of a machine command script (pattern-redacted only); for frr.conf a line number |
 | `mac` | `customer-data` | `tenant-user` | WARN, INFO, DEBUG | yes | no | MAC address of a NIC or of the IPMI interface of the machine, or of a fabric router |
 | `match_mac` | `customer-data` | `tenant-user` | WARN | yes | no | MAC address that a static network config matches |
+| `output` | `content` | `tenant-user` | WARN, INFO, DEBUG | yes | no | output of a post-provision command of the config (`debug`, pattern-redacted only) or of a disk or EFI tool |
 | `overlay_ip` | `customer-data` | `tenant-user` | INFO | yes | no | overlay loopback IP address of the machine |
 | `params` | `content` | `tenant-user` | WARN, INFO | yes | no | per-host kernel parameters; for NIC firmware a count |
 | `prefix` | `customer-data` | `tenant-user` | WARN, INFO, DEBUG | yes | no | a route prefix: the machine's underlay /32 or a tenant or fabric prefix |
@@ -221,10 +222,12 @@ Which level adds personal data:
   details, address deletions, type-5 route details, rescue SSH
   connections that end before a login.
 
-Free text: `error`, `reason`, `message`, `detail`, `output` and `url` are
-not classified as personal data, but an error text or a tool output can
-repeat a host name or an address of the machine; treat them as
-`customer-data` of a `tenant-user` when a line is kept.
+Free text: `error`, `reason`, `message`, `detail` and `url` are not
+classified as personal data, but an error text can repeat a host name or
+an address of the machine; treat them as `customer-data` of a
+`tenant-user` when a line is kept. `output` is classified as `content`,
+because it carries the output of the post-provision commands of the
+config.
 
 Fields of other kinds are free of personal data: states, counts, sizes,
 durations, paths, device and interface names, and the names and addresses

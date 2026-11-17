@@ -33,7 +33,7 @@ type personalField struct {
 // The machine BOOTy provisions can be a node of a tenant cluster, so its
 // names and addresses are tenant-user data.
 var personalDataFields = map[string]personalField{
-	"hostname":       {"customer-data", "tenant-user", "host name of the machine (CAPRF, ramdisk, BGP, standby)"},
+	"hostname":       {"tenant-pii", "tenant-user", "host name of the machine (CAPRF, ramdisk, BGP, standby); it becomes the node name and can carry the tenant's cluster name"},
 	"serial":         {"customer-data", "tenant-user", "serial number of a disk or of the LLDP neighbor; `out-of-band status` logs a bool"},
 	"mac":            {"customer-data", "tenant-user", "MAC address of a NIC or of the IPMI interface of the machine, or of a fabric router"},
 	"bridge_mac":     {"customer-data", "tenant-user", "MAC address of the provisioning bridge of the machine"},
@@ -57,6 +57,7 @@ var personalDataFields = map[string]personalField{
 	"command":        {"content", "tenant-user", "command line of a machine or post-provision command of the config, values of secret flags removed"},
 	"params":         {"content", "tenant-user", "per-host kernel parameters; for NIC firmware a count"},
 	"line":           {"content", "tenant-user", "one output line of a machine command script (pattern-redacted only); for frr.conf a line number"},
+	"output":         {"content", "tenant-user", "output of a post-provision command of the config (`debug`, pattern-redacted only) or of a disk or EFI tool"},
 	"statement":      {"content", "tenant-user", "an frr.conf statement that is skipped or not applied"},
 	"report":         {"customer-data", "tenant-user", "the provisioning report (JSON) with the host name of the machine"},
 	"routerID":       {"customer-data", "tenant-user", "BGP router ID, the underlay IP address of the machine"},
@@ -87,7 +88,7 @@ var nonPersonalFields = strings.Fields(`
 	memAvailableMiB memTotalMiB mem_available_mib member members message method mgmtAddresses min_available_mib
 	min_disk_size_gb minSizeBytes minSizeGB mirroringMode mode module modules mount mountpoint mtu multihop
 	multiplier name native neighbor new nexthop nexthops nic nics nsid ntp num numVFs nvme of offset old onDrift
-	opkssh osFamily outer_format output overlay_aggregate overlay_subnet panic param parent parsed partition
+	opkssh osFamily outer_format overlay_aggregate overlay_subnet panic param parent parsed partition
 	partitions password path payload_format pci pci_devices peak_used_mib peer phase pid port portDescription
 	portID portIDSubtype proc_partitions profile provision_vni pubkey punched_zero_bytes pv quick ranges rd
 	readOnly reason reboot recoverySlot ref remoteASN reportPath required reset_within resolvers response_time
