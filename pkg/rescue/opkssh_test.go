@@ -222,7 +222,8 @@ func TestOPKVerifyRefusesHTTPJWKS(t *testing.T) {
 func selfSignedOPKCert(tb testing.TB, signer ssh.Signer, pkt string) *ssh.Certificate {
 	tb.Helper()
 	cert := &ssh.Certificate{Key: signer.PublicKey(), CertType: ssh.UserCert, ValidBefore: ssh.CertTimeInfinity,
-		Permissions: ssh.Permissions{Extensions: map[string]string{"openpubkey-pkt": pkt}}}
+		ValidPrincipals: []string{"opkssh-wildcard"},
+		Permissions:     ssh.Permissions{Extensions: map[string]string{"openpubkey-pkt": pkt}}}
 	if err := cert.SignCert(rand.Reader, signer); err != nil {
 		tb.Fatal(err)
 	}

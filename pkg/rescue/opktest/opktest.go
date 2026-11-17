@@ -99,7 +99,7 @@ func (p *Provider) NewKey(ctx context.Context, claims map[string]any) (Key, erro
 	if err != nil {
 		return Key{}, fmt.Errorf("PK Token: %w", err)
 	}
-	smuggler, err := sshcert.New(pkt, nil, nil)
+	smuggler, err := sshcert.New(pkt, nil, []string{"opkssh-wildcard"}) // as opkssh login writes it
 	if err != nil {
 		return Key{}, fmt.Errorf("opkssh certificate: %w", err)
 	}

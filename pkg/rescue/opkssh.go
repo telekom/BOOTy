@@ -244,7 +244,14 @@ func (v *opkVerifier) verify(ctx context.Context, user string, cert *ssh.Certifi
 	}
 	// The certificate is signed by its own key (opkssh has no CA): check
 	// its validity period and signature like sshd's cert-authority line.
-	if err := (&ssh.CertChecker{}).CheckCert(user, cert); err != nil {
+	// Its principals are the client's choice (opkssh login writes
+	// opkssh-wildcard) and opkssh's verifier lets sshd accept any of them,
+	// so RESCUE_SSH_OPK_POLICY alone decides the user. x/crypto refuses a
+	// certificate without principals, as OpenSSH 10.3 does.
+	if len(cert.ValidPrincipals) == 0 {
+		return claims, errors.New("certificate: no principals")
+	}
+	if err := (&ssh.CertChecker{}).CheckCert(cert.ValidPrincipals[0], cert); err != nil {
 		return claims, fmt.Errorf("certificate: %w", err)
 	}
 	if _, err := smuggler.VerifySshPktCert(ctx, *v.pkt); err != nil {
