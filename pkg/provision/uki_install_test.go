@@ -166,6 +166,19 @@ func TestUKIPerHostCmdlinePolicy(t *testing.T) {
 		t.Fatalf("enforce: err=%v keys=%d", err, *n)
 	}
 
+	// Values with commas pass the GRUB parameter check too.
+	o, _, root, esp = ukiTestHost(t, config.SigningPerHost, perHostUKI(t))
+	o.cfg.Provision.SerialConsole = "none"
+	o.cfg.Provision.ExtraKernelParams = "mitigations=auto,nosmt isolcpus=1,3"
+	o.cfg.Provision.DiskEncryption.UKICmdlinePolicy = config.UKICmdlinePolicyEnforce
+	if _, err := o.prepareUKI(root, esp); err != nil {
+		t.Fatalf("enforce with mitigations=auto,nosmt: %v", err)
+	}
+	signed, _ := os.ReadFile(filepath.Join(esp, "EFI/Linux/ubuntu-6.8.efi"))
+	if secs, _, _ := ukiSections(signed); string(secs["cmdline"]) != "root=x mitigations=auto,nosmt isolcpus=1,3" {
+		t.Fatalf("enforce: .cmdline %q", secs["cmdline"])
+	}
+
 	o, _, root, esp = ukiTestHost(t, config.SigningPerHost, perHostUKI(t))
 	o.cfg.Provision.SerialConsole = "none"
 	o.cfg.Provision.ExtraKernelParams = "hugepages=16 booty.test=1"
@@ -177,7 +190,7 @@ func TestUKIPerHostCmdlinePolicy(t *testing.T) {
 	if r := o.reportUKI(); !slices.Equal(r.CmdlineNotAllowed, []string{"booty.test"}) {
 		t.Fatalf("report %q", r.CmdlineNotAllowed)
 	}
-	signed, _ := os.ReadFile(filepath.Join(esp, "EFI/Linux/ubuntu-6.8.efi"))
+	signed, _ = os.ReadFile(filepath.Join(esp, "EFI/Linux/ubuntu-6.8.efi"))
 	if secs, _, _ := ukiSections(signed); string(secs["cmdline"]) != "root=x hugepages=16 booty.test=1" {
 		t.Fatalf("warn: .cmdline %q", secs["cmdline"])
 	}
