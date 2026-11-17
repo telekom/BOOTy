@@ -56,6 +56,15 @@ var personalDataFields = map[string]personalField{
 	"key":            {"tenant-pii", "tenant-user", "fingerprint of the SSH key of a rescue login; also a vars key name"},
 	"command":        {"content", "tenant-user", "command line of a machine or post-provision command of the config, values of secret flags removed"},
 	"params":         {"content", "tenant-user", "per-host kernel parameters; for NIC firmware a count"},
+	"line":           {"content", "tenant-user", "one output line of a machine command script (pattern-redacted only); for frr.conf a line number"},
+	"statement":      {"content", "tenant-user", "an frr.conf statement that is skipped or not applied"},
+	"report":         {"customer-data", "tenant-user", "the provisioning report (JSON) with the host name of the machine"},
+	"routerID":       {"customer-data", "tenant-user", "BGP router ID, the underlay IP address of the machine"},
+	"prefix":         {"customer-data", "tenant-user", "a route prefix: the machine's underlay /32 or a tenant or fabric prefix"},
+	"route":          {"customer-data", "tenant-user", "destination of a DHCP route or a route key"},
+	"dst":            {"customer-data", "tenant-user", "destination prefix of a type-5 route; for file copies a path"},
+	"via":            {"customer-data", "tenant-user", "VTEP IP address an FDB entry points to"},
+	"cidr":           {"customer-data", "tenant-user", "prefix of a loopback address of the machine"},
 }
 
 // nonPersonalFields are the attribute keys that hold no personal data:
@@ -63,32 +72,32 @@ var personalDataFields = map[string]personalField{
 // names and addresses of the data-center fabric and of platform services
 // (gateway, BGP neighbor, NTP, DNS, CAPRF and image URLs), and the error.
 var nonPersonalFields = strings.Fields(`
-	MACHINE_SERIAL_CONSOLE action match_name tier also array asn atomic attempt attempts authenticated backoff baud
-	bfd_receive_ms bfd_transmit_ms bgp_hold bgp_interfaces bgp_keepalive blockSize blocks bond_interfaces boot
-	booty bridge budget build bytes candidates cert certSHA256 changes chassisID check checks cidr cipher clock
+	MACHINE_SERIAL_CONSOLE action match_name tier also array asn atomic attempt attempts authenticated backoff
+	baud bfd_receive_ms bfd_transmit_ms bgp_hold bgp_interfaces bgp_keepalive blockSize blocks bond_interfaces
+	boot booty bridge budget build bytes candidates cert certSHA256 changes chassisID check checks cipher clock
 	cmd cmdID code component compliant conflicts console controller corrected_by count cpus current daemon
 	datasource dcgw_ips delay destination detail details detection_time dev_nodes device devices dhcpCount diag
-	diff difference dir direction disk disk1 disk2 disks dns_resolver driver dropped dst duration efi_var
-	enrollSlot entries entry err error esi evidence evpn exit_code expire expiresIn export_statements failed
-	failedStep fallback_blocks fallback_nsid families family fdb file filesystem findings flag floor format from
-	frr.conf fs fsType gateway got gw handoff hardened headerBytes hold host_key id idle iface image image_count
-	images import_statements include index initrd interface internal ipmi_subnet issuer iteration keepalive
-	keepalive_every kernel keys label leaf_asn leftAlone len level line link linkIndex links lldp_neighbors loader
-	localASN local_asn luksUUID lv majors managed mapped marker matches max maxFrameSize max_skew memAvailableMiB
-	memTotalMiB mem_available_mib member members message method mgmtAddresses min_available_mib min_disk_size_gb
-	minSizeBytes minSizeGB mirroringMode mode module modules mount mountpoint mtu multihop multiplier name native
-	neighbor new nexthop nexthops nic nics nsid ntp num numVFs nvme of offset old onDrift opkssh osFamily
-	outer_format output overlay_aggregate overlay_subnet panic param parent parsed partition partitions password
-	path payload_format pci pci_devices peak_used_mib peer phase pid port portDescription portID portIDSubtype
-	prefix proc_partitions profile provision_vni pubkey punched_zero_bytes pv quick ranges rd readOnly reason
-	reboot recoverySlot ref remoteASN report reportPath required reset_within resolvers response_time result root
-	rootHash rootLV route router routerID row run rx search sectors secureBoot selected selectedBy seq server
+	diff difference dir direction disk disk1 disk2 disks dns_resolver driver dropped duration efi_var enrollSlot
+	entries entry err error esi evidence evpn exit_code expire expiresIn export_statements failed failedStep
+	fallback_blocks fallback_nsid families family fdb file filesystem findings flag floor format from frr.conf
+	fs fsType gateway got gw handoff hardened headerBytes hold host_key id idle iface image image_count images
+	import_statements include index initrd interface internal ipmi_subnet issuer iteration keepalive
+	keepalive_every kernel keys label leaf_asn leftAlone len level link linkIndex links lldp_neighbors loader
+	localASN local_asn luksUUID lv majors managed mapped marker matches max maxFrameSize max_skew
+	memAvailableMiB memTotalMiB mem_available_mib member members message method mgmtAddresses min_available_mib
+	min_disk_size_gb minSizeBytes minSizeGB mirroringMode mode module modules mount mountpoint mtu multihop
+	multiplier name native neighbor new nexthop nexthops nic nics nsid ntp num numVFs nvme of offset old onDrift
+	opkssh osFamily outer_format output overlay_aggregate overlay_subnet panic param parent parsed partition
+	partitions password path payload_format pci pci_devices peak_used_mib peer phase pid port portDescription
+	portID portIDSubtype proc_partitions profile provision_vni pubkey punched_zero_bytes pv quick ranges rd
+	readOnly reason reboot recoverySlot ref remoteASN reportPath required reset_within resolvers response_time
+	result root rootHash rootLV router row run rx search sectors secureBoot selected selectedBy seq server
 	servers set_back_by set_name setting severity sha256 signature signing sink size sizeBytes sizeGB sizeMB
-	sizePct size_mib skew skew_seconds skip_reason skipped slave source source_partition src state statement
+	sizePct size_mib skew skew_seconds skip_reason skipped slave source source_partition src state
 	static_gateway status step successAction sys_entries sysext systemName table target time timeout to total
 	total_mib tpm2PCRs tpm2PublicKeyPCRs ttl tunnel_types tx type udev_name uefi unchanged_bytes underlay
 	underlay_subnet unit unmountError unmounted uploaded uptime url valid value var variable vendor version vg
-	via vlan vni volumes vpn_rt vrf vrf_table_id vxlan wait waited want writable written_bytes
+	vlan vni volumes vpn_rt vrf vrf_table_id vxlan wait waited want writable written_bytes
 `)
 
 // loggerWithKeys returns the keys that .With adds to a logger: they are on

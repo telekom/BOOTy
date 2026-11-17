@@ -174,22 +174,31 @@ key's value.
 | `address` | `customer-data` | `tenant-user` | INFO, DEBUG | yes | no | IP address of the machine (static) or of a BGP peer |
 | `bridge_mac` | `customer-data` | `tenant-user` | INFO | yes | no | MAC address of the provisioning bridge of the machine |
 | `ciaddr` | `customer-data` | `tenant-user` | DEBUG | no, `debug` only | no | client IP address of a DHCP message |
+| `cidr` | `customer-data` | `tenant-user` | DEBUG | no, `debug` only | no | prefix of a loopback address of the machine |
 | `command` | `content` | `tenant-user` | INFO | yes | no | command line of a machine or post-provision command of the config, values of secret flags removed |
 | `data` | `customer-data` | `tenant-user` | WARN | yes | no | one line of a network state dump (`debug`): addresses, MACs and names of the machine |
+| `dst` | `customer-data` | `tenant-user` | WARN, INFO, DEBUG | yes | no | destination prefix of a type-5 route; for file copies a path |
 | `hostname` | `customer-data` | `tenant-user` | WARN, INFO | yes | no | host name of the machine (CAPRF, ramdisk, BGP, standby) |
 | `ip` | `customer-data` | `tenant-user` | WARN, INFO, DEBUG | yes | no | IP address of the machine: IPMI, provision, overlay loopback, host route |
 | `key` | `tenant-pii` | `tenant-user` | WARN, INFO | yes | yes | fingerprint of the SSH key of a rescue login; also a vars key name |
+| `line` | `content` | `tenant-user` | WARN, INFO | yes | no | one output line of a machine command script (pattern-redacted only); for frr.conf a line number |
 | `mac` | `customer-data` | `tenant-user` | WARN, INFO, DEBUG | yes | no | MAC address of a NIC or of the IPMI interface of the machine, or of a fabric router |
 | `match_mac` | `customer-data` | `tenant-user` | WARN | yes | no | MAC address that a static network config matches |
 | `overlay_ip` | `customer-data` | `tenant-user` | INFO | yes | no | overlay loopback IP address of the machine |
 | `params` | `content` | `tenant-user` | WARN, INFO | yes | no | per-host kernel parameters; for NIC firmware a count |
+| `prefix` | `customer-data` | `tenant-user` | WARN, INFO, DEBUG | yes | no | a route prefix: the machine's underlay /32 or a tenant or fabric prefix |
 | `principal` | `tenant-pii` | `tenant-user` | WARN, INFO | yes | no | user name that a rescue SSH client logs in or tries to log in as |
 | `provision_ip` | `customer-data` | `tenant-user` | WARN | yes | no | provisioning IP address of the machine |
 | `remote` | `customer-data` | `tenant-user` | WARN, INFO, DEBUG | yes | no | address and port of the rescue SSH client |
+| `report` | `customer-data` | `tenant-user` | INFO | yes | no | the provisioning report (JSON) with the host name of the machine |
+| `route` | `customer-data` | `tenant-user` | WARN, INFO, DEBUG | yes | no | destination of a DHCP route or a route key |
+| `routerID` | `customer-data` | `tenant-user` | INFO | yes | no | BGP router ID, the underlay IP address of the machine |
 | `serial` | `customer-data` | `tenant-user` | WARN, INFO, DEBUG | yes | no | serial number of a disk or of the LLDP neighbor; `out-of-band status` logs a bool |
+| `statement` | `content` | `tenant-user` | WARN | yes | no | an frr.conf statement that is skipped or not applied |
 | `static_ip` | `customer-data` | `tenant-user` | WARN | yes | no | static IP address of the machine |
 | `subject` | `tenant-pii` | `tenant-user` | WARN, INFO | yes | no | OIDC subject of an opkssh rescue SSH login (an account ID or e-mail address) |
 | `underlay_ip` | `customer-data` | `tenant-user` | WARN, INFO | yes | no | underlay loopback IP address of the machine |
+| `via` | `customer-data` | `tenant-user` | WARN, INFO | yes | no | VTEP IP address an FDB entry points to |
 | `vtep` | `customer-data` | `tenant-user` | WARN, INFO, DEBUG | yes | no | VTEP IP address of the machine or of a fabric peer |
 | `vteps` | `customer-data` | `tenant-user` | WARN, INFO | yes | no | VTEP IP addresses of an Ethernet segment |
 | `withdrawn_vtep` | `customer-data` | `tenant-user` | INFO | yes | no | VTEP IP address whose routes were withdrawn |
@@ -199,16 +208,18 @@ key's value.
 Which level adds personal data:
 
 - `info` (the default) already logs every field of the table except
-  `ciaddr`: the host name, the addresses and MACs of the machine, the
-  rescue SSH principal, client address and OIDC subject, the per-host
-  kernel parameters and the machine commands.
+  `ciaddr`: the host name and the provisioning report, the addresses,
+  routes and MACs of the machine, the rescue SSH principal, client address
+  and OIDC subject, the per-host kernel parameters, the machine commands
+  and the output of machine command scripts.
 - `warn` and `error` keep the failures among them: a refused rescue SSH
-  login (`principal`, `remote`, `subject`), a failed address or hostname
-  change, and the network state dump of a failed provisioning step
-  (`debug` with `label` and `data`, at `WARN`).
+  login (`principal`, `remote`, `subject`), a failed address, route or
+  hostname change, a skipped frr.conf statement, and the network state
+  dump of a failed provisioning step (`debug` with `label` and `data`, at
+  `WARN`).
 - `debug` adds `ciaddr` and more lines with the fields above: DHCP lease
-  details, address deletions, rescue SSH connections that end before a
-  login.
+  details, address deletions, type-5 route details, rescue SSH
+  connections that end before a login.
 
 Free text: `error`, `reason`, `message`, `detail`, `output` and `url` are
 not classified as personal data, but an error text or a tool output can
@@ -217,15 +228,21 @@ repeat a host name or an address of the machine; treat them as
 
 Fields of other kinds are free of personal data: states, counts, sizes,
 durations, paths, device and interface names, and the names and addresses
-of the data-center fabric and of platform services (`gateway`, `peer`,
-`neighbor`, `server`, `systemName`, CAPRF and image URLs).
+of the data-center fabric and of platform services (`gateway`, `nexthop`,
+`peer`, `neighbor`, `server`, `systemName`, CAPRF and image URLs).
 
-Never logged: LUKS passphrases and volume keys, TPM-sealed secrets, the
-CAPRF token and JWTs, the rescue SSH password, private keys, and secret
-values of `/deploy/vars`. No log call passes them; the
-[redaction](#destinations-of-the-ramdisk-agent) replaces them as a second
-line of defense when a key name or a value looks like a secret. A rescue
-SSH key fingerprint (`key`) is redacted for the same reason.
+Not logged by BOOTy's own log calls: LUKS passphrases and volume keys,
+TPM-sealed secrets, the CAPRF token and JWTs, the rescue SSH password,
+private keys, and secret values of `/deploy/vars`. The
+[redaction](#destinations-of-the-ramdisk-agent) replaces values whose key
+names a secret and text that looks like one (`password=`, bearer tokens,
+JWTs, PEM keys, ...) as a second line of defense; a rescue SSH key
+fingerprint (`key`) is redacted for the same reason. The redaction does
+not know the secret values themselves: the output of a machine command
+script (`line`), a machine or post-provision command (`command`) and an
+error text are logged as they are once the patterns are removed. **Machine
+commands and scripts must not print or take secrets in a form the patterns
+miss** (an unlabelled passphrase or opaque token).
 
 ## What each level logs
 
