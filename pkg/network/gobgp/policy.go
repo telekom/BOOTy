@@ -117,6 +117,19 @@ func ParseStandardCommunity(s string) (asn, value uint16, err error) {
 	return uint16(a), uint16(v), nil
 }
 
+// asplain writes an asdot AS number up to 65535 ("0.100") as asplain ("100").
+// FRR encodes such an AS as 2-octet whatever its notation, while GoBGP's
+// parsers take every asdot for a 4-octet AS, which would give another RD and
+// cap the RT value at 16 bits. Anything else is returned as is.
+func asplain(admin string) string {
+	if strings.Count(admin, ".") == 1 {
+		if n, err := bgp.ParseAs4Value(admin); err == nil && n <= asnMax2Byte {
+			return strconv.FormatUint(uint64(n), 10)
+		}
+	}
+	return admin
+}
+
 // ParseRouteTarget parses an EVPN route target in either "ASN:value" or
 // "RT:ASN:value" form with bgp.ParseRouteTarget, which rejects a value that
 // does not fit the field (a 4-octet ASN has a 16-bit value).
@@ -128,7 +141,7 @@ func ParseRouteTarget(s string) (asn, value uint32, err error) {
 	if len(parts) != 2 {
 		return 0, 0, fmt.Errorf("invalid route target %q, expected ASN:value or RT:ASN:value", s)
 	}
-	rt, err := bgp.ParseRouteTarget(strings.TrimSpace(parts[0]) + ":" + strings.TrimSpace(parts[1]))
+	rt, err := bgp.ParseRouteTarget(asplain(strings.TrimSpace(parts[0])) + ":" + strings.TrimSpace(parts[1]))
 	if err != nil {
 		return 0, 0, fmt.Errorf("invalid route target %q: %w", s, err)
 	}
@@ -183,7 +196,11 @@ func ValidateCommunities(cfg *CommunityConfig) error {
 // (type 2, 16-bit NN), like FRR. bgp.ParseRouteDistinguisher rejects a
 // value out of range.
 func parseRouteDistinguisher(rd string) (*apipb.RouteDistinguisher, error) {
-	parsed, err := bgp.ParseRouteDistinguisher(rd)
+	norm := rd
+	if admin, nn, ok := strings.Cut(rd, ":"); ok {
+		norm = asplain(admin) + ":" + nn
+	}
+	parsed, err := bgp.ParseRouteDistinguisher(norm)
 	if err != nil {
 		return nil, fmt.Errorf("route distinguisher %q: %w", rd, err)
 	}

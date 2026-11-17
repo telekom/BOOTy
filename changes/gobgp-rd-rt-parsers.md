@@ -7,4 +7,4 @@ section: Behaviour changes in all modes
   `ParseRouteDistinguisher` and `ParseRouteTarget` (#871). Every value that
   BOOTy accepted before is still accepted with the same result, and the
   out-of-range values that BOOTy rejected stay rejected. New: an AS number
-  in asdot form (`1.100:5`, the 4-byte AS 65636) is accepted like in FRR.
+  in asdot form (`1.100:5`, the 4-byte AS 65636) is accepted like in FRR (`0.100` is AS 100, a 2-octet AS as in FRR).

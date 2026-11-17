@@ -273,6 +273,8 @@ func TestParseRouteDistinguisher(t *testing.T) {
 		"65535:70000":      two(65535, 70000),
 		"65536:1":          four(65536, 1),
 		"1.100:5":          four(65636, 5),
+		"0.100:5":          two(100, 5), // FRR: AS 100 is 2-octet in any notation
+		"0.100:70000":      two(100, 70000),
 		"192.0.2.17:2":     {Rd: &apipb.RouteDistinguisher_IpAddress{IpAddress: &apipb.RouteDistinguisherIPAddress{Admin: "192.0.2.17", Assigned: 2}}},
 	} {
 		got, err := parseRouteDistinguisher(in)
