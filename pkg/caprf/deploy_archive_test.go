@@ -416,6 +416,7 @@ func TestDeployArchiveKeepsCosignLockDown(t *testing.T) {
 	}{
 		{name: "same policy", vars: policy + signed},
 		{name: "policy dropped", vars: signed, wantErr: "changes cosign settings"},
+		{name: "require oci set", vars: policy + signed + "IMAGE_COSIGN_REQUIRE_OCI=true\n", wantErr: "changes cosign settings"},
 		{name: "other trusted root", vars: strings.Replace(policy, trustedRoot, "/tmp/evil.json", 1) + signed, wantErr: "changes cosign settings"},
 		{name: "http image with own checksum", vars: policy + "IMAGE=https://evil.example/os.img\nIMAGE_CHECKSUM=" + strings.Repeat("b", 64) + "\n",
 			wantErr: "not oci://"},
@@ -439,6 +440,22 @@ func TestDeployArchiveKeepsCosignLockDown(t *testing.T) {
 				t.Fatalf("CommandConfig() = %v, want %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// A base with IMAGE_COSIGN_REQUIRE_OCI=true can not lose it to an archive.
+func TestDeployArchiveKeepsRequireOCI(t *testing.T) {
+	useDeployRoot(t)
+	policy := "IMAGE_COSIGN_PUBKEYS=/etc/booty/image.pub\nIMAGE_COSIGN_REQUIRE_OCI=true\n"
+	signed := "IMAGE=oci://registry.example/os@sha256:" + strings.Repeat("a", 64) + "\n"
+	for name, vars := range map[string]string{"dropped": "IMAGE_COSIGN_PUBKEYS=/etc/booty/image.pub\n" + signed,
+		"false": policy + "IMAGE_COSIGN_REQUIRE_OCI=false\n" + signed} {
+		c := &Client{vars: []byte(baseAgentVars + policy)}
+		_, _, err := c.CommandConfig(deployArchive(t, archiveEntry{name: "deploy/vars", body: vars}))
+		c.DiscardCommandFiles()
+		if err == nil || !strings.Contains(err.Error(), "changes cosign settings") {
+			t.Errorf("%s: CommandConfig() = %v, want a cosign lock rejection", name, err)
+		}
 	}
 }
 

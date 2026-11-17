@@ -173,12 +173,14 @@ func isOCISource(source string) bool {
 	return len(strings.TrimSpace(source)) >= len("oci://") && strings.EqualFold(strings.TrimSpace(source)[:len("oci://")], "oci://")
 }
 
-// cosignVars returns the cosign verification settings of cfg.
+// cosignVars returns the cosign verification settings of cfg. A bool
+// (IMAGE_COSIGN_REQUIRE_OCI) is no policy for cosignPolicySet.
 func cosignVars(cfg *config.MachineConfig) []any {
 	im, sx := &cfg.Provision.Image, &cfg.Provision.Sysext
 	return []any{
 		im.CosignPublicKeys, im.CosignTrustedRoot, im.CosignIdentityRegexp, im.CosignOIDCIssuer,
 		sx.CosignPublicKeys, sx.CosignTrustedRoot, sx.CosignIdentityRegexp, sx.CosignOIDCIssuer,
+		im.CosignRequireOCI,
 	}
 }
 

@@ -220,7 +220,7 @@ EXTRA_KERNEL_PARAMS=intel_iommu=on
   command drops to the rescue shell of `/deploy/vars`.
 - A payload can change the image, but not the policy its signature is
   checked against: the `IMAGE_COSIGN_*` and `SYSEXT_COSIGN_*` options (keys,
-  trusted root, identity, issuer) are fixed too. With such a policy in
+  trusted root, identity, issuer, `IMAGE_COSIGN_REQUIRE_OCI`) are fixed too. With such a policy in
   `/deploy/vars`, a payload can not add an image or sysext source that is not
   `oci://` (checked only by a checksum) or change the checksum of one
   (`IMAGE_CHECKSUM`, `IMAGE_CHECKSUM_TYPE`, `IMAGE_CHECKSUM_SCOPE`, a layer
