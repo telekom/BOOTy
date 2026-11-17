@@ -124,8 +124,7 @@ jobs:
     name: KVM ${{ matrix.scenario }}
     # Guests are assembled from runner binaries (busybox, kmod, ld-linux),
     # which are x86-64-v3 builds on ubuntu-26.04. The "Enable KVM" step gives
-    # every guest a v3-capable CPU. Hermetic guest userland:
-    # https://github.com/telekom/BOOTy/issues/881
+    # every guest a v3-capable CPU.
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.timeout_minutes || 75 }}
     needs: preflight
