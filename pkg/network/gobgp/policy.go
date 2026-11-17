@@ -187,5 +187,9 @@ func parseRouteDistinguisher(rd string) (*apipb.RouteDistinguisher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("route distinguisher %q: %w", rd, err)
 	}
-	return apiutil.MarshalRD(parsed)
+	msg, err := apiutil.MarshalRD(parsed)
+	if err != nil {
+		return nil, fmt.Errorf("route distinguisher %q: %w", rd, err)
+	}
+	return msg, nil
 }
