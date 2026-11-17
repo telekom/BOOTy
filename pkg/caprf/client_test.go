@@ -2576,6 +2576,18 @@ func TestParseVarsCosignPublicKeys(t *testing.T) {
 	}
 }
 
+func TestParseVarsCosignRequireOCI(t *testing.T) {
+	for value, want := range map[string]bool{"true": true, "1": true, "yes": true, "false": false, "": false} {
+		cfg, err := ParseVars(strings.NewReader("IMAGE_COSIGN_REQUIRE_OCI=" + value + "\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.Provision.Image.CosignRequireOCI; got != want {
+			t.Errorf("IMAGE_COSIGN_REQUIRE_OCI=%q: CosignRequireOCI = %t, want %t", value, got, want)
+		}
+	}
+}
+
 func TestParseVarsDiskSettleTimeout(t *testing.T) {
 	cfg, err := ParseVars(strings.NewReader("DISK_SETTLE_TIMEOUT_SEC=0\n"))
 	if err != nil {

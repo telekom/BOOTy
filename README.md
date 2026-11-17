@@ -593,6 +593,7 @@ root is mounted.
 | `IMAGE_COSIGN_TRUSTED_ROOT` | — | Sigstore `trusted_root.json` in the ramdisk; an `oci://` image must be digest-pinned and keyless-signed ([Keyless cosign verification](#keyless-cosign-verification)) |
 | `IMAGE_COSIGN_IDENTITY_REGEXP` | — | Regexp the whole certificate SAN must match (keyless) |
 | `IMAGE_COSIGN_OIDC_ISSUER` | — | OIDC issuer the certificate must name (keyless) |
+| `IMAGE_COSIGN_REQUIRE_OCI` | `false` | Under a cosign policy, refuse every image or sysext source that is not `oci://` ([Cosign verification](#cosign-verification-of-oci-images-and-sysexts)) |
 | `LUKS_ENABLED` | `false` | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* Enable LUKS2 encryption for target partitions |
 | `LUKS_PASSPHRASE` | (unset) | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* Passphrase for initial LUKS volume creation |
 | `LUKS_UNLOCK_METHOD` | `passphrase` | *(Planned, not accepted: a `LUKS_*` key in `/deploy/vars` fails the run)* Unlock method: `passphrase`, `tpm2`, `clevis`, `keyfile` |
@@ -929,6 +930,12 @@ every `oci://` sysext source. Verification fails closed:
   payload names another digest stops provisioning before the wipe.
 - An HTTP image source needs `IMAGE_CHECKSUM` when `IMAGE_COSIGN_PUBKEYS` is
   set; HTTP and local sysext sources keep their `sha256`.
+- With `IMAGE_COSIGN_REQUIRE_OCI=true` (YAML
+  `provision.image.cosignRequireOCI`, default `false`) such sources are
+  refused instead: under an image policy every configured `IMAGE` source,
+  under a sysext policy every layer source must be `oci://`. `verify-image`
+  and dry-run fail with `BOOTY-IMG-001` and `IMAGE_COSIGN_REQUIRE_OCI is set
+  and the image source <url> is not oci://` before any disk is touched.
 
 BOOTy verifies offline against the configured keys and needs no Sigstore
 service. It reads the signatures that `cosign sign --key` and `cosign attach

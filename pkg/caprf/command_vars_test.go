@@ -81,6 +81,7 @@ func TestMergeCommandVarsRejectsRuntimeSettings(t *testing.T) {
 		"SYSEXT_COSIGN_TRUSTED_ROOT=/deploy/tr.json": "cosign",
 		"SYSEXT_COSIGN_IDENTITY_REGEXP=.*":           "cosign",
 		"SYSEXT_COSIGN_OIDC_ISSUER=https://x":        "cosign",
+		"IMAGE_COSIGN_REQUIRE_OCI=true":              "cosign",
 		"IMAGE_FOLLOW_REDIRECTS=false":               "IMAGE_FOLLOW_REDIRECTS",
 	} {
 		_, _, err := MergeCommandVars([]byte(commandBaseVars), []byte(payload))
@@ -98,8 +99,11 @@ IMAGE_COSIGN_TRUSTED_ROOT=/deploy/trusted_root.json
 IMAGE_COSIGN_IDENTITY_REGEXP=https://ci\.example/.*
 IMAGE_COSIGN_OIDC_ISSUER=https://ci.example
 SYSEXT_COSIGN_TRUSTED_ROOT=/deploy/trusted_root.json
+IMAGE_COSIGN_REQUIRE_OCI=true
 `
 	for _, payload := range []string{
+		"IMAGE_COSIGN_REQUIRE_OCI=false",
+		"IMAGE_COSIGN_REQUIRE_OCI=",
 		"IMAGE_COSIGN_PUBKEYS=",
 		"IMAGE_COSIGN_TRUSTED_ROOT=",
 		"IMAGE_COSIGN_IDENTITY_REGEXP=.*",
@@ -110,7 +114,7 @@ SYSEXT_COSIGN_TRUSTED_ROOT=/deploy/trusted_root.json
 			t.Errorf("payload %q: error = %v, want a cosign rejection", payload, err)
 		}
 	}
-	if _, _, err := MergeCommandVars([]byte(base), []byte("IMAGE_COSIGN_OIDC_ISSUER=https://ci.example\nHOSTNAME=x")); err != nil {
+	if _, _, err := MergeCommandVars([]byte(base), []byte("IMAGE_COSIGN_OIDC_ISSUER=https://ci.example\nIMAGE_COSIGN_REQUIRE_OCI=yes\nHOSTNAME=x")); err != nil {
 		t.Errorf("repeating the policy: %v", err)
 	}
 }

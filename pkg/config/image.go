@@ -159,6 +159,13 @@ type ImageConfig struct {
 	// CosignOIDCIssuer must equal the OIDC issuer extension of the signing
 	// certificate.
 	CosignOIDCIssuer string `yaml:"cosignOIDCIssuer,omitempty" json:"cosignOIDCIssuer,omitempty"`
+
+	// CosignRequireOCI refuses, under a cosign policy, an image source
+	// that is not oci:// (with an image policy) and a sysext source that
+	// is not oci:// (with a sysext policy), instead of accepting it with
+	// its checksum. verify-image fails before the disk is wiped.
+	// Default: false
+	CosignRequireOCI bool `yaml:"cosignRequireOCI,omitempty" json:"cosignRequireOCI,omitempty"`
 }
 
 // CosignTrustFiles returns the cosign public key and trusted root paths of

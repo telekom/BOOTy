@@ -416,6 +416,7 @@ func TestDeployArchiveKeepsCosignLockDown(t *testing.T) {
 	}{
 		{name: "same policy", vars: policy + signed},
 		{name: "policy dropped", vars: signed, wantErr: "changes cosign settings"},
+		{name: "require oci set", vars: policy + signed + "IMAGE_COSIGN_REQUIRE_OCI=true\n", wantErr: "changes cosign settings"},
 		{name: "other trusted root", vars: strings.Replace(policy, trustedRoot, "/tmp/evil.json", 1) + signed, wantErr: "changes cosign settings"},
 		{name: "http image with own checksum", vars: policy + "IMAGE=https://evil.example/os.img\nIMAGE_CHECKSUM=" + strings.Repeat("b", 64) + "\n",
 			wantErr: "not oci://"},

@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -323,5 +324,71 @@ func TestDryRunCosignKeyless(t *testing.T) {
 				t.Fatalf("dryRunCosignKeys() = %s (%s), want %s", got.Status, got.Message, tc.want)
 			}
 		})
+	}
+}
+
+// IMAGE_COSIGN_REQUIRE_OCI refuses an image or sysext source that is not
+// oci:// under a policy, also a configured fallback; oci:// sources pass
+// either way. The failure status names the option and BOOTY-IMG-001.
+func TestCosignRequireOCI(t *testing.T) {
+	keyPath := writeTestCosignKey(t)
+	const ociRef = "oci://registry.example/os@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	const httpRef = "https://images.example/os.raw"
+	tests := []struct {
+		name       string
+		imageURLs  []string
+		sysextSrc  string
+		sysextKeys []string
+		wantErr    string // with the flag; without it every case passes
+	}{
+		{name: "http image", imageURLs: []string{httpRef}, wantErr: "image source " + httpRef + " is not oci://"},
+		{name: "oci image", imageURLs: []string{ociRef}},
+		{name: "http fallback", imageURLs: []string{ociRef, httpRef}, wantErr: "image source " + httpRef + " is not oci://"},
+		{name: "http sysext", imageURLs: []string{ociRef}, sysextSrc: "https://images.example/ext.raw", sysextKeys: []string{keyPath},
+			wantErr: `sysext "ext" signature: cosign signature verification failed: IMAGE_COSIGN_REQUIRE_OCI is set`},
+		{name: "http sysext without sysext policy", imageURLs: []string{ociRef}, sysextSrc: "https://images.example/ext.raw"},
+		{name: "oci sysext", imageURLs: []string{ociRef}, sysextSrc: "oci://registry.example/ext@sha256:" + strings.Repeat("2", 64),
+			sysextKeys: []string{keyPath}},
+	}
+	for _, tc := range tests {
+		for _, require := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s require=%t", tc.name, require), func(t *testing.T) {
+				previous := verifyCosignSignature
+				t.Cleanup(func() { verifyCosignSignature = previous })
+				verifyCosignSignature = func(context.Context, string, []crypto.PublicKey) error { return nil }
+				cfg := &config.MachineConfig{}
+				cfg.Provision.Image.URLs = tc.imageURLs
+				cfg.Provision.Image.Checksum = strings.Repeat("a", 64)
+				cfg.Provision.Image.CosignPublicKeys = []string{keyPath}
+				cfg.Provision.Image.CosignRequireOCI = require
+				if tc.sysextSrc != "" {
+					cfg.Provision.Sysext.Enabled = true
+					cfg.Provision.Sysext.Layers = []config.SysextLayerConfig{{Name: "ext", Source: tc.sysextSrc, SHA256: strings.Repeat("3", 64)}}
+					cfg.Provision.Sysext.CosignPublicKeys = tc.sysextKeys
+				}
+				provider := &mockProvider{}
+				o := newTestOrchestrator(t, cfg, provider)
+				step := Step{"verify-image", func(ctx context.Context) error { return o.verifyCosignSignatures(ctx, tc.imageURLs[0]) }}
+				err := o.executeStep(context.Background(), step, &Checkpoint{})
+				dry := o.dryRunCosignKeys(context.Background())
+				if !require || tc.wantErr == "" {
+					if err != nil || dry.Status != DryRunPass {
+						t.Fatalf("verify-image = %v, dry-run = %s (%s), want both to pass", err, dry.Status, dry.Message)
+					}
+					return
+				}
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("verify-image = %v, want %q", err, tc.wantErr)
+				}
+				if dry.Status != DryRunFail || !strings.Contains(dry.Message, "IMAGE_COSIGN_REQUIRE_OCI") {
+					t.Fatalf("dry-run = %s (%s), want a failure naming IMAGE_COSIGN_REQUIRE_OCI", dry.Status, dry.Message)
+				}
+				if n := len(provider.statuses); n == 0 || provider.statuses[n-1].status != config.StatusError ||
+					!strings.Contains(provider.statuses[n-1].message, "[BOOTY-IMG-001]") ||
+					!strings.Contains(provider.statuses[n-1].message, "IMAGE_COSIGN_REQUIRE_OCI is set") {
+					t.Fatalf("statuses = %+v, want an error status with BOOTY-IMG-001 and the reason", provider.statuses)
+				}
+			})
+		}
 	}
 }

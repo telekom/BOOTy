@@ -2448,11 +2448,16 @@ func (o *Orchestrator) verifyCosignSignatures(ctx context.Context, imageURL stri
 // the image sources and the sysext sources: a keyless policy needs all
 // three options, and with a policy an oci:// source must be pinned by
 // digest and an HTTP image source needs IMAGE_CHECKSUM. Dry-run calls it
-// with every configured image source.
+// with every configured image source. With IMAGE_COSIGN_REQUIRE_OCI every
+// configured source that is not oci:// is refused, not only the selected one.
 func (o *Orchestrator) checkCosignSources(imageURLs []string) error {
+	requireOCI := o.cfg.Provision.Image.CosignRequireOCI
 	if p := imageCosignPolicy(&o.cfg.Provision.Image); p.enabled() {
 		if err := p.checkKeyless("IMAGE"); err != nil {
 			return fmt.Errorf("verifying image signature: %w", err)
+		}
+		if requireOCI {
+			imageURLs = slices.Concat(imageURLs, dryRunImageSources(o.cfg.Provision.Image.URLs))
 		}
 		for _, u := range imageURLs {
 			u = strings.TrimSpace(u)
@@ -2461,6 +2466,8 @@ func (o *Orchestrator) checkCosignSources(imageURLs []string) error {
 				if err := requireOCIDigest(u); err != nil {
 					return fmt.Errorf("verifying image signature: %w", err)
 				}
+			case requireOCI:
+				return fmt.Errorf("verifying image signature: %w", errNotOCI("image", u))
 			case strings.TrimSpace(o.cfg.Provision.Image.Checksum) == "":
 				return fmt.Errorf("verifying image signature: cosign verification is configured but the image source %s is not oci:// and has no IMAGE_CHECKSUM", image.RedactURL(u))
 			}
@@ -2476,14 +2483,27 @@ func (o *Orchestrator) checkCosignSources(imageURLs []string) error {
 	}
 	for i := range sysext.Layers {
 		source := strings.TrimSpace(sysext.Layers[i].Source)
-		if !image.IsOCIReference(source) {
-			continue
+		var err error
+		switch {
+		case image.IsOCIReference(source):
+			err = requireOCIDigest(source)
+		case requireOCI:
+			err = errNotOCI("sysext", source)
 		}
-		if err := requireOCIDigest(source); err != nil {
+		// Without IMAGE_COSIGN_REQUIRE_OCI a source that is not oci:// is
+		// checked by its sha256.
+		if err != nil {
 			return fmt.Errorf("verifying sysext %q signature: %w", sysext.Layers[i].Name, err)
 		}
 	}
 	return nil
+}
+
+// errNotOCI is the IMAGE_COSIGN_REQUIRE_OCI refusal of a source that is
+// not oci://. It names the option, so the failure status says why.
+func errNotOCI(kind, source string) error {
+	return fmt.Errorf("%w: IMAGE_COSIGN_REQUIRE_OCI is set and the %s source %s is not oci://",
+		image.ErrCosignVerification, kind, image.RedactURL(source))
 }
 
 func requireOCIDigest(source string) error {

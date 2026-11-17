@@ -1391,6 +1391,8 @@ func applyImageWriteVar(cfg *config.MachineConfig, key, value string) bool {
 		cfg.Provision.Image.CosignIdentityRegexp = value
 	case "IMAGE_COSIGN_OIDC_ISSUER":
 		cfg.Provision.Image.CosignOIDCIssuer = strings.TrimSpace(value)
+	case "IMAGE_COSIGN_REQUIRE_OCI":
+		cfg.Provision.Image.CosignRequireOCI = parseBoolVar(value)
 	case "SYSEXT_COSIGN_TRUSTED_ROOT":
 		cfg.Provision.Sysext.CosignTrustedRoot = strings.TrimSpace(value)
 	case "SYSEXT_COSIGN_IDENTITY_REGEXP":
