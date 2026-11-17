@@ -1040,8 +1040,9 @@ WantedBy=multi-user.target
 // opens the volume with the PCRs of this boot. Only then key slot 1 and the
 // key are destroyed. A boot that a passphrase or the recovery key opened
 // keeps slot 1, reports tpm2-initrd-unlock-failed and tries again on the
-// next boot. A crash
-// after luksKillSlot finds the slot gone and only cleans up.
+// next boot. A crash after luksKillSlot finds the slot gone and only
+// cleans up; a failed luksDump keeps slot 1 and the key, reports
+// luks-dump-failed and tries again on the next boot.
 const luksEnrollScript = `#!/bin/sh
 # Written by BOOTy (docs/disk-encryption.md).
 set -eu
@@ -1065,6 +1066,12 @@ status() {
 }
 crypttab_line() { sed -i "s|^$LUKS_NAME .*|$LUKS_NAME UUID=$LUKS_UUID $1|" /etc/crypttab; }
 fail() { say "failed: $*"; status failed "$*"; exit 1; }
+# A failed luksDump proves nothing: slot 1 and the key stay (#967).
+dump_failed() {
+	say "luksDump of $dev failed; key slot $LUKS_ENROLL_SLOT and the enrollment key stay, the next boot tries again"
+	status luks-dump-failed "luksDump of the volume failed; key slot $LUKS_ENROLL_SLOT and the enrollment key stay"
+	exit 1
+}
 
 if [ "$(efivar SecureBoot)" != 1 ] || [ "$(efivar SetupMode)" != 0 ]; then
 	say "Secure Boot is not on in user mode, the enrollment waits"
@@ -1080,7 +1087,7 @@ if [ -e "$bound" ]; then
 		fi
 		# headless allows any token that needs no prompt: the marker proves a
 		# TPM2 unlock only when the TPM2 token is the only one.
-		dump=$(cryptsetup luksDump "$dev") || fail "luksDump of $dev"
+		dump=$(cryptsetup luksDump "$dev") || dump_failed
 		others=$(printf '%s\n' "$dump" | sed -n '/^Tokens:/,/^Digests:/p' | grep -E '^  [0-9]+: ' | grep -v ': systemd-tpm2$' || true)
 		[ -z "$others" ] || fail "the volume has a LUKS2 token other than systemd-tpm2 ($others)"
 	fi
@@ -1089,7 +1096,8 @@ if [ -e "$bound" ]; then
 	case $list in *libcryptsetup-token-systemd-tpm2.so*) ;; *) fail "the initramfs of this boot lacks the TPM2 token plugin" ;; esac
 	grep -q "^$LUKS_NAME UUID=$LUKS_UUID none .*tpm2-device=auto" /etc/crypttab || fail "crypttab does not unlock with the TPM2"
 	cryptsetup open --test-passphrase --token-only --token-type systemd-tpm2 "$dev" || fail "the TPM2 does not open $dev with the PCRs of this boot"
-	if cryptsetup luksDump "$dev" | grep -q "^  $LUKS_ENROLL_SLOT: luks2"; then
+	dump=$(cryptsetup luksDump "$dev") || dump_failed
+	if printf '%s\n' "$dump" | grep -q "^  $LUKS_ENROLL_SLOT: luks2"; then
 		cryptsetup open --test-passphrase --key-slot "$LUKS_ENROLL_SLOT" --key-file "$key" "$dev" ||
 			fail "key slot $LUKS_ENROLL_SLOT does not hold the enrollment key"
 		cryptsetup -q luksKillSlot "$dev" "$LUKS_ENROLL_SLOT"
