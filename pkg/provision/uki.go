@@ -83,8 +83,9 @@ const (
 // ukiAllowedParams are the kernel parameters that per-host signing merges
 // into the .cmdline of the UKI: the ones configure-grub writes (console,
 // the cloud-init datasource) and hardware tuning that does not change what
-// boots or what may unseal the volume. mitigations is allowed with
-// ukiMitigations only, the IOMMU names with ukiIOMMUOptions only.
+// boots or what may unseal the volume. The names in ukiParamValues are
+// allowed with those values only, the IOMMU names with ukiIOMMUOptions
+// only, pci with ukiPCIOptions only, and ukiBareFlags without a value.
 // UKI_CMDLINE_POLICY=enforce refuses every other
 // name, warn logs it. Names compare as in ukiDeniedParams.
 var ukiAllowedParams = []string{
@@ -96,9 +97,26 @@ var ukiAllowedParams = []string{
 	"transparent_hugepage", "numa_balancing",
 }
 
-// ukiMitigations are the allowed values of mitigations: the default, and
-// the default with SMT off, which is stricter.
-var ukiMitigations = []string{"auto", "auto,nosmt"}
+// ukiParamValues are the allowed values of names whose other values
+// weaken the system or that take one of a few values. mitigations: the
+// default, and the default with SMT off, which is stricter.
+// systemd.unified_cgroup_hierarchy (cgroup v1 for EnableCGroupV1) and
+// audit (the CPU pinning profile sets audit=0): 0 or 1. Keys are
+// normalised as in ukiParamNorm.
+var ukiParamValues = map[string][]string{
+	"mitigations":                      {"auto", "auto,nosmt"},
+	"systemd.unified_cgroup_hierarchy": {"0", "1"},
+	"audit":                            {"0", "1"},
+}
+
+// ukiBareFlags are allowed without a value only: CPU pinning tuning.
+var ukiBareFlags = []string{"rcu_nocb_poll", "nosoftlockup"}
+
+// ukiPCIOptions are the allowed comma-separated options of pci: bus
+// number and BAR reassignment for SR-IOV. Every other option is refused:
+// others turn MSI, AER or ATS off, disable ACS redirection or change the
+// configuration access, and the kernel matches some by prefix (realloc).
+var ukiPCIOptions = []string{"realloc", "assign-busses"}
 
 // ukiDatasource is the value of ds and ci.datasource: a datasource name,
 // as configure-grub writes it. cloud-init takes a seed URL or path after
@@ -409,8 +427,8 @@ func (o *Orchestrator) ukiCmdline(st *ukiState, imageCmdline []byte) ([]byte, er
 }
 
 // checkUKIKernelParams refuses parameters that are not printable ASCII,
-// in ukiDeniedParams, mitigations with a value not in ukiMitigations, or
-// an IOMMU name with an option not in ukiIOMMUOptions.
+// in ukiDeniedParams, or allowed names with a value that
+// checkUKIParamValue refuses.
 // It returns the names not in ukiAllowedParams; enforce refuses them.
 func checkUKIKernelParams(params string, enforce bool) (notAllowed []string, err error) {
 	if err := checkUKIKernelParamChars(params); err != nil {
@@ -468,14 +486,26 @@ func ukiParamIs(name string) func(string) bool {
 }
 
 // checkUKIParamValue checks the value of the allowed names whose other
-// values weaken the system: mitigations, the IOMMU names and the cloud-init
+// values weaken the system or that take one of a few values:
+// ukiParamValues, ukiBareFlags, the IOMMU names, pci and the cloud-init
 // datasource. checked reports that name is one of them and value allowed.
 func checkUKIParamValue(p, name, value string) (checked bool, err error) {
 	is := ukiParamIs(name)
 	switch {
-	case is("mitigations"):
-		if !slices.Contains(ukiMitigations, value) {
-			return false, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: mitigations must be %s (docs/disk-encryption.md#per-host-kernel-parameters)", p, strings.Join(ukiMitigations, " or "))
+	case ukiParamValues[ukiParamNorm(name)] != nil:
+		vals := ukiParamValues[ukiParamNorm(name)]
+		if !slices.Contains(vals, value) {
+			return false, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: %s must be %s (docs/disk-encryption.md#per-host-kernel-parameters)", p, ukiParamNorm(name), strings.Join(vals, " or "))
+		}
+	case slices.ContainsFunc(ukiBareFlags, is):
+		if p != name {
+			return false, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: %s takes no value (docs/disk-encryption.md#per-host-kernel-parameters)", p, ukiParamNorm(name))
+		}
+	case is("pci"):
+		for o := range strings.SplitSeq(value, ",") {
+			if !slices.Contains(ukiPCIOptions, o) {
+				return false, fmt.Errorf("per-host kernel parameter %q is not allowed in the UKI .cmdline: pci may only have the options %s (docs/disk-encryption.md#per-host-kernel-parameters)", p, strings.Join(ukiPCIOptions, ","))
+			}
 		}
 	case ukiIOMMUOptions[ukiParamNorm(name)] != nil:
 		opts := ukiIOMMUOptions[ukiParamNorm(name)]

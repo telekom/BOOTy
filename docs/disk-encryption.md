@@ -902,7 +902,8 @@ datasource (`ds=nocloud`, `ci.datasource=ConfigDrive`); with
 Without parameters the `.cmdline` of the image stays as it is.
 
 The parameters must be printable ASCII without quotes or backslashes (the
-kernel and systemd strip quotes, so a quoted name would pass the checks)
+kernel and systemd strip quotes, so a quoted name would pass the checks;
+send values unquoted, `isolcpus=2-15`, not `isolcpus='2-15'`)
 and without `cc:` (cloud-init runs the cloud-config between `cc:` and
 `end_cc` anywhere in the command line),
 and the `.cmdline` at most 2047 bytes (`COMMAND_LINE_SIZE` of x86-64).
@@ -921,6 +922,10 @@ release.
 | `ds`, `ci.datasource` | the cloud-init datasource that `configure-grub` writes (`ds=nocloud`, `ci.datasource=ConfigDrive`); only a name (letters, digits, `_`, `-`): a seed (`ds=nocloud;s=http://...`) is refused, as cloud-init would run its user-data as root |
 | `hugepages`, `hugepagesz`, `default_hugepagesz` | memory reservation for workloads |
 | `isolcpus`, `nohz_full`, `rcu_nocbs`, `irqaffinity` | CPU isolation for workloads |
+| `rcu_nocb_poll`, `nosoftlockup` | CPU pinning tuning; only as bare flags, `rcu_nocb_poll=1` is refused |
+| `pci` | PCI resource assignment for SR-IOV, only with the options `realloc` and `assign-busses` (comma-separated, `pci=realloc,assign-busses`, or repeated, `pci=realloc pci=assign-busses`); every other option is refused, as others turn MSI, AER or ATS off, disable ACS redirection or change the configuration access |
+| `systemd.unified_cgroup_hierarchy` | cgroup v1 (`0`) or v2 (`1`) for the `EnableCGroupV1` compute profile; only `0` and `1`, also as `rd.systemd.unified_cgroup_hierarchy` |
+| `audit` | the kernel audit subsystem; only `0` and `1` (the CPU pinning profile sets `audit=0`) |
 | `iommu`, `intel_iommu`, `amd_iommu` | IOMMU mode for SR-IOV and device passthrough, only with options that keep DMA protection on (comma-separated): `iommu=` `pt`, `nopt`, `force`, `merge`, `nomerge`, `panic`, `nopanic`; `intel_iommu=` `on`, `strict`, `forcedac`, `sp_off`, `sm_on`, `sm_off`; `amd_iommu=` `on` (ignored by the kernel), `force_enable`, `force_isolation`, `fullflush`, `pgtbl_v1`, `pgtbl_v2`, `irtcachedis`, `nohugepages`, `v2_pgsizes_only`. `off`, `intel_iommu=igfx_off`, `tboot_noforce` and `nobounce`, `iommu=soft` and `noforce` turn the IOMMU off or let devices bypass it, and every other option is refused too, as the kernel matches options by prefix (`iommu=offx` is `off`). `iommu=pt` maps the devices of the host 1:1 but keeps the IOMMU for VFIO and SR-IOV passthrough |
 | `net.ifnames`, `biosdevname` | interface naming, which the network configuration of the image depends on |
 | `transparent_hugepage`, `numa_balancing` | memory tuning |
