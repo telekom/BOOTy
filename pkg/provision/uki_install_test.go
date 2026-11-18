@@ -131,7 +131,11 @@ func TestUKIKernelParamsAllowList(t *testing.T) {
 	allowed := "console=ttyS0,115200n8 ds=nocloud ci.datasource=ConfigDrive hugepages=16 hugepagesz=1G default-hugepagesz=1G " +
 		"isolcpus=2-3 nohz_full=2-3 rcu_nocbs=2-3 irqaffinity=0-1 iommu=pt intel_iommu=on amd_iommu=on net.ifnames=0 biosdevname=0 " +
 		"iommu=force,nopt intel-iommu=on,sm_on amd_iommu=pgtbl_v1 amd_iommu=force_isolation,pgtbl_v2 " +
-		"transparent_hugepage=never numa_balancing=disable mitigations=auto mitigations=auto,nosmt"
+		"transparent_hugepage=never numa_balancing=disable mitigations=auto mitigations=auto,nosmt " +
+		// T-CaaS compute profiles (#989).
+		"rcu_nocb_poll nosoftlockup pci=realloc pci=assign-busses pci=realloc,assign-busses pci=assign-busses,realloc " +
+		"systemd.unified_cgroup_hierarchy=0 systemd.unified_cgroup_hierarchy=1 systemd.unified-cgroup-hierarchy=1 " +
+		"rd.systemd.unified_cgroup_hierarchy=0 audit=0 audit=1"
 	for _, enforce := range []bool{false, true} {
 		if na, err := checkUKIKernelParams(allowed, enforce); err != nil || na != nil {
 			t.Errorf("enforce=%v: allowed parameters: %v %q", enforce, err, na)
@@ -144,7 +148,13 @@ func TestUKIKernelParamsAllowList(t *testing.T) {
 			"iommu=offx", "iommu=", "iommu", "intel_iommu=ON", "rd.intel_iommu=off",
 			// cloud-init seeds and cloud-config from the command line.
 			"ds=nocloud;s=http://192.0.2.1/", "ds=nocloud;s=/dev/sdb/", "ci.datasource=NoCloud;s=x", "ds=", "x=acc:",
-			"cloud-config-url=http://192.0.2.1/c", "url=http://192.0.2.1/c"} {
+			"cloud-config-url=http://192.0.2.1/c", "url=http://192.0.2.1/c",
+			// T-CaaS compute profiles (#989): bare flags, pci options, 0 or 1, unquoted.
+			"rcu_nocb_poll=1", "rcu_nocb_poll=", "nosoftlockup=0",
+			"pci=noacpi", "pci=realloc,nomsi", "pci=realloc=off", "pci=reallocx", "pci=assign_busses", "pci=", "pci", "pci=realloc,",
+			"systemd.unified_cgroup_hierarchy=yes", "systemd.unified_cgroup_hierarchy", "systemd.unified_cgroup_hierarchy=",
+			"rd.systemd.unified_cgroup_hierarchy=false", "audit=on", "audit=2", "audit", "audit=0,1",
+			"isolcpus='2-15'", `isolcpus="2-15"`, "'audit=0'"} {
 			if _, err := checkUKIKernelParams("hugepages=16 "+p, enforce); err == nil {
 				t.Errorf("enforce=%v: %q accepted", enforce, p)
 			}
