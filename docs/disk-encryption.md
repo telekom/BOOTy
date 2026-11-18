@@ -902,8 +902,8 @@ datasource (`ds=nocloud`, `ci.datasource=ConfigDrive`); with
 Without parameters the `.cmdline` of the image stays as it is.
 
 The parameters must be printable ASCII without quotes or backslashes (the
-kernel and systemd strip quotes, so a quoted name would pass the checks):
-producers send values unquoted, `isolcpus=2-15`, not `isolcpus='2-15'`,
+kernel and systemd strip quotes, so a quoted name would pass the checks;
+send values unquoted, `isolcpus=2-15`, not `isolcpus='2-15'`)
 and without `cc:` (cloud-init runs the cloud-config between `cc:` and
 `end_cc` anywhere in the command line),
 and the `.cmdline` at most 2047 bytes (`COMMAND_LINE_SIZE` of x86-64).
