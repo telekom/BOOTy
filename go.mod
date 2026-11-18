@@ -18,7 +18,7 @@ require (
 	github.com/osrg/gobgp/v4 v4.11.0
 	github.com/pierrec/lz4/v4 v4.1.33
 	github.com/spf13/cobra v1.10.2
-	github.com/telekom/t-caas-go-library v0.1.6
+	github.com/telekom/t-caas-go-library v0.1.7
 	github.com/ulikunitz/xz v0.5.17
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
